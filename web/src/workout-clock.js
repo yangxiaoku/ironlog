@@ -83,21 +83,27 @@ export function restProgress(rest, now = Date.now()) {
 }
 
 let iosHapticLabel = null;
+let iosHapticInput = null;
 function triggerIosSwitchHaptic() {
   if (typeof document === "undefined") return;
   try {
-    if (!iosHapticLabel || !iosHapticLabel.isConnected) {
+    const host = document.querySelector("dialog[open]") ?? document.body;
+    if (!host) return;
+    if (!iosHapticLabel || iosHapticLabel.parentElement !== host) {
+      iosHapticLabel?.remove();
       const wrap = document.createElement("label");
       wrap.setAttribute("aria-hidden", "true");
-      wrap.style.cssText = "position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;overflow:hidden;";
+      wrap.style.cssText = "position:fixed;right:0;bottom:0;width:20px;height:20px;opacity:0.0001;z-index:-1;overflow:hidden;margin:0;padding:0;";
       const input = document.createElement("input");
       input.type = "checkbox";
       input.setAttribute("switch", "");
+      input.style.cssText = "width:20px;height:20px;margin:0;";
       wrap.appendChild(input);
-      document.body?.appendChild(wrap);
+      host.appendChild(wrap);
       iosHapticLabel = wrap;
+      iosHapticInput = input;
     }
-    iosHapticLabel?.click();
+    iosHapticLabel.click();
   } catch {}
 }
 
@@ -163,13 +169,13 @@ export function createRestAudio(enabled) {
   let audio;
   let htmlAudio = null;
   let webAudioPrimed = false;
-  let htmlAudioPrimed = false;
-  let playingChimeUntil = 0;
 
-  function ensureWavs() {
-    cachedCompleteWav ??= buildChimeWavDataUri([[784, 0, 0.14], [988, 0.14, 0.16], [1175, 0.30, 0.28]]);
-    cachedTickWav ??= buildChimeWavDataUri([[660, 0, 0.08]]);
-    cachedSilentWav ??= buildChimeWavDataUri([[440, 0, 0.005]]);
+  function setAmbientAudioSession() {
+    try {
+      if (typeof navigator !== "undefined" && navigator.audioSession && navigator.audioSession.type !== "ambient") {
+        navigator.audioSession.type = "ambient";
+      }
+    } catch {}
   }
 
   function scheduleWebAudioTones(tones, complete) {
@@ -180,10 +186,11 @@ export function createRestAudio(enabled) {
         const start = baseTime + delay;
         const oscillator = audio.createOscillator();
         const gain = audio.createGain();
-        oscillator.type = "triangle";
+        oscillator.type = complete ? "sine" : "triangle";
         oscillator.frequency.value = frequency;
+        const peakGain = complete ? 0.52 : 0.22;
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.linearRampToValueAtTime(complete ? 0.36 : 0.18, start + 0.015);
+        gain.gain.linearRampToValueAtTime(peakGain, start + 0.012);
         gain.gain.exponentialRampToValueAtTime(0.001, start + length);
         oscillator.connect(gain).connect(audio.destination);
         oscillator.start(start);
@@ -197,19 +204,17 @@ export function createRestAudio(enabled) {
 
   function unlock() {
     if (!enabled()) return;
-    try {
-      if (typeof navigator !== "undefined" && navigator.audioSession && navigator.audioSession.type !== "playback") {
-        navigator.audioSession.type = "playback";
-      }
-    } catch {}
+    setAmbientAudioSession();
     const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
     if (Context) {
       try {
         audio ??= new Context();
         if (audio.state !== "running") {
-          void audio.resume().catch(() => {});
+          void audio.resume().then(() => {
+            webAudioPrimed = true;
+          }).catch(() => {});
         }
-        if (!webAudioPrimed || audio.state !== "running") {
+        if (!webAudioPrimed) {
           const silent = audio.createBuffer(1, 1, 22050);
           const src = audio.createBufferSource();
           src.buffer = silent;
@@ -219,52 +224,35 @@ export function createRestAudio(enabled) {
         }
       } catch {}
     }
-    if (typeof Audio !== "undefined" && !htmlAudioPrimed && Date.now() >= playingChimeUntil) {
-      try {
-        ensureWavs();
-        htmlAudio ??= new Audio();
-        htmlAudio.volume = 0.01;
-        htmlAudio.src = cachedSilentWav;
-        const p = htmlAudio.play();
-        if (p && typeof p.then === "function") {
-          p.then(() => {
-            htmlAudioPrimed = true;
-            if (Date.now() >= playingChimeUntil) {
-              htmlAudio.pause();
-              htmlAudio.currentTime = 0;
-            }
-            htmlAudio.volume = 1;
-          }).catch(() => {});
-        }
-      } catch {}
-    }
   }
 
   function play(complete) {
     if (complete) haptic("timer");
     if (!enabled()) return;
+    setAmbientAudioSession();
     const tones = complete
-      ? [[784, 0, 0.14], [988, 0.14, 0.16], [1175, 0.30, 0.28]]
-      : [[660, 0, 0.08]];
-    playingChimeUntil = Date.now() + (complete ? 650 : 150);
+      ? [[880, 0, 0.13], [1175, 0.13, 0.15], [1568, 0.28, 0.24], [1175, 0.56, 0.13], [1568, 0.70, 0.28]]
+      : [[784, 0, 0.07]];
 
     const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-    let playedViaWebAudio = false;
     if (Context) {
       try {
         audio ??= new Context();
         if (audio.state === "running") {
-          playedViaWebAudio = scheduleWebAudioTones(tones, complete);
+          scheduleWebAudioTones(tones, complete);
         } else {
           void audio.resume().then(() => {
+            webAudioPrimed = true;
             scheduleWebAudioTones(tones, complete);
           }).catch(() => {});
         }
+        return;
       } catch {}
     }
-    if (!playedViaWebAudio && typeof Audio !== "undefined") {
+    if (typeof Audio !== "undefined") {
       try {
-        ensureWavs();
+        cachedCompleteWav ??= buildChimeWavDataUri(tones);
+        cachedTickWav ??= buildChimeWavDataUri([[784, 0, 0.07]]);
         htmlAudio ??= new Audio();
         htmlAudio.volume = 1;
         htmlAudio.src = complete ? cachedCompleteWav : cachedTickWav;

@@ -1101,7 +1101,7 @@ dialog.workout-dialog .dialog-head { flex: none; padding: 12px 18px; border-bott
 .set-row input[type="number"]:focus { background: var(--raised); box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 25%, transparent); }
 .set-row > button.icon-button { width: 30px; min-height: 42px; padding: 0; }
 .check-set { display: grid; place-items: center; position: relative; width: 44px; height: 44px; cursor: pointer; user-select: none; }
-.check-set input { position: absolute; left: 50%; top: 50%; width: 1px; height: 1px; margin: 0; opacity: 0; pointer-events: none; }
+.check-set input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0.0001; z-index: 2; cursor: pointer; }
 .check-set span { position: relative; z-index: 1; display: grid; place-items: center; width: 40px; height: 40px; border: 1px solid var(--soft); border-radius: 10px; color: var(--muted); pointer-events: none; transition: transform .15s cubic-bezier(0.22, 1, 0.36, 1), background-color .15s ease, border-color .15s ease, color .15s ease, box-shadow .15s ease; }
 .check-set:active span { transform: scale(0.88); }
 .check-set input:not(:checked) + span svg { opacity: .45; }

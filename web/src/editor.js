@@ -1495,7 +1495,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             <input aria-label="第 ${i + 1} 组${timed ? "秒数" : "重量"}" type="number" inputmode="${timed ? "numeric" : "decimal"}" enterkeyhint="${timed ? "done" : "next"}" min="0" max="${timed ? 86400 : 100000}" step="${timed ? 1 : 0.01}" data-set="${timed ? "seconds" : "weight"}" data-row="${index}" data-index="${i}" value="${timed ? entry.seconds : entry.weight}" required>
             ${timed ? "" : `<input aria-label="第 ${i + 1} 组次数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="1000" step="1" data-set="reps" data-row="${index}" data-index="${i}" value="${entry.reps}" required>`}
             ${timed ? "" : `<select class="col-rir set-rir-select" aria-label="第 ${i + 1} 组 RIR" data-set="rir" data-row="${index}" data-index="${i}">${options(rirValues, entry.rir ?? "")}</select>`}
-            <label class="check-set"><input type="checkbox" aria-label="完成第 ${i + 1} 组" data-set="completed" data-row="${index}" data-index="${i}"${entry.completed ? " checked" : ""}><span>${icon("check", 17)}</span></label>
+            <label class="check-set"><input type="checkbox" switch aria-label="完成第 ${i + 1} 组" data-set="completed" data-row="${index}" data-index="${i}"${entry.completed ? " checked" : ""}><span>${icon("check", 17)}</span></label>
             <button type="button" class="quiet icon-button" data-workout="remove-set" data-row="${index}" data-index="${i}" aria-label="删除第 ${i + 1} 组">${icon("close", 15)}</button>
             <div class="set-reference" data-row="${index}" data-index="${i}" hidden></div>
             <div class="set-stepper-bar" data-row="${index}" data-index="${i}">
