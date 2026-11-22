@@ -5,6 +5,7 @@ import { appleDailyDetailsModal, appleLine, appleWorkoutDetails, openDeviceSetup
 import { badgesOverviewStrip, filterVisibleBadges, renderBadgeSections, renderBadgesView, badgeDetailModal } from "./badges-ui.js";
 import { onboardingSeenKey, welcomeDismissedKey, renderWelcomeChecklist, openOnboardingGuide } from "./onboarding-ui.js";
 import { primeSharedAudio, triggerHaptic } from "./workout-clock.js";
+import { clearQueue, enqueueMutation, flushQueue, isNetworkError, readQueue } from "./offline-queue.js";
 
 const zhWeekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const formatWeekdayZh = (date) => zhWeekdays[(new Date(date + "T00:00:00Z").getUTCDay() + 6) % 7] ?? "";
@@ -205,6 +206,75 @@ function open(title, body, wide = false, layout = "") {
 }
 
 function openConfirmDialog({ title, message, confirmLabel = "确认删除", onConfirm }) {
+  if (dialog.open) {
+    let overlayToken = null;
+    const overlay = document.createElement("div");
+    overlay.className = "confirm-overlay";
+    overlay.setAttribute("role", "alertdialog");
+    overlay.setAttribute("aria-modal", "true");
+    overlay.setAttribute("aria-labelledby", "confirm-overlay-title");
+    overlay.innerHTML = `<div class="confirm-overlay-card">
+      <h3 id="confirm-overlay-title">${esc(title)}</h3>
+      <p class="confirm-dialog-message">${esc(message)}</p>
+      <p class="form-error" data-confirm-error role="alert" hidden></p>
+      <footer class="confirm-dialog-foot">
+        <button type="button" class="quiet" data-confirm-cancel>取消</button>
+        <button type="button" class="danger" data-confirm-ok>${esc(confirmLabel)}</button>
+      </footer>
+    </div>`;
+    dialog.appendChild(overlay);
+    const cancelBtn = $("[data-confirm-cancel]", overlay);
+    const okBtn = $("[data-confirm-ok]", overlay);
+    const errEl = $("[data-confirm-error]", overlay);
+    const onDialogCancel = (event) => {
+      event.preventDefault();
+      closeViaUser();
+    };
+    const cleanupOverlay = () => {
+      dialog.removeEventListener("cancel", onDialogCancel);
+      overlay.remove();
+    };
+    const closeViaUser = () => {
+      cleanupOverlay();
+      if (overlayToken != null && dialog.open) {
+        popOverlay(overlayToken);
+        overlayToken = null;
+      }
+    };
+    dialog.addEventListener("cancel", onDialogCancel);
+    overlayToken = pushOverlay(() => {
+      overlayToken = null;
+      cleanupOverlay();
+    });
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay && !okBtn?.disabled) closeViaUser();
+    });
+    cancelBtn?.addEventListener("click", closeViaUser);
+    okBtn?.addEventListener("click", async () => {
+      if (!okBtn || okBtn.disabled) return;
+      okBtn.disabled = true;
+      if (cancelBtn) cancelBtn.disabled = true;
+      if (errEl) errEl.hidden = true;
+      try {
+        await onConfirm();
+        cleanupOverlay();
+        if (overlayToken != null && dialog.open) {
+          popOverlay(overlayToken);
+          overlayToken = null;
+        }
+      } catch (error) {
+        if (errEl) {
+          errEl.textContent = error?.message || "操作失败，请重试";
+          errEl.hidden = false;
+        }
+        okBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+      }
+    });
+    cancelBtn?.focus({ preventScroll: true });
+    return;
+  }
+
   open(title, `<div class="confirm-dialog-body">
     <p class="confirm-dialog-message">${esc(message)}</p>
     <p class="form-error" data-confirm-error role="alert" hidden></p>
@@ -235,6 +305,49 @@ function openConfirmDialog({ title, message, confirmLabel = "确认删除", onCo
     }
   });
 }
+
+let flushingOfflineQueue = false;
+function pendingQueueCount() {
+  return state.userId ? readQueue(localStorage, state.userId).length : 0;
+}
+function queueOfflineRecord(body, label = "记录") {
+  if (!state.userId) return 0;
+  const count = enqueueMutation(localStorage, state.userId, {
+    opId: body.opId,
+    path: "/api/records",
+    method: "POST",
+    body,
+    label,
+  });
+  nav();
+  return count;
+}
+async function syncOfflineQueue({ silent = false } = {}) {
+  if (!state.userId || flushingOfflineQueue || (typeof navigator !== "undefined" && !navigator.onLine)) return null;
+  if (pendingQueueCount() === 0) return null;
+  flushingOfflineQueue = true;
+  try {
+    const res = await flushQueue(localStorage, state.userId, (path, opts) => api(path, opts));
+    nav();
+    if (res.synced > 0) {
+      dataEpoch++;
+      state.dayCache.clear();
+      if (!dialog.open) void renderRoute();
+      notify(`已自动同步 ${res.synced} 条离线记录`);
+    } else if (!silent && res.stoppedOffline) {
+      notify("网络仍不稳定，待恢复后继续自动同步");
+    } else if (!silent && res.authRequired) {
+      notify("登录已过期，请重新登录后同步离线记录");
+    }
+    if (res.dropped.length > 0) {
+      notify(`${res.dropped.length} 条离线记录与服务端冲突，已保留最新服务端版本`);
+    }
+    return res;
+  } finally {
+    flushingOfflineQueue = false;
+  }
+}
+
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
   $('meta[name="theme-color"]').content = theme === "light" ? "#f4f4f1" : "#000000";
@@ -247,6 +360,7 @@ function clearUser() {
   requestId++;
   reportApple = null;
   dataEpoch = 0;
+  if (state.userId) clearQueue(localStorage, state.userId);
   const prefix = "ironlog-web-draft:" + state.userId + ":";
   if (state.userId) for (const storage of [localStorage, sessionStorage]) {
     for (const key of Object.keys(storage)) if (key.startsWith(prefix)) storage.removeItem(key);
@@ -456,22 +570,19 @@ function openCreateExerciseModal({ existing = null, onDone } = {}) {
     if (onDone) onDone(null);
     else dialog.close();
   });
-  $("#delete-custom-exercise", form)?.addEventListener("click", async (event) => {
-    const btn = event.currentTarget;
-    if (!btn.dataset.confirm) { btn.dataset.confirm = "true"; btn.textContent = "确认删除"; return; }
-    btn.disabled = true;
-    try {
-      await api("/api/records", { method: "POST", body: { opId: crypto.randomUUID(), id: existing.id, kind: "exercise", baseVersion: existing.version, deleted: true, data: existing.data } });
-      state.customExercises = state.customExercises.filter((r) => r.id !== existing.id);
-      notify("已删除自定义动作");
-      if (onDone) onDone(null);
-      else { dialog.close(); if (state.view === "exercises") void catalogueSearch(); }
-    } catch (err) {
-      const errEl = $(".form-error", form);
-      errEl.textContent = err.message;
-      errEl.hidden = false;
-      btn.disabled = false;
-    }
+  $("#delete-custom-exercise", form)?.addEventListener("click", () => {
+    openConfirmDialog({
+      title: "删除自定义动作",
+      message: `确定要删除「${existing.data.name}」吗？历史已记录的训练快照不受影响。`,
+      confirmLabel: "删除动作",
+      onConfirm: async () => {
+        await api("/api/records", { method: "POST", body: { opId: crypto.randomUUID(), id: existing.id, kind: "exercise", baseVersion: existing.version, deleted: true, data: existing.data } });
+        state.customExercises = state.customExercises.filter((r) => r.id !== existing.id);
+        notify("已删除自定义动作");
+        if (onDone) onDone(null);
+        else { dialog.close(); if (state.view === "exercises") void catalogueSearch(); }
+      },
+    });
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -584,7 +695,7 @@ function nav() {
     : `<strong>${destinations[state.view]}</strong>`;
   $("#top").innerHTML = `<div class="breadcrumb"><span>铁记</span>${icon("chevron", 14)}${breadcrumbTrail}</div>
     <a href="#overview" class="phone-brand" aria-label="铁记首页">${matrix("IRONLOG")}<strong>铁记</strong></a>
-    <div class="top-actions">${typeof navigator !== "undefined" && !navigator.onLine ? '<span class="offline-pill" role="status" aria-label="当前离线">离线</span>' : ""}<span class="local-date">${icon("calendar", 16)} <time datetime="${today()}">${today().slice(0, 4)} / ${today().slice(5).replace("-", ".")}</time></span>${state.userId ?
+    <div class="top-actions">${typeof navigator !== "undefined" && !navigator.onLine ? '<span class="offline-pill" role="status" aria-label="当前离线">离线</span>' : ""}${state.userId && pendingQueueCount() > 0 ? `<button type="button" class="sync-pending-pill" data-action="flush-offline-queue" aria-label="同步离线待上传记录">待同步 ${pendingQueueCount()}</button>` : ""}<span class="local-date">${icon("calendar", 16)} <time datetime="${today()}">${today().slice(0, 4)} / ${today().slice(5).replace("-", ".")}</time></span>${state.userId ?
       `${resumePillHtml}<button type="button" class="quick-record-pill" data-action="quick-record-sheet" aria-label="快捷速记">${icon("plus", 14)}<span>速记</span></button>
        <button type="button" class="icon-button top-theme" data-action="theme" aria-label="切换浅色与深色">${themeIcon}</button>` :
       `<button type="button" class="icon-button" data-action="theme" aria-label="切换浅色与深色">${themeIcon}</button>`}</div>`;
@@ -1827,24 +1938,19 @@ function openMeasurementModal(existing = null) {
       err.hidden = false;
     } finally { btn.disabled = false; }
   });
-  $("#delete-measurement", form)?.addEventListener("click", async (event) => {
-    const btn = event.currentTarget;
-    if (btn.dataset.confirm !== "yes") {
-      btn.dataset.confirm = "yes";
-      btn.textContent = "确认删除";
-      return;
-    }
-    btn.disabled = true;
-    try {
-      await api("/api/web/measurements/" + encodeURIComponent(existing.date), { method: "DELETE" });
-      dialog.close();
-      state.recordsCache.weight = null;
-      await loadRecords("weight", requestId);
-      notify("已删除围度记录");
-    } catch (problem) {
-      notify(problem.message);
-      btn.disabled = false;
-    }
+  $("#delete-measurement", form)?.addEventListener("click", () => {
+    openConfirmDialog({
+      title: "删除围度记录",
+      message: `确定要删除 ${shortDate(existing.date)} 的身体围度记录吗？`,
+      confirmLabel: "删除记录",
+      onConfirm: async () => {
+        await api("/api/web/measurements/" + encodeURIComponent(existing.date), { method: "DELETE" });
+        dialog.close();
+        state.recordsCache.weight = null;
+        await loadRecords("weight", requestId);
+        notify("已删除围度记录");
+      },
+    });
   });
 }
 
@@ -3389,7 +3495,7 @@ function openPlanImportModal() {
 function getEditor() {
   return (editorPromise ??= import("./editor.js").then(({ makeEditor }) => makeEditor({
     api, dialog, open, notify, owner: () => state.userId,
-    showReport, pushOverlay, popOverlay,
+    showReport, pushOverlay, popOverlay, openConfirmDialog, queueOfflineRecord,
     onDraft: () => { nav(); if (state.view === "overview" && state.data) overview(state.data); },
     appDate: () => ["diet", "calendar"].includes(state.view) ? state.date : today(),
     getLatestWeight: () => {
@@ -3793,11 +3899,12 @@ async function handleRecordSwipe(rowEl, direction) {
     } else if (record.kind === "weight") {
       renderWeight();
     }
+    const deleteBody = { opId: crypto.randomUUID(), id: record.id, kind: record.kind, baseVersion: record.version, deleted: true, data: record.data };
     try {
       // Swipe Left -> Quick Delete with Undo toast (optimistic removal + rollback on error)
       const res = await api("/api/records", {
         method: "POST",
-        body: { opId: crypto.randomUUID(), id: record.id, kind: record.kind, baseVersion: record.version, deleted: true, data: record.data },
+        body: deleteBody,
       });
       state.badges = null;
       const undoVersion = res?.record?.version ?? (record.version + 1);
@@ -3820,6 +3927,11 @@ async function handleRecordSwipe(rowEl, direction) {
         notify(`已删除 ${shortDate(record.data.date)} 体重记录`, { label: "撤销", onClick: restore });
       }
     } catch (err) {
+      if (isNetworkError(err) && state.userId) {
+        queueOfflineRecord(deleteBody, record.kind === "diet" ? "删除饮食" : "删除体重");
+        notify("当前离线，删除已暂存同步队列");
+        return;
+      }
       state.records = prevRecords;
       if (prevCache !== undefined) state.recordsCache[record.kind] = prevCache;
       state.dietDone = wasDietDone;
@@ -4933,19 +5045,36 @@ document.addEventListener("click", async (event) => {
       else notify("请长按令牌输入框复制");
     }
     if (action === "revoke-device") {
-      if (button.dataset.confirm !== "true") { button.dataset.confirm = "true"; button.textContent = "确认撤销"; return; }
-      await api("/api/integrations/apple-health/tokens/" + encodeURIComponent(value), { method: "DELETE" });
-      await refreshAccountMeta();
-      await renderRoute(); notify("设备已撤销");
+      openConfirmDialog({
+        title: "撤销 Apple 健康设备",
+        message: "撤销后该设备的 iPhone 快捷指令上传令牌将立即失效，已导入的历史健康数据会继续保留。",
+        confirmLabel: "撤销设备",
+        onConfirm: async () => {
+          await api("/api/integrations/apple-health/tokens/" + encodeURIComponent(value), { method: "DELETE" });
+          await refreshAccountMeta();
+          await renderRoute();
+          notify("设备已撤销");
+        },
+      });
     }
     if (action === "issue-api-token") {
       openIssueApiTokenModal();
     }
     if (action === "revoke-api-token") {
-      if (button.dataset.confirm !== "true") { button.dataset.confirm = "true"; button.textContent = "确认撤销"; return; }
-      await api("/api/tokens/" + encodeURIComponent(value), { method: "DELETE" });
-      await renderRoute();
-      notify("访问令牌已撤销");
+      openConfirmDialog({
+        title: "撤销 API 访问令牌",
+        message: "撤销后所有使用该令牌的外部脚本或 MCP 客户端将无法访问你的账号。",
+        confirmLabel: "撤销令牌",
+        onConfirm: async () => {
+          await api("/api/tokens/" + encodeURIComponent(value), { method: "DELETE" });
+          await renderRoute();
+          notify("访问令牌已撤销");
+        },
+      });
+    }
+    if (action === "flush-offline-queue") {
+      button.disabled = true;
+      try { await syncOfflineQueue({ silent: false }); } finally { button.disabled = false; }
     }
     if (action === "open-backup-restore") {
       openBackupRestoreModal();
@@ -5051,6 +5180,9 @@ async function start() {
   }
   catch { /* Guests can register, log in, or browse the public catalogue. */ }
   await renderRoute();
+  if (state.userId && navigator.onLine && pendingQueueCount() > 0) {
+    void syncOfflineQueue({ silent: true });
+  }
   if (!state.demo && state.userId && state.isNewUser && !localStorage.getItem(onboardingSeenKey(state.userId))) {
     triggerOpenOnboarding(1);
   }
@@ -5092,10 +5224,13 @@ window.addEventListener("offline", () => {
 window.addEventListener("online", () => {
   nav();
   notify("网络已恢复");
-  if (!dialog.open && state.userId) {
-    dataEpoch++;
-    void renderRoute();
-  }
+  void (async () => {
+    if (state.userId) await syncOfflineQueue({ silent: false });
+    if (!dialog.open && state.userId) {
+      dataEpoch++;
+      void renderRoute();
+    }
+  })();
 });
 
 $("#sidebar")?.addEventListener("click", (event) => {

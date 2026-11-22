@@ -1,6 +1,7 @@
 import { $, $$, esc, fmt, today, workoutSeconds, field, input, inputGroup, options, icon, empty, meals, feelings, muscles, equipment, prioritizeExact, estimated1RM, plateBreakdown } from "./ui.js";
 import { createRestAudio, createRestTimer, elapsedAt, formatClock, normalizeRestTimer, pauseAt, pauseRestTimer, recoverClock, restProgress, resolveSetRestSeconds, resumeRestTimer, shiftRestTimer, keepWorkoutScreenAwake, haptic } from "./workout-clock.js";
 import { matrix } from "./display.js";
+import { isNetworkError } from "./offline-queue.js";
 
 function round2(v) { return Math.round(v * 100) / 100; }
 
@@ -49,7 +50,7 @@ function syncDialTicks(svg, fraction) {
   for (let i = 0; i < ticks.length; i++) ticks[i].classList.toggle("is-lit", i < activeCount);
 }
 
-export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment, pushOverlay = () => null, popOverlay = () => {} }) {
+export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment, pushOverlay = () => null, popOverlay = () => {}, openConfirmDialog, queueOfflineRecord }) {
   let searching = 0, closeWorkout;
   const audio = createRestAudio(() => localStorage.getItem(soundPreference) !== "off");
   dialog.addEventListener("close", () => {
@@ -429,23 +430,28 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     $("#remove-record")?.addEventListener("click", () => deleteRecord(form, record));
   }
 
+  function resetKeepOpenDietForm(form, message) {
+    ["name", "calories", "protein", "carbs", "fat"].forEach((key) => {
+      const el = $(`[name="${key}"]`, form);
+      if (el) el.value = "";
+    });
+    const sumEl = $("[data-macro-sum]", form);
+    if (sumEl) sumEl.textContent = "0";
+    notify(message);
+    $('[name="name"]', form)?.focus({ preventScroll: true });
+  }
+
   async function commit(form, mutation, kind, date, draftKey, recap = false, keepOpen = false) {
     const buttons = $$("button", form).filter((button) => !button.disabled);
     buttons.forEach((button) => { button.disabled = true; });
     const error = $("[data-form-error]", form) ?? $(".form-error", form);
     error.hidden = true;
+    const payload = { opId: uuid(), deleted: false, ...mutation };
     try {
-      const { record } = await api("/api/records", { method: "POST", body: { opId: uuid(), deleted: false, ...mutation } });
+      const { record } = await api("/api/records", { method: "POST", body: payload });
       if (keepOpen && kind === "diet" && !mutation.deleted) {
-        ["name", "calories", "protein", "carbs", "fat"].forEach((key) => {
-          const el = $(`[name="${key}"]`, form);
-          if (el) el.value = "";
-        });
-        const sumEl = $("[data-macro-sum]", form);
-        if (sumEl) sumEl.textContent = "0";
-        notify(`已保存「${mutation.data.name}」，可继续录入`);
         await refresh(kind, date);
-        $('[name="name"]', form)?.focus({ preventScroll: true });
+        resetKeepOpenDietForm(form, `已保存「${mutation.data.name}」，可继续录入`);
         return;
       }
       form.dataset.saved = "true";
@@ -458,19 +464,43 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         await showReport(record.id, record).catch(() => notify("训练已保存，可在训练记录里打开复盘"));
       }
     } catch (problem) {
+      if (isNetworkError(problem) && queueOfflineRecord && owner?.()) {
+        const typeLabel = kind === "workout" ? "训练记录" : kind === "diet" ? "饮食记录" : "体重记录";
+        queueOfflineRecord(payload, mutation.deleted ? `删除${typeLabel}` : typeLabel);
+        if (keepOpen && kind === "diet" && !mutation.deleted) {
+          resetKeepOpenDietForm(form, `当前离线，已暂存「${mutation.data.name}」，联网后自动同步`);
+          return;
+        }
+        form.dataset.saved = "true";
+        forgetDraft(draftKey);
+        const wasOpen = dialog.open && dialog.contains(form);
+        if (wasOpen) dialog.close();
+        notify("当前离线，已保存到本地同步队列，联网后自动同步");
+        return;
+      }
       error.textContent = problem.status === 409 ? "记录已在其他设备更新。请先关闭并刷新，避免覆盖已有记录。" : problem.message;
       error.hidden = false;
     } finally { buttons.forEach((button) => { button.disabled = false; }); }
   }
 
   function deleteRecord(form, record) {
+    const mutation = { kind: record.kind, id: record.id, baseVersion: record.version, deleted: true, data: record.data };
+    if (openConfirmDialog) {
+      openConfirmDialog({
+        title: "删除记录",
+        message: "确定要删除这条记录吗？删除后无法恢复。",
+        confirmLabel: "删除记录",
+        onConfirm: () => commit(form, mutation, record.kind, record.data.date, form.dataset.draft),
+      });
+      return;
+    }
     const button = $("#remove-record", form);
     if (button.dataset.confirm !== "yes") {
       button.textContent = "确认删除这条记录";
       button.dataset.confirm = "yes";
       return;
     }
-    commit(form, { kind: record.kind, id: record.id, baseVersion: record.version, deleted: true, data: record.data }, record.kind, record.data.date, form.dataset.draft);
+    void commit(form, mutation, record.kind, record.data.date, form.dataset.draft);
   }
   function exerciseLabel(row) { return row.snapshot?.name ?? row.exerciseId; }
 
