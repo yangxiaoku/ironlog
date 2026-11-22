@@ -537,7 +537,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           <div class="session-clock" data-live-clock><strong role="timer" aria-label="训练时长">${matrix("00:00")}</strong>
             <button type="button" class="quiet" data-clock="train">暂停计时</button></div></header>
         <div class="session-progress"><progress max="1" value="0" aria-label="训练组数进度"></progress><span data-set-count></span>
-          ${live ? `<button type="button" class="rir-toggle rest-quick-btn" data-workout="quick-rest" title="按当前动作休息时长启动倒计时">${icon("clock", 12)} 休息</button>` : ""}
           ${live ? `<button type="button" class="rir-toggle ai-adapt-btn" data-adapt="open">${icon("bolt", 12)} AI 调整</button>` : ""}
           <button type="button" class="rir-toggle" data-workout="toggle-rir" aria-pressed="${showRir}">RIR</button></div>
         <div class="session-live-muscles" data-live-muscles hidden></div>
@@ -546,8 +545,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         <div class="exercise-jump" role="group" aria-label="切换动作"></div>
         <div class="session-step-tools">
           <span class="workout-step-badge" data-step-badge hidden></span>
-          ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? `全部 · ${focusRow + 1}/${rows.length}` : "聚焦单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部动作" : "聚焦单步"}</button>`}
-          <button type="button" class="quiet" data-workout="open-picker">+ 加动作</button>
+          ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? "全部" : "单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部" : "单步"}</button>`}
+          <button type="button" class="quiet" data-workout="open-picker">+ 动作</button>
         </div>
       </div>` : ""}
       <div class="workout-scroll">
@@ -1004,13 +1003,13 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         if (layoutBtn) {
           layoutBtn.hidden = rows.length < 2;
           layoutBtn.setAttribute("aria-pressed", String(!guided));
-          layoutBtn.textContent = guided ? `全部 · ${stepRatio}` : `单步 · ${stepRatio}`;
+          layoutBtn.textContent = guided ? "全部" : "单步";
         }
         const openPickerBtn = $('[data-workout="open-picker"]', form);
         const pickerEl = $(".workout-picker", form);
         if (openPickerBtn && pickerEl) {
           openPickerBtn.setAttribute("aria-pressed", String(pickerEl.open));
-          openPickerBtn.textContent = pickerEl.open ? "收起动作库" : "+ 加动作";
+          openPickerBtn.textContent = pickerEl.open ? "收起" : "+ 动作";
         }
         const previous = $('[data-step="-1"]', form), next = $('[data-step="1"]', form);
         previous.hidden = reviewing || !guided || rows.length < 2;
@@ -1433,6 +1432,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
                 ${ssBadge ? `<span class="superset-pill">超级组 ${esc(ssBadge)}</span>` : ""}
                 <h3 tabindex="-1">${esc(exerciseLabel(row))}</h3>
                 ${isUnilateral ? '<span class="unilateral-pill" title="输入单侧重量，计容自动 ×2">单侧 ×2</span>' : ""}
+                ${prog ? `<span class="prog-tag${prog.status === "progress_weight" || prog.status === "progress_reps" ? " is-up" : prog.status === "plateau_deload" ? " is-warn" : ""}" title="${esc(prog.forecast ?? "")}">${icon("trending", 11)} ${esc(prog.statusLabel)}</span>` : ""}
+                ${prog?.deloadWeight != null ? `<button type="button" class="quiet deload-btn" data-workout="apply-deload" data-row="${index}">降载 ${fmt(prog.deloadWeight)}kg</button>` : ""}
               </div>
               <div class="exercise-telemetry-row">
                 <small class="exercise-1rm" data-exercise-1rm></small>
@@ -1440,16 +1441,17 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
                 <small class="exercise-pr-line" data-exercise-pr></small>
               </div>
               <div class="exercise-cue-slot" data-cue-slot>${cuePillMarkup(savedNote, index)}</div>
-              ${prog ? `<div class="exercise-prog-row">
-                <span class="prog-tag${prog.status === "progress_weight" || prog.status === "progress_reps" ? " is-up" : prog.status === "plateau_deload" ? " is-warn" : ""}" title="${esc(prog.forecast ?? "")}">${icon("trending", 12)} ${esc(prog.statusLabel)}</span>
-                ${prog.deloadWeight != null ? `<button type="button" class="quiet deload-btn" data-workout="apply-deload" data-row="${index}">降载至 ${fmt(prog.deloadWeight)} kg</button>` : ""}
-              </div>` : ""}
             </div>
             <span data-exercise-count></span>
           </header>
           <div class="workout-motion-slot" data-motion-slot="${index}"${isMobileViewport() && !openMotions.has(row.id) ? " hidden" : ""}>${renderMotionMarkup(row)}</div>
           <div class="exercise-subbar">
-            <details class="exercise-settings"><summary>${icon("clock", 14)} <span data-rest-text>休息 ${row.restSeconds} 秒</span>${icon("chevron", 12)}</summary>
+            <div class="exercise-subbar-actions">
+              <button type="button" class="quiet subbar-pill motion-toggle-btn${openMotions.has(row.id) ? " is-active" : ""}" data-workout="toggle-motion" data-row="${index}" aria-pressed="${openMotions.has(row.id)}">${icon("play", 12)} ${openMotions.has(row.id) ? "收起示范" : "示范"}</button>
+              <button type="button" class="quiet subbar-pill${dossierOpen ? " is-active" : ""}" data-workout="toggle-dossier" data-row="${index}" aria-pressed="${dossierOpen}">${icon("analytics", 13)} 备忘/历史</button>
+              ${partnerIdx >= 0 ? `<button type="button" class="quiet subbar-pill" data-workout="focus-row" data-row="${partnerIdx}">切搭档 ${esc(ssBadges[partnerIdx])}</button>` : ""}
+            </div>
+            <details class="exercise-settings"><summary>${icon("clock", 13)} <span data-rest-text>休息 ${row.restSeconds} 秒</span> · 更多 ${icon("chevron", 12)}</summary>
               <div class="exercise-settings-body">
                 <div class="rest-preset-row">
                   <label>组间休息 <input aria-label="休息秒数" data-rest="${index}" type="number" inputmode="numeric" min="0" max="900" value="${row.restSeconds}" required> 秒</label>
@@ -1459,6 +1461,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
                   </div>
                 </div>
                 <div class="exercise-manage-row">
+                  ${!timed && mode === "reps" ? `<button type="button" class="secondary-button${isUnilateral ? " is-active" : ""}" data-workout="toggle-unilateral" data-row="${index}" aria-pressed="${isUnilateral}">${isUnilateral ? "计容：单侧 ×2" : "计容：双侧 ×1"}</button>` : ""}
+                  ${rows.length > 1 || row.supersetGroup ? `<button type="button" class="secondary-button${row.supersetGroup ? " is-superset" : ""}" data-workout="toggle-superset" data-row="${index}" aria-pressed="${!!row.supersetGroup}">${row.supersetGroup ? `超级组 ${esc(row.supersetGroup)} · 取消` : "设为超级组"}</button>` : ""}
                   ${rows.length > 1 ? `<div class="exercise-move-group">
                     <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="-1"${index === 0 ? " disabled" : ""}>${icon("arrowUp", 14)} 上移</button>
                     <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="1"${index === rows.length - 1 ? " disabled" : ""}>${icon("arrowDown", 14)} 下移</button>
@@ -1468,13 +1472,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
                   <button type="button" class="danger" data-workout="remove-row" data-row="${index}">移除动作</button>
                 </div>
               </div></details>
-            <div class="exercise-subbar-actions">
-              <button type="button" class="quiet subbar-pill motion-toggle-btn${openMotions.has(row.id) ? " is-active" : ""}" data-workout="toggle-motion" data-row="${index}" aria-pressed="${openMotions.has(row.id)}">${icon("play", 12)} ${openMotions.has(row.id) ? "收起示范" : "动作示范"}</button>
-              <button type="button" class="quiet subbar-pill${dossierOpen ? " is-active" : ""}" data-workout="toggle-dossier" data-row="${index}" aria-pressed="${dossierOpen}">${icon("analytics", 13)} 备忘/历史</button>
-              ${!timed && mode === "reps" ? `<button type="button" class="quiet subbar-pill${isUnilateral ? " is-active" : ""}" data-workout="toggle-unilateral" data-row="${index}" aria-pressed="${isUnilateral}" title="切换单侧双倍计容或标准总重计容">${isUnilateral ? "单侧 ×2" : "双侧 ×1"}</button>` : ""}
-              ${rows.length > 1 || row.supersetGroup ? `<button type="button" class="quiet subbar-pill${row.supersetGroup ? " is-superset" : ""}" data-workout="toggle-superset" data-row="${index}" aria-pressed="${!!row.supersetGroup}">${row.supersetGroup ? `超级组 ${esc(row.supersetGroup)} · 取消` : "超级组"}</button>` : ""}
-              ${partnerIdx >= 0 ? `<button type="button" class="quiet subbar-pill" data-workout="focus-row" data-row="${partnerIdx}">切搭档 ${esc(ssBadges[partnerIdx])}</button>` : ""}
-            </div>
             <div class="plate-math" data-plate-math hidden></div>
           </div>
           ${renderDossierSlot(row, index)}
@@ -1491,10 +1488,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             <div class="set-reference" data-row="${index}" data-index="${i}" hidden></div>
             <div class="set-stepper-bar" data-row="${index}" data-index="${i}">
               ${timed
-                ? `<div class="stepper-group"><span class="stepper-label">时长</span>
+                ? `<div class="stepper-group">
                     <button type="button" class="stepper-pill" data-step-sec="-10" data-row="${index}" data-index="${i}">-10s</button>
-                    <button type="button" class="stepper-pill" data-step-sec="-5" data-row="${index}" data-index="${i}">-5s</button>
-                    <button type="button" class="stepper-pill" data-step-sec="+5" data-row="${index}" data-index="${i}">+5s</button>
                     <button type="button" class="stepper-pill" data-step-sec="+10" data-row="${index}" data-index="${i}">+10s</button>
                     ${live && !entry.completed ? (() => {
                       const running = activeHold && activeHold.rowId === row.id && activeHold.setId === entry.id;
@@ -1502,17 +1497,16 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
                       return `<button type="button" class="stepper-pill ${running ? "is-hold-running" : "stepper-clone"}" data-workout="hold-timer" data-row="${index}" data-index="${i}">${running ? `● <span data-hold-clock>${formatClock(holdSec)}</span> · 停止打卡` : `${icon("clock", 12)} 开始计时`}</button>`;
                     })() : ""}
                   </div>`
-                : `<div class="stepper-group"><span class="stepper-label">调重</span>
+                : `<div class="stepper-group stepper-single-line">
                     ${((["dumbbell", "kettlebell", "cable", "band"].includes(row.snapshot?.equipment) || (entry.weight > 0 && entry.weight <= 15))
-                      ? [-2.5, -1.25, 1.25, 2.5]
-                      : [-5, -2.5, 2.5, 5]).map((d) =>
-                        `<button type="button" class="stepper-pill" data-step-wt="${d}" data-row="${index}" data-index="${i}">${d > 0 ? `+${d}` : d}</button>`).join("")}
-                  </div>
-                  <div class="stepper-group"><span class="stepper-label">调次</span>
-                    <button type="button" class="stepper-pill" data-step-rep="-1" data-row="${index}" data-index="${i}">-1</button>
-                    <button type="button" class="stepper-pill" data-step-rep="+1" data-row="${index}" data-index="${i}">+1</button>
-                    ${i > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-step-clone="${index}" data-index="${i}" title="复制上一组重量与次数">同上组</button>` : ""}
-                    ${row.sets.slice(i + 1).some((s) => !s.completed && s.type !== "warmup") ? `<button type="button" class="stepper-pill" data-step-fill-rest="${index}" data-index="${i}" title="将本组重量与次数同步到后续所有待完成组">同步后续组</button>` : ""}
+                      ? [-2.5, 2.5]
+                      : [-2.5, 2.5, 5]).map((d) =>
+                        `<button type="button" class="stepper-pill" data-step-wt="${d}" data-row="${index}" data-index="${i}">${d > 0 ? `+${d}kg` : `${d}kg`}</button>`).join("")}
+                    <span class="stepper-sep" aria-hidden="true"></span>
+                    <button type="button" class="stepper-pill" data-step-rep="-1" data-row="${index}" data-index="${i}">-1次</button>
+                    <button type="button" class="stepper-pill" data-step-rep="+1" data-row="${index}" data-index="${i}">+1次</button>
+                    ${i > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-step-clone="${index}" data-index="${i}" title="复制上一组重量与次数">同上</button>` : ""}
+                    ${row.sets.slice(i + 1).some((s) => !s.completed && s.type !== "warmup") ? `<button type="button" class="stepper-pill" data-step-fill-rest="${index}" data-index="${i}" title="将本组重量与次数同步到后续所有待完成组">同步后续</button>` : ""}
                   </div>`}
             </div>
           </div>`).join("")}

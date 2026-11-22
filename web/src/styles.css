@@ -1111,6 +1111,8 @@ dialog.workout-dialog .dialog-head { flex: none; padding: 12px 18px; border-bott
 .set-row.is-next .set-stepper-bar, .set-row:focus-within .set-stepper-bar { display: flex; }
 .set-row.is-complete:not(:focus-within) .set-stepper-bar { display: none; }
 .stepper-group { display: flex; align-items: center; gap: 4px; }
+.stepper-group.stepper-single-line { width: 100%; flex-wrap: wrap; gap: 5px; }
+.stepper-sep { width: 1px; height: 18px; background: var(--edge); margin: 0 2px; flex: none; }
 .stepper-label { font: 600 11px var(--font); color: var(--muted); margin-right: 2px; }
 .stepper-pill { min-height: 28px; padding: 0 9px; border-radius: 6px; font: 600 12px/1 var(--mono); font-variant-numeric: tabular-nums; background: var(--surface); border: 1px solid var(--edge); color: var(--ink); cursor: pointer; transition: transform .1s ease, background-color .15s ease, border-color .15s ease; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04); }
 .stepper-pill:hover { border-color: var(--soft); background: var(--raised); }
@@ -4003,6 +4005,10 @@ dialog {
   flex-wrap: wrap;
   gap: 6px;
   margin: 0 0 8px;
+}
+@media (max-width: 630px) {
+  .session-live-muscles { display: none !important; }
+  .exercise-settings[open] { width: 100%; }
 }
 .session-live-muscles {
   display: flex;
