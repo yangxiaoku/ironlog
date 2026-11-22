@@ -547,7 +547,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           <button type="button" class="workout-circle-btn" data-action="close" aria-label="收起训练" autofocus>${icon("arrowDown", 18)}</button>
           <button type="button" class="workout-topbar-center" data-live-clock data-clock="train" aria-label="暂停或继续训练计时">
             <strong data-session-title>${esc(title)}</strong>
-            <span class="workout-topbar-sub"><em data-live-clock-text>00:00</em><i class="clock-sep" aria-hidden="true"> · </i><span data-set-count>0/0 组</span></span>
+            <span class="workout-topbar-sub"><i class="live-led" aria-hidden="true"></i><em data-live-clock-text>00:00</em><i class="clock-sep" aria-hidden="true"> · </i><span data-set-count>0/0 组</span></span>
           </button>
           <div class="workout-topbar-actions">
             <button type="button" class="workout-circle-btn" data-workout="toggle-session-menu" aria-label="训练设置与更多操作" aria-expanded="false">${icon("more", 18)}</button>
@@ -698,8 +698,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           <div class="rest-top-progress" aria-hidden="true"><i data-rest-progress-fill></i></div>
           <div class="rest-clock-inner">
             <button type="button" class="rest-dock-trigger" data-clock="dial-open" aria-label="展开组间休息表盘">
-              <strong role="timer" aria-label="组间休息倒计时" data-rest-time>0:00</strong>
-              <span data-rest-label>休息 ${icon("arrowDown", 11)}</span>
+              <strong role="timer" aria-label="组间休息倒计时" data-rest-time>${matrix("0:00")}</strong>
+              <span data-rest-label><i class="rest-led" aria-hidden="true"></i>休息 ${icon("arrowDown", 11)}</span>
             </button>
             <div class="rest-dock-buttons">
               <button type="button" class="rest-pill-btn" data-clock="sub15">− 15s</button>
@@ -1851,9 +1851,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           audio.play(false);
         }
         const restTimeEl = $("[data-rest-time]", restBanner);
-        if (restTimeEl) restTimeEl.textContent = time ? compactTime : "0:00";
+        if (restTimeEl) restTimeEl.innerHTML = matrix(time ? compactTime : "0:00");
         const restLabelEl = $("[data-rest-label]", restBanner);
-        if (restLabelEl) restLabelEl.innerHTML = `${paused ? "已暂停" : time ? "休息" : "休息结束"} ${icon("arrowDown", 11)}`;
+        if (restLabelEl) restLabelEl.innerHTML = `<i class="rest-led" aria-hidden="true"></i>${paused ? "已暂停" : time ? "休息" : "休息结束"} ${icon("arrowDown", 11)}`;
+        restBanner.classList.toggle("rest-urgent", !paused && time > 0 && time <= 10);
         restBanner.classList.toggle("rest-done", time === 0);
         restBanner.classList.toggle("is-paused", paused);
         restBanner.dataset.pausedState = String(paused);
