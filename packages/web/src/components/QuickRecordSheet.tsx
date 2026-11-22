@@ -1,5 +1,6 @@
+import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
-import type { ViewId } from "../lib/routes";
+import { openDietEditor, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
 import { useUiStore } from "../store/useUiStore";
 import { Icon, type IconName } from "./Icon";
 
@@ -9,17 +10,15 @@ interface QuickOption {
   desc: string;
   accent: string;
   icon: IconName;
-  targetView: ViewId;
 }
 
 const QUICK_OPTIONS: QuickOption[] = [
   {
     kind: "workout",
     title: "记录训练",
-    desc: "自选动作，或开始今天的计划（阶段二上线实时编辑器）",
+    desc: "自选动作，实时计时与杠铃配片",
     accent: "workout-accent",
     icon: "workout",
-    targetView: "workout",
   },
   {
     kind: "diet",
@@ -27,23 +26,20 @@ const QUICK_OPTIONS: QuickOption[] = [
     desc: "按餐次记录食物与热量",
     accent: "diet-accent",
     icon: "diet",
-    targetView: "diet",
   },
   {
     kind: "weight",
     title: "记录体重",
-    desc: "称重打卡与身体围度档案",
+    desc: "快速记录体重与体脂率",
     accent: "weight-accent",
     icon: "weight",
-    targetView: "weight",
   },
   {
     kind: "calc",
     title: "1RM 与配片计算器",
-    desc: "估算 1RM、百分比负荷与杠铃配片图",
+    desc: "估算 1RM、百分比负荷与杠铃配片图（阶段三迁入）",
     accent: "calc-accent",
     icon: "bolt",
-    targetView: "plan",
   },
 ];
 
@@ -63,8 +59,16 @@ export function QuickRecordSheetBody() {
             onClick={() => {
               triggerHaptic("light");
               closeModalSilent();
-              navigate(item.targetView);
-              notify(`已跳转「${item.title}」工作区，将在阶段二/三接入完整弹窗`);
+              if (item.kind === "workout") {
+                openWorkoutEditor();
+              } else if (item.kind === "diet") {
+                openDietEditor({ date: today() });
+              } else if (item.kind === "weight") {
+                openWeightEditor({ date: today() });
+              } else {
+                navigate("plan");
+                notify("1RM 计算器将在阶段三迁入 React 弹窗");
+              }
             }}
           >
             <div className={`quick-sheet-icon ${item.accent}`}>

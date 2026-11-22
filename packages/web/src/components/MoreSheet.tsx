@@ -1,4 +1,6 @@
+import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
+import { openDietEditor, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
 import { MORE_WORKSPACES, VIEW_WORKSPACE, WORKSPACES, type ViewId, type WorkspaceId } from "../lib/routes";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -40,15 +42,39 @@ export function MoreSheetBody() {
     <div className="more-sheet-body">
       {userId ? (
         <div className="more-quick" role="group" aria-label="快速记录">
-          <button type="button" className="more-quick-btn" onClick={() => goTo("workout")}>
+          <button
+            type="button"
+            className="more-quick-btn"
+            onClick={() => {
+              triggerHaptic("light");
+              closeModalSilent();
+              openWorkoutEditor();
+            }}
+          >
             <Icon name="workout" size={18} />
             <span>记训练</span>
           </button>
-          <button type="button" className="more-quick-btn" onClick={() => goTo("diet")}>
+          <button
+            type="button"
+            className="more-quick-btn"
+            onClick={() => {
+              triggerHaptic("light");
+              closeModalSilent();
+              openDietEditor({ date: today() });
+            }}
+          >
             <Icon name="diet" size={18} />
             <span>记饮食</span>
           </button>
-          <button type="button" className="more-quick-btn" onClick={() => goTo("weight")}>
+          <button
+            type="button"
+            className="more-quick-btn"
+            onClick={() => {
+              triggerHaptic("light");
+              closeModalSilent();
+              openWeightEditor({ date: today() });
+            }}
+          >
             <Icon name="weight" size={18} />
             <span>记体重</span>
           </button>

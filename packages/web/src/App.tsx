@@ -7,7 +7,10 @@ import { useMobileGuards } from "./hooks/useMobileGuards";
 import { configureApi } from "./lib/api";
 import { useAuthStore } from "./store/useAuthStore";
 import { useUiStore } from "./store/useUiStore";
-import { OverviewBootView } from "./views/OverviewBootView";
+import { DietView } from "./views/DietView";
+import { OverviewView } from "./views/OverviewView";
+import { WeightView } from "./views/WeightView";
+import { WorkoutView } from "./views/WorkoutView";
 import { WorkspaceStubView } from "./views/WorkspaceStubView";
 
 configureApi({
@@ -40,7 +43,13 @@ export function App() {
   } else if (!userId) {
     mainContent = <AuthScreen />;
   } else if (view === "overview") {
-    mainContent = <OverviewBootView />;
+    mainContent = <OverviewView />;
+  } else if (view === "workout") {
+    mainContent = <WorkoutView />;
+  } else if (view === "diet") {
+    mainContent = <DietView />;
+  } else if (view === "weight") {
+    mainContent = <WeightView />;
   } else {
     mainContent = <WorkspaceStubView view={view} />;
   }

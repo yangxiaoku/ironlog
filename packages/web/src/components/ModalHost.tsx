@@ -14,6 +14,7 @@ export function ModalHost() {
 
   const dialogRef = useRef<HTMLDialogElement>(null);
   const depthRef = useRef(0);
+  const prevModalsLenRef = useRef(0);
   const closingFromPopstateRef = useRef(false);
   const expectedPopsRef = useRef(0);
   const lastSilentSeqRef = useRef(silentCloseSeq);
@@ -33,10 +34,13 @@ export function ModalHost() {
     setConfirmError("");
   }, [confirm]);
 
-  // Synchronize native <dialog> element open state & root browser history entry
+  // Synchronize native <dialog>, history stack per stacked modal, and silent closures
   useEffect(() => {
     const dialog = dialogRef.current;
     if (!dialog) return;
+
+    const prevLen = prevModalsLenRef.current;
+    prevModalsLenRef.current = modals.length;
 
     if (isOpen) {
       const wasOpen = dialog.open;
@@ -49,9 +53,23 @@ export function ModalHost() {
           history.pushState({ ...(history.state ?? {}), ironlogModal: ++overlaySeq }, "", location.href);
           depthRef.current = 1;
         } catch {}
-      } else {
-        dialog.scrollTop = 0;
+      } else if (modals.length > prevLen && prevLen > 0) {
+        // Pushed another stacked modal on top (e.g. ExercisePickerModal over WorkoutEditorModal)
+        try {
+          history.pushState({ ...(history.state ?? {}), ironlogStackedModal: modals.at(-1)?.id }, "", location.href);
+          depthRef.current++;
+        } catch {}
+      } else if (modals.length < prevLen && !closingFromPopstateRef.current && depthRef.current > modals.length) {
+        const drop = depthRef.current - Math.max(1, modals.length);
+        depthRef.current = Math.max(1, depthRef.current - drop);
+        expectedPopsRef.current += drop;
+        try {
+          history.go(-drop);
+        } catch {
+          expectedPopsRef.current = Math.max(0, expectedPopsRef.current - drop);
+        }
       }
+      dialog.scrollTop = 0;
     } else {
       if (dialog.open) {
         dialog.close();
@@ -68,7 +86,7 @@ export function ModalHost() {
         !closingFromPopstateRef.current &&
         !suppressed &&
         typeof history !== "undefined" &&
-        (history.state?.ironlogModal || history.state?.ironlogOverlay)
+        (history.state?.ironlogModal || history.state?.ironlogOverlay || history.state?.ironlogStackedModal)
       ) {
         expectedPopsRef.current++;
         try {
@@ -78,9 +96,9 @@ export function ModalHost() {
         }
       }
     }
-  }, [isOpen, activeModal?.id, silentCloseSeq]);
+  }, [isOpen, modals.length, silentCloseSeq]);
 
-  // Nested confirm pushes its own overlay history entry so device Back dismisses confirm first
+  // Nested confirm pushes its own overlay history entry so Back dismisses confirm first
   useEffect(() => {
     if (!nestedConfirm) return;
     const id = ++overlaySeq;
@@ -119,6 +137,16 @@ export function ModalHost() {
         closingFromPopstateRef.current = true;
         try {
           ui.closeConfirm();
+        } finally {
+          closingFromPopstateRef.current = false;
+        }
+        return;
+      }
+      if (ui.modals.length > 1) {
+        depthRef.current = Math.max(0, depthRef.current - 1);
+        closingFromPopstateRef.current = true;
+        try {
+          ui.closeTopModal();
         } finally {
           closingFromPopstateRef.current = false;
         }
@@ -198,7 +226,8 @@ export function ModalHost() {
           if (!confirmBusy) closeConfirm();
           return;
         }
-        closeAllModals();
+        if (modals.length > 1) closeTopModal();
+        else closeAllModals();
       }}
       onClick={(e) => {
         const dialog = dialogRef.current;
@@ -213,6 +242,8 @@ export function ModalHost() {
         if (outside) {
           if (standaloneConfirm) {
             if (!confirmBusy) closeConfirm();
+          } else if (modals.length > 1) {
+            closeTopModal();
           } else {
             closeAllModals();
           }
@@ -257,6 +288,7 @@ export function ModalHost() {
         dialog.style.transform = "";
         if (dy >= 78) {
           if (standaloneConfirm) closeConfirm();
+          else if (modals.length > 1) closeTopModal();
           else closeAllModals();
         }
       }}
@@ -287,7 +319,14 @@ export function ModalHost() {
             </button>
           </header>
 
-          {activeModal?.content}
+          {modals.map((modal, idx) => {
+            const isTop = idx === modals.length - 1;
+            return (
+              <div key={modal.id} style={isTop ? { display: "contents" } : { display: "none" }} aria-hidden={!isTop}>
+                {modal.content}
+              </div>
+            );
+          })}
 
           {standaloneConfirm && confirm ? (
             <div className="confirm-dialog-body">

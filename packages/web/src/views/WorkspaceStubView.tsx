@@ -2,19 +2,9 @@ import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { DESTINATIONS, type ViewId } from "../lib/routes";
 import { useUiStore } from "../store/useUiStore";
 
-const PHASE_NOTES: Record<Exclude<ViewId, "overview">, { phase: string; scope: string }> = {
-  workout: {
-    phase: "阶段二",
-    scope: "训练历史列表与实时训练编辑器（计时、配片、超级组、热身与本地草稿）将在阶段二迁入 React 组件。",
-  },
-  diet: {
-    phase: "阶段二",
-    scope: "分餐饮食记录、AI 自然语言配餐与常用餐单模板将在阶段二上线。",
-  },
-  weight: {
-    phase: "阶段二",
-    scope: "体重趋势折线与身体围度档案将在阶段二上线。",
-  },
+type PendingView = Exclude<ViewId, "overview" | "workout" | "diet" | "weight">;
+
+const PHASE_NOTES: Record<PendingView, { phase: string; scope: string }> = {
   plan: {
     phase: "阶段三",
     scope: "周期训练计划、每周排期、模板库与 1RM/配片计算器将在阶段三迁移。",
@@ -41,7 +31,7 @@ const PHASE_NOTES: Record<Exclude<ViewId, "overview">, { phase: string; scope: s
   },
 };
 
-export function WorkspaceStubView({ view }: { view: Exclude<ViewId, "overview"> }) {
+export function WorkspaceStubView({ view }: { view: PendingView }) {
   const navigate = useUiStore((s) => s.navigate);
   const info = PHASE_NOTES[view];
   const title = DESTINATIONS[view];
@@ -53,7 +43,9 @@ export function WorkspaceStubView({ view }: { view: Exclude<ViewId, "overview"> 
       <section className="panel">
         <header className="panel-head">
           <div>
-            <h2>{title}（{info.phase}待迁移）</h2>
+            <h2>
+              {title}（{info.phase}待迁移）
+            </h2>
             <p>{info.scope}</p>
           </div>
           <button type="button" className="secondary-button" onClick={() => navigate("overview")}>
