@@ -1,0 +1,50 @@
+{
+  "repository": "melihcolpan/MuscleMap",
+  "revision": "d53ddf4d480b65979f1008b203e6b6eda0e67e54",
+  "heatmap": [
+    {
+      "filename": "atlas-neutral.png",
+      "sha256": "0c92dbdd00365aa0ad07a5616647134b32ca772de8390aa16d8d336755940753"
+    },
+    {
+      "filename": "atlas-chest.png",
+      "sha256": "8963cd98e89e32586438121f7e8ded2a0db61df62028b38a01c7680478558000"
+    },
+    {
+      "filename": "atlas-back.png",
+      "sha256": "f551246c1c56d759e8489a75b5450a9c716ef154f157181930d2d1b7ac088138"
+    },
+    {
+      "filename": "atlas-legs.png",
+      "sha256": "feeeb8e4d3d913598cd97c2f3914ea7b9c172235fa344c66211aeebdd0102f4b"
+    },
+    {
+      "filename": "atlas-shoulders.png",
+      "sha256": "76558a45814f7a815bf48867d747ed10b4e9128509d0223dcca4183da4d7ea8b"
+    },
+    {
+      "filename": "atlas-arms.png",
+      "sha256": "d8fe6953e7ca35f71de5461e20bd66554237be3855c2ba27df3bbe419a99b8c4"
+    },
+    {
+      "filename": "atlas-core.png",
+      "sha256": "57854f4f041a2b7ed9ca2be2f0781b063181f73ac915ac793b0df43106f55594"
+    }
+  ],
+  "sources": [
+    {
+      "filename": "MaleFrontPaths.swift",
+      "sha256": "39029bad327642b5ee8eb9991674dc42790549f49adb98bfb713153eaa7763a0"
+    },
+    {
+      "filename": "MaleBackPaths.swift",
+      "sha256": "be440e303e3f230f9270d13751a880baf7aeb5cb8d4d9a8753618db188c71f13"
+    }
+  ],
+  "transformations": [
+    "将Swift内SVG路径提取为SVG",
+    "仅使用整体肌群形状，按六大分类及其余部位生成白色遮罩",
+    "栅格化为600px索引色 PNG",
+    "同一坐标生成透明正背面叠层，按实际数据着色"
+  ]
+}

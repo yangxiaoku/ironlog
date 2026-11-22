@@ -1,0 +1,835 @@
+import { randomUUID } from "node:crypto";
+import {
+  entityKindSchema,
+  planSchema,
+  schemas,
+  validatePlanExercises,
+  validateRecordIdentity,
+  type EntityKind,
+  type Exercise,
+  type Mutation,
+  type MutationResult,
+  type Plan,
+  type Routine,
+  type ScheduledDay,
+  type StoredRecord,
+  type Workout,
+} from "@ironlog/shared";
+import type Database from "better-sqlite3";
+import type { Db } from "./db.js";
+import { serverCatalogue } from "./catalogue.js";
+
+interface Row {
+  id: string;
+  kind: EntityKind;
+  version: number;
+  deleted: number;
+  data: string;
+  updated_at: string;
+  seq?: number;
+}
+function decode(row: Row): StoredRecord {
+  return {
+    id: row.id,
+    kind: row.kind,
+    version: row.version,
+    deleted: Boolean(row.deleted),
+    data: JSON.parse(row.data),
+    updatedAt: row.updated_at,
+  };
+}
+export class DomainError extends Error {
+  constructor(
+    message: string,
+    public status: 400 | 401 | 403 | 404 | 409 | 429 | 503 = 400,
+  ) {
+    super(message);
+  }
+}
+
+type Stmt = Database.Statement<unknown[], unknown>;
+
+const serverCatalogueMap: ReadonlyMap<string, Exercise> = new Map(
+  serverCatalogue.map((exercise) => [exercise.id, exercise]),
+);
+
+class LayeredExerciseMap implements ReadonlyMap<string, Exercise> {
+  constructor(
+    private readonly base: ReadonlyMap<string, Exercise>,
+    private readonly overlay: ReadonlyMap<string, Exercise>,
+  ) {}
+
+  get size(): number {
+    let count = this.base.size;
+    for (const key of this.overlay.keys()) {
+      if (!this.base.has(key)) count++;
+    }
+    return count;
+  }
+
+  has(key: string): boolean {
+    return this.overlay.has(key) || this.base.has(key);
+  }
+
+  get(key: string): Exercise | undefined {
+    return this.overlay.get(key) ?? this.base.get(key);
+  }
+
+  forEach(
+    callbackfn: (value: Exercise, key: string, map: ReadonlyMap<string, Exercise>) => void,
+    thisArg?: unknown,
+  ): void {
+    for (const [key, value] of this.entries()) {
+      callbackfn.call(thisArg, value, key, this);
+    }
+  }
+
+  *entries(): MapIterator<[string, Exercise]> {
+    for (const [key, value] of this.base) {
+      yield [key, this.overlay.get(key) ?? value];
+    }
+    for (const [key, value] of this.overlay) {
+      if (!this.base.has(key)) yield [key, value];
+    }
+    return undefined;
+  }
+
+  *keys(): MapIterator<string> {
+    for (const [key] of this.entries()) yield key;
+    return undefined;
+  }
+
+  *values(): MapIterator<Exercise> {
+    for (const [, value] of this.entries()) yield value;
+    return undefined;
+  }
+
+  [Symbol.iterator](): MapIterator<[string, Exercise]> {
+    return this.entries();
+  }
+}
+
+export class Store {
+  private readonly stmtGet: Stmt;
+  private readonly stmtListActive: Stmt;
+  private readonly stmtListAll: Stmt;
+  private readonly stmtLatestSeq: Stmt;
+  private readonly listCache = new Map<string, { seq: number; records: StoredRecord[] }>();
+  private readonly stmtOperation: Stmt;
+  private readonly stmtUpsertRecord: Stmt;
+  private readonly stmtInsertChange: Stmt;
+  private readonly stmtInsertOp: Stmt;
+  private readonly stmtPull: Stmt;
+  private readonly stmtActivePlan: Stmt;
+  private readonly stmtPlanVersion: Stmt;
+  private readonly stmtPlanActivations: Stmt;
+  private readonly stmtInsertPlanVersion: Stmt;
+  private readonly stmtUpsertActivePlan: Stmt;
+  private readonly stmtInsertPlanActivation: Stmt;
+  private readonly stmtExportRecords: Stmt;
+  private readonly stmtExportPlanVersions: Stmt;
+  private readonly stmtExportExerciseNotes: Stmt;
+  private readonly stmtExportMeasurements: Stmt;
+  private readonly stmtExportAppleDaily: Stmt;
+  private readonly stmtExportAppleWorkouts: Stmt;
+
+  constructor(public db: Db) {
+    this.stmtGet = db.prepare("SELECT * FROM records WHERE user_id = ? AND kind = ? AND id = ?");
+    this.stmtListActive = db.prepare("SELECT * FROM records WHERE user_id = ? AND kind = ? AND deleted = 0 ORDER BY updated_at, id");
+    this.stmtListAll = db.prepare("SELECT * FROM records WHERE user_id = ? AND kind = ? ORDER BY updated_at, id");
+    this.stmtLatestSeq = db.prepare("SELECT COALESCE(MAX(seq), 0) AS seq FROM changes WHERE user_id = ?");
+    this.stmtOperation = db.prepare("SELECT request, result FROM operations WHERE user_id = ? AND op_id = ?");
+    this.stmtUpsertRecord = db.prepare(
+      `INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, kind, id) DO UPDATE SET version=excluded.version, deleted=excluded.deleted, data=excluded.data, updated_at=excluded.updated_at`,
+    );
+    this.stmtInsertChange = db.prepare(
+      "INSERT INTO changes(user_id,kind,id,version,deleted,data,updated_at) VALUES (?,?,?,?,?,?,?)",
+    );
+    this.stmtInsertOp = db.prepare("INSERT INTO operations VALUES (?,?,?,?)");
+    this.stmtPull = db.prepare("SELECT * FROM changes WHERE user_id = ? AND seq > ? ORDER BY seq LIMIT ?");
+    this.stmtActivePlan = db.prepare("SELECT * FROM active_plans WHERE user_id = ?");
+    this.stmtPlanVersion = db.prepare("SELECT data FROM plan_versions WHERE user_id = ? AND id = ? AND version = ?");
+    this.stmtPlanActivations = db.prepare(
+      `SELECT a.plan_id AS id, a.version, a.updated_at AS updatedAt, v.data
+       FROM plan_activations a JOIN plan_versions v
+         ON v.user_id=a.user_id AND v.id=a.plan_id AND v.version=a.version
+       WHERE a.user_id=? ORDER BY a.revision`,
+    );
+    this.stmtInsertPlanVersion = db.prepare("INSERT OR IGNORE INTO plan_versions VALUES (?,?,?,?,?)");
+    this.stmtUpsertActivePlan = db.prepare(
+      `INSERT INTO active_plans VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+        plan_id=excluded.plan_id, version=excluded.version, revision=excluded.revision, updated_at=excluded.updated_at`,
+    );
+    this.stmtInsertPlanActivation = db.prepare("INSERT INTO plan_activations VALUES (?,?,?,?,?)");
+    this.stmtExportRecords = db.prepare("SELECT * FROM records WHERE user_id=?");
+    this.stmtExportPlanVersions = db.prepare("SELECT id,version,data,created_at FROM plan_versions WHERE user_id=?");
+    this.stmtExportExerciseNotes = db.prepare("SELECT exercise_id AS exerciseId, note, updated_at AS updatedAt FROM exercise_notes WHERE user_id=? AND note <> '' ORDER BY exercise_id");
+    this.stmtExportMeasurements = db.prepare(
+      `SELECT date, waist_cm AS waistCm, chest_cm AS chestCm, arm_cm AS armCm,
+              thigh_cm AS thighCm, hip_cm AS hipCm, notes, updated_at AS updatedAt
+       FROM body_measurements WHERE user_id=? ORDER BY date DESC`,
+    );
+    this.stmtExportAppleDaily = db.prepare("SELECT date, updated_at AS updatedAt, data FROM apple_health_daily WHERE user_id=? ORDER BY date DESC");
+    this.stmtExportAppleWorkouts = db.prepare(
+      "SELECT id, received_at AS receivedAt, ended_at AS endedAt, data FROM apple_health_workouts WHERE user_id=? ORDER BY ended_at DESC, id",
+    );
+  }
+
+  get(userId: string, kind: EntityKind, id: string): StoredRecord | null {
+    const row = this.stmtGet.get(userId, kind, id) as Row | undefined;
+    return row ? decode(row) : null;
+  }
+
+  list(
+    userId: string,
+    kind: EntityKind,
+    includeDeleted = false,
+  ): StoredRecord[] {
+    const { seq } = this.stmtLatestSeq.get(userId) as { seq: number };
+    const key = `${userId}\0${kind}\0${includeDeleted ? 1 : 0}`;
+    const cached = this.listCache.get(key);
+    if (cached && cached.seq === seq) {
+      this.listCache.delete(key);
+      this.listCache.set(key, cached);
+      return cached.records.slice();
+    }
+    const stmt = includeDeleted ? this.stmtListAll : this.stmtListActive;
+    const records = (stmt.all(userId, kind) as Row[]).map(decode);
+    if (this.listCache.size >= 128) this.listCache.delete(this.listCache.keys().next().value!);
+    this.listCache.set(key, { seq, records });
+    return records.slice();
+  }
+
+  catalogue(userId: string, includeDeleted = false): Exercise[] {
+    return [
+      ...serverCatalogue,
+      ...this.list(userId, "exercise", includeDeleted).map((record) => ({
+        ...(record.data as Exercise),
+        custom: true,
+        source: undefined,
+      })),
+    ];
+  }
+
+  catalogueMap(userId: string, includeDeleted = false): ReadonlyMap<string, Exercise> {
+    const custom = this.list(userId, "exercise", includeDeleted);
+    if (!custom.length) return serverCatalogueMap;
+    const overlay = new Map<string, Exercise>();
+    for (const record of custom) {
+      const exercise: Exercise = {
+        ...(record.data as Exercise),
+        custom: true,
+        source: undefined,
+      };
+      overlay.set(exercise.id, exercise);
+    }
+    return new LayeredExerciseMap(serverCatalogueMap, overlay);
+  }
+
+  operation(userId: string, opId: string) {
+    return this.stmtOperation.get(userId, opId) as { request: string; result: string } | undefined;
+  }
+
+  mutate(userId: string, mutation: Mutation): MutationResult {
+    return this.db.transaction(() => {
+      const request = JSON.stringify(mutation);
+      const saved = this.operation(userId, mutation.opId);
+      if (saved) {
+        if (saved.request !== request)
+          throw new DomainError("操作 ID 已用于其他请求", 409);
+        return JSON.parse(saved.result) as MutationResult;
+      }
+      const current = this.get(userId, mutation.kind, mutation.id);
+      if ((current?.version ?? 0) !== mutation.baseVersion) {
+        return {
+          opId: mutation.opId,
+          status: "conflict" as const,
+          record: current,
+        };
+      }
+      let data =
+        mutation.deleted && current
+          ? current.data
+          : schemas[mutation.kind].parse(mutation.data);
+      if (mutation.kind === "exercise")
+        data = { ...(data as Exercise), custom: true, source: undefined };
+      if (mutation.kind === "workout") {
+        const catalogueById = this.catalogueMap(userId, true);
+        for (const item of (data as Workout).exercises) {
+          const exercise = catalogueById.get(item.exerciseId);
+          if (!item.snapshot && exercise)
+            item.snapshot = {
+              name: exercise.name,
+              muscle: exercise.muscle,
+              equipment: exercise.equipment,
+              mode: exercise.mode,
+              volumeMultiplier: exercise.volumeMultiplier,
+            };
+        }
+      }
+      this.validate(userId, mutation.kind, mutation.id, data, mutation.deleted);
+      const updatedAt = new Date().toISOString();
+      const version = (current?.version ?? 0) + 1;
+      const encoded = JSON.stringify(data);
+      this.stmtUpsertRecord.run(
+        userId,
+        mutation.kind,
+        mutation.id,
+        version,
+        Number(mutation.deleted),
+        encoded,
+        updatedAt,
+      );
+      this.stmtInsertChange.run(
+        userId,
+        mutation.kind,
+        mutation.id,
+        version,
+        Number(mutation.deleted),
+        encoded,
+        updatedAt,
+      );
+      const result: MutationResult = {
+        opId: mutation.opId,
+        status: "applied",
+        record: {
+          id: mutation.id,
+          kind: mutation.kind,
+          version,
+          deleted: mutation.deleted,
+          data,
+          updatedAt,
+        },
+      };
+      this.stmtInsertOp.run(userId, mutation.opId, request, JSON.stringify(result));
+      return result;
+    })();
+  }
+
+  private validate(
+    userId: string,
+    kind: EntityKind,
+    id: string,
+    data: unknown,
+    deleted: boolean,
+  ) {
+    if (kind === "exercise" && serverCatalogueMap.has(id))
+      throw new DomainError("自定义动作 ID 与内置动作重复");
+    try {
+      validateRecordIdentity({ kind, id, data });
+    } catch (error) {
+      throw new DomainError(error instanceof Error ? error.message : "记录 ID 无效");
+    }
+    if (deleted) return;
+    if (kind === "plan" || kind === "template") {
+      this.validatePlan(data as Plan, this.catalogueMap(userId));
+    } else if (kind === "scheduledDay" && (data as ScheduledDay).mode === "workout") {
+      this.validatePlan({ exercises: (data as ScheduledDay).exercises }, this.catalogueMap(userId));
+    } else if (kind === "workout") {
+      const catalogue = this.catalogueMap(userId);
+      if (
+        (data as Workout).exercises.some(
+          (item) => !catalogue.has(item.exerciseId) && !item.snapshot,
+        )
+      )
+        throw new DomainError("训练包含未知动作");
+    } else if (
+      kind === "favorite" &&
+      !this.catalogueMap(userId).has((data as { exerciseId: string }).exerciseId)
+    ) {
+      throw new DomainError("收藏动作不存在");
+    }
+  }
+
+  private validatePlan(
+    plan: Plan | { exercises: Routine["exercises"] },
+    catalogue: readonly Exercise[] | ReadonlyMap<string, Exercise>,
+  ) {
+    try {
+      validatePlanExercises(plan, catalogue);
+    } catch (error) {
+      throw new DomainError(
+        error instanceof Error ? error.message : "计划动作无效",
+      );
+    }
+  }
+
+  pull(userId: string, after: number, limit = 200) {
+    const rows = this.stmtPull.all(userId, after, limit + 1) as Row[];
+    const page = rows.slice(0, limit);
+    return {
+      records: page.map(decode),
+      cursor: page.at(-1)?.seq ?? after,
+      hasMore: rows.length > limit,
+    };
+  }
+
+  activePlan(userId: string) {
+    const row = this.stmtActivePlan.get(userId) as
+      | {
+          plan_id: string;
+          version: number;
+          revision: number;
+          updated_at: string;
+        }
+      | undefined;
+    if (!row) return null;
+    const snapshot = this.stmtPlanVersion.get(userId, row.plan_id, row.version) as { data: string };
+    return {
+      id: row.plan_id,
+      version: row.version,
+      revision: row.revision,
+      updatedAt: row.updated_at,
+      data: JSON.parse(snapshot.data) as Plan,
+    };
+  }
+
+  planSchedule(userId: string) {
+    const active = this.activePlan(userId);
+    if (!active) return null;
+    const rows = this.stmtPlanActivations.all(userId) as { id: string; version: number; updatedAt: string; data: string }[];
+    return { ...active, history: rows.map((row) => ({ ...row, data: JSON.parse(row.data) as Plan })) };
+  }
+
+  applyPlan(
+    userId: string,
+    id: string,
+    version: number,
+    expectedRevision: number,
+    historical = false,
+  ) {
+    return this.db.transaction(() => {
+      const active = this.activePlan(userId);
+      if ((active?.revision ?? 0) !== expectedRevision)
+        throw new DomainError("当前计划已变化，请刷新后重试", 409);
+      const current = this.get(userId, "plan", id);
+      let data: Plan;
+      if (historical) {
+        const row = this.stmtPlanVersion.get(userId, id, version) as { data: string } | undefined;
+        if (!row) throw new DomainError("历史计划版本不存在", 404);
+        data = JSON.parse(row.data) as Plan;
+      } else {
+        if (!current || current.deleted)
+          throw new DomainError("计划草稿不存在", 404);
+        if (current.version !== version)
+          throw new DomainError("计划草稿已变化，请重新预览", 409);
+        data = current.data as Plan;
+      }
+      this.validatePlan(data, this.catalogueMap(userId));
+      const now = new Date().toISOString();
+      this.stmtInsertPlanVersion.run(userId, id, version, JSON.stringify(data), now);
+      this.stmtUpsertActivePlan.run(userId, id, version, expectedRevision + 1, now);
+      this.stmtInsertPlanActivation.run(userId, id, version, expectedRevision + 1, now);
+      return this.planSchedule(userId);
+    })();
+  }
+
+  createDraft(userId: string, plan: Plan) {
+    return this.mutate(userId, {
+      opId: randomUUID(),
+      id: randomUUID(),
+      kind: "plan",
+      baseVersion: 0,
+      deleted: false,
+      data: plan,
+    });
+  }
+
+  export(userId: string) {
+    const records = (this.stmtExportRecords.all(userId) as Row[]).map(decode);
+    const versions = this.stmtExportPlanVersions.all(userId) as {
+      id: string;
+      version: number;
+      data: string;
+      created_at: string;
+    }[];
+    const exerciseNotes = this.stmtExportExerciseNotes.all(userId) as {
+      exerciseId: string;
+      note: string;
+      updatedAt: string;
+    }[];
+    const bodyMeasurements = this.stmtExportMeasurements.all(userId) as {
+      date: string;
+      waistCm: number | null;
+      chestCm: number | null;
+      armCm: number | null;
+      thighCm: number | null;
+      hipCm: number | null;
+      notes: string;
+      updatedAt: string;
+    }[];
+    const appleDailyRows = this.stmtExportAppleDaily.all(userId) as {
+      date: string;
+      updatedAt: string;
+      data: string;
+    }[];
+    const appleHealthDaily = appleDailyRows.map((row) => {
+      const parsed = JSON.parse(row.data) as Record<string, unknown>;
+      const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations: _s, ...rest } = parsed;
+      return { ...rest, date: row.date, updatedAt: row.updatedAt };
+    });
+    const appleWorkoutRows = this.stmtExportAppleWorkouts.all(userId) as {
+      id: string;
+      receivedAt: string;
+      endedAt: string;
+      data: string;
+    }[];
+    const appleHealthWorkouts = appleWorkoutRows.map((row) => ({
+      id: row.id,
+      receivedAt: row.receivedAt,
+      ...(JSON.parse(row.data) as Record<string, unknown>),
+    }));
+    return {
+      format: "ironlog",
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      records,
+      planVersions: versions.map((row) => ({
+        ...row,
+        data: JSON.parse(row.data),
+      })),
+      activePlan: this.planSchedule(userId),
+      exerciseNotes,
+      bodyMeasurements,
+      appleHealthDaily,
+      appleHealthWorkouts,
+    };
+  }
+
+  restoreBackup(
+    userId: string,
+    rawPayload: unknown,
+    options: { mode?: "preview" | "commit"; strategy?: "merge" | "replace" } = {},
+  ) {
+    const mode = options.mode ?? "preview";
+    const strategy = options.strategy ?? "merge";
+    let parsedObj: Record<string, unknown>;
+    if (typeof rawPayload === "string") {
+      try {
+        parsedObj = JSON.parse(rawPayload) as Record<string, unknown>;
+      } catch {
+        throw new DomainError("备份文件不是有效的 JSON 格式", 400);
+      }
+    } else if (rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)) {
+      parsedObj = rawPayload as Record<string, unknown>;
+    } else {
+      throw new DomainError("备份文件格式无效", 400);
+    }
+
+    if (parsedObj.format !== "ironlog" && !Array.isArray(parsedObj.records)) {
+      throw new DomainError("这不是铁记导出的全量 JSON 备份文件（缺少 format: \"ironlog\" 或 records）", 400);
+    }
+
+    const rawRecords = Array.isArray(parsedObj.records) ? (parsedObj.records as Record<string, unknown>[]) : [];
+    const rawPlanVersions = Array.isArray(parsedObj.planVersions) ? (parsedObj.planVersions as Record<string, unknown>[]) : [];
+    const rawActivePlan = parsedObj.activePlan && typeof parsedObj.activePlan === "object" && !Array.isArray(parsedObj.activePlan)
+      ? (parsedObj.activePlan as Record<string, unknown>)
+      : null;
+    const rawNotes = Array.isArray(parsedObj.exerciseNotes) ? (parsedObj.exerciseNotes as Record<string, unknown>[]) : [];
+    const rawMeasurements = Array.isArray(parsedObj.bodyMeasurements) ? (parsedObj.bodyMeasurements as Record<string, unknown>[]) : [];
+    const rawAppleDaily = Array.isArray(parsedObj.appleHealthDaily) ? (parsedObj.appleHealthDaily as Record<string, unknown>[]) : [];
+    const rawAppleWorkouts = Array.isArray(parsedObj.appleHealthWorkouts) ? (parsedObj.appleHealthWorkouts as Record<string, unknown>[]) : [];
+
+    const now = new Date().toISOString();
+
+    // Sort records so custom exercises are validated/restored first, then plans/templates, then workouts/others
+    const kindOrder: Record<string, number> = {
+      exercise: 0,
+      food: 1,
+      profile: 2,
+      plan: 3,
+      template: 4,
+      scheduledDay: 5,
+      workout: 6,
+      diet: 7,
+      nutritionDay: 8,
+      weight: 9,
+      favorite: 10,
+      foodFavorite: 11,
+      mealTemplate: 12,
+    };
+    const sortedRecords = [...rawRecords].sort(
+      (a, b) => (kindOrder[String(a?.kind ?? "")] ?? 99) - (kindOrder[String(b?.kind ?? "")] ?? 99),
+    );
+
+    interface PreparedRecord {
+      id: string;
+      kind: EntityKind;
+      version: number;
+      deleted: boolean;
+      data: unknown;
+      updatedAt: string;
+    }
+
+    const validRecords: PreparedRecord[] = [];
+    const previewCustomOverlay = new Map<string, Exercise>();
+
+    for (const item of sortedRecords) {
+      if (!item || typeof item !== "object") continue;
+      const kindRes = entityKindSchema.safeParse(item.kind);
+      if (!kindRes.success) continue;
+      const kind = kindRes.data;
+      const id = typeof item.id === "string" ? item.id.trim() : "";
+      if (!id) continue;
+      const deleted = Boolean(item.deleted);
+      const version = typeof item.version === "number" && item.version >= 1 ? Math.floor(item.version) : 1;
+      const updatedAt = typeof item.updatedAt === "string" && item.updatedAt ? item.updatedAt : now;
+
+      const parsedData = schemas[kind].safeParse(item.data);
+      if (!parsedData.success && !deleted) {
+        throw new DomainError(`备份中记录 ${kind}:${id} 数据结构无效`, 400);
+      }
+      let data: unknown = parsedData.success ? parsedData.data : item.data;
+      if (kind === "exercise" && !deleted && data && typeof data === "object") {
+        const ex: Exercise = { ...(data as Exercise), custom: true, source: undefined };
+        data = ex;
+        if (serverCatalogueMap.has(id)) {
+          throw new DomainError(`自定义动作 ID (${id}) 与内置动作冲突`, 400);
+        }
+        previewCustomOverlay.set(id, ex);
+      }
+
+      try {
+        validateRecordIdentity({ kind, id, data });
+      } catch (err) {
+        throw new DomainError(err instanceof Error ? err.message : `记录 ${kind}:${id} ID 校验失败`, 400);
+      }
+
+      if (!deleted && mode === "preview") {
+        const previewCat = new LayeredExerciseMap(this.catalogueMap(userId), previewCustomOverlay);
+        if (kind === "plan" || kind === "template") {
+          this.validatePlan(data as Plan, previewCat);
+        } else if (kind === "scheduledDay" && (data as ScheduledDay).mode === "workout") {
+          this.validatePlan({ exercises: (data as ScheduledDay).exercises }, previewCat);
+        }
+      }
+
+      validRecords.push({ id, kind, version, deleted, data, updatedAt });
+    }
+
+    const counts = {
+      workouts: validRecords.filter((r) => r.kind === "workout" && !r.deleted).length,
+      diets: validRecords.filter((r) => r.kind === "diet" && !r.deleted).length,
+      weights: validRecords.filter((r) => r.kind === "weight" && !r.deleted).length,
+      plans: validRecords.filter((r) => r.kind === "plan" && !r.deleted).length,
+      templates: validRecords.filter((r) => r.kind === "template" && !r.deleted).length,
+      customExercises: validRecords.filter((r) => r.kind === "exercise" && !r.deleted).length,
+      measurements: rawMeasurements.length,
+      exerciseNotes: rawNotes.length,
+      appleDaily: rawAppleDaily.length,
+      appleWorkouts: rawAppleWorkouts.length,
+      totalRecords: validRecords.length,
+    };
+
+    let toImport = 0;
+    let toUpdate = 0;
+    let unchanged = 0;
+
+    for (const rec of validRecords) {
+      const existing = this.get(userId, rec.kind, rec.id);
+      if (!existing) {
+        toImport++;
+      } else if (
+        strategy === "replace" ||
+        rec.updatedAt > existing.updatedAt ||
+        (existing.deleted && !rec.deleted) ||
+        JSON.stringify(existing.data) !== JSON.stringify(rec.data) ||
+        existing.deleted !== rec.deleted
+      ) {
+        toUpdate++;
+      } else {
+        unchanged++;
+      }
+    }
+
+    if (mode === "preview") {
+      return {
+        mode: "preview" as const,
+        strategy,
+        exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
+        counts,
+        diff: { toImport, toUpdate, unchanged },
+      };
+    }
+
+    // Commit inside atomic SQLite transaction
+    let importedCount = 0;
+    let updatedCount = 0;
+    let skippedCount = 0;
+
+    this.db.transaction(() => {
+      if (strategy === "replace") {
+        this.db.prepare(
+          "UPDATE apple_health_events SET workout_id = NULL WHERE device_id IN (SELECT id FROM apple_health_devices WHERE user_id = ?)",
+        ).run(userId);
+        this.db.prepare("DELETE FROM apple_health_receipts WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM apple_health_workouts WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM apple_health_daily WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM body_measurements WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM exercise_notes WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM plan_activations WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM active_plans WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM plan_versions WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM operations WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM changes WHERE user_id = ?").run(userId);
+        this.db.prepare("DELETE FROM records WHERE user_id = ?").run(userId);
+        this.listCache.clear();
+      }
+
+      for (const rec of validRecords) {
+        const existing = this.get(userId, rec.kind, rec.id);
+        if (!existing) {
+          this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted);
+          const encoded = JSON.stringify(rec.data);
+          this.stmtUpsertRecord.run(userId, rec.kind, rec.id, rec.version, Number(rec.deleted), encoded, rec.updatedAt);
+          this.stmtInsertChange.run(userId, rec.kind, rec.id, rec.version, Number(rec.deleted), encoded, rec.updatedAt);
+          this.listCache.clear();
+          importedCount++;
+        } else {
+          const changed =
+            rec.updatedAt > existing.updatedAt ||
+            (existing.deleted && !rec.deleted) ||
+            JSON.stringify(existing.data) !== JSON.stringify(rec.data) ||
+            existing.deleted !== rec.deleted;
+          if (!changed) {
+            skippedCount++;
+            continue;
+          }
+          this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted);
+          const nextVersion = Math.max(existing.version + 1, rec.version);
+          const encoded = JSON.stringify(rec.data);
+          this.stmtUpsertRecord.run(userId, rec.kind, rec.id, nextVersion, Number(rec.deleted), encoded, rec.updatedAt);
+          this.stmtInsertChange.run(userId, rec.kind, rec.id, nextVersion, Number(rec.deleted), encoded, rec.updatedAt);
+          this.listCache.clear();
+          updatedCount++;
+        }
+      }
+
+      // Restore planVersions
+      for (const pv of rawPlanVersions) {
+        if (!pv || typeof pv !== "object") continue;
+        const pid = typeof pv.id === "string" ? pv.id : "";
+        const pver = typeof pv.version === "number" && pv.version >= 1 ? Math.floor(pv.version) : 1;
+        const pcreated = typeof pv.created_at === "string"
+          ? pv.created_at
+          : typeof pv.createdAt === "string" ? pv.createdAt : now;
+        const parsedPlan = planSchema.safeParse(pv.data);
+        if (pid && parsedPlan.success) {
+          this.stmtInsertPlanVersion.run(userId, pid, pver, JSON.stringify(parsedPlan.data), pcreated);
+        }
+      }
+
+      // Restore activePlan if present
+      if (rawActivePlan && typeof rawActivePlan.id === "string") {
+        const parsedActiveData = planSchema.safeParse(rawActivePlan.data);
+        if (parsedActiveData.success && (strategy === "replace" || !this.activePlan(userId))) {
+          const aid = rawActivePlan.id;
+          const aver = typeof rawActivePlan.version === "number" && rawActivePlan.version >= 1 ? Math.floor(rawActivePlan.version) : 1;
+          const arev = typeof rawActivePlan.revision === "number" && rawActivePlan.revision >= 1 ? Math.floor(rawActivePlan.revision) : 1;
+          const aupdated = typeof rawActivePlan.updatedAt === "string" ? rawActivePlan.updatedAt : now;
+          this.stmtInsertPlanVersion.run(userId, aid, aver, JSON.stringify(parsedActiveData.data), aupdated);
+          if (Array.isArray(rawActivePlan.history)) {
+            let hRev = 1;
+            for (const h of rawActivePlan.history as Record<string, unknown>[]) {
+              const hid = typeof h?.id === "string" ? h.id : "";
+              const hver = typeof h?.version === "number" ? Math.floor(h.version) : 1;
+              const hup = typeof h?.updatedAt === "string" ? h.updatedAt : aupdated;
+              const hParsed = planSchema.safeParse(h?.data);
+              if (hid && hParsed.success) {
+                this.stmtInsertPlanVersion.run(userId, hid, hver, JSON.stringify(hParsed.data), hup);
+                this.db.prepare("INSERT OR IGNORE INTO plan_activations VALUES (?,?,?,?,?)").run(userId, hid, hver, hRev++, hup);
+              }
+            }
+          }
+          const curMaxRev = (this.db.prepare("SELECT COALESCE(MAX(revision), 0) AS r FROM plan_activations WHERE user_id = ?").get(userId) as { r: number }).r;
+          const finalRev = Math.max(arev, curMaxRev + 1);
+          this.stmtUpsertActivePlan.run(userId, aid, aver, finalRev, aupdated);
+          this.db.prepare("INSERT OR IGNORE INTO plan_activations VALUES (?,?,?,?,?)").run(userId, aid, aver, finalRev, aupdated);
+        }
+      }
+
+      // Restore exerciseNotes
+      const stmtUpsertNote = this.db.prepare(
+        `INSERT INTO exercise_notes VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, exercise_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at`,
+      );
+      for (const noteItem of rawNotes) {
+        const exId = typeof noteItem?.exerciseId === "string" ? noteItem.exerciseId.trim() : "";
+        const note = typeof noteItem?.note === "string" ? noteItem.note : "";
+        const upAt = typeof noteItem?.updatedAt === "string" ? noteItem.updatedAt : now;
+        if (exId && note) stmtUpsertNote.run(userId, exId, note, upAt);
+      }
+
+      // Restore bodyMeasurements
+      const stmtUpsertMeas = this.db.prepare(
+        `INSERT INTO body_measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, date) DO UPDATE SET
+           waist_cm = excluded.waist_cm, chest_cm = excluded.chest_cm, arm_cm = excluded.arm_cm,
+           thigh_cm = excluded.thigh_cm, hip_cm = excluded.hip_cm, notes = excluded.notes, updated_at = excluded.updated_at`,
+      );
+      const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+      for (const m of rawMeasurements) {
+        const date = typeof m?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.date) ? m.date : "";
+        if (!date) continue;
+        stmtUpsertMeas.run(
+          userId,
+          date,
+          numOrNull(m.waistCm),
+          numOrNull(m.chestCm),
+          numOrNull(m.armCm),
+          numOrNull(m.thighCm),
+          numOrNull(m.hipCm),
+          typeof m.notes === "string" ? m.notes : "",
+          typeof m.updatedAt === "string" ? m.updatedAt : now,
+        );
+      }
+
+      // Restore appleHealthDaily
+      const stmtUpsertDaily = this.db.prepare(
+        `INSERT INTO apple_health_daily VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, date) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data`,
+      );
+      for (const d of rawAppleDaily) {
+        const date = typeof d?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : "";
+        if (!date) continue;
+        const upAt = typeof d.updatedAt === "string" ? d.updatedAt : now;
+        const { updatedAt: _u, ...restData } = d;
+        stmtUpsertDaily.run(userId, date, upAt, JSON.stringify({ ...restData, date }));
+      }
+
+      // Restore appleHealthWorkouts
+      const stmtUpsertAppleWorkout = this.db.prepare(
+        `INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_id, identity_key) DO UPDATE SET
+           ended_at = excluded.ended_at, received_at = excluded.received_at, data = excluded.data`,
+      );
+      for (const w of rawAppleWorkouts) {
+        if (!w || typeof w !== "object") continue;
+        const wid = typeof w.id === "string" && w.id ? w.id : randomUUID();
+        const endedAt = typeof w.endedAt === "string" && w.endedAt
+          ? w.endedAt
+          : typeof w.date === "string" ? `${w.date}T12:00:00.000Z` : now;
+        const receivedAt = typeof w.receivedAt === "string" && w.receivedAt ? w.receivedAt : now;
+        const extId = typeof w.externalId === "string" && w.externalId ? w.externalId : null;
+        const actType = typeof w.activityType === "string" && w.activityType ? w.activityType : "other";
+        const startedAt = typeof w.startedAt === "string" && w.startedAt ? w.startedAt : endedAt;
+        const identityKey = extId ? `ext:${extId}` : `window:${actType}:${startedAt}:${endedAt}`;
+        const { id: _id, receivedAt: _rec, ...workoutPayload } = w;
+        stmtUpsertAppleWorkout.run(wid, userId, identityKey, endedAt, receivedAt, JSON.stringify(workoutPayload));
+      }
+
+      this.listCache.clear();
+    }).immediate();
+
+    return {
+      mode: "commit" as const,
+      strategy,
+      exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
+      counts,
+      imported: importedCount,
+      updated: updatedCount,
+      skipped: skippedCount,
+    };
+  }
+}

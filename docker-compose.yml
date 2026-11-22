@@ -1,0 +1,18 @@
+services:
+  ironlog:
+    build: .
+    container_name: ironlog
+    restart: unless-stopped
+    ports:
+      - "${IRONLOG_BIND:-0.0.0.0}:${PORT:-8080}:8080"
+    volumes:
+      - ./data:/app/data
+    environment:
+      ALLOW_DEV_LOGIN: ${ALLOW_DEV_LOGIN:-false}
+      ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-false}
+      TRUST_PROXY: ${TRUST_PROXY:-true}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com/v1}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-90000}

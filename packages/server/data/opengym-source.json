@@ -1,0 +1,20 @@
+{
+  "repository": "DuarteSantos8/openGym",
+  "release": "v1.4.5",
+  "revision": "e4a68a94c42a3c17cbd560d66ce2e46a7048ab99",
+  "movementCount": 5632,
+  "describedCount": 5632,
+  "chineseDescriptions": 5613,
+  "alternateDemonstrations": 922,
+  "sources": [
+    "catalogue/exercises/",
+    "catalogue/i18n/zh.json"
+  ],
+  "transformations": [
+    "直接读取 openGym canonical catalogue/exercises JSON 与 catalogue/i18n/zh.json",
+    "保留原动作编号与既有计量方式",
+    "同步动作简介 description 与肌肉权重补充（缺少中文时回退英文简介/步骤）",
+    "排除仅替代演示的变体",
+    "仅导入文字，保持合法开源配图来源不变"
+  ]
+}

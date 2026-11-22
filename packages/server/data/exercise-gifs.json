@@ -1,0 +1,1145 @@
+{
+  "delayMs": 750,
+  "gifs": {
+    "barbell-curl": {
+      "path": "/media/exercises/anim-barbell-curl.gif?v=6f11b7cb0086",
+      "sha256": "6f11b7cb008608ed96c4cd81be917f99aa79e5744b1b0c40e929406bf694007d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "barbell-row": {
+      "path": "/media/exercises/anim-barbell-row.gif?v=9ef2f7fb8073",
+      "sha256": "9ef2f7fb8073b616a9c2821c6ac05d780ec9b867e6c99c794c12f10bd7a29a57",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "bench-press": {
+      "path": "/media/exercises/anim-bench-press.gif?v=cf935e55686d",
+      "sha256": "cf935e55686dfb2bdccd2e621e76207ccaef388bbe8d39909b765562d4a24114",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "bodyweight-squat": {
+      "path": "/media/exercises/anim-bodyweight-squat.gif?v=c3b130997076",
+      "sha256": "c3b1309970761cfcf5bf01c2bf5e46a39345288d4e95314117c7fde8da146822",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "cable-fly": {
+      "path": "/media/exercises/anim-cable-fly.gif?v=e023658b4935",
+      "sha256": "e023658b4935d109f6d1f5654fb7ce738f53c12886cea6d5adc8012be3c6d918",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "crunch": {
+      "path": "/media/exercises/anim-crunch.gif?v=31c7c7a71c06",
+      "sha256": "31c7c7a71c06b1fe67807313996acf4c81f2d1b222394675f0ae09a968809b04",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "dead-bug": {
+      "path": "/media/exercises/anim-dead-bug.gif?v=bd36f13435a5",
+      "sha256": "bd36f13435a528cf581ea661354fee61c3e83d323c869f042519630594e679ed",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0017": {
+      "path": "/media/exercises/anim-exdb_0017.gif?v=dec12e4152d2",
+      "sha256": "dec12e4152d23ad76498c38cbff27411af0eb310813f157f8a5579f15bd94e43",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0030": {
+      "path": "/media/exercises/anim-exdb_0030.gif?v=c8b0eb8c6645",
+      "sha256": "c8b0eb8c66455a6b7f4d6bbf8f66f4323de685ae6e0680494a77da2057358be5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0032": {
+      "path": "/media/exercises/anim-exdb_0032.gif?v=96331b085323",
+      "sha256": "96331b0853232217365880c6d6f3ac2ffb279b04bf86f5fce3df311aa6937be4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0033": {
+      "path": "/media/exercises/anim-exdb_0033.gif?v=2afb15158713",
+      "sha256": "2afb15158713fb2e68828d35962cf4e5c407178727452bd6d09ac76ad6a2f4c3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0038": {
+      "path": "/media/exercises/anim-exdb_0038.gif?v=d1aa42aa2574",
+      "sha256": "d1aa42aa25743f80df293d983ea940dd58449cc549eb7d17ce8fad49571e6150",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0042": {
+      "path": "/media/exercises/anim-exdb_0042.gif?v=10136c6a6801",
+      "sha256": "10136c6a68011428755ad05fe72de0ca968d24fd2f07c7b009c9c7b4649e0beb",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0043": {
+      "path": "/media/exercises/anim-exdb_0043.gif?v=8b93ec12bfae",
+      "sha256": "8b93ec12bfae55f3eae2dea05223c7570501f238d280cd34db3228e42906dbda",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0044": {
+      "path": "/media/exercises/anim-exdb_0044.gif?v=5c9cb919a732",
+      "sha256": "5c9cb919a7323c166ffe2d51a6bb2f0f8ee40398c8e14396dce3c489eea292c7",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0047": {
+      "path": "/media/exercises/anim-exdb_0047.gif?v=6c7e843251b5",
+      "sha256": "6c7e843251b53be88befbdcce6d79f7b41d5e7ab128e8db4a2882263316f8847",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0060": {
+      "path": "/media/exercises/anim-exdb_0060.gif?v=bed99f8aed22",
+      "sha256": "bed99f8aed227cb80835ff8d578d1da69da32f52415e8eac49bebc64781a78db",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0074": {
+      "path": "/media/exercises/anim-exdb_0074.gif?v=e4b1aa261016",
+      "sha256": "e4b1aa261016a977df5ee1834a50cb165e89b2f813ae7e03c53fa941b5e1eb0d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0080": {
+      "path": "/media/exercises/anim-exdb_0080.gif?v=c75c49c790f8",
+      "sha256": "c75c49c790f8d2618175bff0a8fcd1ce4fcdf91d081d09868c460dae84b092de",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0085": {
+      "path": "/media/exercises/anim-exdb_0085.gif?v=1fd99e97c7ba",
+      "sha256": "1fd99e97c7bac47e5d82ab8b17c9abd51499a39ef54c55d4e99b5671695139b4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0095": {
+      "path": "/media/exercises/anim-exdb_0095.gif?v=b78be0717b60",
+      "sha256": "b78be0717b605deba9bd7aa60a9d78d76a153b2707a469f670b0d5c51ca9c25f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0117": {
+      "path": "/media/exercises/anim-exdb_0117.gif?v=16861dd847c5",
+      "sha256": "16861dd847c51fcd89155ef585e1b0c96107c9853fa7de7d5adb603567d311a2",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0120": {
+      "path": "/media/exercises/anim-exdb_0120.gif?v=0029986f3156",
+      "sha256": "0029986f31566fc751f495901f429a931cef52696e7a2b1c57a50a4dc9018886",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0126": {
+      "path": "/media/exercises/anim-exdb_0126.gif?v=2e6bdd0f62c7",
+      "sha256": "2e6bdd0f62c7c57eb26060ea09b419d24dabee7ef31aa4ca48e285be9438c729",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0128": {
+      "path": "/media/exercises/anim-exdb_0128.gif?v=f6e4fa7d5afa",
+      "sha256": "f6e4fa7d5afa662a5bb08c1ddf4fe1cb9c30427d05cb26ca0a5b4e28d202d814",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0155": {
+      "path": "/media/exercises/anim-exdb_0155.gif?v=e023658b4935",
+      "sha256": "e023658b4935d109f6d1f5654fb7ce738f53c12886cea6d5adc8012be3c6d918",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0162": {
+      "path": "/media/exercises/anim-exdb_0162.gif?v=8257b93e8b86",
+      "sha256": "8257b93e8b86f0ef7c89f8ecdba3e6fddbb7a5465b10d7f7c64ac59e8f19fa43",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0165": {
+      "path": "/media/exercises/anim-exdb_0165.gif?v=77d581704e24",
+      "sha256": "77d581704e24fe49f3837f56a9dd08fabf9dc94449d32496fd8f38683a374fe5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0171": {
+      "path": "/media/exercises/anim-exdb_0171.gif?v=06dc90fd9dfd",
+      "sha256": "06dc90fd9dfd8c96c7db3d4e588fa41eb19c185de239ad91b2c61064770079d6",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0178": {
+      "path": "/media/exercises/anim-exdb_0178.gif?v=08ea0668299f",
+      "sha256": "08ea0668299ff98986cb36450227d8acf2f338f65b708bd6f783183bd03cd909",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0200": {
+      "path": "/media/exercises/anim-exdb_0200.gif?v=18bad9926b03",
+      "sha256": "18bad9926b032a23fd5e014c45116d24c0aa77136233e5a731238fb978777e2c",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0238": {
+      "path": "/media/exercises/anim-exdb_0238.gif?v=1ba058b1325d",
+      "sha256": "1ba058b1325d6747404c1f4fb8ec42b91e099fcca75569b670737458e7dfc196",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0251": {
+      "path": "/media/exercises/anim-exdb_0251.gif?v=e8c31d6a7ff6",
+      "sha256": "e8c31d6a7ff6d7c6015aaac5f48d97fadc4eda43b7cdb6c36654039fdd79b0c2",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0274": {
+      "path": "/media/exercises/anim-exdb_0274.gif?v=31c7c7a71c06",
+      "sha256": "31c7c7a71c06b1fe67807313996acf4c81f2d1b222394675f0ae09a968809b04",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0279": {
+      "path": "/media/exercises/anim-exdb_0279.gif?v=f9418ff93dd8",
+      "sha256": "f9418ff93dd805b84316504b9837ccdc0a6683834e21b12ef775d92269ac8371",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0282": {
+      "path": "/media/exercises/anim-exdb_0282.gif?v=b08f389a7b39",
+      "sha256": "b08f389a7b39a773fc6de7a7e400de756df3d51f23555578ab3367ad5bd3bbbb",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0283": {
+      "path": "/media/exercises/anim-exdb_0283.gif?v=9c0a3ed9632c",
+      "sha256": "9c0a3ed9632c55853bf53ee9e91e497959575d3923b28af6684be89579e6f559",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0289": {
+      "path": "/media/exercises/anim-exdb_0289.gif?v=d8fdec6ea9d5",
+      "sha256": "d8fdec6ea9d5563dd87ebe693ced1f31f4bf6117467c98f6794e19183f5c25a4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0292": {
+      "path": "/media/exercises/anim-exdb_0292.gif?v=de0e65918e92",
+      "sha256": "de0e65918e9210faa22c4a6673e49387bf7af9a0eb70e86ec0b4e3110954ff85",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0293": {
+      "path": "/media/exercises/anim-exdb_0293.gif?v=cd9425a8b9c4",
+      "sha256": "cd9425a8b9c48dd1d09b981242b7c99944d53c42bf3f723ebf152f2ac9d38502",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0294": {
+      "path": "/media/exercises/anim-exdb_0294.gif?v=7b2036d37664",
+      "sha256": "7b2036d3766440e9ae159809a10acb55e9aa438468db81d6a00e1be8aa29b12d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0297": {
+      "path": "/media/exercises/anim-exdb_0297.gif?v=9abbbccf9bf1",
+      "sha256": "9abbbccf9bf14fddad7c42b242f6936dfc99f14cd56c056dc4789e275397ebaa",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0300": {
+      "path": "/media/exercises/anim-exdb_0300.gif?v=b4e2115a9286",
+      "sha256": "b4e2115a92868a3ae76979f5ccc077445edaa9ba8fefb0d402745f6133f9d9f9",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/"
+    },
+    "exdb_0301": {
+      "path": "/media/exercises/anim-exdb_0301.gif?v=5432cdefa946",
+      "sha256": "5432cdefa9460a0d1d9e35345ba6e03f050883cc48fe8d15f61d8245c8ee4c3f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0308": {
+      "path": "/media/exercises/anim-exdb_0308.gif?v=63c49fe721c2",
+      "sha256": "63c49fe721c2cfe08f3a984d071a9af5b50bdc9a2374bfb8da0bd687ea55ec53",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0310": {
+      "path": "/media/exercises/anim-exdb_0310.gif?v=b7f252442b78",
+      "sha256": "b7f252442b786a74dfdf3fe24a42d4afd62ad036b32dcabbd6227721e30a3c42",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0313": {
+      "path": "/media/exercises/anim-exdb_0313.gif?v=e317269d5c48",
+      "sha256": "e317269d5c48713b8917766a990607ce75f468784e88be8d19468351a99186ed",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0314": {
+      "path": "/media/exercises/anim-exdb_0314.gif?v=22bc59935816",
+      "sha256": "22bc59935816f1af57ef544e3c155ee8d9a95ac0fa8e7aed51684d2354b485e2",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0318": {
+      "path": "/media/exercises/anim-exdb_0318.gif?v=e75ae4df0f9d",
+      "sha256": "e75ae4df0f9d60422f9046bb961a73a3bfb83d1f25363e3d05b9efcbe1f5e362",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0336": {
+      "path": "/media/exercises/anim-exdb_0336.gif?v=c45eaa46cca1",
+      "sha256": "c45eaa46cca159bf2018ace6b21db1af42fb4947d455348c4805fca96a93bdf9",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0405": {
+      "path": "/media/exercises/anim-exdb_0405.gif?v=c43f57708c56",
+      "sha256": "c43f57708c561efde1588ba2a5ebbd6e5f565c67c3646c3b299ddde87c3b8a15",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0406": {
+      "path": "/media/exercises/anim-exdb_0406.gif?v=71949f42b8a0",
+      "sha256": "71949f42b8a0f89c5dcc8d22421410eda71dc9a185fa8fcca9cf6b48de4bab78",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0407": {
+      "path": "/media/exercises/anim-exdb_0407.gif?v=591acb366bb2",
+      "sha256": "591acb366bb2ddb7980ea2bc0418804827f8f1b35cd7f5578be2fc09169e1a88",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0426": {
+      "path": "/media/exercises/anim-exdb_0426.gif?v=f87e6b5b8e1f",
+      "sha256": "f87e6b5b8e1f9e0c26c510957617b16dbc376961da249d623223ddf2c99033c3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0430": {
+      "path": "/media/exercises/anim-exdb_0430.gif?v=d310de0b63d0",
+      "sha256": "d310de0b63d0494bf185e702be42ca2dc3f36e8053eb3a25f04850b03c2db111",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0431": {
+      "path": "/media/exercises/anim-exdb_0431.gif?v=23f0c12181be",
+      "sha256": "23f0c12181be247e41cb81637c6a688f8d9a3455b7809bd0f9c2a8eb4c9e7498",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0471": {
+      "path": "/media/exercises/anim-exdb_0471.gif?v=027424ac9fd1",
+      "sha256": "027424ac9fd159845fa35a12ad6f43c14b046bf3d2eef1b727f96a0ef49a71a8",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0472": {
+      "path": "/media/exercises/anim-exdb_0472.gif?v=60c7f8fc9b7f",
+      "sha256": "60c7f8fc9b7f45b85970c7ee28a4a326c88449bcd30503f3b4d8420d5475cc9b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0493": {
+      "path": "/media/exercises/anim-exdb_0493.gif?v=c78b53af501f",
+      "sha256": "c78b53af501f0a802f586f3d61e8ec8a2d3a2acf957acb886581ca2e2e2dc6c9",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0499": {
+      "path": "/media/exercises/anim-exdb_0499.gif?v=700e922f3f37",
+      "sha256": "700e922f3f3740c0eb8414ae01f75f443401c5333bfa3061a73cd7ea40b8d1ae",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0514": {
+      "path": "/media/exercises/anim-exdb_0514.gif?v=d34c49720e7e",
+      "sha256": "d34c49720e7e2717ed89e28467959aa7051a905155c3d4432af9d4a0479dc057",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0549": {
+      "path": "/media/exercises/anim-exdb_0549.gif?v=706adb9c8a4c",
+      "sha256": "706adb9c8a4cf96377a74d99944857df01a3abece14c0d740fb9103d93ea4227",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0569": {
+      "path": "/media/exercises/anim-exdb_0569.gif?v=d8d34e726c30",
+      "sha256": "d8d34e726c30aeba142f83c788c50923c48c08f2f3d372b4724c28e57fe6f856",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0572": {
+      "path": "/media/exercises/anim-exdb_0572.gif?v=e03bd6cf209b",
+      "sha256": "e03bd6cf209bc355c09e75ada1f6a9e896a6da105469ffc685e64d2c1704de14",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0584": {
+      "path": "/media/exercises/anim-exdb_0584.gif?v=17d10bbf82bc",
+      "sha256": "17d10bbf82bc35eb0b2e7f916a81f5f8338b1dbc37898b112ef4e72b21029bd7",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0585": {
+      "path": "/media/exercises/anim-exdb_0585.gif?v=8d0a9c090494",
+      "sha256": "8d0a9c0904942adb0738df29ea3ed4de98c162269d813f4293d1999e0ab6a8f1",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0586": {
+      "path": "/media/exercises/anim-exdb_0586.gif?v=7fcc2d3427ff",
+      "sha256": "7fcc2d3427ff7e18d77d5bf3241d25749c2cdf2127fd188f4da6c47fcd862852",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0592": {
+      "path": "/media/exercises/anim-exdb_0592.gif?v=e0942536c0ed",
+      "sha256": "e0942536c0edd2671e048276d3bff11f56c1b441e91f8a12a0d4c0dca93eb0a7",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0593": {
+      "path": "/media/exercises/anim-exdb_0593.gif?v=a055163dae67",
+      "sha256": "a055163dae67d7dc52fadb3498ecdd969f2c963e54d8cb96d222137b0838c237",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0594": {
+      "path": "/media/exercises/anim-exdb_0594.gif?v=ff28e5104b8e",
+      "sha256": "ff28e5104b8ef64875872cd70a90ca020d184465a9d57b0a5f7e88c87d64e344",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0597": {
+      "path": "/media/exercises/anim-exdb_0597.gif?v=f932ad0f9afc",
+      "sha256": "f932ad0f9afcb72a4be8442ff47798e4178ee5f29544eb4b46d7edc1ebb2f850",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0598": {
+      "path": "/media/exercises/anim-exdb_0598.gif?v=0118f5c8a2bc",
+      "sha256": "0118f5c8a2bc87bcd99367cd18e3f56a3620eb1fcc564f493bd7b74007bbb743",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0599": {
+      "path": "/media/exercises/anim-exdb_0599.gif?v=90b2324d7004",
+      "sha256": "90b2324d70044e7f9675cb83fd9a8832f653f7e5aca47b55b4abbdae88eb7539",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0603": {
+      "path": "/media/exercises/anim-exdb_0603.gif?v=a79b0cbb71f2",
+      "sha256": "a79b0cbb71f2d7aa180a6faf543f9a1776d5aca4ffd1c89e13298deedac8e437",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0605": {
+      "path": "/media/exercises/anim-exdb_0605.gif?v=40a513d3cc35",
+      "sha256": "40a513d3cc353d428cefe15ae7eacf122997575390a2a0eb7746dc259ec2d560",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0606": {
+      "path": "/media/exercises/anim-exdb_0606.gif?v=a793309f8254",
+      "sha256": "a793309f825486c67b4f539f8d7067907ef155b95cef63525fd1416de1abe310",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0630": {
+      "path": "/media/exercises/anim-exdb_0630.gif?v=d491d8d55215",
+      "sha256": "d491d8d552152bb142e8fb52e053aadc147096d19b5b2bd7aa545016fa56f0af",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0651": {
+      "path": "/media/exercises/anim-exdb_0651.gif?v=f3851f746956",
+      "sha256": "f3851f7469567e659796c695dbd3f4d2a73a673338817b3818509467c9c88508",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0659": {
+      "path": "/media/exercises/anim-exdb_0659.gif?v=5db8399a79f3",
+      "sha256": "5db8399a79f376b5445c9c6e57c5ec41cca3f7690ec2de404f2e497c08f214ba",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0687": {
+      "path": "/media/exercises/anim-exdb_0687.gif?v=e999f20c8ad5",
+      "sha256": "e999f20c8ad54d1a2b490692ef63f10961bbd7b3a786b49e38b5b33175048734",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0688": {
+      "path": "/media/exercises/anim-exdb_0688.gif?v=d2b28aa6b77a",
+      "sha256": "d2b28aa6b77a34b24cad2300a1ea63ee92beeebee3ece3bfa6cd8ee2e50bb94b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0699": {
+      "path": "/media/exercises/anim-exdb_0699.gif?v=9fd24fdd06a1",
+      "sha256": "9fd24fdd06a1806a7f2383d4b8c05985e00041032020232e0a2e6a97a68f1b42",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0710": {
+      "path": "/media/exercises/anim-exdb_0710.gif?v=8b22b241c87f",
+      "sha256": "8b22b241c87fb7dfab58eb942fc4cd11970cea1fe55236e8dd0e2cfb1c3ebc9a",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0715": {
+      "path": "/media/exercises/anim-exdb_0715.gif?v=d1d08dca4c6f",
+      "sha256": "d1d08dca4c6f53fe99f1d1edc33deaf9f9cde4017a16e8f14dcc2f76d4362bd6",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0734": {
+      "path": "/media/exercises/anim-exdb_0734.gif?v=b1776ee0d479",
+      "sha256": "b1776ee0d479402bfe05a28a5c0c9ac1f52730c2be014cd1fbe470c79632dc40",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0739": {
+      "path": "/media/exercises/anim-exdb_0739.gif?v=a24179aae388",
+      "sha256": "a24179aae3884fa6d309557a3c01d166c1661f0929d0b9e0bbbedd2b24e24e2f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0748": {
+      "path": "/media/exercises/anim-exdb_0748.gif?v=40c4974a64d8",
+      "sha256": "40c4974a64d816f60f6c2920f238c74a62af572cb92d13888ae4dcf6e7af9204",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0770": {
+      "path": "/media/exercises/anim-exdb_0770.gif?v=1e85b8b5640e",
+      "sha256": "1e85b8b5640e852db4348c11b688a055012d3e82aaacf6038cd05abd6d450fdc",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0811": {
+      "path": "/media/exercises/anim-exdb_0811.gif?v=91f67e75a1f6",
+      "sha256": "91f67e75a1f609f011701213ee04b510ea2eb8832eb67c3ec40c7b08f3729ee4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0832": {
+      "path": "/media/exercises/anim-exdb_0832.gif?v=8a213c274b41",
+      "sha256": "8a213c274b415a022c90a1ea3acb64135cf5bdb9c29b57e79a6205d5f2565405",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0841": {
+      "path": "/media/exercises/anim-exdb_0841.gif?v=a3bf2a91269e",
+      "sha256": "a3bf2a91269eb1808a803142b979659c5d650bdc8448d1b26f8afbea0ab486e6",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0857": {
+      "path": "/media/exercises/anim-exdb_0857.gif?v=69ab39b9c528",
+      "sha256": "69ab39b9c5288626c511478cb6c5549480b78efee66623386545ed3005e9cbab",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0860": {
+      "path": "/media/exercises/anim-exdb_0860.gif?v=36d65d7ffe04",
+      "sha256": "36d65d7ffe0460bf22490437092498dc86986223a19152dd14aebdb66e7f7fbf",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0861": {
+      "path": "/media/exercises/anim-exdb_0861.gif?v=cb3649379a7a",
+      "sha256": "cb3649379a7ace9d6f6460232daa06a572e6d403f00bd393641fc377b7f5a4af",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0868": {
+      "path": "/media/exercises/anim-exdb_0868.gif?v=fb74870af24b",
+      "sha256": "fb74870af24b23eb1646b350a2680de9beb053456d2b954d4d297eed138732a4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0872": {
+      "path": "/media/exercises/anim-exdb_0872.gif?v=49294cc0a5f1",
+      "sha256": "49294cc0a5f138b00ba59fa45bf39f0f212c5b03fa12cd07f5f66a46b9098a89",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0881": {
+      "path": "/media/exercises/anim-exdb_0881.gif?v=16de0bf48ec8",
+      "sha256": "16de0bf48ec81728f4cdefa28c6253fb6a7a126429503342482e18bb29945e30",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0903": {
+      "path": "/media/exercises/anim-exdb_0903.gif?v=19f04ffaa14f",
+      "sha256": "19f04ffaa14f6a86eaff3a38ad23b7641c1fdf84284f9b3a8904780bdd76afa5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_0945": {
+      "path": "/media/exercises/anim-exdb_0945.gif?v=47d5017a5c47",
+      "sha256": "47d5017a5c47c7410d97968f9a344daa034f0c0a052007bd0cb9b76df8024138",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_10045": {
+      "path": "/media/exercises/anim-exdb_10045.gif?v=1afa3606888c",
+      "sha256": "1afa3606888c9a4a286fb79e7ac9463ea636c4a5131e40a73b35ec38619951e8",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1030": {
+      "path": "/media/exercises/anim-exdb_1030.gif?v=c7920537f65f",
+      "sha256": "c7920537f65f1042c74e3472fd8df8988d59e4ffae2eca6bd6db66e019225902",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1047": {
+      "path": "/media/exercises/anim-exdb_1047.gif?v=6bbe958ea829",
+      "sha256": "6bbe958ea82993f4faeec494100c9d8a329070ddf6738d7b4d97823ae559f83f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1053": {
+      "path": "/media/exercises/anim-exdb_1053.gif?v=7bb12dc1cb33",
+      "sha256": "7bb12dc1cb338c73fc2f8b5c3ab4064cd1811f188d8ea398308a16086437ad0e",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1060": {
+      "path": "/media/exercises/anim-exdb_1060.gif?v=5155282714c0",
+      "sha256": "5155282714c0dbdeb88337ad7cb4a4c0480feaf4bdb950c5a8881cb13ab62544",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1160": {
+      "path": "/media/exercises/anim-exdb_1160.gif?v=5feed4b112ed",
+      "sha256": "5feed4b112eda7ec56e0bab2da321cadea9a67ddefbfa78036dfd202f6ce3b4d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1161": {
+      "path": "/media/exercises/anim-exdb_1161.gif?v=7c8de0e5ae98",
+      "sha256": "7c8de0e5ae9813c139ac6e63be2a436006b9e3d7000579feaba5eb501d0ed344",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1163": {
+      "path": "/media/exercises/anim-exdb_1163.gif?v=6cd2052dff63",
+      "sha256": "6cd2052dff63ab951c55fe000204f6df7b097717d8d5f02d025bc274b214c2fe",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1197": {
+      "path": "/media/exercises/anim-exdb_1197.gif?v=c3b130997076",
+      "sha256": "c3b1309970761cfcf5bf01c2bf5e46a39345288d4e95314117c7fde8da146822",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1200": {
+      "path": "/media/exercises/anim-exdb_1200.gif?v=28d3fbd0ec9f",
+      "sha256": "28d3fbd0ec9fe32594de70866b8b8dcdcdace2f8445fc29d665ca31fba0e1e93",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1206": {
+      "path": "/media/exercises/anim-exdb_1206.gif?v=94c83afaf2a9",
+      "sha256": "94c83afaf2a93083caca03868225e25980ef2d1950f8f824c3643f1267f94c3b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1241": {
+      "path": "/media/exercises/anim-exdb_1241.gif?v=1477b5aa5441",
+      "sha256": "1477b5aa544151e8961fb6e86dc12446d3bbb16ba2537681240eae9a54fe4c79",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1246": {
+      "path": "/media/exercises/anim-exdb_1246.gif?v=1ea1d89bc963",
+      "sha256": "1ea1d89bc9637bbe084a38372c2f7c14f49875a9054a89ef1249a269206106c5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1253": {
+      "path": "/media/exercises/anim-exdb_1253.gif?v=8e529f535575",
+      "sha256": "8e529f535575176b275258baec9f1f20c925e5f74e5a54d824ac07f6bab4fc12",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1311": {
+      "path": "/media/exercises/anim-exdb_1311.gif?v=46c972a1239c",
+      "sha256": "46c972a1239c347f84ab285b3416d644a07e6012540fc72c918aed6b84cac082",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1326": {
+      "path": "/media/exercises/anim-exdb_1326.gif?v=d4be3f090977",
+      "sha256": "d4be3f090977caa3e70bb6b8f9c27189759e82f6ec56f386b936c46a4aa28c6d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1373": {
+      "path": "/media/exercises/anim-exdb_1373.gif?v=b1bfa2821dc2",
+      "sha256": "b1bfa2821dc2877c4a194a7df02a2c9d0d12a27577c4a98af934f8810a2dc5ca",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1377": {
+      "path": "/media/exercises/anim-exdb_1377.gif?v=407e1a3f15d4",
+      "sha256": "407e1a3f15d41ce9bbf59fa94640c81072354c00cfd07ade4a4deb2451ebe1cf",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1391": {
+      "path": "/media/exercises/anim-exdb_1391.gif?v=74bec6c60937",
+      "sha256": "74bec6c60937b73b728a3a904b13f9d18fb5f818f8843b3a36cf39ae0c535b90",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1402": {
+      "path": "/media/exercises/anim-exdb_1402.gif?v=b6615135c68a",
+      "sha256": "b6615135c68a8013afa200cf6d3a0a7337922122af8b1b16eea6f37be2ab1642",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1409": {
+      "path": "/media/exercises/anim-exdb_1409.gif?v=4710ec1f291c",
+      "sha256": "4710ec1f291cbd5a5f4832ab4a883d2b7105a87682dc38f6cb7a5bb4be655b5b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1459": {
+      "path": "/media/exercises/anim-exdb_1459.gif?v=f18ac83f07ee",
+      "sha256": "f18ac83f07ee093ca03c064715fbb8958dab8f6e3107e323a72bf632aee7338c",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1460": {
+      "path": "/media/exercises/anim-exdb_1460.gif?v=dacb16b63180",
+      "sha256": "dacb16b63180a6b0c81dd7f2d5c3b1a1a706d00eca5a28f4d52f6c96204f3d0d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1471": {
+      "path": "/media/exercises/anim-exdb_1471.gif?v=56c03ff480a2",
+      "sha256": "56c03ff480a294f9d81aebcbec4b7f5055dce43c3adfe8742299cbe92ffbeb19",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1478": {
+      "path": "/media/exercises/anim-exdb_1478.gif?v=152f667d1a7a",
+      "sha256": "152f667d1a7a2bb1d4eb243c0f2a797144bf3ce4b71eabb63f3728a00c47b3b3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1489": {
+      "path": "/media/exercises/anim-exdb_1489.gif?v=83d1ec38002e",
+      "sha256": "83d1ec38002e507c19bc2f07e0a48f4eb54afaedad302a4117475bd079a0d3a9",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1503": {
+      "path": "/media/exercises/anim-exdb_1503.gif?v=02934a40001d",
+      "sha256": "02934a40001d7c670e42be6d23f3c4e386fb9c930aadafedeb1136b46ff1d8b3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1511": {
+      "path": "/media/exercises/anim-exdb_1511.gif?v=ae931d96b16a",
+      "sha256": "ae931d96b16ae13a394530b49a31239a7176bc04396b1a3788828da533f3ce64",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1760": {
+      "path": "/media/exercises/anim-exdb_1760.gif?v=c13cba752883",
+      "sha256": "c13cba75288305ca786232258e5af61c90c837b99f36b02fbc889fa8ed396e9e",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_1793": {
+      "path": "/media/exercises/anim-exdb_1793.gif?v=411de9680a1e",
+      "sha256": "411de9680a1e4f4dd8a6756563a3de391a6706171f015e74e9a26b99c9552c0f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2137": {
+      "path": "/media/exercises/anim-exdb_2137.gif?v=ddec849d963a",
+      "sha256": "ddec849d963adf52cf5630eabe5c31c48baafd79cdd4e12a2eafed0b3b0a38f7",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2141": {
+      "path": "/media/exercises/anim-exdb_2141.gif?v=a1b54835140a",
+      "sha256": "a1b54835140aeb7ba1370ccc75e396e7ae2d51570aa4eb96a286137f5574377f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2154": {
+      "path": "/media/exercises/anim-exdb_2154.gif?v=51533d62d074",
+      "sha256": "51533d62d074c3d015179daea18741af049e31382227555dd3cdbf9f54eb0533",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2192": {
+      "path": "/media/exercises/anim-exdb_2192.gif?v=a1b54835140a",
+      "sha256": "a1b54835140aeb7ba1370ccc75e396e7ae2d51570aa4eb96a286137f5574377f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2197": {
+      "path": "/media/exercises/anim-exdb_2197.gif?v=5af752e807b5",
+      "sha256": "5af752e807b51554c12959ae3edea13cf3788f80fc60e45752d85af19e58a8c2",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2258": {
+      "path": "/media/exercises/anim-exdb_2258.gif?v=a3716fb60b33",
+      "sha256": "a3716fb60b3384bc5e009903214d319aea3dbd95c49e5c76ac60ceb694f8f3e8",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2290": {
+      "path": "/media/exercises/anim-exdb_2290.gif?v=eb7418d7a98d",
+      "sha256": "eb7418d7a98daac5dd776f0f72ca75021233cfc0a8699d9ff9f20c4e64305fed",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2291": {
+      "path": "/media/exercises/anim-exdb_2291.gif?v=f41a814be43a",
+      "sha256": "f41a814be43abe2450f36499fadb664fbeb4dccd54bae0668bad6ed738c9b9ea",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2311": {
+      "path": "/media/exercises/anim-exdb_2311.gif?v=7a237ec6cf47",
+      "sha256": "7a237ec6cf47200406a3b10fb8110daa4651487b42b6f17a366eeee40caa69a0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2471": {
+      "path": "/media/exercises/anim-exdb_2471.gif?v=30b59b4b7d86",
+      "sha256": "30b59b4b7d86a2aafdde0edabc7842a861702cca6ab229301a37a1aadeec5e17",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2612": {
+      "path": "/media/exercises/anim-exdb_2612.gif?v=914acb64b7b1",
+      "sha256": "914acb64b7b198aeaab0e9ec855e4acafbee81ee0c020126a5b5b7afc10140b9",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2760": {
+      "path": "/media/exercises/anim-exdb_2760.gif?v=13ff40575d7b",
+      "sha256": "13ff40575d7b3a2ac7330194524607f45ef487a3c22d96b4b854b611d659c6d4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2870": {
+      "path": "/media/exercises/anim-exdb_2870.gif?v=519d730dcd16",
+      "sha256": "519d730dcd166d59011dd21f4c6801cd4c7ac6c7cf96baa19f5d42cd139d1a77",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2917": {
+      "path": "/media/exercises/anim-exdb_2917.gif?v=70494dfa5098",
+      "sha256": "70494dfa5098a17d9983259459f2faf38f72519d3b6741a36629842505641f04",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2921": {
+      "path": "/media/exercises/anim-exdb_2921.gif?v=fe36024f9227",
+      "sha256": "fe36024f9227f4648b72184502a81aad14f1d56b2b8da79061cceabcb5a83a70",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2950": {
+      "path": "/media/exercises/anim-exdb_2950.gif?v=c1d1e00858a0",
+      "sha256": "c1d1e00858a04a86c11ee605481f7e5ff5a17af3a416899378a0753725dcd60a",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2957": {
+      "path": "/media/exercises/anim-exdb_2957.gif?v=6d62a429ecb3",
+      "sha256": "6d62a429ecb3f21d6553e16d22b8499f0d0ae14414afba478fd4b010c77d28b3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_2960": {
+      "path": "/media/exercises/anim-exdb_2960.gif?v=125ea524f02a",
+      "sha256": "125ea524f02a8534b53b9d26ebf7bfbf58479ead8ad18692f4015118be26392c",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3006": {
+      "path": "/media/exercises/anim-exdb_3006.gif?v=f750c7fe0e9a",
+      "sha256": "f750c7fe0e9ac9f667440da4c7cce8e69eff84796fc624c4b48795a6f68be547",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3017": {
+      "path": "/media/exercises/anim-exdb_3017.gif?v=386b4d539e8f",
+      "sha256": "386b4d539e8f75df3637a3d9cba9e87356878abe017ca69ee791a7d76df1c3f7",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3094": {
+      "path": "/media/exercises/anim-exdb_3094.gif?v=22cd6f735ee1",
+      "sha256": "22cd6f735ee1f4157e9f5aa5e70552ed1e18f44b428ec0a6e04ecc2a46cbb5fd",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3110": {
+      "path": "/media/exercises/anim-exdb_3110.gif?v=65bde7c62af1",
+      "sha256": "65bde7c62af1fb4fba27b1bf83a299819449803e2fc6752fe1346cc6c58cc5d0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3181": {
+      "path": "/media/exercises/anim-exdb_3181.gif?v=c1c46f369ae5",
+      "sha256": "c1c46f369ae54c9fa45f920463b27b35ffeaa3337997454fbb685fafff04de19",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3294": {
+      "path": "/media/exercises/anim-exdb_3294.gif?v=cc7166391ef0",
+      "sha256": "cc7166391ef095e6644cd00e3a27002791cb6ef8f901917c2be15fad242cbd2a",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3335": {
+      "path": "/media/exercises/anim-exdb_3335.gif?v=74e1761a88cc",
+      "sha256": "74e1761a88ccde2839764ea622f2a65458fbf6504707d1bb6d323b8803813c14",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3360": {
+      "path": "/media/exercises/anim-exdb_3360.gif?v=b0631c0cb3c3",
+      "sha256": "b0631c0cb3c38fd92220663d94c359f349fb69bf9d196da1ab6cf4161d3c0bb5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3361": {
+      "path": "/media/exercises/anim-exdb_3361.gif?v=bbbac0812453",
+      "sha256": "bbbac08124537f3fa4645303bd6a25236140a9586f1b8a93af2e4fcf88db65c4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3366": {
+      "path": "/media/exercises/anim-exdb_3366.gif?v=53a4821383e8",
+      "sha256": "53a4821383e880b30010c5c2515f7c62fba593a9e96f73d2975efbd41940df86",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3367": {
+      "path": "/media/exercises/anim-exdb_3367.gif?v=899b1cb8907b",
+      "sha256": "899b1cb8907bf38d55ba4b4a2be2c1efc775f4dff89d8021697441eda65a6dd1",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3418": {
+      "path": "/media/exercises/anim-exdb_3418.gif?v=e97225c4bc60",
+      "sha256": "e97225c4bc6045000f7f33545745f54f22acde2704b8d8ff890bb42355f3c26d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3436": {
+      "path": "/media/exercises/anim-exdb_3436.gif?v=9313868290a3",
+      "sha256": "9313868290a3ed7afb14ee2e53e1479899c1543d00c121a6122f469f3776713e",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3449": {
+      "path": "/media/exercises/anim-exdb_3449.gif?v=ad8bc87b5e8e",
+      "sha256": "ad8bc87b5e8eec08a58a18a505e5092196e69d6e5b8ce28b4c7ecff18210fbd8",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3470": {
+      "path": "/media/exercises/anim-exdb_3470.gif?v=75cc3e0fcbc0",
+      "sha256": "75cc3e0fcbc0eac0655eadbd8d3670a34844391397f7e1cc79c85e2995712c9d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3506": {
+      "path": "/media/exercises/anim-exdb_3506.gif?v=ec4dab06eecd",
+      "sha256": "ec4dab06eecd3ede913e572f18edddbb15f7ca03be73ea572a9b2ff59bcdf679",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3561": {
+      "path": "/media/exercises/anim-exdb_3561.gif?v=23516edab4f5",
+      "sha256": "23516edab4f5b2b31d784c17af03bfdbf61aadf4e5fe3e10d8ddc6f243546fc8",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3593": {
+      "path": "/media/exercises/anim-exdb_3593.gif?v=1ad7f7e6d681",
+      "sha256": "1ad7f7e6d6819c598bb38e4aafb8f3b82dfe86dfe3a631e9be72a138616a7f77",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3622": {
+      "path": "/media/exercises/anim-exdb_3622.gif?v=e5cfd771abc7",
+      "sha256": "e5cfd771abc7e7544180e3a3da7d36981c83c717d43c96828c16bdf180850f7b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3666": {
+      "path": "/media/exercises/anim-exdb_3666.gif?v=9c406a4345ba",
+      "sha256": "9c406a4345ba58bbe4b664a77ad85f8d0481278057c2e3713e4f3177cb4733d1",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3699": {
+      "path": "/media/exercises/anim-exdb_3699.gif?v=6e85e81601e7",
+      "sha256": "6e85e81601e7759cfe0820523bfa75e4b8739b0e4677b77ea852638443dea614",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3705": {
+      "path": "/media/exercises/anim-exdb_3705.gif?v=8ffeed408d50",
+      "sha256": "8ffeed408d50af643c4446ebb312e376a8a9007f1c9469e7e42ea468bfc9933c",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3853": {
+      "path": "/media/exercises/anim-exdb_3853.gif?v=1fa55cec2438",
+      "sha256": "1fa55cec243845debaf166fe4d18a906a7d5e780a5ab907c62722cf3f35a70fb",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3893": {
+      "path": "/media/exercises/anim-exdb_3893.gif?v=91da429de4d6",
+      "sha256": "91da429de4d6e51ca3f77883782540d4ab60a9bd1f12963446ad72f887dc7ad4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3905": {
+      "path": "/media/exercises/anim-exdb_3905.gif?v=a22ca067938d",
+      "sha256": "a22ca067938d56b2676d86e4e5be1a7f2b4b19ff8ecea84659b28c437291be17",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3930": {
+      "path": "/media/exercises/anim-exdb_3930.gif?v=152f667d1a7a",
+      "sha256": "152f667d1a7a2bb1d4eb243c0f2a797144bf3ce4b71eabb63f3728a00c47b3b3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_3996": {
+      "path": "/media/exercises/anim-exdb_3996.gif?v=a22ca067938d",
+      "sha256": "a22ca067938d56b2676d86e4e5be1a7f2b4b19ff8ecea84659b28c437291be17",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4051": {
+      "path": "/media/exercises/anim-exdb_4051.gif?v=98d34bbd1db2",
+      "sha256": "98d34bbd1db2317eee1e41465922f2367dc50437b94784cbd6da48903f6351a0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4102": {
+      "path": "/media/exercises/anim-exdb_4102.gif?v=7ae40b0024c0",
+      "sha256": "7ae40b0024c024c9198d24724dab6eb61d445422d7dc55c5609dd18aec49b1bb",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4113": {
+      "path": "/media/exercises/anim-exdb_4113.gif?v=82d3b2e2e4c0",
+      "sha256": "82d3b2e2e4c0c98fe08e5f639bcb3ffd08beca4e1a2d5ac18a4e45afee8aee4b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4170": {
+      "path": "/media/exercises/anim-exdb_4170.gif?v=36caeea20807",
+      "sha256": "36caeea20807e5739ef2b7a8978fc5567aa77bfad7c555683fdd30202ab80490",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4193": {
+      "path": "/media/exercises/anim-exdb_4193.gif?v=a71bfe14548a",
+      "sha256": "a71bfe14548ad3b1b67381d18a620cf6f078371af7df24ef5f95d1e2af89ce33",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4295": {
+      "path": "/media/exercises/anim-exdb_4295.gif?v=e1a58b94608d",
+      "sha256": "e1a58b94608d30184857b1cc413c1d6c7e180c1db6ffefdfb04832a8df057948",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4343": {
+      "path": "/media/exercises/anim-exdb_4343.gif?v=6a7252a4b587",
+      "sha256": "6a7252a4b587142540024e17bb5c239d9cda0fc89b97fa5ebbc25bd51edc8428",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4568": {
+      "path": "/media/exercises/anim-exdb_4568.gif?v=02934a40001d",
+      "sha256": "02934a40001d7c670e42be6d23f3c4e386fb9c930aadafedeb1136b46ff1d8b3",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4580": {
+      "path": "/media/exercises/anim-exdb_4580.gif?v=919d31b470ac",
+      "sha256": "919d31b470aced89c864f54da7d80976d6daa271d59f0e815d80799e059a9254",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4633": {
+      "path": "/media/exercises/anim-exdb_4633.gif?v=d15c0a39ff8c",
+      "sha256": "d15c0a39ff8c566ab9e61c0cda0c190968f7425dd2425a0219d231e64b01e815",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4726": {
+      "path": "/media/exercises/anim-exdb_4726.gif?v=71e46dc34947",
+      "sha256": "71e46dc3494702f764b21c46a9aee615446582b05640ac76f70fca48e705fead",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4742": {
+      "path": "/media/exercises/anim-exdb_4742.gif?v=449b33f18747",
+      "sha256": "449b33f18747cad66f30711cf0b353a348121b5cb60688d744746994a007ae13",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4853": {
+      "path": "/media/exercises/anim-exdb_4853.gif?v=831d0d96c462",
+      "sha256": "831d0d96c462865479b60e02d1c5cb9646b989ecc5dfb495314ca339eb2a58f9",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4861": {
+      "path": "/media/exercises/anim-exdb_4861.gif?v=4ce31bdb4e0c",
+      "sha256": "4ce31bdb4e0cf4f7d351979a90a5054897fd0385c5a7777222c76e3a671fa9c4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_4937": {
+      "path": "/media/exercises/anim-exdb_4937.gif?v=e7ecc81d5a6b",
+      "sha256": "e7ecc81d5a6bb365bdb865e859178509c6fca7fc722520f9132c1994b6eb01ba",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5041": {
+      "path": "/media/exercises/anim-exdb_5041.gif?v=bb8b2e7b66d4",
+      "sha256": "bb8b2e7b66d4b93a6da7e5e0d2a651d49543c3efc15a6fc8c09514bf28b33ad5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5074": {
+      "path": "/media/exercises/anim-exdb_5074.gif?v=b954b4fdd5ca",
+      "sha256": "b954b4fdd5ca9bdf5992290a34a198d02e009ba47fd8d9642bffef53c51b5dc0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5121": {
+      "path": "/media/exercises/anim-exdb_5121.gif?v=4b16cbbdb275",
+      "sha256": "4b16cbbdb2759c4a46acbd848fcb461d9199a3cbc4fef30fc5cfff2012222332",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5460": {
+      "path": "/media/exercises/anim-exdb_5460.gif?v=bcc8c4609fa7",
+      "sha256": "bcc8c4609fa7c17f68aaa4c5db04f8ef6599a992c6e570235f9715569cd3d1cd",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5516": {
+      "path": "/media/exercises/anim-exdb_5516.gif?v=9d3f089d62fd",
+      "sha256": "9d3f089d62fdee2d2a75b280a2da15e6cda30e4beb4499903b2df6c30bc3f3f6",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5607": {
+      "path": "/media/exercises/anim-exdb_5607.gif?v=4c502a2f6838",
+      "sha256": "4c502a2f683810a7c4a1569fc79fe6c5ddb99866c098df29596a4c7f79565c5b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5649": {
+      "path": "/media/exercises/anim-exdb_5649.gif?v=c824ce681d54",
+      "sha256": "c824ce681d549488192b8aeff5d7dac58b070124395bc75b7f225b5f994511c6",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5822": {
+      "path": "/media/exercises/anim-exdb_5822.gif?v=618d7996db4c",
+      "sha256": "618d7996db4c477b7ba40dd86f65b563fdd5a174e1f5772bdd3110265fee7e8a",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_5881": {
+      "path": "/media/exercises/anim-exdb_5881.gif?v=c21f9ae8e8f5",
+      "sha256": "c21f9ae8e8f52f5b82085feebc704bb17563d5af7075055568949476a355f88a",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_6211": {
+      "path": "/media/exercises/anim-exdb_6211.gif?v=71a399a9b012",
+      "sha256": "71a399a9b0127c32eb0cc6f8f72aabd0f9f27374ba4bb4127d553321231113b5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_6318": {
+      "path": "/media/exercises/anim-exdb_6318.gif?v=3006527c1f21",
+      "sha256": "3006527c1f21394a29257e863addb04ae5c173511cb0abff05cdc43db10e06ad",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_6607": {
+      "path": "/media/exercises/anim-exdb_6607.gif?v=53d9ecfcf8d5",
+      "sha256": "53d9ecfcf8d50e385512f19dc28f6cc6aa642f2d0a89b2fc6403a547d15412f4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_7326": {
+      "path": "/media/exercises/anim-exdb_7326.gif?v=5953a84f58d3",
+      "sha256": "5953a84f58d30f07dd1a3e06792d67ed3839d16b055ffe417d945c08bbfc8148",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_7385": {
+      "path": "/media/exercises/anim-exdb_7385.gif?v=1c56f91642f4",
+      "sha256": "1c56f91642f4b7fef104af275cb03198eb5e8dfeb76afb0039bc97a1a516b2e1",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_7553": {
+      "path": "/media/exercises/anim-exdb_7553.gif?v=d095fb0dce83",
+      "sha256": "d095fb0dce833ce3bf544728e0db0c7f25cacf028a6d037a6d5da1c4703dead8",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_7626": {
+      "path": "/media/exercises/anim-exdb_7626.gif?v=778bd4a8e8d4",
+      "sha256": "778bd4a8e8d44ed202f32945fbe200811b0571639fcd674876cfdddc2e98fa78",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_7746": {
+      "path": "/media/exercises/anim-exdb_7746.gif?v=2a111c1655d4",
+      "sha256": "2a111c1655d481e21d9fc75f213486fb76c2f87d6d6a2753c14e78582624a345",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_8192": {
+      "path": "/media/exercises/anim-exdb_8192.gif?v=b4f1b2358e1f",
+      "sha256": "b4f1b2358e1f0ad087376ed84764285dcb7dfa591581c6a69da2b111d04d3e39",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_9321": {
+      "path": "/media/exercises/anim-exdb_9321.gif?v=b42eed52eac9",
+      "sha256": "b42eed52eac9a69071227061e49ae44b8b9529fbe4edd0d600afbf71a93f7778",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_9819": {
+      "path": "/media/exercises/anim-exdb_9819.gif?v=b919d65c4e73",
+      "sha256": "b919d65c4e732356e4b2f40d7f435e17a970e02f5dc294d396f027960ee31e0f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "exdb_9931": {
+      "path": "/media/exercises/anim-exdb_9931.gif?v=79d6d7c46f53",
+      "sha256": "79d6d7c46f5303989755b0eec299848312b089a6f630a508c0ea50ddf3b56dad",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "face-pull": {
+      "path": "/media/exercises/anim-face-pull.gif?v=3da051b3178c",
+      "sha256": "3da051b3178cfa9d274e274d180ba20253e98662acf48ccd3f2834d870c3b854",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "hammer-curl": {
+      "path": "/media/exercises/anim-hammer-curl.gif?v=21f2176c87f2",
+      "sha256": "21f2176c87f296c13f74fcb5819be9a3778b2100a0c127d6bb536e993e8691a5",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "hanging-knee-raise": {
+      "path": "/media/exercises/anim-hanging-knee-raise.gif?v=b919d65c4e73",
+      "sha256": "b919d65c4e732356e4b2f40d7f435e17a970e02f5dc294d396f027960ee31e0f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "incline-dumbbell": {
+      "path": "/media/exercises/anim-incline-dumbbell.gif?v=22bc59935816",
+      "sha256": "22bc59935816f1af57ef544e3c155ee8d9a95ac0fa8e7aed51684d2354b485e2",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "lat-pulldown": {
+      "path": "/media/exercises/anim-lat-pulldown.gif?v=920546cf1b2c",
+      "sha256": "920546cf1b2c411037fc524f1d7f97e262fa9d5b50bf340e8479d8b4aeba3017",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "lateral-raise": {
+      "path": "/media/exercises/anim-lateral-raise.gif?v=1780a11dd179",
+      "sha256": "1780a11dd179d6cbc34adf4503c48b68af0012dd07bc3106263af2550713432b",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "leg-curl": {
+      "path": "/media/exercises/anim-leg-curl.gif?v=b843dc80dec6",
+      "sha256": "b843dc80dec68bcc67c880cfb6dada05bf0e980bd7a42abf35a93bb6f6ca6619",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "leg-press": {
+      "path": "/media/exercises/anim-leg-press.gif?v=a24179aae388",
+      "sha256": "a24179aae3884fa6d309557a3c01d166c1661f0929d0b9e0bbbedd2b24e24e2f",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "overhead-extension": {
+      "path": "/media/exercises/anim-overhead-extension.gif?v=d310de0b63d0",
+      "sha256": "d310de0b63d0494bf185e702be42ca2dc3f36e8053eb3a25f04850b03c2db111",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "overhead-press": {
+      "path": "/media/exercises/anim-overhead-press.gif?v=fef1382b6ac1",
+      "sha256": "fef1382b6ac150160febfe5b9c73fa563a598798e7ca3609ca33206f103b0696",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "plank": {
+      "path": "/media/exercises/anim-plank.gif?v=c093f516e894",
+      "sha256": "c093f516e8948b3e7047992485002e0bf2065d0d7bd0db568ae79f7dedcc0f6a",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "pull-up": {
+      "path": "/media/exercises/anim-pull-up.gif?v=08d3552fd3ff",
+      "sha256": "08d3552fd3ffe1ee2ce30b8f6acfa2f017a76f973d0eaea617b05314ae149b61",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "push-up": {
+      "path": "/media/exercises/anim-push-up.gif?v=912b8f502cb4",
+      "sha256": "912b8f502cb4f895ee3900653067d8148fdafe4a087669af3169e842b252f4df",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "reverse-fly": {
+      "path": "/media/exercises/anim-reverse-fly.gif?v=78ea0dc5e1fe",
+      "sha256": "78ea0dc5e1fe50de756258866fcdc733f003c507250779759e729c451ff60d0d",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "romanian-deadlift": {
+      "path": "/media/exercises/anim-romanian-deadlift.gif?v=1fd99e97c7ba",
+      "sha256": "1fd99e97c7bac47e5d82ab8b17c9abd51499a39ef54c55d4e99b5671695139b4",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "seated-row": {
+      "path": "/media/exercises/anim-seated-row.gif?v=ad19f6322675",
+      "sha256": "ad19f63226758dc96665e6ac08d25cb5da12982c73acd743302b60aa0f2f5698",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "squat": {
+      "path": "/media/exercises/anim-squat.gif?v=8b93ec12bfae",
+      "sha256": "8b93ec12bfae55f3eae2dea05223c7570501f238d280cd34db3228e42906dbda",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    },
+    "triceps-pushdown": {
+      "path": "/media/exercises/anim-triceps-pushdown.gif?v=18bad9926b03",
+      "sha256": "18bad9926b032a23fd5e014c45116d24c0aa77136233e5a731238fb978777e2c",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/"
+    }
+  }
+}

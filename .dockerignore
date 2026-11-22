@@ -1,0 +1,7 @@
+node_modules
+/data
+.env
+.git
+*.jpg
+!web/assets/visuals/*.jpg
+web/dist

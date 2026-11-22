@@ -1,0 +1,417 @@
+{
+  "repository": "everkinetic/data",
+  "revision": "446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6",
+  "author": "Everkinetic / Greg Priday",
+  "license": "CC BY-SA 4.0",
+  "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+  "sourceUrl": "https://github.com/everkinetic/data/tree/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6",
+  "modifications": "SVG转为360×360 PNG，等比例缩放并增加白色留边。转换后的图片继续按CC BY-SA 4.0提供。",
+  "illustrations": [
+    {
+      "exerciseId": "exdb_0336",
+      "upstreamId": "0115",
+      "upstreamName": "dumbbell-lunges",
+      "englishNames": [
+        "dumbbell lunge"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "站立准备",
+          "path": "/assets/exercises/exdb-0336-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0115-relaxation.svg",
+          "sha256": "1217a0152b7d22b79bb4088c271f8f621ebc2a01d8192fc6561f62f621a60ed2"
+        },
+        {
+          "caption": "前跨下蹲",
+          "path": "/assets/exercises/exdb-0336-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0115-tension.svg",
+          "sha256": "5a5d0544443779f52a4d908a72237960fce8c8207e3601680520bca6aa4bb711"
+        }
+      ]
+    },
+    {
+      "exerciseId": "exdb_1460",
+      "upstreamId": "0121",
+      "upstreamName": "walking-lunges",
+      "englishNames": [
+        "walking lunge"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "前脚落地",
+          "path": "/assets/exercises/exdb-1460-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0121-relaxation.svg",
+          "sha256": "c4e4001bcd1abb6c49fd2b75afa29419371ea5ff392a24a06caaf8f32bd22194"
+        },
+        {
+          "caption": "下沉弓步",
+          "path": "/assets/exercises/exdb-1460-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0121-tension.svg",
+          "sha256": "f467e10d17d7001b51a0fc92a739eb7112bf03adaca0e69d92d2b0bfb2272fcc"
+        }
+      ]
+    },
+    {
+      "exerciseId": "bench-press",
+      "upstreamId": "0042",
+      "upstreamName": "bench-press",
+      "englishNames": [
+        "Barbell Bench Press",
+        "barbell bench press"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "下放",
+          "path": "/assets/exercises/bench-press-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0042-relaxation.svg",
+          "sha256": "434a6fe1226e011944877f2d1f41d4d2e577692d5a432b56548543a359b65eb1"
+        },
+        {
+          "caption": "推起",
+          "path": "/assets/exercises/bench-press-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0042-tension.svg",
+          "sha256": "66d1a70a0294e486ab89a85082b6c5c0b1dbafc68c73c5329db3d0414f8cf9f6"
+        }
+      ]
+    },
+    {
+      "exerciseId": "incline-dumbbell",
+      "upstreamId": "0061",
+      "upstreamName": "dumbbell-incline-bench-press",
+      "englishNames": [
+        "Incline Dumbbell Press",
+        "dumbbell incline bench press"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "下放",
+          "path": "/assets/exercises/incline-dumbbell-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0061-relaxation.svg",
+          "sha256": "b5a1b4f74702e1ea940eae761b95b6ad8104dc10a8e9a5cab3f6cbae426974d6"
+        },
+        {
+          "caption": "推起",
+          "path": "/assets/exercises/incline-dumbbell-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0061-tension.svg",
+          "sha256": "c68b78f52505819aa3d12c93e28b8bfeb8767f524602ff749620458c4bd2f07f"
+        }
+      ]
+    },
+    {
+      "exerciseId": "cable-fly",
+      "upstreamId": "0048",
+      "upstreamName": "cable-crossover",
+      "englishNames": [
+        "Cable Fly",
+        "cable cross-over variation"
+      ],
+      "variation": "图示为高位绳索夹胸",
+      "frames": [
+        {
+          "caption": "展开",
+          "path": "/assets/exercises/cable-fly-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0048-relaxation.svg",
+          "sha256": "b4d94c7b7f4a988dee16032488a8ac565a396bea254584a9c0d2cb561f2c8bc3"
+        },
+        {
+          "caption": "合拢",
+          "path": "/assets/exercises/cable-fly-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0048-tension.svg",
+          "sha256": "ccb1f5866f5ac87a0bf321379eba6ba2f91477cab681fd58894d6824b993bc66"
+        }
+      ]
+    },
+    {
+      "exerciseId": "push-up",
+      "upstreamId": "0077",
+      "upstreamName": "push-ups",
+      "englishNames": [
+        "Push-up",
+        "push up"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "下放",
+          "path": "/assets/exercises/push-up-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0077-relaxation.svg",
+          "sha256": "22031021e757dec7bf2bc7e91f1cac4fad3d5aecb2bcdcf9938af78ed7eca5f2"
+        },
+        {
+          "caption": "撑起",
+          "path": "/assets/exercises/push-up-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0077-tension.svg",
+          "sha256": "87cbcafadc1564648e3a805a36fcbce46b414933ffe3ffc2558807d7959e3bb0"
+        }
+      ]
+    },
+    {
+      "exerciseId": "seated-row",
+      "upstreamId": "0025",
+      "upstreamName": "seated-cable-rows",
+      "englishNames": [
+        "Seated Cable Row",
+        "cable seated row"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "伸臂",
+          "path": "/assets/exercises/seated-row-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0025-relaxation.svg",
+          "sha256": "a79e9cc5c2f1d10a501aab2006c2c8f0b3ddf8ffa36d2c342301cdc5900d9d04"
+        },
+        {
+          "caption": "拉回",
+          "path": "/assets/exercises/seated-row-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0025-tension.svg",
+          "sha256": "90d1e076a14877bdb5d74ef8f2e9a137a932910b266d07f3c4889474eb54089e"
+        }
+      ]
+    },
+    {
+      "exerciseId": "pull-up",
+      "upstreamId": "0087",
+      "upstreamName": "pull-ups",
+      "englishNames": [
+        "Pull-up",
+        "pull up"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "悬垂",
+          "path": "/assets/exercises/pull-up-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0087-relaxation.svg",
+          "sha256": "12f52ede371ca5732f921509eeb27eade4e2324646208dd218943f4b073ca5c4"
+        },
+        {
+          "caption": "拉起",
+          "path": "/assets/exercises/pull-up-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0087-tension.svg",
+          "sha256": "63e07d31884ce4bd457590d483cfcef7374be092978a0f6a693f989b7ccb6cfc"
+        }
+      ]
+    },
+    {
+      "exerciseId": "squat",
+      "upstreamId": "0122",
+      "upstreamName": "barbell-squat",
+      "englishNames": [
+        "Barbell Squat",
+        "barbell full squat"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "下蹲",
+          "path": "/assets/exercises/squat-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0122-relaxation.svg",
+          "sha256": "0e664cfcb70299892a09986c2641718709b928956398853eca8b5be41db03df6"
+        },
+        {
+          "caption": "站起",
+          "path": "/assets/exercises/squat-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0122-tension.svg",
+          "sha256": "b01e46610ba7a4772a228eac9b1e6854748d8c1bba0e3502b4639dfb52047ed2"
+        }
+      ]
+    },
+    {
+      "exerciseId": "leg-press",
+      "upstreamId": "0127",
+      "upstreamName": "leg-press",
+      "englishNames": [
+        "Leg Press",
+        "sled 45° leg press"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "屈膝",
+          "path": "/assets/exercises/leg-press-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0127-relaxation.svg",
+          "sha256": "f8d387e6b877b2cc0b10acc7a70de06dba9dd6929f3f8e97cdd7f51cef0c3ce6"
+        },
+        {
+          "caption": "蹬出",
+          "path": "/assets/exercises/leg-press-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0127-tension.svg",
+          "sha256": "d017917c5823ed5a257b70a1338b6e89a09129c2f252159136d352479edc5e0d"
+        }
+      ]
+    },
+    {
+      "exerciseId": "leg-curl",
+      "upstreamId": "0117",
+      "upstreamName": "lying-leg-curl-machine",
+      "englishNames": [
+        "Leg Curl",
+        "lever lying leg curl"
+      ],
+      "variation": "图示为俯卧腿弯举",
+      "frames": [
+        {
+          "caption": "伸腿",
+          "path": "/assets/exercises/leg-curl-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0117-relaxation.svg",
+          "sha256": "ce873590092638d111c854c08d83ae45c671aa145a1c04bbbcfcfa534c9f4542"
+        },
+        {
+          "caption": "屈膝",
+          "path": "/assets/exercises/leg-curl-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0117-tension.svg",
+          "sha256": "8f22d3e105eb1de7356d13656b2339f2bff31bbac5537493f29f316eeb865446"
+        }
+      ]
+    },
+    {
+      "exerciseId": "lateral-raise",
+      "upstreamId": "0018",
+      "upstreamName": "lateral-dumbbell-raises",
+      "englishNames": [
+        "Dumbbell Lateral Raise",
+        "dumbbell lateral raise"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "手臂下放",
+          "path": "/assets/exercises/lateral-raise-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0018-relaxation.svg",
+          "sha256": "0d6eb5dbd6a6092759dae8f4d599829915ee29576c20ddc39174c6781fb40924"
+        },
+        {
+          "caption": "侧向抬起",
+          "path": "/assets/exercises/lateral-raise-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0018-tension.svg",
+          "sha256": "9ddeae7f08b56911612bc5ed8baf74cb8aace41280ea10e5c7b6f76382cdd0bd"
+        }
+      ]
+    },
+    {
+      "exerciseId": "barbell-curl",
+      "upstreamId": "0211",
+      "upstreamName": "biceps-curls-with-barbell",
+      "englishNames": [
+        "Barbell Curl",
+        "barbell curl"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "手臂下放",
+          "path": "/assets/exercises/barbell-curl-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0211-relaxation.svg",
+          "sha256": "9fc436ce3532f0f48656e0550f9367a571f1acb76a1d1461f9ca98e5722c26e9"
+        },
+        {
+          "caption": "屈肘上举",
+          "path": "/assets/exercises/barbell-curl-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0211-tension.svg",
+          "sha256": "cdd26d8e6df0953af95105b2b9df118f63fb45e3c73de9dc2e8c8318b3f1f777"
+        }
+      ]
+    },
+    {
+      "exerciseId": "hammer-curl",
+      "upstreamId": "0227",
+      "upstreamName": "biceps-hammer-curl-with-dumbbell",
+      "englishNames": [
+        "Hammer Curl",
+        "dumbbell hammer curl"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "手臂下放",
+          "path": "/assets/exercises/hammer-curl-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0227-relaxation.svg",
+          "sha256": "58bc32ebe70f6edb7b99471d27fe8e42c68951eca4b022fbbc7e6b401fc04128"
+        },
+        {
+          "caption": "屈肘上举",
+          "path": "/assets/exercises/hammer-curl-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0227-tension.svg",
+          "sha256": "b4f22bcfce76cae0c7d66d2a6ac8b9e28ca338fe675405df42fe20ec0923e10d"
+        }
+      ]
+    },
+    {
+      "exerciseId": "triceps-pushdown",
+      "upstreamId": "0206",
+      "upstreamName": "triceps-pushdown-with-rope-and-cable",
+      "englishNames": [
+        "Triceps Pushdown",
+        "cable pushdown (with rope attachment)"
+      ],
+      "variation": "图示使用绳索绳把",
+      "frames": [
+        {
+          "caption": "屈肘",
+          "path": "/assets/exercises/triceps-pushdown-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0206-relaxation.svg",
+          "sha256": "c90b00ec5b76d9b1fddce92e202c4fd5ae4fc4df6075b183eed63b92b3dfa715"
+        },
+        {
+          "caption": "向下伸肘",
+          "path": "/assets/exercises/triceps-pushdown-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0206-tension.svg",
+          "sha256": "e4f0762cfccfb48f5217e051e163995f268ed13abc37025b8d0979aa59fac7e5"
+        }
+      ]
+    },
+    {
+      "exerciseId": "overhead-extension",
+      "upstreamId": "0198",
+      "upstreamName": "standing-triceps-extension-2",
+      "englishNames": [
+        "Dumbbell Overhead Extension",
+        "dumbbell standing triceps extension"
+      ],
+      "variation": "",
+      "frames": [
+        {
+          "caption": "屈肘下放",
+          "path": "/assets/exercises/overhead-extension-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0198-relaxation.svg",
+          "sha256": "f9dc6896ce605cf0476d9c25cb1c0ce0e4ee186c44c31fbaad434f63f2f42179"
+        },
+        {
+          "caption": "伸肘上举",
+          "path": "/assets/exercises/overhead-extension-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0198-tension.svg",
+          "sha256": "a7fb61a9ba241d924e730174e15017e2abc36b1d10054ec03843b3a8d58598ea"
+        }
+      ]
+    },
+    {
+      "exerciseId": "crunch",
+      "upstreamId": "0291",
+      "upstreamName": "crunches",
+      "englishNames": [
+        "Crunch",
+        "crunch floor"
+      ],
+      "variation": "图示中双脚支撑在凳上",
+      "frames": [
+        {
+          "caption": "平躺",
+          "path": "/assets/exercises/crunch-1.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0291-relaxation.svg",
+          "sha256": "27859030b8011095660f7aa2efc27251c19c7cad8fa649e1fe58035fa970b2de"
+        },
+        {
+          "caption": "卷起",
+          "path": "/assets/exercises/crunch-2.png",
+          "sourceUrl": "https://raw.githubusercontent.com/everkinetic/data/446bb9a3d0c3beb6b84f7c9d77dfc8af707a2ab6/dist/svg/0291-tension.svg",
+          "sha256": "226061a864d0b602587157dcd752a1060400d8c752d516f0be905152825bf1aa"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,69 @@
+{
+  "generator": "Built-in image_gen",
+  "assets": [
+    {
+      "name": "athlete-halftone",
+      "file": "exec-bf89c623-5d56-422f-8528-9722d8fb8963.png",
+      "prompt": "Use case: stylized-concept. Asset type: production background artwork for a real Chinese gym logging mobile app. Create one square raster image, no UI or device mockup. Pure pitch-black background #000000. An anatomically realistic adult male athlete's muscular right shoulder, upper chest and upper arm, cropped so the face and head are outside the frame. The torso emerges from darkness on the RIGHT half and lower-right of the image. Leave the LEFT 55 percent as uninterrupted black negative space for interface text. Premium high-contrast monochrome white-on-black stippled halftone print, fine round white dots defining muscle and skin texture, controlled highlight edges, a contemporary industrial sports editorial aesthetic. A diagonal shoulder contour creates a strong silhouette. At the left boundary, the dots gradually fade naturally to pure black. Crisp, photographic anatomy with tactile printed texture. White, gray and black only. No text, letters, numbers, logos, UI, frames, watermark or additional objects.",
+      "output": "web/assets/visuals/athlete-halftone.jpg",
+      "sha256": "cb3b98aaec34eddbe903f0288f2cd180ef16474156f998f18c83b20c1bb79331",
+      "bytes": 83195
+    },
+    {
+      "name": "plate-halftone",
+      "file": "exec-1e5c5084-9fad-4f9c-b4f7-a310e5e6100b.png",
+      "prompt": "Use case: stylized-concept. Asset type: a production background illustration for a real strength-training app. Generate a square raster artwork without any interface. Pure black background #000000. Extreme close-up of one heavy cast-iron barbell weight plate on a short section of metal bar, viewed diagonally from the front, the circular rim and ridged iron texture occupying the LOWER RIGHT two-thirds. The TOP LEFT half is black negative space suitable for a countdown or page heading. Monochrome white-on-black halftone editorial print, visibly distinct round white dots, coarse stippling, high contrast, precise industrial geometry and tactile iron grain. Highlight the circular plate edge and a diagonal bar. The artwork fades into pure black at top and left so it can blend into a black phone screen. No humans, text, numbers, labels, logos, frame, UI or watermark.",
+      "output": "web/assets/visuals/plate-halftone.jpg",
+      "sha256": "185af275a5dface84f20bb2311238e181794eff59910af0097f80c3c939eeca5",
+      "bytes": 125268
+    },
+    {
+      "name": "nutrition-halftone",
+      "file": "exec-ecf2cc6f-bfc4-477c-8eea-5603e2febe76.png",
+      "prompt": "Use case: stylized-concept. Asset type: raster editorial artwork behind the right side of the daily nutrition summary in the Chinese fitness log 铁记. Generate one landscape crop, 3:2 or wider. An overhead editorial photograph of a dark matte stoneware plate with a few neatly arranged slices of grilled chicken, a spoonful of rice and two broccoli florets. Include a fine stainless fork edge if useful to composition. Plate center at 74% of canvas width, plate extends off the right and bottom edges. Leave the entire left third and upper-left corner truly black, fade the plate naturally into pitch black at its left edge. Controlled oblique light on the ceramic arc and ingredients. Convert the image to refined white-on-black, tightly screened circular halftone dots reminiscent of a contemporary monochrome hardware editorial in the Nothing design aesthetic. Clear large forms and distinct white dots that still read at 160px wide. Grayscale only. No words, numerals, division lines, UI, logo, label, border, extra objects, gradients in empty backdrop or watermark.",
+      "output": "web/assets/visuals/nutrition-halftone.jpg",
+      "sha256": "c0f8fb53e906d5edf9156b4f4e56482ebc93998d8c425efc4800d255ec855fb5",
+      "bytes": 7756
+    },
+    {
+      "name": "equipment-halftone",
+      "file": "exec-c1b7ae29-fb36-4f30-88bc-582fdc4bf591.png",
+      "prompt": "Use case: stylized-concept. Asset type: small editorial masthead for the exercise catalogue of a Chinese strength training app 铁记. Generate one landscape image, 3:2 or wider. A single compact cast iron hex dumbbell viewed close up as precise studio product photography. The visible hex weight face crops against the right edge and the knurled handle runs diagonally toward lower center. Silhouette should remain recognizable when cropped to a shallow 120 by 66-pixel inset. Right-weighted composition, left third and all corner areas gently recede into uniformly pure black. Make the contours and the knurling read in a monochrome white-on-black photographic halftone print with visible disciplined round dots. Matte iron, crisp controlled rim light, modern Nothing-inspired industrial design, realistic proportions. Black, gray and white only. No athlete, secondary equipment, chalk clouds, gradients in empty background, words, logos, stamped weight numerals, screen, frame, UI or watermark.",
+      "output": "web/assets/visuals/equipment-halftone.jpg",
+      "sha256": "11b035f284983cf8e5b2f760b56c20665a0abffb28a7525efd08d57fd6c161a0",
+      "bytes": 3228
+    },
+    {
+      "name": "nutrition-halftone-light",
+      "file": "exec-3faf7548-091a-4a4e-be10-77be760de2b8.png",
+      "prompt": "Use case: stylized-concept. Asset type: production illustration for the white daily-nutrition panel of a Chinese strength-training app. Horizontal 3:2 composition. On a pure matte white #FFFFFF background, photograph an overhead plate with clearly recognizable slices of grilled chicken, rice and broccoli, with a thin dark fork at the far right. The plate center is at 76% of frame width, partly out of frame at the lower right. Left 42% empty pure white, with subject edges on left fading into the white. Natural positive black-and-white studio lighting: light ceramic with clearly defined charcoal outline, mid-gray food bodies and deep ink details. Refined black dot-screen printing on white with clean distinct shapes that survive at 160px wide. Dark ink and genuine white highlights, sharp readable silhouettes, contemporary monochrome editorial industrial design. Avoid photo-negative look, murky gray background, weak contrast, glow, text, logos, frames and UI.",
+      "output": "web/assets/visuals/nutrition-halftone-light.jpg",
+      "sha256": "180ec84b0cbef4b0c5c309023ebaff8b25873154b6d7ddf13a57cd852e37e0e2",
+      "bytes": 14599
+    },
+    {
+      "name": "equipment-halftone-light",
+      "file": "exec-d2d514ee-38fc-4844-9e5b-40338e6a7f16.png",
+      "prompt": "Use case: stylized-concept. Asset type: positive monochrome artwork for a small exercise library entry on a white app. Horizontal 3:2 image. A single charcoal cast iron hex dumbbell in close-up: knurled handle runs diagonally from lower-middle toward the upper-right head and its weight face is cropped against the right edge. Left 40% pure white #FFFFFF. High-key positive front-lit studio photograph with black and graphite shadows, white specular highlights and a confidently ink-black silhouette on the white. Render as a refined black ink halftone print with round dots. At extremely small 130px width the reader should still instantly see a dumbbell. Hard geometry, steel microtexture. No gray backdrop, overexposure, photo negative, person, text, numbers, logos, watermark or UI.",
+      "output": "web/assets/visuals/equipment-halftone-light.jpg",
+      "sha256": "92f25f49366f3e7865c65807a94642fe30c00b67453773c8a45bc1e3b9696dea",
+      "bytes": 5309
+    },
+    {
+      "name": "athlete-halftone-light",
+      "file": "exec-f2d1a454-55bc-4a4e-9cfd-1d7f582aad89.png",
+      "prompt": "Use case: stylized-concept. Asset type: wide home-cover artwork for the white theme of a Chinese strength-training log. Horizontal 3:2 composition, real studio sports editorial photography converted to black ink halftone on pure white #FFFFFF. Close-up of an adult athlete in a charcoal sleeveless performance top, shoulder, upper arm and chest in a naturally athletic posture. Head entirely outside the frame. Let the strong shoulder curve and fabric sit on the right ~50% of the shot with the torso cropped by the right and bottom edges, left half clean uninterrupted white for the UI title. Bright front-softbox positive lighting with faithfully lit skin and deep ink shadows in black fabric. Sharp contours, boldly printed round grain, anatomical realism, expressive yet restrained. Maintain enough dark ink for instant subject recognition on a small phone crop. No negative look, gray or off-white ambient background, logos, words, numerals, border, or UI.",
+      "output": "web/assets/visuals/athlete-halftone-light.jpg",
+      "sha256": "b1c32c13d9cdf9cf0a669c10158313077adff294e8931ee405f5143c00804ebf",
+      "bytes": 31333
+    },
+    {
+      "name": "plate-halftone-light",
+      "file": "exec-b971f25d-7813-4512-b613-f59063a06d54.png",
+      "prompt": "Use case: stylized-concept. Asset type: shared cover photo for plan, plan preview and rest timer on the white theme of a Chinese gym app. One landscape 3:2 raster image. Real studio macro of a heavy charcoal cast iron barbell weight plate with a central machined bar, angled three-quarter view, cropped close against lower-right and right edges. Circular rim and rough machined ridges should be clear in a shallow crop. Keep entire left 46% and upper-left corner pure white #FFFFFF blank for interface content. Black, mid-gray, white only, positive tonal rendering in bright product studio light with deep graphite texture, white highlights and beautiful well-defined screened circular ink dots. Clean, precise brutalist hardware editorial feel. No negative effect or gray background, no extra gear, no human, no engravings, letters, numbers, logos, UI or watermark.",
+      "output": "web/assets/visuals/plate-halftone-light.jpg",
+      "sha256": "23b3d8a2c4140cb484a09e622b450da35a145fe1ba61275d938762a2a2635b2c",
+      "bytes": 26076
+    }
+  ]
+}

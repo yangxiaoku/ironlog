@@ -1,0 +1,15 @@
+{
+  "repository": "hasaneyldrm/exercises-dataset",
+  "revision": "7455efae41b330c265e7cd4b78dfa848e7ce5ebd",
+  "fetchedAt": "2026-11-18T08:50:51.057Z",
+  "upstreamCount": 1324,
+  "importedCount": 1324,
+  "dataUrl": "https://raw.githubusercontent.com/hasaneyldrm/exercises-dataset/7455efae41b330c265e7cd4b78dfa848e7ce5ebd/data/exercises.json",
+  "transformations": [
+    "映射器械与肌群分类",
+    "保留上游中文步骤并以英文回退",
+    "使用独立ID前缀",
+    "有氧动作按时长记录",
+    "仅导入文本"
+  ]
+}

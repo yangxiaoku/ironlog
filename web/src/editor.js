@@ -1,0 +1,3163 @@
+import { $, $$, esc, fmt, today, workoutSeconds, field, input, inputGroup, options, icon, empty, meals, feelings, muscles, equipment, prioritizeExact, estimated1RM, plateBreakdown } from "./ui.js";
+import { createRestAudio, createRestTimer, elapsedAt, formatClock, normalizeRestTimer, pauseAt, recoverClock, restProgress, resolveSetRestSeconds, shiftRestTimer, keepWorkoutScreenAwake, haptic } from "./workout-clock.js";
+import { matrix } from "./display.js";
+
+function round2(v) { return Math.round(v * 100) / 100; }
+
+const numeric = 'type="number" inputmode="decimal" step="0.1" min="0" max="100000" required';
+const uuid = () => crypto.randomUUID();
+const set = () => ({ id: uuid(), type: "normal", weight: 0, reps: 8, seconds: 0, completed: false, rir: null });
+const soundPreference = "ironlog-web-rest-sound";
+const screenPreference = "ironlog-web-workout-screen";
+const rirPreference = "ironlog-web-show-rir";
+const dialPreference = "ironlog-web-auto-rest-dial";
+const notifyPreference = "ironlog-web-rest-notify";
+const barPreference = "ironlog-web-bar-weight";
+const platesPreference = "ironlog-web-plates";
+const ALL_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25, 0.5];
+const BAR_PRESETS = [[20, "20kg杆"], [15, "15kg杆"], [10, "10kg曲杆"], [25, "25kg六角"], [0, "0kg纯挂片"]];
+
+function forgetDraft(key) {
+  if (!key) return;
+  localStorage.removeItem(key);
+  sessionStorage.removeItem(key);
+}
+
+function renderDialTicks(fraction, { count = 48, cx = 130, r1 = 104, r2 = 120, r1Major = 99 } = {}) {
+  const clamped = Math.max(0, Math.min(1, fraction));
+  const activeCount = clamped <= 0 ? 0 : Math.max(1, Math.round(clamped * count));
+  const lines = [];
+  for (let i = 0; i < count; i++) {
+    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
+    const major = i % (count / 12) === 0;
+    const inner = major ? r1Major : r1;
+    const x1 = (cx + Math.cos(angle) * inner).toFixed(1);
+    const y1 = (cx + Math.sin(angle) * inner).toFixed(1);
+    const x2 = (cx + Math.cos(angle) * r2).toFixed(1);
+    const y2 = (cx + Math.sin(angle) * r2).toFixed(1);
+    const lit = i < activeCount;
+    lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="dial-tick${major ? " is-major" : ""}${lit ? " is-lit" : ""}"/>`);
+  }
+  return lines.join("");
+}
+
+function syncDialTicks(svg, fraction) {
+  const ticks = svg?.children;
+  if (!ticks?.length) return;
+  const clamped = Math.max(0, Math.min(1, fraction));
+  const activeCount = clamped <= 0 ? 0 : Math.max(1, Math.round(clamped * ticks.length));
+  for (let i = 0; i < ticks.length; i++) ticks[i].classList.toggle("is-lit", i < activeCount);
+}
+
+export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment }) {
+  let searching = 0, closeWorkout;
+  const audio = createRestAudio(() => localStorage.getItem(soundPreference) !== "off");
+  dialog.addEventListener("close", () => {
+    if (dialog.open) return;
+    const close = closeWorkout;
+    closeWorkout = undefined;
+    close?.();
+    searching++;
+  });
+
+  function shiftDateStr(base, delta) {
+    try {
+      const d = new Date(base + "T00:00:00Z");
+      d.setUTCDate(d.getUTCDate() + delta);
+      return d.toISOString().slice(0, 10);
+    } catch {
+      return base;
+    }
+  }
+
+  function commonFields(kind, data, record) {
+    return field("日期", input("date", data.date ?? appDate(), `type="date" min="1902-01-01" max="${today()}" required ${kind === "weight" && record ? "readonly" : ""}`));
+  }
+  function edit(kind, record, settings = {}, seed) {
+    const prevClose = closeWorkout;
+    closeWorkout = undefined;
+    prevClose?.();
+    const data = record?.data ?? seed ?? {};
+    if (kind === "workout") return editWorkout(record, data, settings);
+    const weight = kind === "weight";
+    const title = (record ? "编辑" : "添加") + (weight ? "体重" : "饮食");
+    const activeWeightDate = weight ? (data.date ?? appDate()) : "";
+
+    if (weight) {
+      const curDate = activeWeightDate;
+      const fallbackWeight = !record && (data.weight == null || data.weight === "") ? (getLatestWeight?.() ?? null) : null;
+      const initialWeight = data.weight ?? (fallbackWeight ?? "");
+      open(title, `<form id="editor-form" class="dialog-form modern-weight-form">
+        <div class="date-quick-strip weight-date-strip">
+          <div class="date-pill-group">
+            <button type="button" class="date-pill" data-set-date="${today()}" aria-pressed="${curDate === today()}">今天</button>
+            <button type="button" class="date-pill" data-set-date="${shiftDateStr(today(), -1)}" aria-pressed="${curDate === shiftDateStr(today(), -1)}">昨天</button>
+            <button type="button" class="date-pill" data-set-date="${shiftDateStr(today(), -2)}" aria-pressed="${curDate === shiftDateStr(today(), -2)}">前天</button>
+          </div>
+          <input class="date-input-inline" type="date" name="date" value="${esc(curDate)}" min="1902-01-01" max="${today()}" required>
+        </div>
+
+        <div class="scale-hero-card">
+          <div class="scale-head">
+            <span class="scale-label">${icon("weight", 16)} 晨起空腹体重</span>
+            <span class="scale-mode-pill">KG</span>
+          </div>
+          <div class="scale-display">
+            <input name="weight" type="number" inputmode="decimal" min="1" max="500" step="0.01" required autofocus value="${initialWeight}" placeholder="00.00">
+            <span class="scale-unit">kg</span>
+          </div>
+          ${fallbackWeight ? `<small class="scale-prev-hint">已记忆上次记录：${fmt(fallbackWeight, 2)} kg · 可直接点下方微调</small>` : ""}
+          <div class="scale-stepper-row">
+            <button type="button" class="scale-stepper-btn" data-scale-bump="-1.0">-1.0</button>
+            <button type="button" class="scale-stepper-btn" data-scale-bump="-0.5">-0.5</button>
+            <button type="button" class="scale-stepper-btn" data-scale-bump="-0.1">-0.1</button>
+            <button type="button" class="scale-stepper-btn" data-scale-bump="+0.1">+0.1</button>
+            <button type="button" class="scale-stepper-btn" data-scale-bump="+0.5">+0.5</button>
+            <button type="button" class="scale-stepper-btn" data-scale-bump="+1.0">+1.0</button>
+          </div>
+        </div>
+
+        <div class="bodyfat-card">
+          <div class="bodyfat-head">
+            <span>体脂率（可选）</span>
+            <span class="bodyfat-unit">%</span>
+          </div>
+          <div class="bodyfat-body">
+            <input name="bodyFat" type="number" inputmode="decimal" min="1" max="99" step="0.1" value="${data.bodyFat ?? ""}" placeholder="15.0">
+            <div class="bodyfat-steppers">
+              <button type="button" class="micro-chip" data-bf-bump="-0.5">-0.5%</button>
+              <button type="button" class="micro-chip" data-bf-bump="+0.5">+0.5%</button>
+            </div>
+          </div>
+        </div>
+
+        <p class="form-error" role="alert" hidden></p>
+        <footer class="dialog-foot${record ? " has-remove" : ""}">
+          ${record ? '<button type="button" class="danger" id="remove-record">删除记录</button>' : ""}
+          <button class="primary-button" type="submit">保存体重记录</button>
+        </footer>
+      </form>`);
+    } else {
+      const curMeal = data.meal ?? "lunch";
+      const curDate = data.date ?? appDate();
+      const builtinPresets = [
+        { short: "蛋白粉", name: "乳清蛋白粉 (1勺)", protein: 24, carbs: 3, fat: 1.5, calories: 120, hint: "24P·120k" },
+        { short: "鸡蛋2颗", name: "水煮蛋 (2颗)", protein: 12, carbs: 1.2, fat: 10, calories: 140, hint: "12P·140k" },
+        { short: "鸡胸150g", name: "香煎鸡胸肉 (150g)", protein: 34, carbs: 0, fat: 3.5, calories: 165, hint: "34P·165k" },
+        { short: "白米饭 200g", name: "蒸白米饭 (200g)", protein: 5, carbs: 52, fat: 0.6, calories: 230, hint: "52C·230k" },
+        { short: "燕麦50g", name: "纯燕麦片 (50g)", protein: 6.5, carbs: 33, fat: 3.5, calories: 190, hint: "33C·190k" },
+        { short: "香蕉1根", name: "香蕉 (中等1根)", protein: 1.3, carbs: 27, fat: 0.4, calories: 105, hint: "27C·105k" },
+      ];
+      const builtinNames = new Set(builtinPresets.map((p) => p.name));
+      const recentFoods = (getRecentFoods?.() ?? []).filter((f) => f.name && !builtinNames.has(f.name)).slice(0, 6);
+      const presetChip = (item, isRecent = false) => `<button type="button" class="preset-chip${isRecent ? " is-recent" : ""}" data-diet-preset="${esc(JSON.stringify([item.name, item.protein, item.carbs, item.fat, item.calories]))}">${isRecent ? '<span class="preset-tag">常吃</span>' : ""}${esc(item.short ?? item.name)} <small>${esc(item.hint ?? `${Math.round(item.calories)}k`)}</small></button>`;
+      open(title, `<form id="editor-form" class="dialog-form modern-diet-form">
+        <div class="diet-top-bar">
+          <div class="meal-segmented-control" role="group" aria-label="选择餐次">
+            ${Object.entries(meals).map(([val, label]) => `
+              <button type="button" class="meal-pill" data-meal-choice="${val}" aria-pressed="${curMeal === val}">${label}</button>
+            `).join("")}
+            <input type="hidden" name="meal" value="${esc(curMeal)}">
+          </div>
+          <div class="date-quick-strip">
+            <button type="button" class="date-pill" data-set-date="${today()}" aria-pressed="${curDate === today()}">今天</button>
+            <button type="button" class="date-pill" data-set-date="${shiftDateStr(today(), -1)}" aria-pressed="${curDate === shiftDateStr(today(), -1)}">昨天</button>
+            <input class="date-input-inline" type="date" name="date" value="${esc(curDate)}" min="1902-01-01" max="${today()}" required>
+          </div>
+        </div>
+
+        <label class="field food-name-field">
+          <span>食物名称</span>
+          <div class="food-input-group">
+            <span class="food-icon" aria-hidden="true">${icon("diet", 17)}</span>
+            <input name="name" maxlength="120" required autofocus value="${esc(data.name ?? "")}" placeholder="例如：香煎鸡胸肉糙米饭 / 蛋白粉燕麦">
+          </div>
+        </label>
+
+        <div class="diet-quick-presets" role="group" aria-label="常见健身餐快捷填入">
+          <span class="preset-label">${recentFoods.length ? "近期常吃与预设：" : "快捷预设："}</span>
+          <div class="preset-chips">
+            ${recentFoods.map((f) => presetChip(f, true)).join("")}${builtinPresets.map((p) => presetChip(p, false)).join("")}
+          </div>
+        </div>
+
+        <div class="macro-deck" aria-label="四大营养宏量">
+          <div class="macro-card macro-calories">
+            <div class="macro-card-head">
+              <span class="macro-badge badge-kcal"><i class="macro-dot"></i> 热量</span>
+              <span class="macro-unit">kcal</span>
+            </div>
+            <div class="macro-card-value">
+              <input type="number" inputmode="decimal" name="calories" min="0" max="100000" step="1" value="${data.calories ?? ""}" placeholder="0" required>
+            </div>
+            <div class="macro-steppers">
+              <button type="button" class="micro-chip" data-macro-bump="calories" data-val="50">+50</button>
+              <button type="button" class="micro-chip" data-macro-bump="calories" data-val="100">+100</button>
+              <button type="button" class="micro-chip" data-macro-bump="calories" data-val="200">+200</button>
+            </div>
+          </div>
+
+          <div class="macro-card macro-protein">
+            <div class="macro-card-head">
+              <span class="macro-badge badge-protein"><i class="macro-dot"></i> 蛋白质</span>
+              <span class="macro-unit">g</span>
+            </div>
+            <div class="macro-card-value">
+              <input type="number" inputmode="decimal" name="protein" min="0" max="1000" step="0.1" value="${data.protein ?? (record ? 0 : "")}" placeholder="0">
+            </div>
+            <div class="macro-steppers">
+              <button type="button" class="micro-chip" data-macro-bump="protein" data-val="10">+10</button>
+              <button type="button" class="micro-chip" data-macro-bump="protein" data-val="20">+20</button>
+              <button type="button" class="micro-chip" data-macro-bump="protein" data-val="30">+30</button>
+            </div>
+          </div>
+
+          <div class="macro-card macro-carbs">
+            <div class="macro-card-head">
+              <span class="macro-badge badge-carbs"><i class="macro-dot"></i> 碳水化合物</span>
+              <span class="macro-unit">g</span>
+            </div>
+            <div class="macro-card-value">
+              <input type="number" inputmode="decimal" name="carbs" min="0" max="1000" step="0.1" value="${data.carbs ?? (record ? 0 : "")}" placeholder="0">
+            </div>
+            <div class="macro-steppers">
+              <button type="button" class="micro-chip" data-macro-bump="carbs" data-val="10">+10</button>
+              <button type="button" class="micro-chip" data-macro-bump="carbs" data-val="25">+25</button>
+              <button type="button" class="micro-chip" data-macro-bump="carbs" data-val="50">+50</button>
+            </div>
+          </div>
+
+          <div class="macro-card macro-fat">
+            <div class="macro-card-head">
+              <span class="macro-badge badge-fat"><i class="macro-dot"></i> 优质脂肪</span>
+              <span class="macro-unit">g</span>
+            </div>
+            <div class="macro-card-value">
+              <input type="number" inputmode="decimal" name="fat" min="0" max="1000" step="0.1" value="${data.fat ?? (record ? 0 : "")}" placeholder="0">
+            </div>
+            <div class="macro-steppers">
+              <button type="button" class="micro-chip" data-macro-bump="fat" data-val="5">+5</button>
+              <button type="button" class="micro-chip" data-macro-bump="fat" data-val="10">+10</button>
+              <button type="button" class="micro-chip" data-macro-bump="fat" data-val="15">+15</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="macro-calc-bar">
+          <div class="macro-calc-hint">
+            <span>宏量折算：<strong data-macro-sum>0</strong> kcal <small>(4P + 4C + 9F)</small></span>
+          </div>
+          <button type="button" class="quiet macro-calc-apply" data-apply-macro-calc>按折算填入热量</button>
+        </div>
+
+        <p class="form-error" role="alert" hidden></p>
+        <footer class="dialog-foot${record ? " has-remove" : ""}">
+          ${record ? '<button type="button" class="danger" id="remove-record">删除记录</button>' : '<button type="button" class="secondary-button" data-save-continue>保存并继续</button>'}
+          <button class="primary-button" type="submit">保存饮食记录</button>
+        </footer>
+      </form>`);
+    }
+
+    const form = $("#editor-form");
+    let keepOpenAfterSave = false;
+    let dateSwitchSeq = 0;
+
+    function syncDatePills() {
+      const cur = $('[name="date"]', form)?.value ?? "";
+      $$(".date-pill", form).forEach((pill) => {
+        pill.setAttribute("aria-pressed", String(pill.dataset.setDate === cur));
+      });
+    }
+    syncDatePills();
+
+    async function switchWeightDate(nextDate) {
+      if (!weight || !nextDate || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || nextDate === activeWeightDate) return;
+      const seq = ++dateSwitchSeq;
+      const dateControls = [...$$(".date-pill", form), $('[name="date"]', form)].filter(Boolean);
+      dateControls.forEach((el) => { el.disabled = true; });
+      try {
+        const existing = await api("/api/web/records/weight/weight_" + encodeURIComponent(nextDate) + "?includeDeleted=1").catch(() => null);
+        if (!form.isConnected || seq !== dateSwitchSeq) return;
+        const alive = existing && !existing.deleted ? existing : undefined;
+        edit("weight", alive, settings, alive ? undefined : { date: nextDate });
+      } finally {
+        if (form.isConnected) dateControls.forEach((el) => { el.disabled = false; });
+      }
+    }
+
+    function updateMacroSum() {
+      if (weight) return;
+      const p = Number($('[name="protein"]', form)?.value) || 0;
+      const c = Number($('[name="carbs"]', form)?.value) || 0;
+      const f = Number($('[name="fat"]', form)?.value) || 0;
+      const sumEl = $("[data-macro-sum]", form);
+      if (sumEl) sumEl.textContent = String(Math.round(p * 4 + c * 4 + f * 9));
+    }
+    updateMacroSum();
+    form.addEventListener("input", updateMacroSum);
+    form.addEventListener("change", ({ target }) => {
+      if (target.name !== "date") return;
+      if (weight) void switchWeightDate(target.value);
+      else syncDatePills();
+    });
+
+    form.addEventListener("click", ({ target }) => {
+      const mealChoice = target.closest("[data-meal-choice]");
+      if (mealChoice) {
+        const mealVal = mealChoice.dataset.mealChoice;
+        const hidden = $('[name="meal"]', form);
+        if (hidden) hidden.value = mealVal;
+        $$(".meal-pill", form).forEach((p) => p.setAttribute("aria-pressed", String(p === mealChoice)));
+        haptic("light");
+        return;
+      }
+      const presetBtn = target.closest("[data-diet-preset]");
+      if (presetBtn) {
+        const raw = presetBtn.dataset.dietPreset;
+        const [pName, pP, pC, pF, pCal] = raw.startsWith("[") ? JSON.parse(raw) : raw.split(",");
+        const nameInput = $('[name="name"]', form);
+        const pInput = $('[name="protein"]', form);
+        const cInput = $('[name="carbs"]', form);
+        const fInput = $('[name="fat"]', form);
+        const calInput = $('[name="calories"]', form);
+        if (nameInput) nameInput.value = pName;
+        if (pInput) pInput.value = pP;
+        if (cInput) cInput.value = pC;
+        if (fInput) fInput.value = pF;
+        if (calInput) calInput.value = pCal;
+        updateMacroSum();
+        haptic("light");
+        return;
+      }
+      const dateBtn = target.closest("[data-set-date]");
+      if (dateBtn) {
+        if (weight) {
+          haptic("light");
+          void switchWeightDate(dateBtn.dataset.setDate);
+          return;
+        }
+        const dateInput = $('[name="date"]', form);
+        if (dateInput) {
+          dateInput.value = dateBtn.dataset.setDate;
+          dateInput.dispatchEvent(new Event("change", { bubbles: true }));
+          syncDatePills();
+        }
+        haptic("light");
+        return;
+      }
+      if (target.closest("[data-save-continue]") && !record && !weight) {
+        if (!form.reportValidity()) { keepOpenAfterSave = false; return; }
+        keepOpenAfterSave = true;
+        form.requestSubmit();
+        return;
+      }
+      const macroBump = target.closest("[data-macro-bump]");
+      if (macroBump) {
+        const key = macroBump.dataset.macroBump;
+        const delta = Number(macroBump.dataset.val);
+        const inputEl = $(`[name="${key}"]`, form);
+        if (inputEl) {
+          const cur = Number(inputEl.value) || 0;
+          inputEl.value = String(Math.max(0, Math.round((cur + delta) * 10) / 10));
+          updateMacroSum();
+        }
+        haptic("light");
+        return;
+      }
+      if (target.closest("[data-apply-macro-calc]")) {
+        const sumEl = $("[data-macro-sum]", form);
+        const calInput = $('[name="calories"]', form);
+        if (sumEl && calInput) {
+          calInput.value = sumEl.textContent;
+        }
+        haptic("light");
+        return;
+      }
+      const scaleBump = target.closest("[data-scale-bump]");
+      if (scaleBump) {
+        const delta = Number(scaleBump.dataset.scaleBump);
+        const wtInput = $('[name="weight"]', form);
+        if (wtInput) {
+          const cur = Number(wtInput.value) || 70;
+          wtInput.value = String(Math.max(1, Math.round((cur + delta) * 100) / 100));
+        }
+        haptic("light");
+        return;
+      }
+      const bfBump = target.closest("[data-bf-bump]");
+      if (bfBump) {
+        const delta = Number(bfBump.dataset.bfBump);
+        const bfInput = $('[name="bodyFat"]', form);
+        if (bfInput) {
+          const cur = Number(bfInput.value) || 15;
+          bfInput.value = String(Math.max(1, Math.min(99, Math.round((cur + delta) * 10) / 10)));
+        }
+        haptic("light");
+        return;
+      }
+    });
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const keepOpen = keepOpenAfterSave && !record && !weight;
+      keepOpenAfterSave = false;
+      const values = new FormData(form);
+      const date = values.get("date");
+      const updated = weight ? {
+        date,
+        weight: Number(values.get("weight")),
+        bodyFat: values.get("bodyFat") === "" ? null : Number(values.get("bodyFat")),
+      } : {
+        ...data,
+        date,
+        name: values.get("name").trim(),
+        meal: values.get("meal"),
+        calories: Number(values.get("calories")),
+        protein: Number(values.get("protein")) || 0,
+        carbs: Number(values.get("carbs")) || 0,
+        fat: Number(values.get("fat")) || 0,
+      };
+      let baseVersion = record?.version ?? 0;
+      if (!record && weight) {
+        const prevWeight = await api("/api/web/records/weight/weight_" + encodeURIComponent(date) + "?includeDeleted=1").catch(() => null);
+        if (!form.isConnected) return;
+        if (prevWeight?.version > 0) baseVersion = prevWeight.version;
+      }
+      commit(form, { kind, id: record?.id ?? (weight ? `weight_${date}` : uuid()), baseVersion, data: updated }, kind, date, undefined, false, keepOpen);
+    });
+    $("#remove-record")?.addEventListener("click", () => deleteRecord(form, record));
+  }
+
+  async function commit(form, mutation, kind, date, draftKey, recap = false, keepOpen = false) {
+    const buttons = $$("button", form).filter((button) => !button.disabled);
+    buttons.forEach((button) => { button.disabled = true; });
+    const error = $("[data-form-error]", form) ?? $(".form-error", form);
+    error.hidden = true;
+    try {
+      const { record } = await api("/api/records", { method: "POST", body: { opId: uuid(), deleted: false, ...mutation } });
+      if (keepOpen && kind === "diet" && !mutation.deleted) {
+        ["name", "calories", "protein", "carbs", "fat"].forEach((key) => {
+          const el = $(`[name="${key}"]`, form);
+          if (el) el.value = "";
+        });
+        const sumEl = $("[data-macro-sum]", form);
+        if (sumEl) sumEl.textContent = "0";
+        notify(`已保存「${mutation.data.name}」，可继续录入`);
+        await refresh(kind, date);
+        $('[name="name"]', form)?.focus({ preventScroll: true });
+        return;
+      }
+      form.dataset.saved = "true";
+      forgetDraft(draftKey);
+      const wasOpen = dialog.open && dialog.contains(form);
+      if (wasOpen) dialog.close();
+      notify(mutation.deleted ? "记录已删除" : mutation.data.status === "active" ? "训练草稿已保存" : "记录已保存");
+      await refresh(kind, date);
+      if (recap && record && wasOpen && !dialog.open) {
+        await showReport(record.id, record).catch(() => notify("训练已保存，可在训练记录里打开复盘"));
+      }
+    } catch (problem) {
+      error.textContent = problem.status === 409 ? "记录已在其他设备更新。请先关闭并刷新，避免覆盖已有记录。" : problem.message;
+      error.hidden = false;
+    } finally { buttons.forEach((button) => { button.disabled = false; }); }
+  }
+
+  function deleteRecord(form, record) {
+    const button = $("#remove-record", form);
+    if (button.dataset.confirm !== "yes") {
+      button.textContent = "确认删除这条记录";
+      button.dataset.confirm = "yes";
+      return;
+    }
+    commit(form, { kind: record.kind, id: record.id, baseVersion: record.version, deleted: true, data: record.data }, record.kind, record.data.date, form.dataset.draft);
+  }
+  function exerciseLabel(row) { return row.snapshot?.name ?? row.exerciseId; }
+
+  function editWorkout(record, data, settings) {
+    const template = data.templateKey;
+    const seedExerciseMeta = Array.isArray(data.exerciseMeta) ? data.exerciseMeta : [];
+    const scope = owner();
+    const draftKey = scope ? "ironlog-web-draft:" + scope + ":" + (record ? record.id + ":" + record.version : template ? "template:" + template : "new") : "";
+    data = { ...data };
+    delete data.templateKey;
+    delete data.exerciseMeta;
+    let local;
+    try { if (draftKey) local = JSON.parse(localStorage.getItem(draftKey) ?? sessionStorage.getItem(draftKey) ?? "null"); } catch {}
+    const rows = structuredClone(local?.exercises ?? data.exercises ?? []).map((r) => ({ ...r, supersetGroup: r.supersetGroup ?? null }));
+    const started = data.startedAt ?? local?.startedAt ?? new Date().toISOString();
+    const previousDuration = workoutSeconds(data);
+    const isActive = data.status === "active";
+    const live = !record || isActive;
+    const initialDate = local?.date ?? data.date ?? appDate();
+    const now = Date.now();
+    let timing = local?.timing ?? recoverClock({ ...data, exercises: rows }, now);
+    if (!local && !record && initialDate === today()) timing.runningSince = started;
+    let rest = normalizeRestTimer(
+      local?.rest ?? (data.restEndsAt ? { end: data.restEndsAt, start: data.restStartedAt ?? now } : null),
+      now,
+    );
+    if (live && rest) audio.unlock();
+    let guided = live;
+    let showRir = localStorage.getItem(rirPreference) === "on" || rows.some((row) => row.sets.some((entry) => entry.rir != null));
+    const rawSavedBar = localStorage.getItem(barPreference);
+    const savedBar = rawSavedBar === null || rawSavedBar === "" ? NaN : Number(rawSavedBar);
+    let barWeight = [20, 15, 10, 25, 0].includes(savedBar) ? savedBar : 20;
+    let enabledPlates = [25, 20, 15, 10, 5, 2.5, 1.25];
+    try {
+      const rawPlates = JSON.parse(localStorage.getItem(platesPreference) ?? "null");
+      if (Array.isArray(rawPlates)) {
+        const validPlates = rawPlates.map(Number).filter((p) => ALL_PLATES.includes(p));
+        if (validPlates.length) enabledPlates = validPlates;
+      }
+    } catch {}
+    let plateConfigRowId = "";
+    let dialOpen = false;
+    const supportsWake = live && "wakeLock" in navigator;
+    const restoredIndex = rows.findIndex((row) => row.id === local?.focusId);
+    const firstPendingIndex = rows.findIndex((row) => row.sets.some((entry) => !entry.completed));
+    let dirty = !!local, lastRest = null, restNotifiedEndAt = 0, focusRow = Math.max(0, restoredIndex >= 0 ? restoredIndex : firstPendingIndex);
+    const originalTitle = document.title;
+    let referenceRequest = 0, detailRequest = 0, advanceTimer = 0, stepNoticeTimer = 0, stepNotice = null;
+    let references = new Map(), prBaselines = new Map(), exerciseDetails = new Map();
+    const exerciseNotes = new Map(), draftDossierNotes = new Map(), exerciseHistoryCache = new Map(), openDossiers = new Set(), openMotions = new Set();
+    const isMobileViewport = () => matchMedia("(max-width: 630px)").matches;
+    let readinessDismissed = false, swapTargetRow = -1, activeHold = null;
+    let reviewing = false, pickerMuscle = "", pickerEquipment = "", pendingUndo = null, undoTimer = 0;
+    const celebratedPrKeys = new Set();
+    const plannedMeta = new Map();
+    seedExerciseMeta.forEach((meta, idx) => { if (meta) plannedMeta.set(meta.exerciseId + ":" + idx, meta); });
+    let activeRecord = record ?? null, workoutId = activeRecord?.id ?? uuid(), activeAdapt = null;
+    const untouchedWeights = new WeakSet();
+    const title = local?.title ?? data.title ?? "自由训练";
+    const selectedFeeling = local?.feeling ?? data.feeling ?? "";
+
+    open(record && !isActive ? "编辑训练" : isActive ? "继续训练" : "记录训练", `<form id="editor-form" class="dialog-form workout-form${live && focusRow < rows.length - 1 ? " has-next" : ""}${showRir ? " show-rir" : ""}">
+      ${live ? `<section class="session-overview" aria-label="本次训练概况">
+        <header><div class="session-title-group"><h3 data-session-title>${esc(title)}</h3><span class="session-live-meta" data-live-volume></span></div>
+          <div class="session-clock" data-live-clock><strong role="timer" aria-label="训练时长">${matrix("00:00")}</strong>
+            <button type="button" class="quiet" data-clock="train">暂停计时</button></div></header>
+        <div class="session-progress"><progress max="1" value="0" aria-label="训练组数进度"></progress><span data-set-count></span>
+          ${live ? `<button type="button" class="rir-toggle rest-quick-btn" data-workout="quick-rest" title="按当前动作休息时长启动倒计时">${icon("clock", 12)} 休息</button>` : ""}
+          ${live ? `<button type="button" class="rir-toggle ai-adapt-btn" data-adapt="open">${icon("bolt", 12)} AI 调整</button>` : ""}
+          <button type="button" class="rir-toggle" data-workout="toggle-rir" aria-pressed="${showRir}">RIR</button></div>
+        <div class="session-live-muscles" data-live-muscles hidden></div>
+      </section>` : ""}
+      ${live ? `<div class="session-control-stack" hidden>
+        <div class="exercise-jump" role="group" aria-label="切换动作"></div>
+        <div class="session-step-tools">
+          <span class="workout-step-badge" data-step-badge></span>
+          ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? "全部动作" : "聚焦单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部动作" : "聚焦单步"}</button>`}
+          <button type="button" class="quiet" data-workout="open-picker">+ 加动作</button>
+        </div>
+      </div>` : ""}
+      <div class="workout-scroll">
+        ${local ? '<p class="draft-note">已恢复此设备上的草稿 <button class="quiet" type="button" id="discard-local">丢弃草稿</button></p>' : ""}
+        <div id="readiness-slot"></div>
+        <div id="workout-rows"></div>
+        <details class="picker workout-picker"${rows.length ? "" : " open"}>
+          <summary><span>${icon("plus", 17)} 添加动作</span><span class="picker-close-hint">展开 / 收起 ${icon("chevron", 14)}</span></summary>
+          <div class="swap-mode-banner" data-swap-banner hidden></div>
+          <div class="muscle-pills picker-muscles" role="group" aria-label="按肌群快速筛选">${Object.entries({ "": "全部", __fav__: "★ 收藏", chest: "胸", back: "背", legs: "腿", shoulders: "肩", arms: "臂", core: "核心" }).map(([val, label]) =>
+            `<button type="button" data-picker-muscle="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>
+          ${(() => {
+            const userEquip = getUserEquipment?.() ?? [];
+            const equipOpts = [
+              ["", "全部器械"],
+              ...(userEquip.length ? [["__mine__", "我的器械"]] : []),
+              ["barbell", "杠铃"], ["dumbbell", "哑铃"], ["machine", "器械"], ["cable", "绳索"],
+              ["bodyweight", "自重"], ["kettlebell", "壶铃"], ["band", "弹力带"],
+            ];
+            return `<div class="muscle-pills picker-equipment" role="group" aria-label="按器械筛选">${equipOpts.map(([val, label]) =>
+              `<button type="button" data-picker-equipment="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>`;
+          })()}
+          <label class="search">${icon("search")}<input id="exercise-query" type="search" maxlength="120" placeholder="输入动作名称或直接从上方点选" aria-label="搜索动作"></label>
+          <div id="matches" class="picker-results"></div>
+          ${onCreateCustomExercise ? `<button type="button" class="quiet picker-create-custom" data-workout="create-custom-exercise">${icon("plus", 15)} 没找到想要的？新建自定义动作</button>` : ""}
+        </details>
+        <details class="training-details"${!live || initialDate !== today() ? " open" : ""}><summary><span>${live ? "训练设置与草稿" : "训练信息"}</span>${icon("chevron", 14)}</summary>
+        <div class="details-body">
+          ${field("训练名称", input("title", title, 'maxlength="120" required'))}
+          <div class="fields">${commonFields("workout", { date: initialDate }, record)}
+            ${field("手动时长", inputGroup("minutes", local?.minutes ?? (live || previousDuration == null ? "" : Math.round(previousDuration / 60 * 100) / 100), "分钟", 'placeholder="自动计时" type="number" inputmode="decimal" min="0" max="10080" step="0.01"'))}</div>
+          ${live ? `<div class="session-options">
+            <label class="switch-chip"><span>休息提示音</span><input class="switch" type="checkbox" name="restSound"${localStorage.getItem(soundPreference) !== "off" ? " checked" : ""}></label>
+            <label class="switch-chip"><span>自动展开表盘</span><input class="switch" type="checkbox" name="autoDial"${localStorage.getItem(dialPreference) === "on" ? " checked" : ""}></label>
+            ${"Notification" in window ? `<label class="switch-chip" title="切到后台时推送休息结束提醒"><span>后台提醒</span><input class="switch" type="checkbox" name="restNotify"${Notification.permission === "granted" && localStorage.getItem(notifyPreference) !== "off" ? " checked" : ""}></label>` : ""}
+            ${supportsWake ? `<label class="switch-chip" title="训练计时期间保持屏幕常亮"><span>屏幕常亮<span data-wake-status class="visually-hidden" role="status"></span></span><input class="switch" type="checkbox" name="keepScreen"${localStorage.getItem(screenPreference) === "on" ? " checked" : ""}></label>` : ""}
+          </div>` : `<div class="session-options">
+            <label class="switch-chip"><span>显示 RIR 列</span><input class="switch" type="checkbox" name="toggleRirEdit"${showRir ? " checked" : ""}></label>
+          </div>`}
+          ${live || record ? `<div class="details-actions">${record ? '<button id="remove-record" class="danger" type="button">删除记录</button>' : "<span></span>"}${live ? '<button class="secondary-button" type="button" data-workout="save-draft">存为草稿</button>' : ""}</div>` : ""}
+        </div></details>
+        <section class="finish-panel" aria-label="训练小结"${live ? " hidden" : ""}>
+          ${live ? '<div class="finish-summary-slot" data-finish-summary></div>' : ""}
+          <fieldset><legend>训练体感</legend><div class="feeling-choices">${Object.entries(feelings).map(([key, label]) =>
+            `<label><input type="radio" name="feeling" value="${key}"${selectedFeeling === key ? " checked" : ""}><span>${label}</span></label>`).join("")}</div>
+            <button class="quiet" type="button" data-workout="clear-feeling"${selectedFeeling ? "" : " hidden"}>清除体感</button></fieldset>
+          ${field("备注（可选）", `<textarea name="notes" maxlength="4000" rows="2" placeholder="记录本次组间体感或下次调整…">${esc(local?.notes ?? data.notes)}</textarea>`)}
+        </section>
+      </div>
+      <div class="rest-dial-overlay" hidden aria-label="组间休息表盘">
+        <span class="crosshair tl" aria-hidden="true"></span><span class="crosshair br" aria-hidden="true"></span>
+        <header class="rest-dial-head"><span><i aria-hidden="true"></i> 组间休息</span>
+          <button type="button" class="quiet" data-clock="dial-close">收起表盘</button></header>
+        <div class="rest-dial-face">
+          <svg class="rest-dial-svg" viewBox="0 0 260 260" aria-hidden="true">${renderDialTicks(1)}</svg>
+          <div class="rest-dial-readout">
+            <strong data-dial-time>${matrix("00:00")}</strong>
+            <span data-dial-sub>组间恢复</span>
+          </div>
+        </div>
+        <div class="rest-dial-next" data-dial-next hidden></div>
+        <div class="rest-dial-controls">
+          <button type="button" class="secondary-button" data-clock="sub15">-15 秒</button>
+          <button type="button" class="primary-button" data-clock="skip">跳过休息</button>
+          <button type="button" class="secondary-button" data-clock="add15">+15 秒</button>
+        </div>
+        <div class="rest-dial-presets" role="group" aria-label="快速设定休息时长">${[60, 90, 120, 180].map((sec) =>
+          `<button type="button" class="stepper-pill" data-clock-preset="${sec}">${sec}s</button>`).join("")}</div>
+      </div>
+      ${live ? `<div class="ai-adapt-overlay" data-adapt-overlay hidden aria-label="AI 训中调整">
+        <header class="rest-dial-head"><span>${icon("bolt", 16)} AI 训中实时调整</span>
+          <button type="button" class="quiet" data-adapt="close">返回记录</button></header>
+        <div class="ai-adapt-body">
+          <p class="muted">根据你此刻的剩余时间或身体状态，仅对尚未完成的训练组提出调整，已打卡组不受影响。</p>
+          <div class="ai-presets" role="group" aria-label="常见训中状况">
+            <button type="button" class="ai-chip" data-adapt-preset="时间不太够，只剩 15 分钟，请精简后续训练组并缩短休息">赶时间精简</button>
+            <button type="button" class="ai-chip" data-adapt-preset="今天有点疲劳，请适当降低余下重量或组数以保持动作质量">疲劳降载</button>
+            <button type="button" class="ai-chip" data-adapt-preset="目前状态很好，未完成工作组可以微调加重冲一下状态">状态好加量</button>
+          </div>
+          <label class="field"><span>当前状况或要求</span><textarea rows="2" maxlength="1000" data-adapt-input placeholder="例如：肩前束有点酸，不想推举了，或者只剩 20 分钟"></textarea></label>
+          <p class="form-error" data-adapt-error hidden></p>
+          <div class="ai-adapt-proposal" data-adapt-proposal hidden></div>
+        </div>
+        <footer class="ai-adapt-foot">
+          <button type="button" class="secondary-button" data-adapt="ask">${icon("bolt", 15)} 获取建议</button>
+          <button type="button" class="primary-button" data-adapt="apply" hidden>应用所选调整</button>
+        </footer>
+      </div>` : ""}
+      <footer class="session-dock">
+        <p class="form-error" data-form-error role="alert" hidden></p>
+        <div class="undo-banner" data-undo-banner hidden></div>
+        <div class="rest-clock" hidden>
+          <button type="button" class="rest-dock-trigger" data-clock="dial-open" aria-label="展开组间休息表盘">
+            <svg class="rest-mini-ring" viewBox="0 0 36 36" aria-hidden="true">${renderDialTicks(1, { count: 24, cx: 18, r1: 11.5, r2: 15.5, r1Major: 10.5 })}</svg>
+            <div><span><i aria-hidden="true"></i> 休息</span><strong role="timer" aria-label="组间休息倒计时">${matrix("00:00")}</strong></div>
+          </button>
+          <div class="rest-dock-buttons">
+            <button type="button" class="secondary-button" data-clock="sub15">-15s</button>
+            <button type="button" class="secondary-button" data-clock="add15">+15s</button>
+            <button type="button" class="quiet" data-clock="skip">跳过</button>
+          </div>
+          <span class="visually-hidden" data-rest-announcement role="status"></span>
+        </div>
+        <div class="session-dock-actions">
+          ${live ? `<button type="button" class="secondary-button icon-button" data-workout="step" data-step="-1" aria-label="上一个动作">${icon("back", 17)}</button>
+            <button type="button" class="primary-button next-exercise" data-workout="step" data-step="1" aria-label="下一个动作"><span><b>下一个动作</b><small data-next-name></small></span>${icon("chevron", 17)}</button>
+            <button type="button" class="secondary-button finish-trigger" data-workout="finish-review">结束训练</button>
+            <button type="button" class="secondary-button" data-workout="back-from-finish" hidden>返回记录</button>` : ""}
+          <button class="primary-button finish-save" type="submit" value="finish"${live ? " hidden" : ""}>${live ? "保存并完成" : "保存训练"}</button>
+        </div>
+      </footer>
+    </form>`, true, "workout");
+
+    const form = $("#editor-form");
+    const scroller = $(".workout-scroll", form);
+    form.dataset.draft = draftKey;
+    $("#discard-local")?.addEventListener("click", () => {
+      form.dataset.saved = "true";
+      forgetDraft(draftKey);
+      closeWorkout?.();
+      onDraft?.();
+      editWorkout(record, { ...data, ...(template ? { templateKey: template } : {}), exerciseMeta: seedExerciseMeta }, settings);
+    });
+    function remember() {
+      if (!draftKey || !form.isConnected) return;
+      const values = Object.fromEntries(new FormData(form).entries());
+      try { localStorage.setItem(draftKey, JSON.stringify({ ...values, startedAt: started, exercises: rows,
+        timing: pauseAt(timing, Date.now()), rest, focusId: rows[focusRow]?.id })); } catch {}
+    }
+    function markDirty() { dirty = true; remember(); }
+    const list = $("#workout-rows");
+    const dateInput = $('[name="date"]', form);
+    const error = $("[data-form-error]", form) ?? $(".form-error", form);
+    function startFor(date) {
+      if (record && date === data.date) return started;
+      return date === today() ? started : new Date(date + "T00:00:00+08:00").toISOString();
+    }
+
+    function nextPendingDescription() {
+      const targetRow = rows[focusRow];
+      if (!targetRow) return "";
+      const nextIndex = targetRow.sets.findIndex((entry) => !entry.completed);
+      if (nextIndex >= 0) {
+        const entry = targetRow.sets[nextIndex];
+        const mode = targetRow.snapshot?.mode ?? "reps";
+        const val = mode === "timed" ? `${entry.seconds} 秒`
+          : entry.weight ? `${entry.weight} kg × ${entry.reps}` : `${entry.reps} 次`;
+        return `下一组 · ${exerciseLabel(targetRow)} · 第 ${nextIndex + 1} 组 · ${val}`;
+      }
+      const nextRow = rows[focusRow + 1];
+      return nextRow ? `下个动作 · ${exerciseLabel(nextRow)}` : "所有预设组已完成 · 可结束训练";
+    }
+
+    function updatePlateHint(section, row) {
+      const host = $("[data-plate-math]", section);
+      if (!host) return;
+      const isConfigOpen = plateConfigRowId === row.id;
+      if (row.snapshot?.equipment !== "barbell" && !isConfigOpen) { host.hidden = true; return; }
+      const targetSet = row.sets.find((entry) => !entry.completed && entry.type !== "warmup" && entry.weight > 0)
+        ?? row.sets.find((entry) => !entry.completed && entry.weight > 0)
+        ?? row.sets.findLast((entry) => entry.weight > 0);
+      const weight = targetSet?.weight ?? 0;
+      if (weight <= 0 && !isConfigOpen) { host.hidden = true; return; }
+      host.hidden = false;
+      const barLabel = BAR_PRESETS.find(([w]) => w === barWeight)?.[1] ?? `${barWeight}kg杆`;
+      const configHtml = isConfigOpen ? `<div class="plate-config-pop">
+        <div class="plate-inv-row"><span>杠铃杆</span><div class="plate-inv-pills">${BAR_PRESETS.map(([w, lbl]) =>
+          `<button type="button" class="stepper-pill" data-plate-bar="${w}" aria-pressed="${barWeight === w}">${lbl}</button>`).join("")}</div></div>
+        <div class="plate-inv-row"><span>可用配片 (kg)</span><div class="plate-inv-pills">${ALL_PLATES.map((p) =>
+          `<button type="button" class="stepper-pill" data-plate-toggle="${p}" aria-pressed="${enabledPlates.includes(p)}">${p}</button>`).join("")}</div></div>
+      </div>` : "";
+      const calc = plateBreakdown(weight, barWeight, enabledPlates);
+      if (!calc.valid) {
+        host.innerHTML = `<span class="plate-label">配片</span><button type="button" class="plate-bar-btn" data-workout="toggle-plate-config" data-row-id="${esc(row.id)}" title="设置杠铃杆与配片清单" aria-expanded="${isConfigOpen}">${barLabel}</button><span class="plate-empty">${weight <= 0 ? "输入负重查看配片" : weight === barWeight ? "空杆重量" : `低于 ${barWeight} kg 标准杆`}</span>${configHtml}`;
+        return;
+      }
+      const visual = `<span class="plate-visual" aria-hidden="true"><i class="plate-bar-rod"></i>${calc.plates.map((p) => `<i class="plate-disc" data-plate="${String(p).replace(".", "_")}"></i>`).join("")}</span>`;
+      const chips = calc.plates.map((plate) => `<span class="plate-chip">${plate}</span>`).join("");
+      host.innerHTML = `<span class="plate-label">每侧配片</span><button type="button" class="plate-bar-btn" data-workout="toggle-plate-config" data-row-id="${esc(row.id)}" title="设置杠铃杆与配片清单" aria-expanded="${isConfigOpen}">${barLabel}</button>${visual}<span class="plate-chips">${chips}${calc.remainder > 0 ? `<small>+${calc.remainder}kg</small>` : ""}</span>${configHtml}`;
+    }
+
+    function rowMeta(row, index) {
+      return plannedMeta.get(row.exerciseId + ":" + (row.targetIndex ?? index))
+        ?? plannedMeta.get(row.exerciseId + ":" + index)
+        ?? null;
+    }
+
+    function setBeatenPrs(row, entry) {
+      if (!entry || entry.type === "warmup") return [];
+      const mode = row.snapshot?.mode ?? "reps";
+      const baseline = prBaselines.get(row.exerciseId + ":" + mode);
+      if (!baseline) return [];
+      const hits = [];
+      if (mode === "timed") {
+        if (baseline.hold != null && entry.seconds > baseline.hold) {
+          hits.push({ metric: "hold", label: `时长 PR ${entry.seconds}s`, prev: baseline.hold, cur: entry.seconds });
+        }
+      } else if (mode === "assisted") {
+        if (entry.reps > 0 && baseline.assistance != null && entry.weight < baseline.assistance) {
+          hits.push({ metric: "assistance", label: `辅助 PR ${fmt(entry.weight)}kg`, prev: baseline.assistance, cur: entry.weight });
+        }
+      } else if (entry.weight > 0 && entry.reps > 0) {
+        if (baseline.weight != null && entry.weight > baseline.weight) {
+          hits.push({ metric: "weight", label: `重量 PR ${fmt(entry.weight)}kg`, prev: baseline.weight, cur: entry.weight });
+        }
+        if (entry.reps <= 10 && baseline.oneRepMax != null) {
+          const est = round2(estimated1RM(entry.weight, entry.reps));
+          if (est > baseline.oneRepMax) {
+            hits.push({ metric: "oneRepMax", label: `1RM PR ${fmt(est)}kg`, prev: baseline.oneRepMax, cur: est });
+          }
+        }
+      }
+      return hits;
+    }
+
+    function computeLiveSessionStats() {
+      let vol = 0, refVol = 0, workSets = 0, unfinishedCount = 0;
+      const prByKey = new Map();
+      for (const row of rows) {
+        const mode = row.snapshot?.mode ?? "reps";
+        const mult = row.snapshot?.volumeMultiplier ?? 1;
+        for (const entry of row.sets) {
+          if (entry.type === "warmup") continue;
+          const valid = mode === "timed" ? entry.seconds > 0 : entry.reps > 0;
+          if (entry.completed) {
+            if (valid) workSets++;
+            if (mode === "reps" && entry.weight > 0 && entry.reps > 0) {
+              vol += entry.weight * entry.reps * mult;
+            }
+            for (const hit of setBeatenPrs(row, entry)) {
+              const k = `${row.exerciseId}:${hit.metric}`;
+              const prev = prByKey.get(k);
+              const better = !prev || (hit.metric === "assistance" ? hit.cur < prev.cur : hit.cur > prev.cur);
+              if (better) prByKey.set(k, { name: exerciseLabel(row), ...hit });
+            }
+          } else if (valid) {
+            unfinishedCount++;
+          }
+        }
+        if (mode === "reps") {
+          const prevSets = references.get(row.exerciseId);
+          if (Array.isArray(prevSets)) {
+            for (const prev of prevSets) {
+              if (prev?.weight > 0 && prev?.reps > 0) refVol += prev.weight * prev.reps * mult;
+            }
+          }
+        }
+      }
+      return { vol, refVol, workSets, unfinishedCount, beatenPrs: [...prByKey.values()] };
+    }
+
+    function renderFinishSummary() {
+      const host = $("[data-finish-summary]", form);
+      if (!host) return;
+      const { vol, refVol, workSets, unfinishedCount, beatenPrs } = computeLiveSessionStats();
+      const elapsedSec = elapsedAt(timing, Date.now());
+      const diff = refVol > 0 && vol > 0 ? Math.round(vol - refVol) : null;
+      host.innerHTML = `<div class="finish-summary-card">
+        <div class="finish-summary-grid">
+          <div><span>有效工作组</span><strong>${workSets} <small>组</small></strong></div>
+          <div><span>完成总容量</span><strong>${Math.round(vol).toLocaleString("zh-CN")} <small>kg</small></strong>${diff != null && diff > 0 ? `<em class="finish-delta is-up">+${diff.toLocaleString("zh-CN")}</em>` : ""}</div>
+          <div><span>已用时长</span><strong>${formatClock(elapsedSec)}</strong></div>
+        </div>
+        ${beatenPrs.length ? `<div class="finish-pr-list">${beatenPrs.map((p) =>
+          `<span>${icon("trophy", 12)} <b>${esc(p.name)}</b> · ${esc(p.label)}</span>`).join("")}</div>` : ""}
+        ${unfinishedCount > 0 ? `<div class="finish-uncheck-alert" role="status">
+          <span>还有 <b>${unfinishedCount}</b> 组未勾选（保存时仅计入已勾选组）</span>
+          <div class="finish-uncheck-actions">
+            <button type="button" class="quiet" data-workout="check-remaining">全部补勾</button>
+            <button type="button" class="quiet" data-workout="back-from-finish">返回核对</button>
+          </div>
+        </div>` : ""}
+      </div>`;
+    }
+
+    function updateLiveMetrics() {
+      const { vol, refVol } = computeLiveSessionStats();
+      const volEl = $("[data-live-volume]", form);
+      if (volEl) {
+        let deltaHtml = "";
+        if (refVol > 0 && vol > 0) {
+          const diff = Math.round(vol - refVol);
+          deltaHtml = diff >= 0
+            ? ` <em class="live-vol-delta is-up">较上次 +${diff.toLocaleString("zh-CN")} kg</em>`
+            : ` <em class="live-vol-delta">达上次 ${Math.min(99, Math.round((vol / refVol) * 100))}%</em>`;
+        }
+        volEl.innerHTML = `总容量 ${Math.round(vol).toLocaleString("zh-CN")} kg${deltaHtml}`;
+      }
+      $$(".exercise-editor", form).forEach((section, index) => {
+        const row = rows[index];
+        if (!row) return;
+        const mode = row.snapshot?.mode ?? "reps";
+        const mult = row.snapshot?.volumeMultiplier ?? 1;
+        const baseline = prBaselines.get(row.exerciseId + ":" + mode);
+        const oneRmEl = $("[data-exercise-1rm]", section);
+        if (oneRmEl) {
+          if (mode !== "reps") { oneRmEl.textContent = ""; }
+          else {
+            const candidates = row.sets.filter((entry) => entry.type !== "warmup" && entry.weight > 0 && entry.reps > 0);
+            const completed = candidates.filter((entry) => entry.completed);
+            const pool = completed.length ? completed : candidates;
+            let best = 0;
+            let usedRir = false;
+            for (const entry of pool) {
+              const rir = entry.rir != null && Number.isFinite(entry.rir) && entry.rir > 0 && entry.rir <= 4 ? entry.rir : 0;
+              const est = estimated1RM(entry.weight, Math.min(entry.reps + rir, 12));
+              if (est > best) {
+                best = est;
+                usedRir = rir > 0;
+              }
+            }
+            oneRmEl.textContent = best > 0 ? `估算 1RM ${Math.round(best * 10) / 10} kg${usedRir ? " (含RIR)" : ""}` : "";
+          }
+        }
+        const exVolEl = $("[data-exercise-vol]", section);
+        if (exVolEl) {
+          if (mode !== "reps") {
+            exVolEl.textContent = "";
+          } else {
+            let exVol = 0;
+            for (const entry of row.sets) {
+              if (entry.completed && entry.type !== "warmup" && entry.weight > 0 && entry.reps > 0) {
+                exVol += entry.weight * entry.reps * mult;
+              }
+            }
+            let exRefVol = 0;
+            for (const prev of references.get(row.exerciseId) ?? []) {
+              if (prev?.weight > 0 && prev?.reps > 0) exRefVol += prev.weight * prev.reps * mult;
+            }
+            exVolEl.textContent = exVol > 0
+              ? `本项 ${Math.round(exVol).toLocaleString("zh-CN")} kg${exRefVol > 0 && exVol > exRefVol ? ` (+${Math.round(exVol - exRefVol)})` : ""}`
+              : "";
+          }
+        }
+        const prEl = $("[data-exercise-pr]", section);
+        if (prEl) {
+          const completedBestHits = row.sets.filter((s) => s.completed).flatMap((s) => setBeatenPrs(row, s));
+          const previewHits = row.sets.flatMap((s) => setBeatenPrs(row, s));
+          if (completedBestHits.length) {
+            prEl.className = "exercise-pr-line is-pr";
+            prEl.innerHTML = `${icon("trophy", 12)} <b>新纪录！</b>${esc(completedBestHits[0].label)}（原 ${fmt(completedBestHits[0].prev)}）`;
+          } else if (previewHits.length) {
+            prEl.className = "exercise-pr-line is-pr-pending";
+            prEl.innerHTML = `${icon("trophy", 12)} 完成即刷新 ${esc(previewHits[0].label)}`;
+          } else if (baseline) {
+            let nudge = "";
+            const nextOpen = row.sets.find((s) => !s.completed && s.type !== "warmup" && s.weight > 0);
+            if (mode === "reps" && nextOpen && baseline.oneRepMax != null) {
+              for (let r = 1; r <= 10; r++) {
+                if (round2(estimated1RM(nextOpen.weight, r)) > baseline.oneRepMax) {
+                  nudge = ` · 做满 ${r} 次破 1RM PR`;
+                  break;
+                }
+              }
+            }
+            const bestText = mode === "timed" ? `最佳 ${baseline.hold ?? 0} 秒`
+              : mode === "assisted" ? `最佳辅助 ${fmt(baseline.assistance)} kg`
+              : `最佳 ${fmt(baseline.weight)} kg / 1RM ${fmt(baseline.oneRepMax)} kg`;
+            prEl.className = "exercise-pr-line";
+            prEl.innerHTML = `${icon("trophy", 11)} ${esc(bestText + nudge)}`;
+          } else {
+            prEl.className = "exercise-pr-line";
+            prEl.textContent = "";
+          }
+        }
+        updatePlateHint(section, row);
+      });
+      const musclesHost = $("[data-live-muscles]", form);
+      if (musclesHost) {
+        const tracked = new Set(["chest", "back", "legs", "shoulders", "arms", "core"]);
+        let completedWorkCount = 0;
+        const doneMap = new Map();
+        const planMap = new Map();
+        for (const row of rows) {
+          const primary = row.snapshot?.muscle ?? exerciseDetails.get(row.exerciseId)?.muscle;
+          const secondary = (exerciseDetails.get(row.exerciseId)?.secondaryMuscles ?? [])
+            .filter((s) => s !== primary && tracked.has(s));
+          for (const s of row.sets) {
+            if (s.type === "warmup") continue;
+            if (primary && (tracked.has(primary) || primary === "cardio")) {
+              planMap.set(primary, (planMap.get(primary) ?? 0) + 1);
+            }
+            for (const sec of new Set(secondary)) {
+              planMap.set(sec, (planMap.get(sec) ?? 0) + 0.5);
+            }
+            if (s.completed) {
+              completedWorkCount++;
+              if (primary && (tracked.has(primary) || primary === "cardio")) {
+                doneMap.set(primary, (doneMap.get(primary) ?? 0) + 1);
+              }
+              for (const sec of new Set(secondary)) {
+                doneMap.set(sec, (doneMap.get(sec) ?? 0) + 0.5);
+              }
+            }
+          }
+        }
+        const activeMap = completedWorkCount > 0 ? doneMap : planMap;
+        const items = [...activeMap.entries()]
+          .map(([k, v]) => [k, Math.round(v * 10) / 10])
+          .filter(([, v]) => v > 0)
+          .sort((a, b) => b[1] - a[1]);
+        musclesHost.hidden = items.length === 0;
+        musclesHost.innerHTML = items.length
+          ? `<span class="live-muscles-tag">${completedWorkCount > 0 ? "已刺激" : "本场分配"}</span>${items.map(([k, v]) => `<span>${esc(muscles[k] ?? k)} <b>${fmt(v)}</b> 组</span>`).join("")}`
+          : "";
+      }
+    }
+
+    function isRowCompleted(row) {
+      return Boolean(row?.sets?.length) && row.sets.every((entry) => entry.completed);
+    }
+    function findNextPendingRow(fromIndex) {
+      for (let i = fromIndex + 1; i < rows.length; i++) {
+        if (!isRowCompleted(rows[i])) return i;
+      }
+      for (let i = 0; i < fromIndex; i++) {
+        if (!isRowCompleted(rows[i])) return i;
+      }
+      return -1;
+    }
+    function clearAutoAdvance() {
+      if (advanceTimer) {
+        clearTimeout(advanceTimer);
+        advanceTimer = 0;
+      }
+    }
+    function showStepNotice(message, backRowIndex) {
+      clearTimeout(stepNoticeTimer);
+      stepNotice = { message, backRowIndex };
+      renderUndoBanner();
+      stepNoticeTimer = setTimeout(() => {
+        stepNotice = null;
+        renderUndoBanner();
+      }, 4500);
+    }
+
+    function updateProgress() {
+      const done = rows.reduce((sum, row) => sum + row.sets.filter((entry) => entry.completed).length, 0);
+      const total = rows.reduce((sum, row) => sum + row.sets.length, 0);
+      form.dataset.layout = guided ? "focus" : "list";
+      form.classList.toggle("show-rir", showRir);
+      if (live) {
+        $("[data-set-count]", form).textContent = `${done} / ${total} 组`;
+        $(".session-progress progress", form).value = total ? done / total : 0;
+        const controlStack = $(".session-control-stack", form);
+        controlStack.hidden = reviewing || rows.length === 0;
+        const stepBadge = $("[data-step-badge]", form);
+        if (stepBadge) stepBadge.textContent = rows.length ? `${focusRow + 1} / ${rows.length}` : "";
+        const layoutBtn = $('[data-workout="toggle-layout"]', form);
+        if (layoutBtn) {
+          layoutBtn.hidden = rows.length < 2;
+          layoutBtn.setAttribute("aria-pressed", String(!guided));
+          layoutBtn.textContent = guided ? "全部动作" : "聚焦单步";
+        }
+        const openPickerBtn = $('[data-workout="open-picker"]', form);
+        const pickerEl = $(".workout-picker", form);
+        if (openPickerBtn && pickerEl) {
+          openPickerBtn.setAttribute("aria-pressed", String(pickerEl.open));
+          openPickerBtn.textContent = pickerEl.open ? "收起动作库" : "+ 加动作";
+        }
+        const previous = $('[data-step="-1"]', form), next = $('[data-step="1"]', form);
+        previous.hidden = reviewing || !guided || rows.length < 2;
+        previous.disabled = focusRow <= 0;
+        next.hidden = reviewing || !guided || focusRow >= rows.length - 1;
+        $("[data-next-name]", next).textContent = rows[focusRow + 1] ? exerciseLabel(rows[focusRow + 1]) : "";
+        form.classList.toggle("has-next", !next.hidden);
+        const finishBtn = $(".finish-trigger", form);
+        finishBtn.hidden = reviewing;
+        finishBtn.className = `${next.hidden ? "primary-button" : "secondary-button"} finish-trigger`;
+        const dockBack = $('.session-dock [data-workout="back-from-finish"]', form);
+        if (dockBack) dockBack.hidden = !reviewing;
+        $(".finish-save", form).hidden = !reviewing;
+        if (pickerEl) pickerEl.hidden = reviewing;
+        const detailsEl = $(".training-details", form);
+        if (detailsEl) detailsEl.hidden = reviewing;
+        $('[data-workout="toggle-rir"]', form)?.setAttribute("aria-pressed", String(showRir));
+      }
+      $$(".exercise-jump button", form).forEach((button, index) => {
+        const sets = rows[index]?.sets ?? [];
+        button.classList.toggle("finished", sets.length > 0 && sets.every((entry) => entry.completed));
+        button.setAttribute("aria-pressed", String(index === focusRow));
+      });
+      const allDone = rows.length > 0 && rows.every((row) => isRowCompleted(row));
+      const nextPending = findNextPendingRow(focusRow);
+      $$(".exercise-editor", form).forEach((section, index) => {
+        section.hidden = (guided && index !== focusRow) || (live && reviewing);
+        const sets = rows[index].sets;
+        $("[data-exercise-count]", section).textContent = `${sets.filter((entry) => entry.completed).length} / ${sets.length} 组`;
+        const next = live && index === focusRow ? sets.findIndex((entry) => !entry.completed) : -1;
+        $$(".set-row", section).forEach((element, position) => {
+          element.classList.toggle("is-next", position === next);
+          element.classList.toggle("is-complete", sets[position].completed);
+        });
+        const callout = $("[data-complete-callout]", section);
+        if (callout) {
+          const rowDone = live && isRowCompleted(rows[index]);
+          callout.hidden = !rowDone;
+          if (rowDone) {
+            if (allDone) {
+              callout.innerHTML = `<span>全部 ${rows.length} 个动作已完成，可补组或结束训练</span>
+                <button type="button" class="primary-button" data-workout="finish-review">进入训练小结</button>`;
+            } else if (nextPending >= 0) {
+              const target = rows[nextPending];
+              callout.innerHTML = `<span>本动作已完成</span>
+                <button type="button" class="primary-button" data-workout="focus-row" data-row="${nextPending}">下一动作：${esc(exerciseLabel(target))}</button>`;
+            }
+          }
+        }
+      });
+      updateLiveMetrics();
+    }
+
+    function jumpTo(index, animate = true) {
+      clearAutoAdvance();
+      const previous = focusRow;
+      focusRow = Math.max(0, Math.min(rows.length - 1, index));
+      updateProgress();
+      const section = $(`[data-row-index="${focusRow}"]`, list);
+      if (section && scroller) {
+        const top = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+        if (!guided || top < 0 || top > scroller.clientHeight * 0.5) scroller.scrollTop += top - 6;
+        const jump = $(".exercise-jump", form), active = jump?.children[focusRow];
+        if (active && jump.scrollWidth > jump.clientWidth + 2) {
+          jump.scrollTo({ left: Math.max(0, active.offsetLeft - (jump.clientWidth - active.offsetWidth) / 2), behavior: animate ? "smooth" : "instant" });
+        }
+        if (guided && animate && focusRow !== previous && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          const distance = focusRow > previous ? 8 : -8;
+          section.animate?.([{ opacity: .65, transform: `translateX(${distance}px)` },
+            { opacity: 1, transform: "translateX(0)" }], { duration: 140, easing: "ease-out" });
+        }
+      }
+      if (dirty) remember();
+    }
+
+    function referenceForSet(row, setIndex) {
+      const entry = row?.sets?.[setIndex];
+      if (!entry || entry.type === "warmup") return null;
+      let workIdx = 0;
+      for (let i = 0; i < setIndex; i++) {
+        if (row.sets[i]?.type !== "warmup") workIdx++;
+      }
+      return references.get(row.exerciseId)?.[workIdx] ?? null;
+    }
+
+    function updateReferences() {
+      $$(".set-reference", form).forEach((slot) => {
+        const index = Number(slot.dataset.row);
+        const setIndex = Number(slot.dataset.index);
+        const row = rows[index], entry = row.sets[setIndex];
+        const previous = referenceForSet(row, setIndex);
+        const prHits = setBeatenPrs(row, entry);
+        const prTag = prHits.length
+          ? `<span class="set-pr-chip${entry.completed ? " is-achieved" : ""}">${icon("trophy", 11)} ${esc(prHits[0].label)}</span>`
+          : "";
+        if (!previous && !prTag) { slot.hidden = true; return; }
+        const mode = row.snapshot?.mode ?? "reps";
+        const hint = previous ? (mode === "timed" ? `${previous.seconds} 秒`
+          : `${mode === "assisted" ? "辅助 " : ""}${previous.weight} kg × ${previous.reps}`) : "";
+        slot.hidden = false;
+        slot.innerHTML = `${hint ? `<span>上次 ${hint}</span>` : "<span></span>"}${prTag}${hint && !entry.completed ? `<button type="button" class="quiet" data-workout="use-reference" data-row="${index}" data-index="${setIndex}">沿用</button>` : ""}`;
+      });
+      $$('[data-workout="use-workout-reference"]', list).forEach((button) => {
+        const row = rows[Number(button.dataset.row)];
+        button.hidden = !row.sets.some((entry, index) => !entry.completed && !!referenceForSet(row, index));
+      });
+      updateLiveMetrics();
+    }
+
+    function renderMotionMarkup(row) {
+      const detail = exerciseDetails.get(row.exerciseId);
+      const illustration = detail?.illustration;
+      const gifPath = illustration?.gifPath?.startsWith("/media/exercises/") ? illustration.gifPath : "";
+      const thumbPath = illustration?.frames?.[0]?.path?.startsWith("/media/exercises/") ? illustration.frames[0].path : "";
+      const mediaPath = gifPath || thumbPath;
+      const muscleKey = row.snapshot?.muscle ?? detail?.muscle;
+      const gearKey = row.snapshot?.equipment ?? detail?.equipment;
+      const tags = [muscles[muscleKey] ?? muscleKey, equipment[gearKey] ?? gearKey].filter(Boolean);
+      const steps = detail?.instructions ?? [];
+      const mistakes = detail?.mistakes ?? [];
+      const frames = illustration?.frames?.filter((f) => f.path.startsWith("/media/exercises/")) ?? [];
+      const safeURL = (value) => typeof value === "string" && value.startsWith("https://") ? esc(value) : "#";
+      const summary = detail?.description ?? "";
+      return `<div class="workout-motion-box">
+        <div class="workout-motion-media${mediaPath ? "" : " is-fallback"}">
+          ${mediaPath ? `<img class="workout-motion-gif" src="${esc(mediaPath)}" width="112" height="112" decoding="async" alt="${esc(exerciseLabel(row))} 动作示范">${gifPath ? '<span class="motion-pill">GIF</span>' : ""}`
+            : `${icon("workout", 26)}<span>${esc(muscles[muscleKey] ?? "动作")}</span>`}
+        </div>
+        <div class="workout-motion-copy">
+          ${tags.length ? `<div class="workout-motion-tags">${tags.map((tag) => `<span>${esc(tag)}</span>`).join("")}</div>` : ""}
+          ${summary ? `<p class="workout-motion-desc">${esc(summary)}</p>` : ""}
+          ${steps.length || frames.length ? `<details class="exercise-cue-details"><summary>动作要领与分解${steps.length ? `（${steps.length} 步）` : ""}${icon("chevron", 12)}</summary>
+            <div class="exercise-cue-body">
+              ${steps.length ? `<ol>${steps.map((step) => `<li>${esc(step)}</li>`).join("")}</ol>` : ""}
+              ${mistakes.length ? `<ul class="cue-mistakes">${mistakes.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>` : ""}
+              ${frames.length ? `<div class="cue-frames">${frames.map((frame, i) => `<figure><img src="${esc(frame.path)}" width="72" height="72" loading="lazy" alt="${esc(frame.caption)}"><figcaption>${String(i + 1).padStart(2, "0")} ${esc(frame.caption)}</figcaption></figure>`).join("")}</div>
+                <p class="cue-credit">${esc(illustration.author)} · <a href="${safeURL(illustration.licenseUrl)}" target="_blank" rel="noopener noreferrer">${esc(illustration.license)}</a></p>` : ""}
+            </div></details>` : ""}
+        </div>
+      </div>`;
+    }
+
+    function refreshMotionSlots() {
+      $$("[data-motion-slot]", list).forEach((slot) => {
+        const row = rows[Number(slot.dataset.motionSlot)];
+        if (row) {
+          slot.innerHTML = renderMotionMarkup(row);
+          slot.hidden = isMobileViewport() && !openMotions.has(row.id);
+        }
+      });
+    }
+
+    async function loadExerciseDetails() {
+      for (const ex of getCustomExercises?.() ?? []) {
+        if (ex?.id && !exerciseDetails.has(ex.id)) exerciseDetails.set(ex.id, ex);
+      }
+      const ids = [...new Set(rows.map((row) => row.exerciseId))].filter((id) => !exerciseDetails.has(id));
+      if (!ids.length) { refreshMotionSlots(); return; }
+      const sequence = ++detailRequest;
+      try {
+        for (let i = 0; i < ids.length; i += 100) {
+          const { items = [] } = await api("/api/catalogue/exercises/details", {
+            method: "POST",
+            body: { ids: ids.slice(i, i + 100) },
+          });
+          if (sequence !== detailRequest || !dialog.open || !form.isConnected) return;
+          for (const item of items) exerciseDetails.set(item.id, item);
+        }
+        refreshMotionSlots();
+        updateLiveMetrics();
+      } catch { /* Catalogue illustrations stay optional when offline. */ }
+    }
+
+    async function loadReferences() {
+      const sequence = ++referenceRequest;
+      const date = dateInput.value;
+      if (!rows.length || !date || !dateInput.validity.valid) return;
+      const entries = [...new Map(rows.map((row) => [row.exerciseId, { id: row.exerciseId, mode: row.snapshot?.mode }])).values()];
+      const payload = { date, startedAt: startFor(date), workoutId: record?.id, exercises: entries };
+      try {
+        const [refReply, prReply] = await Promise.all([
+          api("/api/web/exercise-references", { method: "POST", body: payload }),
+          api("/api/web/exercise-prs", { method: "POST", body: payload }).catch(() => []),
+        ]);
+        if (sequence !== referenceRequest || !dialog.open || !form.isConnected) return;
+        references = new Map(refReply.map(({ id, sets }) => [id, sets]));
+        prBaselines = new Map(prReply.map((b) => [b.exerciseId + ":" + b.mode, b]));
+        updateReferences();
+        updateLiveMetrics();
+      } catch { /* Historical hints can be unavailable while recording offline. */ }
+    }
+
+    function renderReadinessBanner() {
+      const slot = $("#readiness-slot", form);
+      if (!slot) return;
+      const hint = live && !readinessDismissed ? getReadinessHint?.() : null;
+      if (!hint) { slot.innerHTML = ""; return; }
+      slot.innerHTML = `<div class="readiness-banner is-${esc(hint.tone)}" role="status">
+        <div class="readiness-banner-copy">
+          <strong>${icon("bolt", 14)} ${esc(hint.title)}</strong>
+          <small>${esc(hint.detail)}</small>
+        </div>
+        <div class="readiness-banner-actions">
+          <button type="button" class="secondary-button" data-workout="apply-readiness-deload">一键减载 -10%</button>
+          <button type="button" class="quiet icon-button" data-workout="dismiss-readiness" aria-label="忽略提示">${icon("close", 14)}</button>
+        </div>
+      </div>`;
+    }
+
+    function cleanSupersetOrphans() {
+      const counts = new Map();
+      for (const r of rows) {
+        if (r.supersetGroup) counts.set(r.supersetGroup, (counts.get(r.supersetGroup) ?? 0) + 1);
+      }
+      for (const r of rows) {
+        if (r.supersetGroup && (counts.get(r.supersetGroup) ?? 0) < 2) r.supersetGroup = null;
+      }
+    }
+
+    function computeSupersetBadges() {
+      const counters = new Map();
+      return rows.map((r) => {
+        if (!r.supersetGroup) return "";
+        const n = (counters.get(r.supersetGroup) ?? 0) + 1;
+        counters.set(r.supersetGroup, n);
+        return `${r.supersetGroup}${n}`;
+      });
+    }
+
+    function toggleSupersetAt(index) {
+      const row = rows[index];
+      if (!row) return;
+      if (row.supersetGroup) {
+        row.supersetGroup = null;
+        cleanSupersetOrphans();
+        return;
+      }
+      if (rows.length < 2) return;
+      const prev = index > 0 ? rows[index - 1] : null;
+      if (prev?.supersetGroup) {
+        row.supersetGroup = prev.supersetGroup;
+        return;
+      }
+      const used = new Set(rows.map((r) => r.supersetGroup).filter(Boolean));
+      const letters = "ABCDEFGHIJKLMN".split("");
+      const nextCode = letters.find((ch) => !used.has(ch)) ?? `S${used.size + 1}`;
+      row.supersetGroup = nextCode;
+      const partner = rows[index + 1] ?? rows[index - 1];
+      if (partner) partner.supersetGroup = nextCode;
+      cleanSupersetOrphans();
+    }
+
+    function renderDossierHistory(row) {
+      const hist = exerciseHistoryCache.get(row.exerciseId);
+      if (!hist) return '<p class="muted dossier-loading">正在读取历史走势…</p>';
+      const sessions = hist.sessions ?? [];
+      if (!sessions.length) return '<p class="muted dossier-empty">暂无该动作的历史完成记录。</p>';
+      const asc = [...sessions].reverse();
+      const chartPts = asc.filter((s) => s.estimated1rm != null && s.estimated1rm > 0);
+      let svgHtml = "";
+      if (chartPts.length >= 2) {
+        const w = 260, h = 64, p = 8;
+        const vals = chartPts.map((s) => s.estimated1rm);
+        const minV = Math.min(...vals), maxV = Math.max(...vals);
+        const span = Math.max(1, maxV - minV);
+        const coords = chartPts.map((s, idx) => {
+          const x = p + (idx / (chartPts.length - 1)) * (w - p * 2);
+          const y = h - p - ((s.estimated1rm - minV) / span) * (h - p * 2);
+          return [x.toFixed(1), y.toFixed(1), s];
+        });
+        const polyline = coords.map(([x, y]) => `${x},${y}`).join(" ");
+        svgHtml = `<div class="dossier-chart-wrap">
+          <div class="dossier-chart-head"><span>估算 1RM 趋势</span><strong>${fmt(chartPts.at(-1).estimated1rm)} kg</strong></div>
+          <svg class="dossier-sparkline" viewBox="0 0 ${w} ${h}" role="img" aria-label="估算 1RM 历史折线图">
+            <polyline fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" points="${polyline}"/>
+            ${coords.map(([x, y]) => `<circle cx="${x}" cy="${y}" r="2.8" fill="var(--bg)" stroke="var(--red)" stroke-width="1.6"/>`).join("")}
+          </svg>
+        </div>`;
+      }
+      const listHtml = `<ul class="dossier-history-list">${sessions.slice(0, 5).map((s) => {
+        const bestLabel = hist.mode === "timed"
+          ? `${s.bestSeconds ?? 0} 秒`
+          : `${fmt(s.topWeight ?? 0)} kg × ${s.topReps ?? 0}`;
+        return `<li><time datetime="${esc(s.date)}">${esc(s.date.slice(5))}</time><span>${esc(bestLabel)}</span><small>${s.estimated1rm ? `1RM ${fmt(s.estimated1rm)}kg` : `${fmt(s.workSets, 0)} 组`}</small></li>`;
+      }).join("")}</ul>`;
+      return `${svgHtml}${listHtml}`;
+    }
+
+    function bestReference1rm(row) {
+      if ((row.snapshot?.mode ?? "reps") !== "reps") return 0;
+      let best = prBaselines.get(row.exerciseId + ":reps")?.oneRepMax ?? 0;
+      const hist = exerciseHistoryCache.get(row.exerciseId);
+      if (hist?.sessions) {
+        for (const s of hist.sessions) {
+          if (s.estimated1rm && s.estimated1rm > best) best = s.estimated1rm;
+        }
+      }
+      for (const s of row.sets) {
+        if (s.type !== "warmup" && s.weight > 0 && s.reps > 0) {
+          const est = estimated1RM(s.weight, Math.min(s.reps, 12));
+          if (est > best) best = est;
+        }
+      }
+      return best > 0 ? round2(best) : 0;
+    }
+
+    function renderDossierPct(row, index) {
+      const ref1rm = bestReference1rm(row);
+      if (!ref1rm) return "";
+      const zones = [
+        [0.9, "90%·3次", 3],
+        [0.85, "85%·5次", 5],
+        [0.8, "80%·8次", 8],
+        [0.75, "75%·10次", 10],
+        [0.7, "70%·12次", 12],
+      ];
+      return `<div class="dossier-pct-strip">
+        <div class="dossier-pct-head"><span>%1RM 负荷速填</span><small>基准 ${fmt(ref1rm)} kg</small></div>
+        <div class="dossier-pct-pills">${zones.map(([pct, label, targetReps]) => {
+          const w = Math.max(2.5, Math.round((ref1rm * pct) / 2.5) * 2.5);
+          return `<button type="button" class="stepper-pill" data-workout="apply-pct-load" data-row="${index}" data-weight="${w}" data-reps="${targetReps}"><b>${fmt(w)}kg</b><small>${label}</small></button>`;
+        }).join("")}</div>
+      </div>`;
+    }
+
+    function renderDossierSlot(row, index) {
+      if (!openDossiers.has(row.id)) return "";
+      const noteVal = draftDossierNotes.has(row.exerciseId)
+        ? draftDossierNotes.get(row.exerciseId)
+        : (exerciseNotes.get(row.exerciseId) ?? "");
+      return `<div class="exercise-dossier" data-dossier-row="${index}">
+        <div class="dossier-note-row">
+          <input type="text" maxlength="500" data-dossier-note="${index}" value="${esc(noteVal)}" placeholder="记下座椅档位、握距或发力提示…">
+          <button type="button" class="secondary-button" data-workout="save-note" data-row="${index}">保存备忘</button>
+        </div>
+        <div data-dossier-pct="${index}">${renderDossierPct(row, index)}</div>
+        <div class="dossier-history-box">${renderDossierHistory(row)}</div>
+      </div>`;
+    }
+
+    function cuePillMarkup(noteText, rowIndex) {
+      return noteText
+        ? `<button type="button" class="exercise-cue-pill" data-workout="toggle-dossier" data-row="${rowIndex}" title="点击编辑动作备忘">${icon("bookmark", 11)} ${esc(noteText)}</button>`
+        : "";
+    }
+
+    async function loadExerciseNotes() {
+      try {
+        const map = await api("/api/web/exercise-notes");
+        if (!dialog.open || !form.isConnected) return;
+        for (const [exId, entry] of Object.entries(map ?? {})) {
+          if (entry?.note) exerciseNotes.set(exId, entry.note);
+        }
+        $$(".exercise-editor", list).forEach((section, index) => {
+          const row = rows[index];
+          if (!row) return;
+          const noteText = exerciseNotes.get(row.exerciseId) ?? "";
+          const cueSlot = $("[data-cue-slot]", section);
+          if (cueSlot) cueSlot.innerHTML = cuePillMarkup(noteText, index);
+          const noteInput = $(`[data-dossier-note="${index}"]`, section);
+          if (noteInput && document.activeElement !== noteInput) noteInput.value = noteText;
+        });
+      } catch { /* Notes stay optional offline */ }
+    }
+
+    async function loadExerciseHistoryFor(exerciseId) {
+      if (exerciseHistoryCache.has(exerciseId)) return;
+      try {
+        const hist = await api("/api/web/exercise-history/" + encodeURIComponent(exerciseId));
+        if (!dialog.open || !form.isConnected) return;
+        exerciseHistoryCache.set(exerciseId, hist);
+        if (hist?.note && !exerciseNotes.has(exerciseId)) exerciseNotes.set(exerciseId, hist.note);
+        $$(".exercise-editor", list).forEach((section, index) => {
+          const row = rows[index];
+          if (!row || row.exerciseId !== exerciseId || !openDossiers.has(row.id)) return;
+          const pctBox = $(`[data-dossier-pct="${index}"]`, section);
+          if (pctBox) pctBox.innerHTML = renderDossierPct(row, index);
+          const box = $(".dossier-history-box", section);
+          if (box) box.innerHTML = renderDossierHistory(row);
+        });
+      } catch { /* History unavailable offline */ }
+    }
+
+    function renderRows() {
+      renderReadinessBanner();
+      const ssBadges = computeSupersetBadges();
+      const jump = $(".exercise-jump", form);
+      focusRow = Math.min(focusRow, Math.max(0, rows.length - 1));
+      if (jump) jump.innerHTML = rows.map((row, index) =>
+        `<button type="button" class="quiet" data-workout="focus-row" data-row="${index}">
+          <span class="exercise-index" aria-hidden="true"><b>${index + 1}</b>${icon("check", 12)}</span>${ssBadges[index] ? `<em class="jump-ss-tag">${esc(ssBadges[index])}</em>` : ""}${esc(exerciseLabel(row))}</button>`).join("");
+      list.innerHTML = rows.map((row, index) => {
+        const mode = row.snapshot?.mode ?? "reps";
+        const timed = mode === "timed";
+        const rirValues = { "": "—", 0: "0", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5" };
+        const meta = rowMeta(row, index);
+        const prog = meta?.progression;
+        const backup = meta?.backup;
+        const ssBadge = ssBadges[index];
+        const partnerIdx = row.supersetGroup
+          ? (() => {
+              const after = rows.findIndex((other, idx) => idx > index && other.supersetGroup === row.supersetGroup);
+              if (after >= 0) return after;
+              return rows.findIndex((other, idx) => idx !== index && other.supersetGroup === row.supersetGroup);
+            })()
+          : -1;
+        const savedNote = exerciseNotes.get(row.exerciseId) ?? "";
+        const dossierOpen = openDossiers.has(row.id);
+        const isUnilateral = !timed && mode === "reps" && (row.snapshot?.volumeMultiplier ?? 1) >= 2;
+        return `<section class="exercise-editor${timed ? " timed-exercise" : ""}${ssBadge ? " has-superset" : ""}" data-row-index="${index}"${row.supersetGroup ? ` data-superset="${esc(row.supersetGroup)}"` : ""}>
+          <header>
+            <div class="exercise-title-col">
+              <div class="exercise-title-line">
+                ${ssBadge ? `<span class="superset-pill">超级组 ${esc(ssBadge)}</span>` : ""}
+                <h3 tabindex="-1">${esc(exerciseLabel(row))}</h3>
+                ${isUnilateral ? '<span class="unilateral-pill" title="输入单侧重量，计容自动 ×2">单侧 ×2</span>' : ""}
+              </div>
+              <div class="exercise-telemetry-row">
+                <small class="exercise-1rm" data-exercise-1rm></small>
+                <small class="exercise-vol" data-exercise-vol></small>
+                <small class="exercise-pr-line" data-exercise-pr></small>
+              </div>
+              <div class="exercise-cue-slot" data-cue-slot>${cuePillMarkup(savedNote, index)}</div>
+              ${prog ? `<div class="exercise-prog-row">
+                <span class="prog-tag${prog.status === "progress_weight" || prog.status === "progress_reps" ? " is-up" : prog.status === "plateau_deload" ? " is-warn" : ""}" title="${esc(prog.forecast ?? "")}">${icon("trending", 12)} ${esc(prog.statusLabel)}</span>
+                ${prog.deloadWeight != null ? `<button type="button" class="quiet deload-btn" data-workout="apply-deload" data-row="${index}">降载至 ${fmt(prog.deloadWeight)} kg</button>` : ""}
+              </div>` : ""}
+            </div>
+            <span data-exercise-count></span>
+          </header>
+          <div class="workout-motion-slot" data-motion-slot="${index}"${isMobileViewport() && !openMotions.has(row.id) ? " hidden" : ""}>${renderMotionMarkup(row)}</div>
+          <div class="exercise-subbar">
+            <details class="exercise-settings"><summary>${icon("clock", 14)} <span data-rest-text>休息 ${row.restSeconds} 秒</span>${icon("chevron", 12)}</summary>
+              <div class="exercise-settings-body">
+                <div class="rest-preset-row">
+                  <label>组间休息 <input aria-label="休息秒数" data-rest="${index}" type="number" inputmode="numeric" min="0" max="900" value="${row.restSeconds}" required> 秒</label>
+                  <div class="rest-quick-pills" role="group" aria-label="常用休息时长">${[60, 90, 120, 180].map((sec) =>
+                    `<button type="button" class="stepper-pill" data-workout="set-rest" data-row="${index}" data-seconds="${sec}" aria-pressed="${row.restSeconds === sec}">${sec}s</button>`).join("")}
+                    ${live && row.restSeconds > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-workout="start-rest" data-row="${index}">立即计时</button>` : ""}
+                  </div>
+                </div>
+                <div class="exercise-manage-row">
+                  ${rows.length > 1 ? `<div class="exercise-move-group">
+                    <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="-1"${index === 0 ? " disabled" : ""}>${icon("arrowUp", 14)} 上移</button>
+                    <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="1"${index === rows.length - 1 ? " disabled" : ""}>${icon("arrowDown", 14)} 下移</button>
+                  </div>` : ""}
+                  ${backup ? `<button type="button" class="secondary-button" data-workout="swap-backup" data-row="${index}">${icon("swap", 14)} 换为备选：${esc(backup.name)}</button>` : ""}
+                  <button type="button" class="secondary-button" data-workout="swap-any" data-row="${index}">${icon("swap", 14)} 替换动作</button>
+                  <button type="button" class="danger" data-workout="remove-row" data-row="${index}">移除动作</button>
+                </div>
+              </div></details>
+            <div class="exercise-subbar-actions">
+              <button type="button" class="quiet subbar-pill motion-toggle-btn${openMotions.has(row.id) ? " is-active" : ""}" data-workout="toggle-motion" data-row="${index}" aria-pressed="${openMotions.has(row.id)}">${icon("play", 12)} ${openMotions.has(row.id) ? "收起示范" : "动作示范"}</button>
+              <button type="button" class="quiet subbar-pill${dossierOpen ? " is-active" : ""}" data-workout="toggle-dossier" data-row="${index}" aria-pressed="${dossierOpen}">${icon("analytics", 13)} 备忘/历史</button>
+              ${!timed && mode === "reps" ? `<button type="button" class="quiet subbar-pill${isUnilateral ? " is-active" : ""}" data-workout="toggle-unilateral" data-row="${index}" aria-pressed="${isUnilateral}" title="切换单侧双倍计容或标准总重计容">${isUnilateral ? "单侧 ×2" : "双侧 ×1"}</button>` : ""}
+              ${rows.length > 1 || row.supersetGroup ? `<button type="button" class="quiet subbar-pill${row.supersetGroup ? " is-superset" : ""}" data-workout="toggle-superset" data-row="${index}" aria-pressed="${!!row.supersetGroup}">${row.supersetGroup ? `超级组 ${esc(row.supersetGroup)} · 取消` : "超级组"}</button>` : ""}
+              ${partnerIdx >= 0 ? `<button type="button" class="quiet subbar-pill" data-workout="focus-row" data-row="${partnerIdx}">切搭档 ${esc(ssBadges[partnerIdx])}</button>` : ""}
+            </div>
+            <div class="plate-math" data-plate-math hidden></div>
+          </div>
+          ${renderDossierSlot(row, index)}
+          <div class="set-head"><span>组别</span><span>${timed ? "时长 / 秒" : mode === "assisted" ? "辅助 / kg" : "重量 / kg"}</span>${timed ? "" : "<span>次数</span>"}${timed ? "" : '<span class="col-rir">RIR</span>'}<span>完成</span><span></span></div>
+          ${row.sets.map((entry, i) => `<div class="set-row" data-row="${index}" data-index="${i}">
+            <div class="set-swipe-bg is-done-hint" aria-hidden="true">${icon("check", 16)}<span>${entry.completed ? "取消完成" : "完成本组"}</span></div>
+            <div class="set-swipe-bg is-del-hint" aria-hidden="true"><span>删除本组</span>${icon("close", 16)}</div>
+            <button type="button" class="set-kind" data-workout="cycle-type" data-type="${esc(entry.type)}" data-row="${index}" data-index="${i}" aria-label="第 ${i + 1} 组类型，当前${{ normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" }[entry.type] ?? "常规"}，点击切换"><strong class="kind-pip"></strong><strong>${i + 1}</strong><span>${{ normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" }[entry.type] ?? "常规"}</span></button>
+            <input aria-label="第 ${i + 1} 组${timed ? "秒数" : "重量"}" type="number" inputmode="${timed ? "numeric" : "decimal"}" enterkeyhint="${timed ? "done" : "next"}" min="0" max="${timed ? 86400 : 100000}" step="${timed ? 1 : 0.01}" data-set="${timed ? "seconds" : "weight"}" data-row="${index}" data-index="${i}" value="${timed ? entry.seconds : entry.weight}" required>
+            ${timed ? "" : `<input aria-label="第 ${i + 1} 组次数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="1000" step="1" data-set="reps" data-row="${index}" data-index="${i}" value="${entry.reps}" required>`}
+            ${timed ? "" : `<select class="col-rir set-rir-select" aria-label="第 ${i + 1} 组 RIR" data-set="rir" data-row="${index}" data-index="${i}">${options(rirValues, entry.rir ?? "")}</select>`}
+            <label class="check-set"><input type="checkbox" aria-label="完成第 ${i + 1} 组" data-set="completed" data-row="${index}" data-index="${i}"${entry.completed ? " checked" : ""}><span>${icon("check", 17)}</span></label>
+            <button type="button" class="quiet icon-button" data-workout="remove-set" data-row="${index}" data-index="${i}" aria-label="删除第 ${i + 1} 组">${icon("close", 15)}</button>
+            <div class="set-reference" data-row="${index}" data-index="${i}" hidden></div>
+            <div class="set-stepper-bar" data-row="${index}" data-index="${i}">
+              ${timed
+                ? `<div class="stepper-group"><span class="stepper-label">时长</span>
+                    <button type="button" class="stepper-pill" data-step-sec="-10" data-row="${index}" data-index="${i}">-10s</button>
+                    <button type="button" class="stepper-pill" data-step-sec="-5" data-row="${index}" data-index="${i}">-5s</button>
+                    <button type="button" class="stepper-pill" data-step-sec="+5" data-row="${index}" data-index="${i}">+5s</button>
+                    <button type="button" class="stepper-pill" data-step-sec="+10" data-row="${index}" data-index="${i}">+10s</button>
+                    ${live && !entry.completed ? (() => {
+                      const running = activeHold && activeHold.rowId === row.id && activeHold.setId === entry.id;
+                      const holdSec = running ? Math.max(0, Math.floor((Date.now() - activeHold.startedAt) / 1000)) : 0;
+                      return `<button type="button" class="stepper-pill ${running ? "is-hold-running" : "stepper-clone"}" data-workout="hold-timer" data-row="${index}" data-index="${i}">${running ? `● <span data-hold-clock>${formatClock(holdSec)}</span> · 停止打卡` : `${icon("clock", 12)} 开始计时`}</button>`;
+                    })() : ""}
+                  </div>`
+                : `<div class="stepper-group"><span class="stepper-label">调重</span>
+                    ${((["dumbbell", "kettlebell", "cable", "band"].includes(row.snapshot?.equipment) || (entry.weight > 0 && entry.weight <= 15))
+                      ? [-2.5, -1.25, 1.25, 2.5]
+                      : [-5, -2.5, 2.5, 5]).map((d) =>
+                        `<button type="button" class="stepper-pill" data-step-wt="${d}" data-row="${index}" data-index="${i}">${d > 0 ? `+${d}` : d}</button>`).join("")}
+                  </div>
+                  <div class="stepper-group"><span class="stepper-label">调次</span>
+                    <button type="button" class="stepper-pill" data-step-rep="-1" data-row="${index}" data-index="${i}">-1</button>
+                    <button type="button" class="stepper-pill" data-step-rep="+1" data-row="${index}" data-index="${i}">+1</button>
+                    ${i > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-step-clone="${index}" data-index="${i}" title="复制上一组重量与次数">同上组</button>` : ""}
+                    ${row.sets.slice(i + 1).some((s) => !s.completed && s.type !== "warmup") ? `<button type="button" class="stepper-pill" data-step-fill-rest="${index}" data-index="${i}" title="将本组重量与次数同步到后续所有待完成组">同步后续组</button>` : ""}
+                  </div>`}
+            </div>
+          </div>`).join("")}
+          <footer class="exercise-actions">
+            <button type="button" class="secondary-button add-set" data-workout="add-set" data-row="${index}"${row.sets.length >= 100 ? " disabled" : ""}>${icon("plus", 17)} 加一组</button>
+            ${!timed && row.sets.length < 100 && row.sets.some((s) => s.weight > 0) ? `${mode === "reps" ? `<button type="button" class="quiet drop-add-btn" data-workout="add-drop-set" data-row="${index}">${icon("bolt", 13)} + 递减组</button>` : ""}<button type="button" class="quiet rp-add-btn" data-workout="add-rest-pause" data-row="${index}">${icon("clock", 13)} + 休停组</button>` : ""}
+            ${mode === "reps" && row.sets.some((s) => s.type !== "warmup" && s.weight > 20) && !row.sets.some((s) => s.type === "warmup") ? `<button type="button" class="quiet warmup-gen-btn" data-workout="gen-warmups" data-row="${index}">${icon("bolt", 13)} 一键热身组</button>` : ""}
+            <button type="button" class="quiet" data-workout="use-workout-reference" data-row="${index}" hidden>沿用上次数据</button>
+            <small class="set-swipe-tip">右滑完成 · 左滑删组</small>
+          </footer>
+          ${live ? `<div class="exercise-complete-banner" data-complete-callout hidden></div>` : ""}</section>`;
+      }).join("") || empty("还没有动作", "从下方搜索并添加训练动作。");
+      updateProgress();
+      updateReferences();
+      const jumpBar = $(".exercise-jump", form), activeChip = jumpBar?.children[focusRow];
+      if (activeChip && jumpBar.scrollWidth > jumpBar.clientWidth + 2) {
+        jumpBar.scrollTo({ left: Math.max(0, activeChip.offsetLeft - (jumpBar.clientWidth - activeChip.offsetWidth) / 2), behavior: "instant" });
+      }
+    }
+    renderRows();
+    void loadReferences();
+    void loadExerciseDetails();
+    void loadExerciseNotes();
+
+    const liveClock = $("[data-live-clock]", form);
+    const restBanner = $(".rest-clock", form);
+    const dialOverlay = $(".rest-dial-overlay", form);
+    const miniRing = $(".rest-mini-ring", form);
+    const dialSvg = $(".rest-dial-svg", form);
+    const wake = supportsWake ? keepWorkoutScreenAwake(() => !!$('[name="keepScreen"]', form)?.checked
+      && !!timing.runningSince && dateInput.value === today(), (locked) => {
+        $("[data-wake-status]", form).textContent = locked ? "屏幕常亮已启用" : "";
+        $('[name="keepScreen"]', form)?.closest("label").classList.toggle("wake-active", locked);
+      }) : null;
+
+    function renderClocks() {
+      const now = Date.now();
+      if (activeHold) {
+        const holdElapsed = Math.max(0, Math.floor((now - activeHold.startedAt) / 1000));
+        const holdEl = $("[data-hold-clock]", list);
+        if (holdEl) {
+          const text = formatClock(holdElapsed);
+          if (holdEl.textContent !== text) holdEl.textContent = text;
+        }
+        if (activeHold.targetSeconds > 0 && holdElapsed >= activeHold.targetSeconds && !activeHold.beeped) {
+          activeHold.beeped = true;
+          audio.play(true);
+          haptic("timer");
+        }
+      }
+      if (liveClock) {
+        liveClock.hidden = dateInput.value !== today();
+        const elapsed = formatClock(elapsedAt(timing, now));
+        const face = $("strong", liveClock);
+        if (face.textContent !== elapsed) face.innerHTML = matrix(elapsed);
+        const label = timing.runningSince ? "暂停计时" : timing.elapsedSeconds ? "继续计时" : "开始计时";
+        const button = $("button", liveClock);
+        if (button.textContent !== label) button.textContent = label;
+      }
+      const showRest = !!rest && !reviewing && dateInput.value === today();
+      restBanner.hidden = !showRest;
+      dialOverlay.hidden = !showRest || !dialOpen;
+      if (!showRest) {
+        if (activeHold) {
+          const holdElapsed = Math.max(0, Math.floor((now - activeHold.startedAt) / 1000));
+          document.title = `[● ${formatClock(holdElapsed)}] 计时中 · 铁记`;
+        } else if (document.title !== originalTitle) {
+          document.title = originalTitle;
+        }
+        return;
+      }
+      const { total, fraction: remainingFrac, seconds: time } = restProgress(rest, now);
+      const formatted = time ? formatClock(time) : "00:00";
+      document.title = time ? `[${formatted}] 休息中 · 铁记` : "休息结束！· 铁记";
+      if (
+        time === 0 &&
+        rest.end &&
+        restNotifiedEndAt !== rest.end &&
+        document.hidden &&
+        "Notification" in window &&
+        Notification.permission === "granted" &&
+        localStorage.getItem(notifyPreference) !== "off"
+      ) {
+        restNotifiedEndAt = rest.end;
+        try {
+          new Notification("铁记 · 组间休息结束", {
+            body: nextPendingDescription() || "准备好开始下一组！",
+            tag: "ironlog-rest",
+          });
+        } catch {}
+      }
+      if (lastRest !== time) {
+        if (lastRest !== null && lastRest - 1 === time && time <= 3) audio.play(time === 0);
+        $("strong", restBanner).innerHTML = time ? matrix(formatted) : "休息结束";
+        restBanner.classList.toggle("rest-done", time === 0);
+        $("[data-rest-announcement]", restBanner).textContent = time === 0 ? "组间休息结束" : "";
+        if ($("[data-dial-time]", dialOverlay)) {
+          $("[data-dial-time]", dialOverlay).innerHTML = matrix(formatted);
+          $("[data-dial-sub]", dialOverlay).textContent = time ? `组间恢复 · 共 ${formatClock(Math.round(total / 1000))}` : "休息结束";
+          dialOverlay.classList.toggle("rest-done", time === 0);
+          $$("[data-clock-preset]", dialOverlay).forEach((btn) =>
+            btn.setAttribute("aria-pressed", String(Math.round(total / 1000) === Number(btn.dataset.clockPreset))));
+        }
+        lastRest = time;
+      }
+      syncDialTicks(miniRing, remainingFrac);
+      if (dialSvg && !dialOverlay.hidden) {
+        syncDialTicks(dialSvg, remainingFrac);
+        const nextText = nextPendingDescription();
+        const nextBox = $("[data-dial-next]", dialOverlay);
+        nextBox.hidden = !nextText;
+        nextBox.textContent = nextText;
+      }
+    }
+
+    function beginRest(seconds, setId) {
+      rest = createRestTimer(seconds, setId, Date.now());
+      lastRest = null;
+      if (localStorage.getItem(dialPreference) === "on") dialOpen = true;
+      audio.unlock();
+      renderClocks();
+    }
+    renderClocks();
+    wake?.update();
+    const ticks = live ? setInterval(renderClocks, 180) : null;
+    function checkpoint() { if (dirty && !form.dataset.saved) remember(); }
+    window.addEventListener("pagehide", checkpoint);
+    closeWorkout = () => {
+      activeHold = null;
+      if (ticks) clearInterval(ticks);
+      document.title = originalTitle;
+      clearTimeout(undoTimer);
+      clearTimeout(advanceTimer);
+      clearTimeout(stepNoticeTimer);
+      referenceRequest++;
+      detailRequest++;
+      wake?.stop();
+      window.removeEventListener("pagehide", checkpoint);
+      checkpoint();
+      if (dirty && !form.dataset.saved) onDraft?.();
+    };
+
+    function renderUndoBanner() {
+      const banner = $("[data-undo-banner]", form);
+      if (!banner) return;
+      if (pendingUndo) {
+        banner.hidden = false;
+        banner.innerHTML = `<span>已删除「${esc(pendingUndo.label)}」第 ${pendingUndo.index + 1} 组</span>
+          <button type="button" class="quiet" data-workout="undo-set">撤销</button>`;
+        return;
+      }
+      if (stepNotice) {
+        banner.hidden = false;
+        banner.innerHTML = `<span>${esc(stepNotice.message)}</span>
+          <button type="button" class="quiet" data-workout="focus-row" data-row="${stepNotice.backRowIndex}">返回查看</button>`;
+        return;
+      }
+      banner.hidden = true;
+      banner.innerHTML = "";
+    }
+
+    function clearSwapMode() {
+      swapTargetRow = -1;
+      const banner = $("[data-swap-banner]", form);
+      if (banner) {
+        banner.hidden = true;
+        banner.innerHTML = "";
+      }
+    }
+
+    function applyExerciseSwap(rowIndex, nextId, nextSnapshot) {
+      const targetRow = rows[rowIndex];
+      if (!targetRow) return false;
+      const completedSets = targetRow.sets.filter((s) => s.completed);
+      const openSets = targetRow.sets.filter((s) => !s.completed);
+      if (completedSets.length && !openSets.length) {
+        notify("该动作已全部完成，无法替换剩余组");
+        return false;
+      }
+      const nextMode = nextSnapshot?.mode ?? "reps";
+      const normalizeSwappedSet = (s, resetWeight) => ({
+        ...s,
+        weight: nextMode === "timed" ? 0 : (resetWeight ? 0 : s.weight),
+        seconds: nextMode === "timed" ? (s.seconds || 30) : 0,
+        reps: nextMode === "timed" ? 0 : (s.reps || 8),
+      });
+      if (activeHold?.rowId === targetRow.id) activeHold = null;
+      if (pendingUndo?.rowId === targetRow.id) {
+        pendingUndo = null;
+        clearTimeout(undoTimer);
+        renderUndoBanner();
+      }
+      if (!completedSets.length) {
+        targetRow.exerciseId = nextId;
+        targetRow.snapshot = nextSnapshot;
+        targetRow.sets = targetRow.sets.map((s) => normalizeSwappedSet(s, false));
+        if (guided) focusRow = rowIndex;
+      } else if (rows.length < 100) {
+        targetRow.sets = completedSets;
+        rows.splice(rowIndex + 1, 0, {
+          id: uuid(),
+          exerciseId: nextId,
+          supersetGroup: targetRow.supersetGroup ?? null,
+          restSeconds: targetRow.restSeconds,
+          snapshot: nextSnapshot,
+          sets: openSets.map((s) => ({ ...normalizeSwappedSet(s, true), id: uuid() })),
+        });
+        focusRow = rowIndex + 1;
+      } else {
+        notify("动作数量已达上限，无法拆分替换");
+        return false;
+      }
+      return true;
+    }
+
+    function completeSetEffects(row, entry, wasComplete) {
+      if (activeHold?.setId === entry.id) activeHold = null;
+      haptic("success");
+      const curRowIdx = rows.indexOf(row);
+      let supersetHandled = false;
+      if (dateInput.value === today()) {
+        entry.completedAt = entry.completedAt ?? new Date().toISOString();
+        const startSetRest = () => {
+          const entryIdx = row.sets.indexOf(entry);
+          const nextPending = entryIdx >= 0 ? row.sets.slice(entryIdx + 1).find((s) => !s.completed) : null;
+          const decision = resolveSetRestSeconds({
+            setType: entry.type,
+            nextSetType: nextPending?.type ?? null,
+            defaultRestSeconds: row.restSeconds,
+          });
+          if (decision.reason === "drop_chain") {
+            notify("递减组连续执行 · 降重后立即开组");
+            return;
+          }
+          if (!decision.seconds) return;
+          beginRest(decision.seconds, entry.id);
+          if (decision.reason === "rest_pause") {
+            notify(`休停组 · ${decision.seconds} 秒短暂喘息`);
+          } else if (decision.reason === "warmup" && decision.seconds < (Number(row.restSeconds) || 0)) {
+            notify(`热身组 · ${decision.seconds} 秒快捷间歇`);
+          }
+        };
+        if (live && row.supersetGroup && curRowIdx >= 0) {
+          const groupIndices = rows.flatMap((r, idx) => (r.supersetGroup === row.supersetGroup ? [idx] : []));
+          if (groupIndices.length > 1) {
+            const myDone = row.sets.filter((s) => s.completed).length;
+            const posInGroup = groupIndices.indexOf(curRowIdx);
+            let nextPartnerIdx = -1;
+            for (let off = 1; off < groupIndices.length; off++) {
+              const pIdx = groupIndices[(posInGroup + off) % groupIndices.length];
+              const pRow = rows[pIdx];
+              const pDone = pRow.sets.filter((s) => s.completed).length;
+              if (pDone < myDone && pRow.sets.some((s) => !s.completed)) {
+                nextPartnerIdx = pIdx;
+                break;
+              }
+            }
+            if (nextPartnerIdx >= 0) {
+              supersetHandled = true;
+              if (guided) {
+                clearAutoAdvance();
+                advanceTimer = setTimeout(() => {
+                  advanceTimer = 0;
+                  if (!dialog.open || !form.isConnected || reviewing) return;
+                  jumpTo(nextPartnerIdx, true);
+                  showStepNotice(`超级组 ${row.supersetGroup} · 下一搭档：${exerciseLabel(rows[nextPartnerIdx])}`, curRowIdx);
+                }, 450);
+              }
+            } else {
+              startSetRest();
+              const firstPendingInGroup = groupIndices.find((idx) => rows[idx]?.sets.some((s) => !s.completed));
+              if (guided && firstPendingInGroup !== undefined && firstPendingInGroup !== curRowIdx) {
+                supersetHandled = true;
+                clearAutoAdvance();
+                advanceTimer = setTimeout(() => {
+                  advanceTimer = 0;
+                  if (!dialog.open || !form.isConnected || reviewing) return;
+                  jumpTo(firstPendingInGroup, true);
+                  showStepNotice(`本轮超级组完成 · 休息后回到「${exerciseLabel(rows[firstPendingInGroup])}」`, curRowIdx);
+                }, 650);
+              }
+            }
+          } else {
+            startSetRest();
+          }
+        } else if (live) {
+          startSetRest();
+        }
+      }
+      const prHits = setBeatenPrs(row, entry);
+      if (prHits.length) {
+        const freshHits = prHits.filter((hit) => {
+          const prKey = `${row.exerciseId}:${hit.metric}:${hit.cur}`;
+          if (celebratedPrKeys.has(prKey)) return false;
+          celebratedPrKeys.add(prKey);
+          return true;
+        });
+        if (freshHits.length) {
+          haptic("pr");
+          notify(`新纪录！${exerciseLabel(row)} · ${freshHits[0].label}`);
+        }
+      }
+      updateProgress();
+      if (!supersetHandled && live && guided && !wasComplete && isRowCompleted(row) && curRowIdx === focusRow) {
+        const completedIndex = focusRow;
+        const nextIndex = findNextPendingRow(completedIndex);
+        if (nextIndex >= 0) {
+          clearAutoAdvance();
+          advanceTimer = setTimeout(() => {
+            advanceTimer = 0;
+            if (!dialog.open || !form.isConnected || reviewing) return;
+            if (!isRowCompleted(rows[completedIndex]) || focusRow !== completedIndex) return;
+            jumpTo(nextIndex, true);
+            showStepNotice(`已完成「${exerciseLabel(rows[completedIndex])}」，已切换下一动作`, completedIndex);
+          }, 650);
+        }
+      }
+    }
+
+    scroller?.addEventListener("focusin", ({ target }) => {
+      if (target.matches('.set-row input[type="number"]')) {
+        try { target.select(); } catch {}
+      }
+      if (matchMedia("(max-width: 630px)").matches && target.matches("input, select, textarea")) {
+        setTimeout(() => {
+          if (form.isConnected && document.activeElement === target) {
+            (target.closest(".set-row") ?? target).scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+        }, 120);
+      }
+    });
+
+    let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+    let swipeSetEl = null, swipeAxisLocked = "";
+    scroller?.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+        touchStartTime = Date.now();
+        swipeAxisLocked = "";
+        const inStepper = e.target.closest?.(".set-stepper-bar, .muscle-pills, .exercise-jump");
+        swipeSetEl = inStepper ? null : e.target.closest?.(".set-row");
+        if (swipeSetEl) {
+          swipeSetEl.style.transition = "none";
+        }
+      }
+    }, { passive: true });
+    scroller?.addEventListener("touchmove", (e) => {
+      if (!swipeSetEl || e.touches.length !== 1) return;
+      const dx = e.touches[0].clientX - touchStartX;
+      const dy = e.touches[0].clientY - touchStartY;
+      if (!swipeAxisLocked) {
+        if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+        swipeAxisLocked = Math.abs(dx) > Math.abs(dy) * 1.35 ? "x" : "y";
+      }
+      if (swipeAxisLocked !== "x") return;
+      const clamped = Math.max(-96, Math.min(96, dx * 0.78));
+      swipeSetEl.style.transform = `translateX(${clamped.toFixed(1)}px)`;
+      swipeSetEl.classList.toggle("is-swiping-right", clamped > 24);
+      swipeSetEl.classList.toggle("is-swiping-left", clamped < -24);
+    }, { passive: true });
+    const resetSetSwipe = () => {
+      if (!swipeSetEl) return;
+      const el = swipeSetEl;
+      swipeSetEl = null;
+      swipeAxisLocked = "";
+      el.style.transition = "transform .18s ease";
+      el.style.transform = "";
+      el.classList.remove("is-swiping-right", "is-swiping-left");
+    };
+    scroller?.addEventListener("touchcancel", resetSetSwipe, { passive: true });
+    scroller?.addEventListener("touchend", (e) => {
+      if (e.changedTouches.length !== 1) { resetSetSwipe(); return; }
+      const touchEndX = e.changedTouches[0].clientX;
+      const touchEndY = e.changedTouches[0].clientY;
+      const deltaX = touchEndX - touchStartX;
+      const deltaY = touchEndY - touchStartY;
+      const duration = Date.now() - touchStartTime;
+
+      if (swipeSetEl && swipeAxisLocked === "x") {
+        const targetSetEl = swipeSetEl;
+        resetSetSwipe();
+        if (Math.abs(deltaX) >= 62 && Math.abs(deltaX) > Math.abs(deltaY) * 1.4) {
+          if (deltaX > 0) {
+            // Swipe Right -> Toggle set completed
+            const checkbox = $('input[data-set="completed"]', targetSetEl);
+            if (checkbox) {
+              checkbox.checked = !checkbox.checked;
+              checkbox.dispatchEvent(new Event("input", { bubbles: true }));
+            }
+          } else {
+            // Swipe Left -> Delete set (with 5-second undo banner)
+            const removeBtn = $('[data-workout="remove-set"]', targetSetEl);
+            if (removeBtn) removeBtn.click();
+          }
+          return;
+        }
+      } else {
+        resetSetSwipe();
+      }
+
+      if (!live || reviewing || rows.length < 2) return;
+      if (e.target.closest?.(".set-row, .workout-picker, input, select, textarea")) return;
+      if (duration < 450 && Math.abs(deltaX) > 64 && Math.abs(deltaX) > 1.8 * Math.abs(deltaY)) {
+        if (deltaX < 0 && focusRow < rows.length - 1) {
+          jumpTo(focusRow + 1, true);
+          haptic("light");
+        } else if (deltaX > 0 && focusRow > 0) {
+          jumpTo(focusRow - 1, true);
+          haptic("light");
+        }
+      }
+    }, { passive: true });
+
+    form.addEventListener("input", ({ target }) => {
+      if (target.dataset.rest !== undefined) {
+        const seconds = Number(target.value);
+        rows[Number(target.dataset.rest)].restSeconds = seconds;
+        $("[data-rest-text]", target.closest(".exercise-settings")).textContent = `休息 ${seconds} 秒`;
+      }
+      if (target.name === "title" && live) $("[data-session-title]", form).textContent = target.value.trim() || "自由训练";
+      if (target.name === "feeling") $('[data-workout="clear-feeling"]', form).hidden = false;
+      if (!target.dataset.set) return;
+      const row = rows[Number(target.dataset.row)];
+      const entry = row.sets[Number(target.dataset.index)];
+      const key = target.dataset.set;
+      const wasComplete = key === "completed" ? isRowCompleted(row) : false;
+      if (key === "type") entry.type = target.value;
+      else if (key === "completed") entry.completed = target.checked;
+      else if (key === "rir") entry.rir = target.value === "" ? null : Number(target.value);
+      else entry[key] = Number(target.value);
+
+      if (key === "weight") {
+        untouchedWeights.delete(entry);
+        const val = Number(target.value);
+        if (val > 0) {
+          const rowIndex = Number(target.dataset.row);
+          const curIndex = Number(target.dataset.index);
+          for (let i = curIndex + 1; i < row.sets.length; i++) {
+            const nextSet = row.sets[i];
+            if (!nextSet.completed && nextSet.weight === 0 && untouchedWeights.has(nextSet)) {
+              nextSet.weight = val;
+              untouchedWeights.delete(nextSet);
+              const inputEl = $(`[data-set="weight"][data-row="${rowIndex}"][data-index="${i}"]`, list);
+              if (inputEl) inputEl.value = String(val);
+            }
+          }
+        }
+      }
+
+      if (key === "completed") {
+        if (target.checked) {
+          completeSetEffects(row, entry, wasComplete);
+        } else {
+          if (activeHold?.setId === entry.id) activeHold = null;
+          haptic("light");
+          delete entry.completedAt;
+          clearAutoAdvance();
+          if (rest?.setId === entry.id) { rest = null; dialOpen = false; renderClocks(); }
+          updateProgress();
+        }
+        if (live && row.snapshot?.mode === "timed") {
+          const setRowEl = target.closest(".set-row");
+          const holdBtn = $('[data-workout="hold-timer"]', setRowEl);
+          if (target.checked) holdBtn?.remove();
+          else if (!holdBtn) {
+            const rowIdx = Number(target.dataset.row), setIdx = Number(target.dataset.index);
+            $('.stepper-group', setRowEl)?.insertAdjacentHTML("beforeend",
+              `<button type="button" class="stepper-pill stepper-clone" data-workout="hold-timer" data-row="${rowIdx}" data-index="${setIdx}">${icon("clock", 12)} 开始计时</button>`);
+          }
+        }
+      } else if (key === "weight" || key === "reps" || key === "seconds" || key === "rir") {
+        updateReferences();
+      }
+      if (key === "completed" || key === "type") updateReferences();
+      if (error.dataset.finishRequired && hasCompletedSet()) {
+        error.hidden = true;
+        delete error.dataset.finishRequired;
+      }
+    });
+    form.addEventListener("input", ({ target }) => {
+      if (target.matches?.("[data-dossier-note]")) {
+        const noteRow = rows[Number(target.dataset.dossierNote)];
+        if (noteRow) draftDossierNotes.set(noteRow.exerciseId, target.value);
+        return;
+      }
+      if (target.id !== "exercise-query" && !["keepScreen", "restSound", "autoDial", "restNotify", "toggleRirEdit"].includes(target.name)) markDirty();
+    });
+    form.addEventListener("keypress", (event) => {
+      if (event.key === "Enter" && event.target.matches?.("input")) event.preventDefault();
+    }, true);
+    form.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.isComposing) return;
+      const noteEl = event.target.closest?.("[data-dossier-note]");
+      if (noteEl) {
+        event.preventDefault();
+        event.stopPropagation();
+        $(`[data-workout="save-note"][data-row="${noteEl.dataset.dossierNote}"]`, list)?.click();
+        return;
+      }
+      const setInput = event.target.closest?.("[data-set]");
+      if (setInput) {
+        const fieldKey = setInput.dataset.set;
+        const setRowEl = setInput.closest(".set-row");
+        if (fieldKey === "weight") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (setRowEl) $('[data-set="reps"]', setRowEl)?.focus();
+          return;
+        }
+        if (fieldKey === "reps" || fieldKey === "seconds") {
+          event.preventDefault();
+          event.stopPropagation();
+          setInput.dispatchEvent(new Event("input", { bubbles: true }));
+          if (setRowEl) {
+            const checkEl = $('[data-set="completed"]', setRowEl);
+            if (checkEl && !checkEl.checked) checkEl.click();
+            const secEl = setRowEl.closest(".exercise-editor");
+            const nextRow = secEl ? $$(".set-row", secEl).find((el) => !$('[data-set="completed"]', el)?.checked) : null;
+            const nextInput = nextRow ? ($('[data-set="weight"]', nextRow) ?? $('[data-set="seconds"]', nextRow)) : null;
+            nextInput?.focus();
+          }
+          return;
+        }
+      }
+      if (live && !reviewing && event.target.matches?.('input:not([type="checkbox"]):not([type="radio"])')) {
+        event.preventDefault();
+      }
+    }, true);
+    form.addEventListener("change", ({ target }) => {
+      if (target === dateInput) {
+        if (dateInput.value !== today()) { timing = pauseAt(timing, Date.now()); rest = null; dialOpen = false; }
+        references.clear();
+        prBaselines.clear();
+        updateReferences();
+        renderClocks();
+        wake?.update();
+        markDirty();
+        void loadReferences();
+      }
+      if (target.name === "restSound") {
+        localStorage.setItem(soundPreference, target.checked ? "on" : "off");
+        if (target.checked) audio.unlock();
+      }
+      if (target.name === "autoDial") {
+        localStorage.setItem(dialPreference, target.checked ? "on" : "off");
+      }
+      if (target.name === "restNotify") {
+        if (target.checked) {
+          if ("Notification" in window) {
+            if (Notification.permission === "granted") {
+              localStorage.setItem(notifyPreference, "on");
+            } else if (Notification.permission === "denied") {
+              target.checked = false;
+              localStorage.setItem(notifyPreference, "off");
+              notify("浏览器已屏蔽通知权限，请在地址栏权限设置中允许通知");
+            } else {
+              Notification.requestPermission().then((perm) => {
+                if (perm === "granted") {
+                  localStorage.setItem(notifyPreference, "on");
+                  notify("已开启后台休息结束提醒");
+                } else {
+                  target.checked = false;
+                  localStorage.setItem(notifyPreference, "off");
+                  notify("未授予通知权限，已关闭后台提醒");
+                }
+              }).catch(() => { target.checked = false; });
+            }
+          }
+        } else {
+          localStorage.setItem(notifyPreference, "off");
+        }
+      }
+      if (target.name === "toggleRirEdit") {
+        showRir = target.checked;
+        localStorage.setItem(rirPreference, showRir ? "on" : "off");
+        updateProgress();
+      }
+      if (target.name === "keepScreen") {
+        localStorage.setItem(screenPreference, target.checked ? "on" : "off");
+        wake?.update();
+      }
+    });
+    form.addEventListener("invalid", ({ target }) => {
+      if (live && reviewing) {
+        showFinish(false);
+        notify("请补全空白的训练组或日期/标题必填项");
+      }
+      const details = target.closest("details");
+      if (details) details.open = true;
+      const section = target.closest("[data-row-index]");
+      if (section?.hidden) jumpTo(Number(section.dataset.rowIndex), false);
+      setTimeout(() => { if (form.isConnected && target.isConnected) target.focus({ preventScroll: false }); }, 0);
+    }, true);
+    function hasCompletedSet() {
+      return rows.some((row) => row.sets.some((entry) =>
+        entry.completed && (row.snapshot?.mode === "timed" ? entry.seconds > 0 : entry.reps > 0)));
+    }
+    function canFinish() {
+      if (hasCompletedSet()) return true;
+      error.textContent = "至少完成一组有效训练，或在训练设置中存为草稿。";
+      error.hidden = false;
+      error.dataset.finishRequired = "true";
+      return false;
+    }
+    function showFinish(openReview) {
+      const panel = $(".finish-panel", form);
+      reviewing = openReview;
+      dialOpen = false;
+      if (openReview) renderFinishSummary();
+      panel.hidden = !openReview;
+      updateProgress();
+      renderClocks();
+      if (openReview) {
+        if (scroller) scroller.scrollTop = scroller.scrollHeight;
+        ($('[name="feeling"]:checked', panel) ?? $('[name="feeling"]', panel)).focus({ preventScroll: true });
+      } else {
+        jumpTo(focusRow, false);
+        $(".finish-trigger", form).focus({ preventScroll: true });
+      }
+    }
+    form.addEventListener("click", ({ target }) => {
+      const clockControl = target.closest("[data-clock]")?.dataset.clock;
+      if (clockControl) {
+        const instant = Date.now();
+        if (clockControl === "skip") { rest = null; dialOpen = false; }
+        if (clockControl === "dial-open") { dialOpen = true; lastRest = null; }
+        if (clockControl === "dial-close") { dialOpen = false; }
+        if ((clockControl === "add15" || clockControl === "add") && rest) {
+          rest = shiftRestTimer(rest, 15, instant);
+          lastRest = null;
+          audio.unlock();
+        }
+        if (clockControl === "sub15" && rest) {
+          rest = shiftRestTimer(rest, -15, instant);
+          lastRest = null;
+        }
+        if (clockControl === "train") timing = timing.runningSince ? pauseAt(timing, instant)
+          : { ...timing, runningSince: new Date(instant).toISOString() };
+        renderClocks();
+        wake?.update();
+        markDirty();
+        return;
+      }
+      const clockPreset = target.closest("[data-clock-preset]");
+      if (clockPreset) {
+        const sec = Number(clockPreset.dataset.clockPreset);
+        if (sec > 0) {
+          dialOpen = true;
+          beginRest(sec, rest?.setId ?? null);
+          markDirty();
+          haptic("light");
+        }
+        return;
+      }
+      const wtBtn = target.closest("[data-step-wt]");
+      if (wtBtn) {
+        const rIdx = Number(wtBtn.dataset.row);
+        const sIdx = Number(wtBtn.dataset.index);
+        const delta = Number(wtBtn.dataset.stepWt);
+        const targetRow = rows[rIdx];
+        const targetSet = targetRow?.sets[sIdx];
+        if (targetSet) {
+          untouchedWeights.delete(targetSet);
+          const curVal = Number(targetSet.weight) || 0;
+          const nextVal = Math.max(0, Math.round((curVal + delta) * 100) / 100);
+          targetSet.weight = nextVal;
+          const inputEl = $(`[data-set="weight"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+          if (inputEl) inputEl.value = String(nextVal);
+          updateReferences();
+          updateLiveMetrics();
+          markDirty();
+          haptic("light");
+        }
+        return;
+      }
+      const repBtn = target.closest("[data-step-rep]");
+      if (repBtn) {
+        const rIdx = Number(repBtn.dataset.row);
+        const sIdx = Number(repBtn.dataset.index);
+        const delta = Number(repBtn.dataset.stepRep);
+        const targetRow = rows[rIdx];
+        const targetSet = targetRow?.sets[sIdx];
+        if (targetSet) {
+          const curVal = Number(targetSet.reps) || 0;
+          const nextVal = Math.max(0, Math.round(curVal + delta));
+          targetSet.reps = nextVal;
+          const inputEl = $(`[data-set="reps"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+          if (inputEl) inputEl.value = String(nextVal);
+          updateReferences();
+          updateLiveMetrics();
+          markDirty();
+          haptic("light");
+        }
+        return;
+      }
+      const secBtn = target.closest("[data-step-sec]");
+      if (secBtn) {
+        const rIdx = Number(secBtn.dataset.row);
+        const sIdx = Number(secBtn.dataset.index);
+        const delta = Number(secBtn.dataset.stepSec);
+        const targetRow = rows[rIdx];
+        const targetSet = targetRow?.sets[sIdx];
+        if (targetSet) {
+          const curVal = Number(targetSet.seconds) || 0;
+          const nextVal = Math.max(0, curVal + delta);
+          targetSet.seconds = nextVal;
+          const inputEl = $(`[data-set="seconds"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+          if (inputEl) inputEl.value = String(nextVal);
+          updateReferences();
+          updateLiveMetrics();
+          markDirty();
+          haptic("light");
+        }
+        return;
+      }
+      const cloneBtn = target.closest("[data-step-clone]");
+      if (cloneBtn) {
+        const rIdx = Number(cloneBtn.dataset.stepClone);
+        const sIdx = Number(cloneBtn.dataset.index);
+        const targetRow = rows[rIdx];
+        if (targetRow && sIdx > 0) {
+          const prev = targetRow.sets[sIdx - 1];
+          const cur = targetRow.sets[sIdx];
+          if (prev && cur) {
+            cur.weight = prev.weight;
+            cur.reps = prev.reps;
+            cur.seconds = prev.seconds;
+            untouchedWeights.delete(cur);
+            const wtInput = $(`[data-set="weight"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+            const repInput = $(`[data-set="reps"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+            if (wtInput) wtInput.value = String(cur.weight);
+            if (repInput) repInput.value = String(cur.reps);
+            updateReferences();
+            updateLiveMetrics();
+            markDirty();
+            haptic("light");
+          }
+        }
+        return;
+      }
+      const fillRestBtn = target.closest("[data-step-fill-rest]");
+      if (fillRestBtn) {
+        const rIdx = Number(fillRestBtn.dataset.stepFillRest);
+        const sIdx = Number(fillRestBtn.dataset.index);
+        const targetRow = rows[rIdx];
+        const src = targetRow?.sets[sIdx];
+        if (targetRow && src) {
+          let filled = 0;
+          for (let k = sIdx + 1; k < targetRow.sets.length; k++) {
+            const dst = targetRow.sets[k];
+            if (dst.completed || dst.type === "warmup") continue;
+            dst.weight = src.weight;
+            dst.reps = src.reps;
+            untouchedWeights.delete(dst);
+            filled++;
+          }
+          if (filled > 0) {
+            renderRows();
+            markDirty();
+            haptic("light");
+            notify(`已将 ${fmt(src.weight)} kg × ${src.reps} 同步至后续 ${filled} 组`);
+          }
+        }
+        return;
+      }
+      const barSelect = target.closest("[data-plate-bar]");
+      if (barSelect) {
+        barWeight = Number(barSelect.dataset.plateBar);
+        localStorage.setItem(barPreference, String(barWeight));
+        updateLiveMetrics();
+        haptic("light");
+        return;
+      }
+      const plateToggle = target.closest("[data-plate-toggle]");
+      if (plateToggle) {
+        const val = Number(plateToggle.dataset.plateToggle);
+        if (enabledPlates.includes(val)) {
+          if (enabledPlates.length <= 1) { notify("至少保留一种配片规格"); return; }
+          enabledPlates = enabledPlates.filter((p) => p !== val);
+        } else {
+          enabledPlates = [...enabledPlates, val].sort((a, b) => b - a);
+        }
+        localStorage.setItem(platesPreference, JSON.stringify(enabledPlates));
+        updateLiveMetrics();
+        haptic("light");
+        return;
+      }
+      const button = target.closest("[data-workout]");
+      if (!button) return;
+      const snapWarmupWeight = (target, isBarbell) => {
+        if (isBarbell) {
+          if (target <= barWeight) return barWeight;
+          const calc = plateBreakdown(target, barWeight, enabledPlates);
+          if (!calc.valid) return barWeight;
+          return Math.max(barWeight, round2(calc.bar + 2 * (calc.perSide - calc.remainder)));
+        }
+        const step = target < 15 ? 1 : 2.5;
+        return Math.max(step, Math.round(target / step) * step);
+      };
+      if (button.dataset.workout === "gen-warmups") {
+        const targetRow = rows[Number(button.dataset.row)];
+        if (targetRow && (targetRow.snapshot?.mode ?? "reps") === "reps") {
+          const maxWeight = Math.max(...targetRow.sets.filter((s) => s.type !== "warmup").map((s) => s.weight || 0), 0);
+          const isBarbell = targetRow.snapshot?.equipment === "barbell";
+          const warmups = [];
+          let prevWeight = -1;
+          if (isBarbell && barWeight > 0 && barWeight < maxWeight) {
+            warmups.push({ ...set(), type: "warmup", weight: barWeight, reps: 10, completed: false });
+            prevWeight = barWeight;
+          }
+          const ratios = maxWeight >= 100
+            ? [[0.55, 5], [0.75, 3], [0.88, 1]]
+            : isBarbell ? [[0.55, 6], [0.75, 3]] : [[0.45, 10], [0.65, 6], [0.8, 3]];
+          for (const [ratio, reps] of ratios) {
+            const w = snapWarmupWeight(maxWeight * ratio, isBarbell);
+            if (w > 0 && w > prevWeight && w < maxWeight) {
+              warmups.push({ ...set(), type: "warmup", weight: w, reps, completed: false });
+              prevWeight = w;
+            }
+          }
+          if (!warmups.length && maxWeight > 0) {
+            warmups.push({ ...set(), type: "warmup", weight: snapWarmupWeight(maxWeight * 0.5, isBarbell), reps: 8, completed: false });
+          }
+          targetRow.sets.unshift(...warmups);
+          renderRows();
+          markDirty();
+          haptic("success");
+          notify(`已为「${exerciseLabel(targetRow)}」生成 ${warmups.length} 组热身：${warmups.map((s) => fmt(s.weight)).join(" / ")} kg`);
+        }
+        return;
+      }
+      if (button.dataset.workout === "toggle-rir") {
+        showRir = !showRir;
+        localStorage.setItem(rirPreference, showRir ? "on" : "off");
+        updateProgress();
+        return;
+      }
+      if (button.dataset.workout === "quick-rest") {
+        const activeRest = normalizeRestTimer(rest, Date.now());
+        dialOpen = true;
+        if (!activeRest) {
+          const sec = Math.max(15, Math.min(900, Number(rows[focusRow]?.restSeconds) || 90));
+          beginRest(sec, null);
+        } else {
+          renderClocks();
+        }
+        markDirty();
+        haptic("light");
+        return;
+      }
+      if (button.dataset.workout === "toggle-bar") {
+        barWeight = barWeight === 20 ? 15 : 20;
+        localStorage.setItem(barPreference, String(barWeight));
+        updateLiveMetrics();
+        return;
+      }
+      if (button.dataset.workout === "toggle-plate-config") {
+        const rowId = button.dataset.rowId ?? "";
+        plateConfigRowId = plateConfigRowId === rowId ? "" : rowId;
+        updateLiveMetrics();
+        return;
+      }
+      if (button.dataset.workout === "finish-review") {
+        if (canFinish()) { error.hidden = true; showFinish(true); }
+        return;
+      }
+      if (button.dataset.workout === "back-from-finish") { showFinish(false); return; }
+      if (button.dataset.workout === "save-draft") {
+        if (!dateInput.value) dateInput.value = today();
+        submitWorkout("active");
+        return;
+      }
+      if (button.dataset.workout === "check-remaining") {
+        const nowIso = new Date().toISOString();
+        let added = 0;
+        for (const r of rows) {
+          const exMode = r.snapshot?.mode ?? "reps";
+          for (const s of r.sets) {
+            if (!s.completed && s.type !== "warmup" && (exMode === "timed" ? s.seconds > 0 : s.reps > 0)) {
+              if (activeHold?.setId === s.id) activeHold = null;
+              s.completed = true;
+              s.completedAt = s.completedAt ?? nowIso;
+              added++;
+            }
+          }
+        }
+        if (added) {
+          renderRows();
+          renderFinishSummary();
+          markDirty();
+          haptic("success");
+          notify(`已补勾全部剩余 ${added} 组`);
+        }
+        return;
+      }
+      if (button.dataset.workout === "clear-feeling") {
+        const selection = $('[name="feeling"]:checked', form);
+        if (selection) selection.checked = false;
+        button.hidden = true;
+        $('[name="feeling"]', form).focus({ preventScroll: true });
+        markDirty();
+        return;
+      }
+      if (button.dataset.workout === "toggle-layout") {
+        guided = !guided;
+        updateProgress();
+        haptic("light");
+        return;
+      }
+      if (button.dataset.workout === "open-picker") {
+        const pickerEl = $(".workout-picker", form);
+        if (pickerEl) {
+          pickerEl.hidden = false;
+          const willOpen = !pickerEl.open;
+          pickerEl.open = willOpen;
+          form.classList.toggle("is-picking", willOpen);
+          updateProgress();
+          if (willOpen) {
+            if (!results.length) void find(query.value.trim());
+            requestAnimationFrame(() => {
+              if (scroller) scroller.scrollTo({ top: 0, behavior: "smooth" });
+              query?.focus({ preventScroll: true });
+            });
+          }
+        }
+        return;
+      }
+      if (button.dataset.workout === "step") {
+        jumpTo(focusRow + Number(button.dataset.step));
+        if (button.hidden || button.disabled) $(`[data-row-index="${focusRow}"] h3`, list)?.focus({ preventScroll: true });
+        return;
+      }
+      if (button.dataset.workout === "undo-set" && pendingUndo) {
+        const { rowId, index: restoreAt, entry } = pendingUndo;
+        const targetRow = rows.find((item) => item.id === rowId);
+        pendingUndo = null;
+        clearTimeout(undoTimer);
+        renderUndoBanner();
+        if (targetRow) {
+          targetRow.sets.splice(Math.min(restoreAt, targetRow.sets.length), 0, entry);
+          renderRows();
+          markDirty();
+          notify("已恢复该组");
+        }
+        return;
+      }
+      if (button.dataset.workout === "create-custom-exercise") {
+        remember();
+        const savedRecord = activeRecord;
+        const savedData = {
+          ...data,
+          ...(template ? { templateKey: template } : {}),
+          exerciseMeta: seedExerciseMeta,
+        };
+        const savedSettings = settings;
+        const reopenKey = scope
+          ? "ironlog-web-draft:" + scope + ":" + (savedRecord ? savedRecord.id + ":" + savedRecord.version : template ? "template:" + template : "new")
+          : "";
+        if (reopenKey && reopenKey !== draftKey) {
+          try {
+            const rawDraft = localStorage.getItem(draftKey);
+            if (rawDraft) localStorage.setItem(reopenKey, rawDraft);
+          } catch {}
+        }
+        const prevClose = closeWorkout;
+        closeWorkout = null;
+        prevClose?.();
+        onCreateCustomExercise?.({
+          onDone: (created) => {
+            if (created && reopenKey) {
+              try {
+                const raw = localStorage.getItem(reopenKey) ?? localStorage.getItem(draftKey);
+                const draft = raw ? JSON.parse(raw) : { exercises: rows };
+                const { name, muscle, equipment: equip, mode, volumeMultiplier } = created;
+                draft.exercises = [...(draft.exercises ?? rows), {
+                  id: uuid(), exerciseId: created.id, restSeconds: settings.restSeconds ?? 90,
+                  snapshot: { name, muscle, equipment: equip, mode, volumeMultiplier },
+                  sets: Array.from({ length: 3 }, () => ({
+                    ...set(), seconds: mode === "timed" ? 30 : 0, reps: mode === "timed" ? 0 : 8,
+                  })),
+                }];
+                draft.focusId = draft.exercises.at(-1)?.id;
+                localStorage.setItem(reopenKey, JSON.stringify(draft));
+              } catch {}
+            }
+            editWorkout(savedRecord, savedData, savedSettings);
+          },
+        });
+        return;
+      }
+      const index = Number(button.dataset.row);
+      const row = rows[index];
+      const setIndex = Number(button.dataset.index);
+      if (button.dataset.workout === "set-rest" && row) {
+        const sec = Number(button.dataset.seconds);
+        row.restSeconds = sec;
+        const inputEl = $(`[data-rest="${index}"]`, form);
+        if (inputEl) inputEl.value = String(sec);
+        const textEl = $("[data-rest-text]", button.closest(".exercise-settings"));
+        if (textEl) textEl.textContent = `休息 ${sec} 秒`;
+        $$('[data-workout="set-rest"]', button.closest(".exercise-settings")).forEach((b) =>
+          b.setAttribute("aria-pressed", String(Number(b.dataset.seconds) === sec)));
+        markDirty();
+        haptic("light");
+        return;
+      }
+      if (button.dataset.workout === "start-rest" && row && live) {
+        if (row.restSeconds > 0) {
+          beginRest(row.restSeconds, row.sets.at(-1)?.id ?? row.id);
+          haptic("light");
+          notify(`已开启 ${row.restSeconds} 秒组间休息`);
+        }
+        return;
+      }
+      if (button.dataset.workout === "move-row" && row) {
+        const dir = Number(button.dataset.dir);
+        const targetPos = index + dir;
+        if (targetPos >= 0 && targetPos < rows.length) {
+          [rows[index], rows[targetPos]] = [rows[targetPos], rows[index]];
+          if (focusRow === index) focusRow = targetPos;
+          else if (focusRow === targetPos) focusRow = index;
+          renderRows();
+          markDirty();
+          haptic("light");
+        }
+        return;
+      }
+      if (button.dataset.workout === "focus-row") {
+        stepNotice = null;
+        clearTimeout(stepNoticeTimer);
+        renderUndoBanner();
+        jumpTo(index);
+        return;
+      }
+      if (button.dataset.workout === "cycle-type") {
+        const order = ["normal", "warmup", "failure", "drop", "rest_pause"];
+        const labels = { normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" };
+        const entry = row.sets[setIndex];
+        entry.type = order[(order.indexOf(entry.type) + 1) % order.length];
+        button.dataset.type = entry.type;
+        button.setAttribute("aria-label", `第 ${setIndex + 1} 组类型，当前${labels[entry.type]}，点击切换`);
+        $("span", button).textContent = labels[entry.type];
+        updateReferences();
+        updateLiveMetrics();
+        markDirty();
+        return;
+      }
+      if (button.dataset.workout === "toggle-unilateral" && row) {
+        const detail = exerciseDetails.get(row.exerciseId);
+        row.snapshot = row.snapshot ?? (detail
+          ? { name: detail.name, muscle: detail.muscle, equipment: detail.equipment, mode: detail.mode, volumeMultiplier: detail.volumeMultiplier ?? 1 }
+          : { name: exerciseLabel(row), muscle: "chest", equipment: "dumbbell", mode: "reps", volumeMultiplier: 1 });
+        row.snapshot.volumeMultiplier = (row.snapshot.volumeMultiplier ?? 1) >= 2 ? 1 : 2;
+        renderRows();
+        markDirty();
+        haptic("light");
+        notify(row.snapshot.volumeMultiplier === 2 ? "已切换为单侧双倍计容（每组重量 × 2）" : "已切换为标准总重计容（× 1）");
+        return;
+      }
+      if (button.dataset.workout === "toggle-superset" && row) {
+        toggleSupersetAt(index);
+        renderRows();
+        markDirty();
+        haptic("light");
+        notify(row.supersetGroup ? `已编入超级组 ${row.supersetGroup}` : "已取消超级组配对");
+        return;
+      }
+      if (button.dataset.workout === "toggle-motion" && row) {
+        if (openMotions.has(row.id)) openMotions.delete(row.id);
+        else openMotions.add(row.id);
+        const nowOpen = openMotions.has(row.id);
+        const slot = $(`[data-motion-slot="${index}"]`, list);
+        if (slot) slot.hidden = isMobileViewport() && !nowOpen;
+        button.classList.toggle("is-active", nowOpen);
+        button.setAttribute("aria-pressed", String(nowOpen));
+        button.innerHTML = `${icon("play", 12)} ${nowOpen ? "收起示范" : "动作示范"}`;
+        return;
+      }
+      if (button.dataset.workout === "toggle-dossier" && row) {
+        if (openDossiers.has(row.id)) openDossiers.delete(row.id);
+        else {
+          openDossiers.add(row.id);
+          void loadExerciseHistoryFor(row.exerciseId);
+        }
+        renderRows();
+        if (openDossiers.has(row.id)) $(`[data-dossier-note="${index}"]`, list)?.focus({ preventScroll: true });
+        return;
+      }
+      if (button.dataset.workout === "save-note" && row) {
+        const noteInput = $(`[data-dossier-note="${index}"]`, list);
+        const noteText = (noteInput?.value ?? "").trim();
+        button.disabled = true;
+        void api("/api/web/exercise-notes/" + encodeURIComponent(row.exerciseId), {
+          method: "PUT",
+          body: { note: noteText },
+        }).then((saved) => {
+          draftDossierNotes.delete(row.exerciseId);
+          if (saved.note) exerciseNotes.set(row.exerciseId, saved.note);
+          else exerciseNotes.delete(row.exerciseId);
+          $$(".exercise-editor", list).forEach((section, rIdx) => {
+            if (rows[rIdx]?.exerciseId !== row.exerciseId) return;
+            const cueSlot = $("[data-cue-slot]", section);
+            if (cueSlot) cueSlot.innerHTML = cuePillMarkup(saved.note, rIdx);
+          });
+          notify(saved.note ? "已保存动作技术备忘" : "已清空动作备忘");
+        }).catch((err) => notify(err.message)).finally(() => { button.disabled = false; });
+        return;
+      }
+      if (button.dataset.workout === "apply-readiness-deload") {
+        const scale = getReadinessHint?.()?.suggestedScale ?? 0.9;
+        let touched = 0;
+        for (const r of rows) {
+          const exMode = r.snapshot?.mode ?? "reps";
+          if (exMode === "timed") continue;
+          for (const s of r.sets) {
+            if (!s.completed && s.type !== "warmup" && s.weight > 0) {
+              untouchedWeights.delete(s);
+              const step = s.weight <= 5 ? 0.5 : 2.5;
+              if (exMode === "assisted") {
+                const next = Math.round((s.weight * (2 - scale)) / step) * step;
+                s.weight = Math.max(s.weight, round2(next));
+              } else {
+                const next = Math.max(step, Math.round((s.weight * scale) / step) * step);
+                s.weight = Math.min(s.weight, round2(next));
+              }
+              touched++;
+            }
+          }
+        }
+        readinessDismissed = true;
+        renderRows();
+        markDirty();
+        notify(touched ? "已将未完成工作组重量按减载规则调整" : "已收起减载提示");
+        return;
+      }
+      if (button.dataset.workout === "dismiss-readiness") {
+        readinessDismissed = true;
+        renderReadinessBanner();
+        return;
+      }
+      if (button.dataset.workout === "apply-deload") {
+        const meta = rowMeta(row, index);
+        const deloadW = meta?.progression?.deloadWeight;
+        if (deloadW != null) {
+          row.sets.forEach((entry) => {
+            if (!entry.completed && entry.type !== "warmup") {
+              untouchedWeights.delete(entry);
+              entry.weight = deloadW;
+            }
+          });
+          renderRows();
+          markDirty();
+          notify(`${exerciseLabel(row)} 未完成组已减载至 ${fmt(deloadW)} kg`);
+        }
+        return;
+      }
+      if (button.dataset.workout === "hold-timer" && row && row.sets[setIndex] && live) {
+        const entry = row.sets[setIndex];
+        if (activeHold && activeHold.rowId === row.id && activeHold.setId === entry.id) {
+          const sec = Math.max(1, Math.floor((Date.now() - activeHold.startedAt) / 1000));
+          const wasComplete = isRowCompleted(row);
+          activeHold = null;
+          entry.seconds = sec;
+          entry.completed = true;
+          entry.completedAt = new Date().toISOString();
+          renderRows();
+          completeSetEffects(row, entry, wasComplete);
+          markDirty();
+          notify(`已完成保持 ${sec} 秒`);
+        } else if (!entry.completed) {
+          activeHold = {
+            rowId: row.id,
+            setId: entry.id,
+            startedAt: Date.now(),
+            targetSeconds: entry.seconds || 0,
+            beeped: false,
+          };
+          audio.unlock();
+          renderRows();
+        }
+        return;
+      }
+      if (button.dataset.workout === "apply-pct-load" && row) {
+        const w = Number(button.dataset.weight);
+        const r = Number(button.dataset.reps);
+        const targetSet = row.sets.find((s) => !s.completed && s.type !== "warmup")
+          ?? row.sets.findLast((s) => !s.completed);
+        if (targetSet && w > 0) {
+          untouchedWeights.delete(targetSet);
+          targetSet.weight = w;
+          if (r > 0) targetSet.reps = r;
+          renderRows();
+          markDirty();
+          haptic("light");
+          notify(`已填入 ${fmt(w)} kg × ${r} 次`);
+        } else {
+          notify("当前动作没有可填入的待完成组");
+        }
+        return;
+      }
+      if (button.dataset.workout === "add-drop-set" && row && row.sets.length < 100 && (row.snapshot?.mode ?? "reps") === "reps") {
+        const last = [...row.sets].reverse().find((s) => s.weight > 0) ?? row.sets.at(-1);
+        const baseW = Number(last?.weight) || 0;
+        const step = baseW <= 10 ? 0.5 : 2.5;
+        let dropW = Math.max(step, Math.round((baseW * 0.8) / step) * step);
+        if (dropW >= baseW && baseW > 0) dropW = Math.max(0, round2(baseW - step));
+        const added = {
+          ...set(),
+          type: "drop",
+          weight: round2(dropW),
+          reps: last?.reps || 8,
+          seconds: 0,
+        };
+        row.sets.push(added);
+        renderRows();
+        markDirty();
+        haptic("light");
+        notify(`已添加递减组（${fmt(dropW)} kg）`);
+        return;
+      }
+      if (button.dataset.workout === "add-rest-pause" && row && row.sets.length < 100) {
+        const last = [...row.sets].reverse().find((s) => s.weight > 0) ?? row.sets.at(-1);
+        const baseW = Number(last?.weight) || 0;
+        const added = {
+          ...set(),
+          type: "rest_pause",
+          weight: round2(baseW),
+          reps: Math.max(1, Math.round((last?.reps || 8) * 0.5)),
+          seconds: 0,
+        };
+        row.sets.push(added);
+        renderRows();
+        markDirty();
+        haptic("light");
+        notify(`已添加休停组（${fmt(baseW)} kg · 组间 20 秒）`);
+        return;
+      }
+      if (button.dataset.workout === "swap-any" && row) {
+        if (row.sets.some((s) => s.completed) && !row.sets.some((s) => !s.completed)) {
+          notify("该动作已全部完成，无法替换剩余组");
+          return;
+        }
+        swapTargetRow = index;
+        pickerMuscle = row.snapshot?.muscle ?? "";
+        pickerEquipment = "";
+        $$("[data-picker-muscle]", form).forEach((el) =>
+          el.setAttribute("aria-pressed", String(el.dataset.pickerMuscle === pickerMuscle)));
+        $$("[data-picker-equipment]", form).forEach((el) =>
+          el.setAttribute("aria-pressed", String(el.dataset.pickerEquipment === "")));
+        const banner = $("[data-swap-banner]", form);
+        if (banner) {
+          banner.hidden = false;
+          banner.innerHTML = `<span>正在替换「<b>${esc(exerciseLabel(row))}</b>」— 请在下方选择替代动作</span>
+            <button type="button" class="quiet" data-workout="cancel-swap">取消替换</button>`;
+        }
+        const pickerEl = $(".workout-picker", form);
+        if (pickerEl) {
+          pickerEl.hidden = false;
+          pickerEl.open = true;
+          form.classList.add("is-picking");
+          updateProgress();
+          void find(query.value.trim());
+          requestAnimationFrame(() => pickerEl.scrollIntoView({ behavior: "smooth", block: "start" }));
+        }
+        return;
+      }
+      if (button.dataset.workout === "cancel-swap") {
+        clearSwapMode();
+        const pickerEl = $(".workout-picker", form);
+        if (pickerEl) {
+          pickerEl.open = false;
+          form.classList.remove("is-picking");
+          updateProgress();
+        }
+        return;
+      }
+      if (button.dataset.workout === "swap-backup") {
+        const meta = rowMeta(row, index);
+        const backup = meta?.backup;
+        if (backup && applyExerciseSwap(index, backup.id, backup.snapshot)) {
+          renderRows();
+          markDirty();
+          void loadReferences();
+          void loadExerciseDetails();
+          notify(`已切换备选动作：${backup.name}`);
+        }
+        return;
+      }
+      if (button.dataset.workout === "use-reference") {
+        const entry = row.sets[setIndex];
+        const previous = referenceForSet(row, setIndex);
+        if (previous && !entry.completed && entry.type !== "warmup") {
+          untouchedWeights.delete(entry);
+          if (row.snapshot?.mode === "timed") entry.seconds = previous.seconds;
+          else Object.assign(entry, { weight: previous.weight, reps: previous.reps });
+        }
+      }
+      if (button.dataset.workout === "use-workout-reference") {
+        row.sets.forEach((entry, position) => {
+          const value = referenceForSet(row, position);
+          if (!value || entry.completed || entry.type === "warmup") return;
+          untouchedWeights.delete(entry);
+          if (row.snapshot?.mode === "timed") entry.seconds = value.seconds;
+          else Object.assign(entry, { weight: value.weight, reps: value.reps });
+        });
+      }
+      if ((button.dataset.workout === "remove-row" && row.sets.some((entry) => entry.id === rest?.setId))
+        || (button.dataset.workout === "remove-set" && row.sets[setIndex]?.id === rest?.setId)) {
+        rest = null;
+        dialOpen = false;
+        renderClocks();
+      }
+      if ((button.dataset.workout === "remove-row" && activeHold?.rowId === row?.id)
+        || (button.dataset.workout === "remove-set" && activeHold?.setId === row?.sets[setIndex]?.id)) {
+        activeHold = null;
+      }
+      if (button.dataset.workout === "remove-row") {
+        if (swapTargetRow === index) clearSwapMode();
+        else if (swapTargetRow > index) swapTargetRow--;
+        rows.splice(index, 1);
+        cleanSupersetOrphans();
+        if (index < focusRow) focusRow--;
+        pendingUndo = null;
+        renderUndoBanner();
+      }
+      if (button.dataset.workout === "remove-set") {
+        const removed = row.sets.splice(setIndex, 1)[0];
+        if (removed) {
+          pendingUndo = { rowId: row.id, index: setIndex, entry: removed, label: exerciseLabel(row) };
+          clearTimeout(undoTimer);
+          undoTimer = setTimeout(() => { pendingUndo = null; renderUndoBanner(); }, 5000);
+          renderUndoBanner();
+        }
+      }
+      if (button.dataset.workout === "add-set" && row.sets.length < 100) {
+        pendingUndo = null;
+        renderUndoBanner();
+        const last = row.sets.at(-1);
+        const added = { ...set(), weight: last?.weight ?? 0, reps: last?.reps ?? 8, seconds: last?.seconds ?? (row.snapshot?.mode === "timed" ? 30 : 0) };
+        if (added.weight === 0) untouchedWeights.add(added);
+        row.sets.push(added);
+      }
+      renderRows();
+      if (button.dataset.workout === "add-set") $('[data-workout="add-set"][data-row="' + index + '"]', list)?.focus({ preventScroll: true });
+      markDirty();
+    });
+
+    const query = $("#exercise-query");
+    const adaptOverlay = $("[data-adapt-overlay]", form);
+    const adaptInput = $("[data-adapt-input]", form);
+    const adaptProposal = $("[data-adapt-proposal]", form);
+    const adaptError = $("[data-adapt-error]", form);
+    const adaptAskBtn = $('[data-adapt="ask"]', form);
+    const adaptApplyBtn = $('[data-adapt="apply"]', form);
+
+    function formatAdaptPatch(before, patch) {
+      const notes = [];
+      if (patch.exerciseId && patch.exerciseId !== before.exerciseId) notes.push(`更换动作`);
+      if (patch.weight !== undefined) notes.push(`重量 → ${patch.weight} kg`);
+      if (patch.reps !== undefined) notes.push(`次数 → ${patch.reps} 次`);
+      if (patch.seconds !== undefined) notes.push(`时长 → ${patch.seconds} 秒`);
+      if (patch.remainingSets !== undefined) {
+        notes.push(patch.remainingSets === 0 ? "跳过余下组" : `余组 ${before.openSets.length} → ${patch.remainingSets} 组`);
+      }
+      if (patch.restSeconds !== undefined) notes.push(`休息 → ${patch.restSeconds} 秒`);
+      return notes.join(" · ") || "微调参数";
+    }
+
+    async function ensureActiveRecordSaved() {
+      const date = dateInput.value;
+      const nowDate = new Date();
+      const minutes = $('[name="minutes"]', form)?.value ?? "";
+      const elapsed = minutes === "" ? null : Math.round(Number(minutes) * 60);
+      const tracked = pauseAt(timing, nowDate.getTime());
+      const recordedTime = elapsed !== null ? { elapsedSeconds: elapsed, runningSince: null }
+        : (date === today() || (date === initialDate && tracked.elapsedSeconds > 0)) ? tracked : undefined;
+      const resting = rest?.end > nowDate.getTime() && date === today();
+      const payload = {
+        ...data,
+        date,
+        title: $('[name="title"]', form)?.value.trim() || "自由训练",
+        startedAt: startFor(date),
+        endedAt: null,
+        status: "active",
+        durationUnknown: false,
+        notes: $('[name="notes"]', form)?.value ?? "",
+        feeling: $('[name="feeling"]:checked', form)?.value || null,
+        exercises: rows,
+        timing: recordedTime,
+        restEndsAt: resting ? rest.end : null,
+        restStartedAt: resting ? rest.start : null,
+        adjustments: activeRecord?.data?.adjustments ?? data.adjustments ?? [],
+      };
+      const res = await api("/api/records", {
+        method: "POST",
+        body: { opId: uuid(), id: workoutId, kind: "workout", baseVersion: activeRecord?.version ?? 0, deleted: false, data: payload },
+      });
+      if (res.record) activeRecord = res.record;
+      return activeRecord;
+    }
+
+    function openAdaptOverlay() {
+      if (!adaptOverlay) return;
+      if (!rows.some((r) => r.sets.some((s) => !s.completed))) {
+        notify("当前没有待完成的训练组，可结束训练或先加一组");
+        return;
+      }
+      dialOpen = false;
+      activeAdapt = null;
+      adaptProposal.hidden = true;
+      adaptProposal.innerHTML = "";
+      adaptApplyBtn.hidden = true;
+      adaptAskBtn.className = "primary-button";
+      adaptAskBtn.textContent = "获取 AI 建议";
+      adaptError.hidden = true;
+      adaptOverlay.hidden = false;
+      renderClocks();
+      adaptInput?.focus();
+    }
+
+    $$("[data-adapt-preset]", form).forEach((btn) => btn.addEventListener("click", () => {
+      if (!adaptInput) return;
+      adaptInput.value = btn.dataset.adaptPreset ?? "";
+      adaptInput.focus();
+    }));
+
+    form.addEventListener("click", async ({ target }) => {
+      const adaptAction = target.closest("[data-adapt]")?.dataset.adapt;
+      if (adaptAction === "open") { openAdaptOverlay(); return; }
+      if (adaptAction === "close") { adaptOverlay.hidden = true; return; }
+      if (adaptAction === "ask") {
+        const text = adaptInput?.value.trim();
+        if (!text) { adaptError.textContent = "请先填写当前状态或时间要求"; adaptError.hidden = false; return; }
+        adaptAskBtn.disabled = true;
+        adaptApplyBtn.disabled = true;
+        adaptAskBtn.textContent = "正在分析…";
+        adaptError.hidden = true;
+        try {
+          const saved = await ensureActiveRecordSaved();
+          if (!dialog.open || !form.isConnected) return;
+          const proposal = await api("/api/ai/adapt-workout", {
+            method: "POST",
+            timeout: 125000,
+            body: { workoutId: saved.id, text },
+          });
+          if (!dialog.open || !form.isConnected) return;
+          activeAdapt = proposal;
+          adaptProposal.hidden = false;
+          adaptProposal.innerHTML = `<div class="ai-prose"><p>${esc(proposal.summary)}</p></div>` +
+            (proposal.changes.length ? `<div class="ai-adapt-changes">${proposal.changes.map((ch) => {
+              const exName = ch.before.snapshot?.name ?? ch.before.exerciseId;
+              return `<label class="ai-adapt-item"><input class="switch" type="checkbox" data-adapt-pick value="${esc(ch.exerciseRowId)}" checked>
+                <span><strong>${esc(exName)} · ${esc(formatAdaptPatch(ch.before, ch.patch))}</strong><small>${esc(ch.reason)}</small></span></label>`;
+            }).join("")}</div>` : '<p class="muted">当前无需修改具体组数，按原计划继续即可。</p>');
+          adaptApplyBtn.hidden = proposal.changes.length === 0;
+          adaptApplyBtn.disabled = proposal.changes.length === 0;
+          adaptAskBtn.className = "secondary-button";
+          adaptAskBtn.textContent = "重新获取";
+        } catch (err) {
+          adaptError.textContent = err.message;
+          adaptError.hidden = false;
+          adaptAskBtn.textContent = "获取 AI 建议";
+        } finally {
+          adaptAskBtn.disabled = false;
+          adaptApplyBtn.disabled = false;
+        }
+        return;
+      }
+      if (adaptAction === "apply" && activeAdapt) {
+        const selectedRowIds = $$("[data-adapt-pick]:checked", adaptProposal).map((el) => el.value);
+        if (!selectedRowIds.length) { adaptError.textContent = "请至少保留一项需要应用的调整"; adaptError.hidden = false; return; }
+        adaptApplyBtn.disabled = true;
+        adaptAskBtn.disabled = true;
+        adaptError.hidden = true;
+        try {
+          const { record: updatedRecord } = await api("/api/ai/adapt-workout/apply", {
+            method: "POST",
+            body: { workoutId: activeAdapt.workoutId, proposal: activeAdapt, selectedRowIds },
+          });
+          if (!dialog.open || !form.isConnected) return;
+          activeRecord = updatedRecord;
+          rows.splice(0, rows.length, ...structuredClone(updatedRecord.data.exercises));
+          pendingUndo = null;
+          renderUndoBanner();
+          adaptOverlay.hidden = true;
+          renderRows();
+          markDirty();
+          void loadReferences();
+          void loadExerciseDetails();
+          notify("已应用 AI 训中调整");
+        } catch (err) {
+          adaptError.textContent = err.message;
+          adaptError.hidden = false;
+        } finally {
+          adaptApplyBtn.disabled = false;
+          adaptAskBtn.disabled = false;
+        }
+      }
+    });
+    const picker = $(".workout-picker", form);
+    let results = [];
+    let debounce;
+    function matchesPickerQuery(item, q) {
+      if (!q) return true;
+      const needle = q.toLowerCase();
+      return [item.name, item.englishName, ...(item.aliases ?? [])].some((t) => String(t ?? "").toLowerCase().includes(needle));
+    }
+    async function find(value) {
+      const seq = ++searching;
+      const favIds = getFavoriteIds?.() ?? new Set();
+      const customList = getCustomExercises?.() ?? [];
+      const customIds = new Set(customList.map((ex) => ex.id));
+      const mineSet = pickerEquipment === "__mine__" ? new Set(getUserEquipment?.() ?? []) : null;
+      const matchesEquip = (ex) => !pickerEquipment || (mineSet ? mineSet.has(ex.equipment) : ex.equipment === pickerEquipment);
+      try {
+        let pool = [];
+        if (pickerMuscle === "__fav__") {
+          const builtinFavIds = [...favIds].filter((id) => !customIds.has(id)).slice(0, 100);
+          const customFavs = customList.filter((ex) => favIds.has(ex.id) && matchesEquip(ex) && matchesPickerQuery(ex, value));
+          let builtinFavs = [];
+          if (builtinFavIds.length) {
+            const { items = [] } = await api("/api/catalogue/exercises/details", { method: "POST", body: { ids: builtinFavIds } });
+            builtinFavs = items.filter((ex) => matchesEquip(ex) && matchesPickerQuery(ex, value));
+          }
+          pool = [...customFavs, ...builtinFavs];
+        } else {
+          const customMatches = customList.filter((ex) => (!pickerMuscle || ex.muscle === pickerMuscle) && matchesEquip(ex) && matchesPickerQuery(ex, value));
+          const params = new URLSearchParams({ q: value, limit: pickerEquipment === "__mine__" ? "48" : "12" });
+          if (pickerMuscle) params.set("muscle", pickerMuscle);
+          if (pickerEquipment && pickerEquipment !== "__mine__") params.set("equipment", pickerEquipment);
+          const { items = [] } = await api("/api/catalogue/exercises?" + params);
+          pool = [...customMatches, ...items.filter((ex) => !customIds.has(ex.id) && matchesEquip(ex))].slice(0, 20);
+          // If no search query and viewing "全部", bubble favorites to top cleanly
+          if (!value && !pickerMuscle && favIds.size) {
+            const missingFavs = [...favIds].filter((id) => !pool.some((p) => p.id === id) && !customIds.has(id)).slice(0, 6);
+            if (missingFavs.length) {
+              const { items: favItems = [] } = await api("/api/catalogue/exercises/details", { method: "POST", body: { ids: missingFavs } }).catch(() => ({ items: [] }));
+              pool = [...favItems.filter(matchesEquip), ...pool];
+            }
+          }
+        }
+        if (seq !== searching || !form.isConnected) return;
+        const ranked = prioritizeExact(pool, value);
+        results = ranked.sort((a, b) => (value ? 0 : Number(favIds.has(b.id)) - Number(favIds.has(a.id))));
+        $("#matches", form).innerHTML = results.map((item, i) =>
+          `<button type="button" data-result="${i}"><span>${favIds.has(item.id) ? '<b class="fav-pip" aria-label="已收藏">★</b> ' : ""}${esc(item.name)}${item.custom ? ' <em class="custom-badge">自定义</em>' : ""}</span><small>${esc(muscles[item.muscle] ?? item.muscle)} · ${esc(equipment[item.equipment] ?? item.equipment)}</small>${icon("plus", 16)}</button>`).join("")
+          || `<p class="muted">${pickerMuscle === "__fav__" ? "还没有符合筛选条件的收藏动作。" : "没有匹配动作，试试切换肌群/器械或新建自定义动作。"}</p>`;
+      } catch (problem) { if (seq === searching && form.isConnected) $("#matches", form).textContent = problem.message; }
+    }
+    $(".picker-muscles", form)?.addEventListener("click", ({ target }) => {
+      const btn = target.closest("[data-picker-muscle]");
+      if (!btn) return;
+      pickerMuscle = btn.dataset.pickerMuscle;
+      $$("[data-picker-muscle]", form).forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.pickerMuscle === pickerMuscle)));
+      void find(query.value.trim());
+    });
+    $(".picker-equipment", form)?.addEventListener("click", ({ target }) => {
+      const btn = target.closest("[data-picker-equipment]");
+      if (!btn) return;
+      pickerEquipment = btn.dataset.pickerEquipment;
+      $$("[data-picker-equipment]", form).forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.pickerEquipment === pickerEquipment)));
+      void find(query.value.trim());
+    });
+    if (picker?.open) void find("");
+    picker?.addEventListener("toggle", () => {
+      if (!picker.open && swapTargetRow >= 0) clearSwapMode();
+      form.classList.toggle("is-picking", Boolean(picker.open));
+      updateProgress();
+      if (!picker.open) return;
+      if (!results.length) void find(query.value.trim());
+      requestAnimationFrame(() => {
+        if (scroller) {
+          const top = picker.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+          if (top > scroller.clientHeight * 0.35 || top < 0) {
+            scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 8), behavior: "smooth" });
+          }
+        }
+      });
+    });
+    query.addEventListener("input", () => { searching++; clearTimeout(debounce); debounce = setTimeout(() => find(query.value.trim()), 180); });
+    query.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) event.preventDefault(); });
+    query.addEventListener("focus", () => { if (!results.length) void find(query.value.trim()); });
+    $("#matches", form).addEventListener("click", async ({ target }) => {
+      const button = target.closest("[data-result]");
+      const swapping = swapTargetRow >= 0 && !!rows[swapTargetRow];
+      if (!button || (!swapping && rows.length >= 100)) return;
+      const match = results[Number(button.dataset.result)];
+      button.disabled = true;
+      try {
+        const exercise = match.custom ? match : (await api("/api/catalogue/exercises/" + encodeURIComponent(match.id))).exercise;
+        if (!dialog.open || !form.isConnected) return;
+        exerciseDetails.set(exercise.id, exercise);
+        const { name, muscle, equipment: equip, mode, volumeMultiplier } = exercise;
+        const newSnapshot = { name, muscle, equipment: equip, mode, volumeMultiplier };
+        let changed = true;
+        if (swapping) {
+          changed = applyExerciseSwap(swapTargetRow, exercise.id, newSnapshot);
+          clearSwapMode();
+          if (changed) notify(`已替换为「${name}」`);
+        } else {
+          const initialSets = Array.from({ length: 3 }, () => {
+            const entry = { ...set(), seconds: mode === "timed" ? 30 : 0, reps: mode === "timed" ? 0 : 8 };
+            untouchedWeights.add(entry);
+            return entry;
+          });
+          rows.push({ id: uuid(), exerciseId: exercise.id, supersetGroup: null, restSeconds: settings.restSeconds ?? 90,
+            snapshot: newSnapshot,
+            sets: initialSets });
+          if (guided) focusRow = rows.length - 1;
+        }
+        renderRows();
+        $("#matches", form).innerHTML = "";
+        query.value = "";
+        results = [];
+        query.closest("details").open = false;
+        form.classList.remove("is-picking");
+        if (!changed) return;
+        if (guided) {
+          jumpTo(focusRow);
+          $(`[data-row-index="${focusRow}"] h3`, list)?.focus({ preventScroll: true });
+        }
+        markDirty();
+        void loadReferences();
+        void loadExerciseDetails();
+      } catch (problem) { notify(problem.message); } finally { button.disabled = false; }
+    });
+    function submitWorkout(status) {
+      const values = new FormData(form);
+      const date = values.get("date");
+      const nowDate = new Date();
+      if (status === "completed" && !canFinish()) return;
+      const minutes = values.get("minutes");
+      const elapsed = minutes === "" ? null : Math.round(Number(minutes) * 60);
+      const sessionStart = startFor(date);
+      const endedAt = status === "active" ? null : data.endedAt && date === data.date
+        ? data.endedAt : date === today() ? nowDate.toISOString() : new Date(Date.parse(sessionStart) + (elapsed ?? 0) * 1000).toISOString();
+      const tracked = pauseAt(timing, nowDate.getTime());
+      const recordedTime = elapsed !== null ? { elapsedSeconds: elapsed, runningSince: null }
+        : live && (date === today() || (date === initialDate && tracked.elapsedSeconds > 0)) ? tracked : undefined;
+      const durationUnknown = recordedTime === undefined && status === "completed";
+      const resting = status === "active" && rest?.end > nowDate.getTime() && date === today();
+      const updated = { ...data, date, title: values.get("title").trim(), startedAt: sessionStart, endedAt, status, durationUnknown,
+        notes: values.get("notes"), feeling: values.get("feeling") || null, exercises: rows,
+        adjustments: activeRecord?.data?.adjustments ?? data.adjustments ?? [],
+        timing: recordedTime, restEndsAt: resting ? rest.end : null, restStartedAt: resting ? rest.start : null };
+      commit(form, { kind: "workout", id: workoutId, baseVersion: activeRecord?.version ?? 0, data: updated },
+        "workout", date, draftKey, live && status === "completed");
+    }
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (live && !reviewing) return;
+      submitWorkout("completed");
+    });
+    $("#remove-record", form)?.addEventListener("click", () => { if (activeRecord) deleteRecord(form, activeRecord); });
+  }
+  return { edit };
+}

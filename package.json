@@ -1,0 +1,30 @@
+{
+  "name": "ironlog",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @ironlog/server",
+    "build": "npm run build -w @ironlog/shared && npm run build -w @ironlog/server && npm run build -w @ironlog/mcp && npm run build:web",
+    "typecheck": "npm run build -w @ironlog/shared && tsc -p packages/server --noEmit && tsc -p packages/mcp --noEmit",
+    "build:web": "node scripts/build-web.mjs",
+    "web": "node --env-file-if-exists=.env packages/server/dist/index.js",
+    "web:demo": "node scripts/preview-web.mjs",
+    "web:account": "node --env-file-if-exists=.env packages/server/dist/web-account.js",
+    "pretest": "npm run build",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "sharp": "^0.35.5",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

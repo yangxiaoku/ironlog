@@ -1,0 +1,28 @@
+{
+  "poses": [
+    {
+      "exerciseId": "exdb_0300",
+      "upstreamId": "DumbbellDeadlift.JPG",
+      "author": "GeorgeStepanek / Wikimedia Commons",
+      "license": "CC BY-SA 3.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/3.0/",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:DumbbellDeadlift.JPG",
+      "modifications": "将原始对照照片分为两帧，缩放并转灰阶。",
+      "variation": "",
+      "frames": [
+        {
+          "path": "/media/exercises/commons-dumbbell-deadlift-1.png?v=4b998c875326",
+          "caption": "屈髋下放",
+          "sha256": "4b998c875326fc1730a0f6de0f24a9c5518acced20318a1e6ed8db96379df86f",
+          "sourceUrl": "https://commons.wikimedia.org/wiki/File:DumbbellDeadlift.JPG"
+        },
+        {
+          "path": "/media/exercises/commons-dumbbell-deadlift-2.png?v=8c1dd2b0191b",
+          "caption": "站直完成",
+          "sha256": "8c1dd2b0191b71278aefdf0b947c0a12ba8998e51f2c0dfca8874d02c35d3fb3",
+          "sourceUrl": "https://commons.wikimedia.org/wiki/File:DumbbellDeadlift.JPG"
+        }
+      ]
+    }
+  ]
+}
