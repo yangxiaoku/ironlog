@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {
   createRestTimer,
   normalizeRestTimer,
+  pauseRestTimer,
   restProgress,
+  resumeRestTimer,
   shiftRestTimer,
 } from "../web/src/workout-clock.js";
 
@@ -69,4 +71,48 @@ test("恢复进行中与已过期的组间休息状态", () => {
   assert.ok(restored);
   assert.equal(restored.total, 90_000);
   assert.ok(Math.abs(restProgress(restored, now).fraction - 60 / 90) < 1e-6);
+});
+
+test("暂停与继续组间休息及暂停时加减时间", () => {
+  const t0 = 1_795_160_000_000;
+  const running = createRestTimer(90, "下一组", t0);
+  assert.equal(restProgress(running, t0).paused, false);
+
+  const paused = pauseRestTimer(running, t0 + 30_000);
+  assert.ok(paused);
+  assert.equal(paused.pausedLeftMs, 60_000);
+
+  // 时间流逝但暂停中的剩余秒数与恢复状态不变
+  const later = t0 + 120_000;
+  const normalized = normalizeRestTimer(paused, later);
+  assert.ok(normalized);
+  assert.equal(normalized.pausedLeftMs, 60_000);
+  assert.deepEqual(restProgress(paused, later), {
+    total: 90_000,
+    left: 60_000,
+    fraction: 60 / 90,
+    seconds: 60,
+    paused: true,
+  });
+
+  // 暂停状态下 -15s 与 +15s（含超出原 total 时扩展 total）
+  const minus15 = shiftRestTimer(paused, -15, later);
+  assert.ok(minus15);
+  assert.equal(minus15.pausedLeftMs, 45_000);
+  assert.equal(restProgress(minus15, later).seconds, 45);
+  assert.equal(restProgress(minus15, later).paused, true);
+
+  const plus45 = shiftRestTimer(paused, 45, later);
+  assert.ok(plus45);
+  assert.equal(plus45.pausedLeftMs, 105_000);
+  assert.equal(plus45.total, 105_000);
+  assert.equal(restProgress(plus45, later).seconds, 105);
+
+  // 继续倒计时
+  const resumed = resumeRestTimer(minus15, later);
+  assert.ok(resumed);
+  assert.equal(resumed.pausedLeftMs, null);
+  assert.equal(restProgress(resumed, later).paused, false);
+  assert.equal(restProgress(resumed, later).seconds, 45);
+  assert.equal(restProgress(resumed, later + 15_000).seconds, 30);
 });

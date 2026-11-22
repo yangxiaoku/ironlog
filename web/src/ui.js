@@ -132,6 +132,7 @@ const paths = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="m6 6 12 12m0-12L6 18"/>',
   play: '<polygon points="6 4 20 12 6 20 6 4"/>',
+  pause: '<rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/>',
   clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
   dial: '<circle cx="12" cy="12" r="9"/><path d="M12 5v2m0 10v2M5 12h2m10 0h2m-7-2v2l2 2"/>',
   heart: '<path d="M20.7 5.8a4.5 4.5 0 0 0-6.4 0L12 8.1 9.7 5.8a4.5 4.5 0 1 0-6.4 6.4L12 21l8.7-8.8a4.5 4.5 0 0 0 0-6.4Z"/>',

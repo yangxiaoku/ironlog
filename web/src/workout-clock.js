@@ -51,17 +51,50 @@ export function resolveSetRestSeconds({ setType = "normal", nextSetType = null, 
   return { seconds: base, reason: "normal" };
 }
 
-/** Restore an active rest timer, preserving its reference total duration. */
+/** Restore an active or paused rest timer, preserving its reference total duration. */
 export function normalizeRestTimer(rest, now = Date.now()) {
-  if (!rest || rest.end <= now) return null;
+  if (!rest) return null;
+  if (rest.pausedLeftMs != null) {
+    const left = Math.max(0, rest.pausedLeftMs);
+    if (left <= 0) return null;
+    const total = Math.max(1, rest.total ?? left);
+    return { ...rest, pausedLeftMs: left, total };
+  }
+  if (rest.end <= now) return null;
   const total = Math.max(1, rest.total ?? (rest.end - rest.start));
   return { ...rest, total };
+}
+
+/** Pause an active rest timer, storing remaining milliseconds. */
+export function pauseRestTimer(rest, now = Date.now()) {
+  if (!rest) return null;
+  if (rest.pausedLeftMs != null) return rest;
+  const left = Math.max(0, rest.end - now);
+  return { ...rest, pausedLeftMs: left };
+}
+
+/** Resume a paused rest timer from the stored remaining milliseconds. */
+export function resumeRestTimer(rest, now = Date.now()) {
+  if (!rest) return null;
+  if (rest.pausedLeftMs == null) return rest;
+  const left = Math.max(0, rest.pausedLeftMs);
+  const total = Math.max(1, rest.total ?? left);
+  const end = now + left;
+  const start = Math.max(0, Math.round(end - total));
+  return { ...rest, start, end, total, pausedLeftMs: null };
 }
 
 /** Shift rest deadline by +/- deltaSeconds without shrinking the reference ring total. */
 export function shiftRestTimer(rest, deltaSeconds, now = Date.now()) {
   if (!rest) return null;
   const deltaMs = deltaSeconds * 1000;
+  if (rest.pausedLeftMs != null) {
+    const pausedLeftMs = Math.max(0, rest.pausedLeftMs + deltaMs);
+    const total = deltaMs > 0
+      ? Math.max(1, rest.total ?? 1, pausedLeftMs)
+      : Math.max(1, rest.total ?? 1);
+    return { ...rest, total, pausedLeftMs };
+  }
   let total = Math.max(1, rest.total ?? (rest.end - rest.start));
   if (deltaMs > 0 && rest.end <= now) total = 0;
   const end = Math.max(now, (deltaMs > 0 ? Math.max(now, rest.end) : rest.end) + deltaMs);
@@ -72,42 +105,49 @@ export function shiftRestTimer(rest, deltaSeconds, now = Date.now()) {
 
 /** Compute remaining rest clock seconds and 0..1 dial fraction. */
 export function restProgress(rest, now = Date.now()) {
+  const paused = rest?.pausedLeftMs != null;
   const total = Math.max(1, rest.total ?? (rest.end - rest.start));
-  const left = Math.max(0, rest.end - now);
+  const left = paused ? Math.max(0, rest.pausedLeftMs) : Math.max(0, rest.end - now);
   return {
     total,
     left,
     fraction: Math.max(0, Math.min(1, left / total)),
     seconds: Math.ceil(left / 1000),
+    paused,
   };
 }
 
+let iosHapticWrap = null;
 let iosHapticLabel = null;
-let iosHapticInput = null;
 function triggerIosSwitchHaptic() {
   if (typeof document === "undefined") return;
   try {
     const host = document.querySelector("dialog[open]") ?? document.body;
     if (!host) return;
-    if (!iosHapticLabel || iosHapticLabel.parentElement !== host) {
-      iosHapticLabel?.remove();
-      const wrap = document.createElement("label");
+    if (!iosHapticWrap || iosHapticWrap.parentElement !== host) {
+      iosHapticWrap?.remove();
+      const wrap = document.createElement("div");
       wrap.setAttribute("aria-hidden", "true");
-      wrap.style.cssText = "position:fixed;right:0;bottom:0;width:20px;height:20px;opacity:0.0001;z-index:-1;overflow:hidden;margin:0;padding:0;";
+      wrap.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.001;pointer-events:none;margin:0;overflow:hidden;";
       const input = document.createElement("input");
+      input.id = "ironlog-ios-haptic";
       input.type = "checkbox";
+      input.tabIndex = -1;
       input.setAttribute("switch", "");
-      input.style.cssText = "width:20px;height:20px;margin:0;";
-      wrap.appendChild(input);
+      input.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.001;pointer-events:none;margin:0;";
+      const label = document.createElement("label");
+      label.htmlFor = "ironlog-ios-haptic";
+      label.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0.001;pointer-events:none;margin:0;";
+      wrap.append(input, label);
       host.appendChild(wrap);
-      iosHapticLabel = wrap;
-      iosHapticInput = input;
+      iosHapticWrap = wrap;
+      iosHapticLabel = label;
     }
-    iosHapticLabel.click();
+    iosHapticLabel?.click();
   } catch {}
 }
 
-export function haptic(type = "light") {
+export function haptic(type = "light", { skipIosSwitch = false } = {}) {
   if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
     try {
       if (type === "light") navigator.vibrate(12);
@@ -118,7 +158,7 @@ export function haptic(type = "light") {
       return;
     } catch {}
   }
-  triggerIosSwitchHaptic();
+  if (!skipIosSwitch) triggerIosSwitchHaptic();
 }
 
 function buildChimeWavDataUri(tones, sampleRate = 22050) {
@@ -178,7 +218,7 @@ export function createRestAudio(enabled) {
     } catch {}
   }
 
-  function scheduleWebAudioTones(tones, complete) {
+  function scheduleWebAudioTones(tones, wave = "sine", peak = 0.36) {
     if (!audio) return false;
     try {
       const baseTime = Math.max(audio.currentTime, 0);
@@ -186,17 +226,49 @@ export function createRestAudio(enabled) {
         const start = baseTime + delay;
         const oscillator = audio.createOscillator();
         const gain = audio.createGain();
-        oscillator.type = complete ? "sine" : "triangle";
+        oscillator.type = wave;
         oscillator.frequency.value = frequency;
-        const peakGain = complete ? 0.52 : 0.22;
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.linearRampToValueAtTime(peakGain, start + 0.012);
+        gain.gain.linearRampToValueAtTime(peak, start + 0.008);
         gain.gain.exponentialRampToValueAtTime(0.001, start + length);
         oscillator.connect(gain).connect(audio.destination);
         oscillator.start(start);
-        oscillator.stop(start + length + 0.02);
+        oscillator.stop(start + length + 0.015);
       }
       return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function emitTap(kind) {
+    if (!audio) return false;
+    try {
+      if (kind === "tick") {
+        const start = Math.max(audio.currentTime, 0);
+        const osc = audio.createOscillator();
+        const gain = audio.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(1150, start);
+        osc.frequency.exponentialRampToValueAtTime(580, start + 0.022);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.linearRampToValueAtTime(0.24, start + 0.004);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.022);
+        osc.connect(gain).connect(audio.destination);
+        osc.start(start);
+        osc.stop(start + 0.028);
+        return true;
+      }
+      if (kind === "check") {
+        return scheduleWebAudioTones([[660, 0, 0.05], [1046, 0.055, 0.10]], "sine", 0.30);
+      }
+      if (kind === "uncheck") {
+        return scheduleWebAudioTones([[520, 0, 0.04], [380, 0.04, 0.05]], "sine", 0.16);
+      }
+      if (kind === "pr") {
+        return scheduleWebAudioTones([[880, 0, 0.08], [1175, 0.08, 0.09], [1568, 0.17, 0.18]], "sine", 0.36);
+      }
+      return scheduleWebAudioTones([[740, 0, 0.04]], "triangle", 0.20);
     } catch {
       return false;
     }
@@ -226,6 +298,24 @@ export function createRestAudio(enabled) {
     }
   }
 
+  function tap(kind = "tick") {
+    if (!enabled()) return;
+    setAmbientAudioSession();
+    const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+    if (!Context) return;
+    try {
+      audio ??= new Context();
+      if (audio.state === "running") {
+        emitTap(kind);
+      } else {
+        void audio.resume().then(() => {
+          webAudioPrimed = true;
+          emitTap(kind);
+        }).catch(() => {});
+      }
+    } catch {}
+  }
+
   function play(complete) {
     if (complete) haptic("timer");
     if (!enabled()) return;
@@ -239,11 +329,11 @@ export function createRestAudio(enabled) {
       try {
         audio ??= new Context();
         if (audio.state === "running") {
-          scheduleWebAudioTones(tones, complete);
+          scheduleWebAudioTones(tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
         } else {
           void audio.resume().then(() => {
             webAudioPrimed = true;
-            scheduleWebAudioTones(tones, complete);
+            scheduleWebAudioTones(tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
           }).catch(() => {});
         }
         return;
@@ -260,7 +350,7 @@ export function createRestAudio(enabled) {
       } catch {}
     }
   }
-  return { unlock, play };
+  return { unlock, play, tap };
 }
 
 export function keepWorkoutScreenAwake(isActive, onStatus) {

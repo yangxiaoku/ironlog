@@ -1,5 +1,5 @@
 import { $, $$, esc, fmt, today, workoutSeconds, field, input, inputGroup, options, icon, empty, meals, feelings, muscles, equipment, prioritizeExact, estimated1RM, plateBreakdown } from "./ui.js";
-import { createRestAudio, createRestTimer, elapsedAt, formatClock, normalizeRestTimer, pauseAt, recoverClock, restProgress, resolveSetRestSeconds, shiftRestTimer, keepWorkoutScreenAwake, haptic } from "./workout-clock.js";
+import { createRestAudio, createRestTimer, elapsedAt, formatClock, normalizeRestTimer, pauseAt, pauseRestTimer, recoverClock, restProgress, resolveSetRestSeconds, resumeRestTimer, shiftRestTimer, keepWorkoutScreenAwake, haptic } from "./workout-clock.js";
 import { matrix } from "./display.js";
 
 function round2(v) { return Math.round(v * 100) / 100; }
@@ -77,6 +77,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     const prevClose = closeWorkout;
     closeWorkout = undefined;
     prevClose?.();
+    dialog.classList.remove("is-live-workout");
     const data = record?.data ?? seed ?? {};
     if (kind === "workout") return editWorkout(record, data, settings);
     const weight = kind === "weight";
@@ -524,6 +525,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     let readinessDismissed = false, swapTargetRow = -1, activeHold = null;
     let reviewing = false, pickerMuscle = "", pickerEquipment = "", pendingUndo = null, undoTimer = 0;
     let settingsOpen = !live || initialDate !== today();
+    let sessionMenuOpen = false, quickNotesOpen = false;
+    const openExMenus = new Set(), deleteSetMode = new Set();
     const celebratedPrKeys = new Set();
     const plannedMeta = new Map();
     seedExerciseMeta.forEach((meta, idx) => { if (meta) plannedMeta.set(meta.exerciseId + ":" + idx, meta); });
@@ -532,45 +535,61 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     const title = local?.title ?? data.title ?? "自由训练";
     const selectedFeeling = local?.feeling ?? data.feeling ?? "";
 
-    open(record && !isActive ? "编辑训练" : isActive ? "继续训练" : "记录训练", `<form id="editor-form" class="dialog-form workout-form${live && focusRow < rows.length - 1 ? " has-next" : ""}${showRir ? " show-rir" : ""}">
-      ${live ? `<section class="session-overview" aria-label="本次训练概况">
-        <header><div class="session-title-group"><h3 data-session-title>${esc(title)}</h3><span class="session-live-meta" data-live-volume></span></div>
-          <button type="button" class="session-clock" data-live-clock data-clock="train" aria-label="暂停或继续训练计时"><strong role="timer" aria-label="训练时长">${matrix("00:00")}</strong>
-            <span data-clock-label>暂停计时</span></button></header>
-        <div class="session-progress"><progress max="1" value="0" aria-label="训练组数进度"></progress><span data-set-count></span>
-          ${live ? `<button type="button" class="rir-toggle ai-adapt-btn" data-adapt="open">${icon("bolt", 12)} AI 调整</button>` : ""}
-          <button type="button" class="rir-toggle" data-workout="toggle-rir" aria-pressed="${showRir}">RIR</button>
-          <button type="button" class="rir-toggle" data-workout="toggle-settings" aria-pressed="${settingsOpen}">设置</button></div>
-        <div class="session-live-muscles" data-live-muscles hidden></div>
-      </section>` : ""}
-      ${live ? `<div class="session-control-stack" hidden>
-        <div class="exercise-jump" role="group" aria-label="切换动作"></div>
-        <div class="session-step-tools">
-          <span class="workout-step-badge" data-step-badge hidden></span>
-          ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? "全部" : "单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部" : "单步"}</button>`}
-          <button type="button" class="quiet add-exercise-pill" data-workout="open-picker">+ 动作</button>
+    open(record && !isActive ? "编辑训练" : isActive ? "继续训练" : "记录训练", `<form id="editor-form" class="dialog-form workout-form${live && focusRow < rows.length - 1 ? " has-next" : ""}${showRir ? " show-rir" : ""}${live ? " is-live" : ""}">
+      ${live ? `<header class="workout-topbar" aria-label="本次训练概况">
+        <div class="workout-topbar-row">
+          <button type="button" class="workout-circle-btn" data-action="close" aria-label="收起训练" autofocus>${icon("arrowDown", 18)}</button>
+          <button type="button" class="workout-topbar-center" data-live-clock data-clock="train" aria-label="暂停或继续训练计时">
+            <strong data-session-title>${esc(title)}</strong>
+            <span class="workout-topbar-sub"><em data-live-clock-text>00:00</em><i class="clock-sep" aria-hidden="true"> · </i><span data-set-count>0/0 组</span></span>
+          </button>
+          <div class="workout-topbar-actions">
+            <button type="button" class="workout-circle-btn" data-workout="toggle-session-menu" aria-label="训练设置与更多操作" aria-expanded="false">${icon("more", 18)}</button>
+            <button type="button" class="workout-finish-pill finish-trigger" data-workout="finish-review">结束</button>
+            <button type="button" class="secondary-button workout-finish-pill" data-workout="back-from-finish" hidden>返回</button>
+          </div>
         </div>
-      </div>` : ""}
+        <div class="workout-progress-strip">
+          <progress max="1" value="0" aria-label="训练组数进度"></progress>
+          <span class="workout-live-vol" data-live-volume>0 kg</span>
+        </div>
+      </header>` : ""}
       <div class="workout-scroll">
         ${local ? '<p class="draft-note">已恢复此设备上的草稿 <button class="quiet" type="button" id="discard-local">丢弃草稿</button></p>' : ""}
         <div id="readiness-slot"></div>
+        ${live ? `<button type="button" class="up-next-card" data-workout="step" data-step="1" hidden>
+          <span class="up-next-kicker">这之后</span>
+          <strong data-next-name></strong>
+        </button>
+        <div class="exercise-circle-bar" data-circle-bar hidden>
+          <div class="exercise-jump" role="group" aria-label="切换动作"></div>
+          <div class="exercise-bar-right">
+            <div class="session-live-muscles" data-live-muscles hidden></div>
+            <button type="button" class="workout-circle-btn add-circle-btn" data-workout="open-picker" aria-label="添加动作">${icon("plus", 16)}</button>
+          </div>
+        </div>` : ""}
         <div id="workout-rows"></div>
-        <button type="button" class="secondary-button workout-inline-add-btn" data-workout="open-picker"${(live && guided) || rows.length === 0 ? " hidden" : ""}>${icon("plus", 16)} 添加训练动作</button>
-        <details class="training-details"${settingsOpen ? " open" : ""}${live && !settingsOpen ? " hidden" : ""}><summary><span>${live ? "训练设置与草稿" : "训练信息"}</span>${icon("chevron", 14)}</summary>
+        ${live ? `<div class="workout-step-nav" data-step-nav hidden>
+          <button type="button" class="step-nav-btn" data-workout="step" data-step="-1">${icon("back", 15)}<span>上一个</span></button>
+          <button type="button" class="step-nav-btn" data-workout="step" data-step="1"><span data-step-next-label>下一个</span>${icon("chevron", 15)}</button>
+        </div>
+        <div class="workout-bottom-list" data-bottom-list hidden>
+          <button type="button" class="workout-list-row is-accent" data-workout="open-picker">${icon("plus", 17)}<span>添加训练动作</span></button>
+          <button type="button" class="workout-list-row" data-workout="open-notes" aria-expanded="false">${icon("book", 16)}<span>添加训练备注</span>${icon("chevron", 15)}</button>
+          <div class="workout-quick-note-box" data-quick-note-box hidden>
+            <textarea rows="2" maxlength="4000" data-quick-notes placeholder="记录本次组间体感或下次调整…">${esc(local?.notes ?? data.notes)}</textarea>
+          </div>
+        </div>` : `<button type="button" class="secondary-button workout-inline-add-btn" data-workout="open-picker"${rows.length === 0 ? " hidden" : ""}>${icon("plus", 16)} 添加训练动作</button>
+        <details class="training-details" open><summary><span>训练信息</span>${icon("chevron", 14)}</summary>
         <div class="details-body">
           ${field("训练名称", input("title", title, 'maxlength="120" required'))}
           <div class="fields">${commonFields("workout", { date: initialDate }, record)}
-            ${field("手动时长", inputGroup("minutes", local?.minutes ?? (live || previousDuration == null ? "" : Math.round(previousDuration / 60 * 100) / 100), "分钟", 'placeholder="自动计时" type="number" inputmode="decimal" min="0" max="10080" step="0.01"'))}</div>
-          ${live ? `<div class="session-options">
-            <label class="switch-chip"><span>休息提示音</span><input class="switch" type="checkbox" name="restSound"${localStorage.getItem(soundPreference) !== "off" ? " checked" : ""}></label>
-            <label class="switch-chip"><span>自动展开表盘</span><input class="switch" type="checkbox" name="autoDial"${localStorage.getItem(dialPreference) === "on" ? " checked" : ""}></label>
-            ${"Notification" in window ? `<label class="switch-chip" title="切到后台时推送休息结束提醒"><span>后台提醒</span><input class="switch" type="checkbox" name="restNotify"${Notification.permission === "granted" && localStorage.getItem(notifyPreference) !== "off" ? " checked" : ""}></label>` : ""}
-            ${supportsWake ? `<label class="switch-chip" title="训练计时期间保持屏幕常亮"><span>屏幕常亮<span data-wake-status class="visually-hidden" role="status"></span></span><input class="switch" type="checkbox" name="keepScreen"${localStorage.getItem(screenPreference) === "on" ? " checked" : ""}></label>` : ""}
-          </div>` : `<div class="session-options">
+            ${field("手动时长", inputGroup("minutes", local?.minutes ?? (previousDuration == null ? "" : Math.round(previousDuration / 60 * 100) / 100), "分钟", 'placeholder="自动计时" type="number" inputmode="decimal" min="0" max="10080" step="0.01"'))}</div>
+          <div class="session-options">
             <label class="switch-chip"><span>显示 RIR 列</span><input class="switch" type="checkbox" name="toggleRirEdit"${showRir ? " checked" : ""}></label>
-          </div>`}
-          ${live || record ? `<div class="details-actions">${record ? '<button id="remove-record" class="danger" type="button">删除记录</button>' : "<span></span>"}${live ? '<button class="secondary-button" type="button" data-workout="save-draft">存为草稿</button>' : ""}</div>` : ""}
-        </div></details>
+          </div>
+          ${record ? '<div class="details-actions"><button id="remove-record" class="danger" type="button">删除记录</button><span></span></div>' : ""}
+        </div></details>`}
         <section class="finish-panel" aria-label="训练小结"${live ? " hidden" : ""}>
           ${live ? '<div class="finish-summary-slot" data-finish-summary></div>' : ""}
           <fieldset><legend>训练体感</legend><div class="feeling-choices">${Object.entries(feelings).map(([key, label]) =>
@@ -579,6 +598,31 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           ${field("备注（可选）", `<textarea name="notes" maxlength="4000" rows="2" placeholder="记录本次组间体感或下次调整…">${esc(local?.notes ?? data.notes)}</textarea>`)}
         </section>
       </div>
+      ${live ? `<div class="session-menu-overlay" data-session-menu hidden aria-label="训练设置与更多操作">
+        <header class="rest-dial-head">
+          <span>${icon("settings", 16)} 训练设置与更多</span>
+          <button type="button" class="secondary-button picker-close-btn" data-workout="close-session-menu">完成</button>
+        </header>
+        <div class="session-menu-body">
+          <div class="session-menu-quick">
+            <button type="button" class="secondary-button ai-adapt-btn" data-adapt="open">${icon("bolt", 14)} AI 训中调整</button>
+            <button type="button" class="secondary-button" data-workout="toggle-rir" aria-pressed="${showRir}">RIR 列：${showRir ? "开" : "关"}</button>
+            <button type="button" class="secondary-button" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? "单步视图" : "全部视图"}</button>
+          </div>
+          <div class="details-body">
+            ${field("训练名称", input("title", title, 'maxlength="120" required'))}
+            <div class="fields">${commonFields("workout", { date: initialDate }, record)}
+              ${field("手动时长", inputGroup("minutes", local?.minutes ?? "", "分钟", 'placeholder="自动计时" type="number" inputmode="decimal" min="0" max="10080" step="0.01"'))}</div>
+            <div class="session-options">
+              <label class="switch-chip"><span>按键与休息提示音</span><input class="switch" type="checkbox" name="restSound"${localStorage.getItem(soundPreference) !== "off" ? " checked" : ""}></label>
+              <label class="switch-chip"><span>自动展开休息表盘</span><input class="switch" type="checkbox" name="autoDial"${localStorage.getItem(dialPreference) === "on" ? " checked" : ""}></label>
+              ${"Notification" in window ? `<label class="switch-chip" title="切到后台时推送休息结束提醒"><span>后台休息提醒</span><input class="switch" type="checkbox" name="restNotify"${Notification.permission === "granted" && localStorage.getItem(notifyPreference) !== "off" ? " checked" : ""}></label>` : ""}
+              ${supportsWake ? `<label class="switch-chip" title="训练计时期间保持屏幕常亮"><span>屏幕常亮<span data-wake-status class="visually-hidden" role="status"></span></span><input class="switch" type="checkbox" name="keepScreen"${localStorage.getItem(screenPreference) === "on" ? " checked" : ""}></label>` : ""}
+            </div>
+            <div class="details-actions">${record ? '<button id="remove-record" class="danger" type="button">删除记录</button>' : "<span></span>"}<button class="secondary-button" type="button" data-workout="save-draft">存为草稿</button></div>
+          </div>
+        </div>
+      </div>` : ""}
       <div class="picker-overlay workout-picker" data-picker-overlay${rows.length ? " hidden" : ""} aria-label="添加动作">
         <header class="picker-overlay-head">
           <strong data-picker-title>${icon("plus", 16)} 添加训练动作</strong>
@@ -645,26 +689,28 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         <p class="form-error" data-form-error role="alert" hidden></p>
         <div class="undo-banner" data-undo-banner hidden></div>
         <div class="rest-clock" hidden>
-          <button type="button" class="rest-dock-trigger" data-clock="dial-open" aria-label="展开组间休息表盘">
-            <svg class="rest-mini-ring" viewBox="0 0 36 36" aria-hidden="true">${renderDialTicks(1, { count: 24, cx: 18, r1: 11.5, r2: 15.5, r1Major: 10.5 })}</svg>
-            <div><span><i aria-hidden="true"></i> 休息</span><strong role="timer" aria-label="组间休息倒计时">${matrix("00:00")}</strong></div>
-          </button>
-          <div class="rest-dock-buttons">
-            <button type="button" class="secondary-button" data-clock="sub15">-15s</button>
-            <button type="button" class="secondary-button" data-clock="add15">+15s</button>
-            <button type="button" class="quiet" data-clock="skip">跳过</button>
+          <div class="rest-top-progress" aria-hidden="true"><i data-rest-progress-fill></i></div>
+          <div class="rest-clock-inner">
+            <button type="button" class="rest-dock-trigger" data-clock="dial-open" aria-label="展开组间休息表盘">
+              <strong role="timer" aria-label="组间休息倒计时" data-rest-time>0:00</strong>
+              <span data-rest-label>休息 ${icon("arrowDown", 11)}</span>
+            </button>
+            <div class="rest-dock-buttons">
+              <button type="button" class="rest-pill-btn" data-clock="sub15">− 15s</button>
+              <button type="button" class="rest-pill-btn" data-clock="add15">+ 15s</button>
+              <button type="button" class="rest-pill-btn rest-pause-btn" data-clock="pause-rest" aria-label="暂停休息计时">${icon("pause", 14)}</button>
+              <button type="button" class="rest-skip-btn" data-clock="skip">跳过</button>
+            </div>
           </div>
           <span class="visually-hidden" data-rest-announcement role="status"></span>
         </div>
-        <div class="session-dock-actions">
-          ${live ? `<button type="button" class="secondary-button icon-button" data-workout="step" data-step="-1" aria-label="上一个动作">${icon("back", 17)}</button>
-            <button type="button" class="primary-button next-exercise" data-workout="step" data-step="1" aria-label="下一个动作"><span><b>下一个动作</b><small data-next-name></small></span>${icon("chevron", 17)}</button>
-            <button type="button" class="secondary-button finish-trigger" data-workout="finish-review">结束训练</button>
-            <button type="button" class="secondary-button" data-workout="back-from-finish" hidden>返回记录</button>` : ""}
+        <div class="session-dock-actions"${live ? " hidden" : ""}>
+          ${live ? `<button type="button" class="secondary-button" data-workout="back-from-finish" hidden>返回记录</button>` : ""}
           <button class="primary-button finish-save" type="submit" value="finish"${live ? " hidden" : ""}>${live ? "保存并完成" : "保存训练"}</button>
         </div>
       </footer>
     </form>`, true, "workout");
+    dialog.classList.toggle("is-live-workout", live);
 
     const form = $("#editor-form");
     const scroller = $(".workout-scroll", form);
@@ -706,32 +752,97 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       return nextRow ? `下个动作 · ${exerciseLabel(nextRow)}` : "所有预设组已完成 · 可结束训练";
     }
 
+    function plateDeltaLabel(prevWeight, curWeight) {
+      if (!(prevWeight > barWeight) || !(curWeight > barWeight) || prevWeight === curWeight) return "";
+      const prevCalc = plateBreakdown(prevWeight, barWeight, enabledPlates);
+      const curCalc = plateBreakdown(curWeight, barWeight, enabledPlates);
+      if (!prevCalc.valid || !curCalc.valid) return "";
+      const counts = new Map();
+      for (const p of curCalc.plates) counts.set(p, (counts.get(p) ?? 0) + 1);
+      for (const p of prevCalc.plates) counts.set(p, (counts.get(p) ?? 0) - 1);
+      const parts = [];
+      for (const w of [...counts.keys()].sort((a, b) => a - b)) {
+        const diff = counts.get(w) ?? 0;
+        for (let k = 0; k < Math.abs(diff); k++) parts.push(`${diff < 0 ? "-" : "+"}${w}`);
+      }
+      return parts.join(" ");
+    }
+
+    function updateSetInlineMetas(section, row, rowIndex) {
+      const equipKey = row.snapshot?.equipment ?? exerciseDetails.get(row.exerciseId)?.equipment;
+      const mode = row.snapshot?.mode ?? "reps";
+      const baseline = prBaselines.get(row.exerciseId + ":" + mode);
+      const timed = mode === "timed";
+      const orderedIndices = [
+        ...row.sets.flatMap((s, i) => (s.type === "warmup" ? [i] : [])),
+        ...row.sets.flatMap((s, i) => (s.type !== "warmup" ? [i] : [])),
+      ];
+      let prevWeight = null;
+      for (const sIdx of orderedIndices) {
+        const entry = row.sets[sIdx];
+        const metaEl = $(`[data-inline-meta="${rowIndex}:${sIdx}"]`, section);
+        if (!metaEl) continue;
+        let leftHtml = "";
+        let rightHtml = "";
+        if (!timed && equipKey === "barbell" && entry.weight > barWeight) {
+          const calc = plateBreakdown(entry.weight, barWeight, enabledPlates);
+          if (calc.valid && calc.plates.length) {
+            const platesLabel = calc.plates.join(" + ");
+            const isFirst = prevWeight === null;
+            const prefix = isFirst ? `${barWeight} kg 杠铃杆上每侧` : "每侧";
+            leftHtml += `<button type="button" class="set-plate-line" data-workout="toggle-plate-config" data-row-id="${esc(row.id)}" title="设置杠铃杆与可用杠铃片">◎ ${prefix} ${esc(platesLabel)}${calc.remainder > 0 ? ` (+${calc.remainder})` : ""}</button>`;
+            const delta = prevWeight !== null ? plateDeltaLabel(prevWeight, entry.weight) : "";
+            if (delta) rightHtml += `<span class="set-plate-delta">${esc(delta)}</span>`;
+          }
+        }
+        if (entry.weight > 0) prevWeight = entry.weight;
+        const prHits = setBeatenPrs(row, entry);
+        let prHtml = "";
+        if (prHits.length) {
+          prHtml = `<span class="set-pr-chip${entry.completed ? " is-achieved" : ""}">${icon("trending", 12)} ${entry.completed ? `新纪录！${esc(prHits[0].label)}` : `${esc(prHits[0].label)} · 完成即破纪录`}</span>`;
+        } else if (mode === "reps" && entry.type !== "warmup" && !entry.completed && baseline?.oneRepMax > 0 && entry.weight > 0 && entry.reps > 0) {
+          const curEst = estimated1RM(entry.weight, entry.reps);
+          const pct = Math.round((curEst / baseline.oneRepMax) * 100);
+          if (pct >= 88) {
+            let needReps = null;
+            for (let r = entry.reps + 1; r <= entry.reps + 3; r++) {
+              if (round2(estimated1RM(entry.weight, r)) > baseline.oneRepMax) {
+                needReps = r - entry.reps;
+                break;
+              }
+            }
+            if (needReps !== null) {
+              prHtml = `<span class="set-pr-hint">${icon("trending", 12)} 这个重量再多 ${needReps} 次就是纪录 · 最佳 e1RM 的 ${pct}%</span>`;
+            }
+          }
+        }
+        let holdHtml = "";
+        if (timed && live && !entry.completed) {
+          const running = activeHold && activeHold.rowId === row.id && activeHold.setId === entry.id;
+          const holdSec = running ? Math.max(0, Math.floor((Date.now() - activeHold.startedAt) / 1000)) : 0;
+          holdHtml = `<button type="button" class="stepper-pill ${running ? "is-hold-running" : "stepper-clone"}" data-workout="hold-timer" data-row="${rowIndex}" data-index="${sIdx}">${running ? `● <span data-hold-clock>${formatClock(holdSec)}</span> · 停止打卡` : `${icon("clock", 12)} 开始计时`}</button>`;
+        }
+        const hasBody = Boolean(leftHtml || rightHtml || prHtml || holdHtml);
+        metaEl.hidden = !hasBody;
+        if (!hasBody) { metaEl.innerHTML = ""; continue; }
+        const topLine = (leftHtml || rightHtml) ? `<div class="set-inline-top">${leftHtml}${rightHtml}</div>` : "";
+        const botLine = (prHtml || holdHtml) ? `<div class="set-inline-bot">${prHtml}${holdHtml}</div>` : "";
+        metaEl.innerHTML = `${topLine}${botLine}`;
+      }
+    }
+
     function updatePlateHint(section, row) {
       const host = $("[data-plate-math]", section);
       if (!host) return;
       const isConfigOpen = plateConfigRowId === row.id;
-      if (row.snapshot?.equipment !== "barbell" && !isConfigOpen) { host.hidden = true; return; }
-      const targetSet = row.sets.find((entry) => !entry.completed && entry.type !== "warmup" && entry.weight > 0)
-        ?? row.sets.find((entry) => !entry.completed && entry.weight > 0)
-        ?? row.sets.findLast((entry) => entry.weight > 0);
-      const weight = targetSet?.weight ?? 0;
-      if (weight <= 0 && !isConfigOpen) { host.hidden = true; return; }
+      if (!isConfigOpen) { host.hidden = true; host.innerHTML = ""; return; }
       host.hidden = false;
-      const barLabel = BAR_PRESETS.find(([w]) => w === barWeight)?.[1] ?? `${barWeight}kg杆`;
-      const configHtml = isConfigOpen ? `<div class="plate-config-pop">
+      host.innerHTML = `<div class="plate-config-pop">
         <div class="plate-inv-row"><span>杠铃杆</span><div class="plate-inv-pills">${BAR_PRESETS.map(([w, lbl]) =>
           `<button type="button" class="stepper-pill" data-plate-bar="${w}" aria-pressed="${barWeight === w}">${lbl}</button>`).join("")}</div></div>
         <div class="plate-inv-row"><span>可用配片 (kg)</span><div class="plate-inv-pills">${ALL_PLATES.map((p) =>
           `<button type="button" class="stepper-pill" data-plate-toggle="${p}" aria-pressed="${enabledPlates.includes(p)}">${p}</button>`).join("")}</div></div>
-      </div>` : "";
-      const calc = plateBreakdown(weight, barWeight, enabledPlates);
-      if (!calc.valid) {
-        host.innerHTML = `<span class="plate-label">配片</span><button type="button" class="plate-bar-btn" data-workout="toggle-plate-config" data-row-id="${esc(row.id)}" title="设置杠铃杆与配片清单" aria-expanded="${isConfigOpen}">${barLabel}</button><span class="plate-empty">${weight <= 0 ? "输入负重查看配片" : weight === barWeight ? "空杆重量" : `低于 ${barWeight} kg 标准杆`}</span>${configHtml}`;
-        return;
-      }
-      const visual = `<span class="plate-visual" aria-hidden="true"><i class="plate-bar-rod"></i>${calc.plates.map((p) => `<i class="plate-disc" data-plate="${String(p).replace(".", "_")}"></i>`).join("")}</span>`;
-      const chips = calc.plates.map((plate) => `<span class="plate-chip">${plate}</span>`).join("");
-      host.innerHTML = `<span class="plate-label">每侧配片</span><button type="button" class="plate-bar-btn" data-workout="toggle-plate-config" data-row-id="${esc(row.id)}" title="设置杠铃杆与配片清单" aria-expanded="${isConfigOpen}">${barLabel}</button>${visual}<span class="plate-chips">${chips}${calc.remainder > 0 ? `<small>+${calc.remainder}kg</small>` : ""}</span>${configHtml}`;
+      </div>`;
     }
 
     function rowMeta(row, index) {
@@ -832,14 +943,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const { vol, refVol } = computeLiveSessionStats();
       const volEl = $("[data-live-volume]", form);
       if (volEl) {
-        let deltaHtml = "";
-        if (refVol > 0 && vol > 0) {
-          const diff = Math.round(vol - refVol);
-          deltaHtml = diff >= 0
-            ? ` <em class="live-vol-delta is-up">较上次 +${diff.toLocaleString("zh-CN")} kg</em>`
-            : ` <em class="live-vol-delta">达上次 ${Math.min(99, Math.round((vol / refVol) * 100))}%</em>`;
-        }
-        volEl.innerHTML = `总容量 ${Math.round(vol).toLocaleString("zh-CN")} kg${deltaHtml}`;
+        volEl.textContent = `${Math.round(vol).toLocaleString("zh-CN")} kg`;
+        volEl.title = refVol > 0 ? `较上次 ${vol >= refVol ? "+" : ""}${Math.round(vol - refVol)} kg` : "";
       }
       $$(".exercise-editor", form).forEach((section, index) => {
         const row = rows[index];
@@ -847,6 +952,20 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const mode = row.snapshot?.mode ?? "reps";
         const mult = row.snapshot?.volumeMultiplier ?? 1;
         const baseline = prBaselines.get(row.exerciseId + ":" + mode);
+        const bestTagEl = $("[data-exercise-best]", section);
+        if (bestTagEl) {
+          if (baseline) {
+            const bestStr = mode === "timed" ? `最佳: ${baseline.hold ?? 0} 秒`
+              : mode === "assisted" ? `最佳辅助: ${fmt(baseline.assistance)} kg`
+              : baseline.weight != null ? `最佳: ${fmt(baseline.weight)} kg`
+              : baseline.oneRepMax != null ? `最佳 1RM: ${fmt(baseline.oneRepMax)} kg` : "";
+            bestTagEl.hidden = !bestStr;
+            bestTagEl.textContent = bestStr;
+          } else {
+            bestTagEl.hidden = true;
+            bestTagEl.textContent = "";
+          }
+        }
         const oneRmEl = $("[data-exercise-1rm]", section);
         if (oneRmEl) {
           if (mode !== "reps") { oneRmEl.textContent = ""; }
@@ -897,27 +1016,12 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           } else if (previewHits.length) {
             prEl.className = "exercise-pr-line is-pr-pending";
             prEl.innerHTML = `${icon("trophy", 12)} 完成即刷新 ${esc(previewHits[0].label)}`;
-          } else if (baseline) {
-            let nudge = "";
-            const nextOpen = row.sets.find((s) => !s.completed && s.type !== "warmup" && s.weight > 0);
-            if (mode === "reps" && nextOpen && baseline.oneRepMax != null) {
-              for (let r = 1; r <= 10; r++) {
-                if (round2(estimated1RM(nextOpen.weight, r)) > baseline.oneRepMax) {
-                  nudge = ` · 做满 ${r} 次破 1RM PR`;
-                  break;
-                }
-              }
-            }
-            const bestText = mode === "timed" ? `最佳 ${baseline.hold ?? 0} 秒`
-              : mode === "assisted" ? `最佳辅助 ${fmt(baseline.assistance)} kg`
-              : `最佳 ${fmt(baseline.weight)} kg / 1RM ${fmt(baseline.oneRepMax)} kg`;
-            prEl.className = "exercise-pr-line";
-            prEl.innerHTML = `${icon("trophy", 11)} ${esc(bestText + nudge)}`;
           } else {
             prEl.className = "exercise-pr-line";
             prEl.textContent = "";
           }
         }
+        updateSetInlineMetas(section, row, index);
         updatePlateHint(section, row);
       });
       const musclesHost = $("[data-live-muscles]", form);
@@ -953,10 +1057,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const items = [...activeMap.entries()]
           .map(([k, v]) => [k, Math.round(v * 10) / 10])
           .filter(([, v]) => v > 0)
-          .sort((a, b) => b[1] - a[1]);
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 2);
         musclesHost.hidden = items.length === 0;
         musclesHost.innerHTML = items.length
-          ? `<span class="live-muscles-tag">${completedWorkCount > 0 ? "已刺激" : "本场分配"}</span>${items.map(([k, v]) => `<span>${esc(muscles[k] ?? k)} <b>${fmt(v)}</b> 组</span>`).join("")}`
+          ? items.map(([k, v]) => `<span>${esc(muscles[k] ?? k)} <b>${fmt(v)}</b></span>`).join("")
           : "";
       }
     }
@@ -989,56 +1094,79 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       }, 4500);
     }
 
+    function syncDockVisibility() {
+      if (!live) return;
+      const dock = $(".session-dock", form);
+      const restBanner = $(".rest-clock", form);
+      const undoBanner = $("[data-undo-banner]", form);
+      if (!dock) return;
+      const hasAlert = !error.hidden || (undoBanner && !undoBanner.hidden) || (restBanner && !restBanner.hidden);
+      dock.hidden = !reviewing && !hasAlert;
+    }
+
     function updateProgress() {
       const done = rows.reduce((sum, row) => sum + row.sets.filter((entry) => entry.completed).length, 0);
       const total = rows.reduce((sum, row) => sum + row.sets.length, 0);
       form.dataset.layout = guided ? "focus" : "list";
       form.classList.toggle("show-rir", showRir);
       const pickerEl = $("[data-picker-overlay]", form);
-      const pickerOpen = Boolean(pickerEl && !pickerEl.hidden);
       const inlineAddBtn = $(".workout-inline-add-btn", form);
       if (inlineAddBtn) inlineAddBtn.hidden = reviewing || (live && guided) || rows.length === 0;
       if (live) {
-        $("[data-set-count]", form).textContent = `${done} / ${total} 组`;
-        $(".session-progress progress", form).value = total ? done / total : 0;
-        const controlStack = $(".session-control-stack", form);
-        controlStack.hidden = reviewing || rows.length === 0;
-        const stepBadge = $("[data-step-badge]", form);
-        const stepRatio = rows.length ? `${focusRow + 1}/${rows.length}` : "";
-        if (stepBadge) {
-          stepBadge.textContent = stepRatio;
-          stepBadge.hidden = true;
+        $("[data-set-count]", form).textContent = `${done}/${total} 组`;
+        $(".workout-progress-strip progress", form).value = total ? done / total : 0;
+        const circleBar = $("[data-circle-bar]", form);
+        if (circleBar) circleBar.hidden = reviewing || rows.length === 0;
+        const upNextCard = $(".up-next-card", form);
+        const hasNext = !reviewing && guided && focusRow < rows.length - 1;
+        if (upNextCard) {
+          upNextCard.hidden = !hasNext;
+          const nextNameEl = $("[data-next-name]", upNextCard);
+          if (nextNameEl) {
+            const nextRow = rows[focusRow + 1];
+            const nextEn = nextRow ? exerciseDetails.get(nextRow.exerciseId)?.englishName : "";
+            nextNameEl.textContent = nextRow ? `${exerciseLabel(nextRow)}${nextEn && nextEn !== exerciseLabel(nextRow) ? ` (${nextEn})` : ""}` : "";
+          }
         }
-        const layoutBtn = $('[data-workout="toggle-layout"]', form);
-        if (layoutBtn) {
-          layoutBtn.hidden = rows.length < 2;
-          layoutBtn.setAttribute("aria-pressed", String(!guided));
-          layoutBtn.textContent = guided ? "全部" : "单步";
+        const stepNav = $("[data-step-nav]", form);
+        if (stepNav) {
+          stepNav.hidden = reviewing || !guided || rows.length < 2;
+          const prevBtn = $('[data-step="-1"]', stepNav);
+          const nextBtn = $('[data-step="1"]', stepNav);
+          if (prevBtn) prevBtn.disabled = focusRow <= 0;
+          if (nextBtn) nextBtn.disabled = focusRow >= rows.length - 1;
         }
-        const openPickerBtn = $('.session-step-tools [data-workout="open-picker"]', form);
-        if (openPickerBtn) {
-          openPickerBtn.setAttribute("aria-pressed", String(pickerOpen));
-        }
-        const previous = $('[data-step="-1"]', form), next = $('[data-step="1"]', form);
-        previous.hidden = reviewing || !guided || rows.length < 2;
-        previous.disabled = focusRow <= 0;
-        next.hidden = reviewing || !guided || focusRow >= rows.length - 1;
-        $("[data-next-name]", next).textContent = rows[focusRow + 1] ? exerciseLabel(rows[focusRow + 1]) : "";
-        form.classList.toggle("has-next", !next.hidden);
+        const bottomList = $("[data-bottom-list]", form);
+        if (bottomList) bottomList.hidden = reviewing || rows.length === 0;
+        form.classList.toggle("has-next", hasNext);
         const finishBtn = $(".finish-trigger", form);
-        finishBtn.hidden = reviewing;
-        finishBtn.className = `${next.hidden ? "primary-button" : "secondary-button"} finish-trigger`;
+        if (finishBtn) finishBtn.hidden = reviewing;
+        const topBackBtn = $('.workout-topbar [data-workout="back-from-finish"]', form);
+        if (topBackBtn) topBackBtn.hidden = !reviewing;
+        const dockActions = $(".session-dock-actions", form);
+        if (dockActions) dockActions.hidden = !reviewing;
         const dockBack = $('.session-dock [data-workout="back-from-finish"]', form);
         if (dockBack) dockBack.hidden = !reviewing;
-        $(".finish-save", form).hidden = !reviewing;
+        const saveBtn = $(".finish-save", form);
+        if (saveBtn) saveBtn.hidden = !reviewing;
         if (pickerEl && reviewing) pickerEl.hidden = true;
-        const detailsEl = $(".training-details", form);
-        if (detailsEl) {
-          detailsEl.hidden = reviewing || !settingsOpen;
-          detailsEl.open = settingsOpen;
+        const menuEl = $("[data-session-menu]", form);
+        if (menuEl) {
+          if (reviewing) sessionMenuOpen = false;
+          menuEl.hidden = !sessionMenuOpen;
+          $('[data-workout="toggle-session-menu"]', form)?.setAttribute("aria-expanded", String(sessionMenuOpen));
         }
-        $('[data-workout="toggle-rir"]', form)?.setAttribute("aria-pressed", String(showRir));
-        $('[data-workout="toggle-settings"]', form)?.setAttribute("aria-pressed", String(settingsOpen));
+        const rirMenuBtn = $('.session-menu-overlay [data-workout="toggle-rir"]', form);
+        if (rirMenuBtn) {
+          rirMenuBtn.setAttribute("aria-pressed", String(showRir));
+          rirMenuBtn.textContent = `RIR 列：${showRir ? "开" : "关"}`;
+        }
+        const layoutMenuBtn = $('.session-menu-overlay [data-workout="toggle-layout"]', form);
+        if (layoutMenuBtn) {
+          layoutMenuBtn.setAttribute("aria-pressed", String(!guided));
+          layoutMenuBtn.textContent = guided ? "单步视图" : "全部视图";
+        }
+        syncDockVisibility();
       }
       $$(".exercise-jump button", form).forEach((button, index) => {
         const sets = rows[index]?.sets ?? [];
@@ -1058,9 +1186,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const sets = rows[index].sets;
         $("[data-exercise-count]", section).textContent = `${sets.filter((entry) => entry.completed).length} / ${sets.length} 组`;
         const next = live && index === focusRow ? sets.findIndex((entry) => !entry.completed) : -1;
-        $$(".set-row", section).forEach((element, position) => {
-          element.classList.toggle("is-next", position === next);
-          element.classList.toggle("is-complete", sets[position].completed);
+        $$(".set-row", section).forEach((element) => {
+          const pos = Number(element.dataset.index);
+          element.classList.toggle("is-next", pos === next);
+          element.classList.toggle("is-complete", Boolean(sets[pos]?.completed));
         });
         const callout = $("[data-complete-callout]", section);
         if (callout) {
@@ -1114,25 +1243,23 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     }
 
     function updateReferences() {
-      $$(".set-reference", form).forEach((slot) => {
-        const index = Number(slot.dataset.row);
-        const setIndex = Number(slot.dataset.index);
-        const row = rows[index], entry = row.sets[setIndex];
-        const previous = referenceForSet(row, setIndex);
-        const prHits = setBeatenPrs(row, entry);
-        const prTag = prHits.length
-          ? `<span class="set-pr-chip${entry.completed ? " is-achieved" : ""}">${icon("trophy", 11)} ${esc(prHits[0].label)}</span>`
-          : "";
-        if (!previous && !prTag) { slot.hidden = true; return; }
-        const mode = row.snapshot?.mode ?? "reps";
-        const hint = previous ? (mode === "timed" ? `${previous.seconds} 秒`
-          : `${mode === "assisted" ? "辅助 " : ""}${previous.weight} kg × ${previous.reps}`) : "";
-        slot.hidden = false;
-        slot.innerHTML = `${hint ? `<span>上次 ${hint}</span>` : "<span></span>"}${prTag}${hint && !entry.completed ? `<button type="button" class="quiet" data-workout="use-reference" data-row="${index}" data-index="${setIndex}">沿用</button>` : ""}`;
-      });
-      $$('[data-workout="use-workout-reference"]', list).forEach((button) => {
-        const row = rows[Number(button.dataset.row)];
-        button.hidden = !row.sets.some((entry, index) => !entry.completed && !!referenceForSet(row, index));
+      $$(".exercise-editor", form).forEach((section, index) => {
+        const row = rows[index];
+        if (!row) return;
+        const lastHost = $("[data-ex-last-summary]", section);
+        if (lastHost) {
+          const prevSets = references.get(row.exerciseId) ?? [];
+          const mode = row.snapshot?.mode ?? "reps";
+          const canApply = row.sets.some((entry, idx) => !entry.completed && !!referenceForSet(row, idx));
+          if (prevSets.length) {
+            const parts = prevSets.slice(0, 6).map((p) => mode === "timed" ? `${p.seconds}s` : `${fmt(p.weight)}×${p.reps}`);
+            lastHost.hidden = false;
+            lastHost.innerHTML = `<span>上次: ${esc(parts.join(", "))}</span>${canApply ? `<button type="button" class="ex-apply-ref" data-workout="use-workout-reference" data-row="${index}">↻ 沿用</button>` : ""}`;
+          } else {
+            lastHost.hidden = true;
+            lastHost.innerHTML = "";
+          }
+        }
       });
       updateLiveMetrics();
     }
@@ -1172,10 +1299,23 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
 
     function refreshMotionSlots() {
       $$("[data-motion-slot]", list).forEach((slot) => {
-        const row = rows[Number(slot.dataset.motionSlot)];
+        const idx = Number(slot.dataset.motionSlot);
+        const row = rows[idx];
         if (row) {
           slot.innerHTML = renderMotionMarkup(row);
-          slot.hidden = isMobileViewport() && !openMotions.has(row.id);
+          slot.hidden = !openMotions.has(row.id);
+          const thumbBtn = $(`[data-ex-thumb="${idx}"]`, list);
+          if (thumbBtn) {
+            const detail = exerciseDetails.get(row.exerciseId);
+            const illustration = detail?.illustration;
+            const thumbUrl = (illustration?.gifPath?.startsWith("/media/exercises/") ? illustration.gifPath : "")
+              || (illustration?.frames?.[0]?.path?.startsWith("/media/exercises/") ? illustration.frames[0].path : "");
+            thumbBtn.classList.toggle("is-fallback", !thumbUrl);
+            thumbBtn.innerHTML = `${thumbUrl ? `<img src="${esc(thumbUrl)}" width="54" height="54" decoding="async" alt="">` : `${icon("workout", 22)}`}<span class="ex-thumb-badge" aria-hidden="true">${icon("more", 10)}</span>`;
+            const enName = detail?.englishName && detail.englishName !== exerciseLabel(row) ? detail.englishName : "";
+            const h3 = $(`[data-row-index="${idx}"] .ex-hero-title-row h3`, list);
+            if (h3) h3.innerHTML = `${esc(exerciseLabel(row))}${enName ? ` <small class="ex-en-name">(${esc(enName)})</small>` : ""}`;
+          }
         }
       });
     }
@@ -1370,7 +1510,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
 
     function cuePillMarkup(noteText, rowIndex) {
       return noteText
-        ? `<button type="button" class="exercise-cue-pill" data-workout="toggle-dossier" data-row="${rowIndex}" title="点击编辑动作备忘">${icon("bookmark", 11)} ${esc(noteText)}</button>`
+        ? `<button type="button" class="ex-note-card" data-workout="toggle-dossier" data-row="${rowIndex}" title="点击编辑动作备忘">${icon("bookmark", 13)}<span>${esc(noteText)}</span></button>`
         : "";
     }
 
@@ -1416,13 +1556,18 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const ssBadges = computeSupersetBadges();
       const jump = $(".exercise-jump", form);
       focusRow = Math.min(focusRow, Math.max(0, rows.length - 1));
-      if (jump) jump.innerHTML = rows.map((row, index) =>
-        `<button type="button" class="quiet" data-workout="focus-row" data-row="${index}">
-          <span class="exercise-index" aria-hidden="true"><b>${index + 1}</b>${icon("check", 12)}</span>${ssBadges[index] ? `<em class="jump-ss-tag">${esc(ssBadges[index])}</em>` : ""}${esc(exerciseLabel(row))}</button>`).join("");
+      if (jump) jump.innerHTML = rows.map((row, index) => {
+        const ss = ssBadges[index];
+        return `<button type="button" class="jump-circle" data-workout="focus-row" data-row="${index}" aria-label="第 ${index + 1} 个动作：${esc(exerciseLabel(row))}">${ss ? `<em class="jump-ss-sup">${esc(ss)}</em>` : ""}<b>${index + 1}</b></button>`;
+      }).join("");
+
+      const typeNames = { normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" };
+      const typeBadges = { warmup: "W", failure: "F", drop: "D", rest_pause: "P" };
+      const rirValues = { "": "—", 0: "0", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5" };
+
       list.innerHTML = rows.map((row, index) => {
         const mode = row.snapshot?.mode ?? "reps";
         const timed = mode === "timed";
-        const rirValues = { "": "—", 0: "0", 1: "1", 2: "2", 3: "3", 4: "4", 5: "5" };
         const meta = rowMeta(row, index);
         const prog = meta?.progression;
         const backup = meta?.backup;
@@ -1436,99 +1581,145 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           : -1;
         const savedNote = exerciseNotes.get(row.exerciseId) ?? "";
         const dossierOpen = openDossiers.has(row.id);
+        const exMenuOpen = openExMenus.has(row.id);
+        const showDelCols = deleteSetMode.has(row.id);
+        const detail = exerciseDetails.get(row.exerciseId);
+        const illustration = detail?.illustration;
+        const thumbUrl = (illustration?.gifPath?.startsWith("/media/exercises/") ? illustration.gifPath : "")
+          || (illustration?.frames?.[0]?.path?.startsWith("/media/exercises/") ? illustration.frames[0].path : "");
+        const muscleKey = row.snapshot?.muscle ?? detail?.muscle;
+        const equipKey = row.snapshot?.equipment ?? detail?.equipment;
+        const muscleLabel = muscles[muscleKey] ?? muscleKey ?? "";
+        const equipLabel = equipment[equipKey] ?? equipKey ?? "";
+        const enName = detail?.englishName && detail.englishName !== exerciseLabel(row) ? detail.englishName : "";
         const isUnilateral = !timed && mode === "reps" && (row.snapshot?.volumeMultiplier ?? 1) >= 2;
-        return `<section class="exercise-editor${timed ? " timed-exercise" : ""}${ssBadge ? " has-superset" : ""}" data-row-index="${index}"${row.supersetGroup ? ` data-superset="${esc(row.supersetGroup)}"` : ""}>
-          <header>
-            <div class="exercise-title-col">
-              <div class="exercise-title-line">
-                ${ssBadge ? `<span class="superset-pill">超级组 ${esc(ssBadge)}</span>` : ""}
-                <h3 tabindex="-1">${esc(exerciseLabel(row))}</h3>
-                ${isUnilateral ? '<span class="unilateral-pill" title="输入单侧重量，计容自动 ×2">单侧 ×2</span>' : ""}
-                ${prog ? `<span class="prog-tag${prog.status === "progress_weight" || prog.status === "progress_reps" ? " is-up" : prog.status === "plateau_deload" ? " is-warn" : ""}" title="${esc(prog.forecast ?? "")}">${icon("trending", 11)} ${esc(prog.statusLabel)}</span>` : ""}
-                ${prog?.deloadWeight != null ? `<button type="button" class="quiet deload-btn" data-workout="apply-deload" data-row="${index}">降载 ${fmt(prog.deloadWeight)}kg</button>` : ""}
-              </div>
-              <div class="exercise-telemetry-row">
-                <small class="exercise-1rm" data-exercise-1rm></small>
-                <small class="exercise-vol" data-exercise-vol></small>
-                <small class="exercise-pr-line" data-exercise-pr></small>
-              </div>
-              <div class="exercise-cue-slot" data-cue-slot>${cuePillMarkup(savedNote, index)}</div>
-            </div>
-            <span data-exercise-count></span>
-          </header>
-          <div class="workout-motion-slot" data-motion-slot="${index}"${isMobileViewport() && !openMotions.has(row.id) ? " hidden" : ""}>${renderMotionMarkup(row)}</div>
-          <div class="exercise-subbar">
-            <div class="exercise-subbar-actions">
-              <button type="button" class="quiet subbar-pill motion-toggle-btn${openMotions.has(row.id) ? " is-active" : ""}" data-workout="toggle-motion" data-row="${index}" aria-pressed="${openMotions.has(row.id)}">${icon("play", 12)} ${openMotions.has(row.id) ? "收起示范" : "示范"}</button>
-              <button type="button" class="quiet subbar-pill${dossierOpen ? " is-active" : ""}" data-workout="toggle-dossier" data-row="${index}" aria-pressed="${dossierOpen}">${icon("analytics", 13)} 备忘/历史</button>
-              ${partnerIdx >= 0 ? `<button type="button" class="quiet subbar-pill" data-workout="focus-row" data-row="${partnerIdx}">切搭档 ${esc(ssBadges[partnerIdx])}</button>` : ""}
-            </div>
-            <details class="exercise-settings"><summary>${icon("clock", 13)} <span data-rest-text>休息 ${row.restSeconds} 秒</span> · 更多 ${icon("chevron", 12)}</summary>
-              <div class="exercise-settings-body">
-                <div class="rest-preset-row">
-                  <label>组间休息 <input aria-label="休息秒数" data-rest="${index}" type="number" inputmode="numeric" min="0" max="900" value="${row.restSeconds}" required> 秒</label>
-                  <div class="rest-quick-pills" role="group" aria-label="常用休息时长">${[60, 90, 120, 180].map((sec) =>
-                    `<button type="button" class="stepper-pill" data-workout="set-rest" data-row="${index}" data-seconds="${sec}" aria-pressed="${row.restSeconds === sec}">${sec}s</button>`).join("")}
-                    ${live && row.restSeconds > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-workout="start-rest" data-row="${index}">立即计时</button>` : ""}
-                  </div>
-                </div>
-                <div class="exercise-manage-row">
-                  ${!timed && mode === "reps" ? `<button type="button" class="secondary-button${isUnilateral ? " is-active" : ""}" data-workout="toggle-unilateral" data-row="${index}" aria-pressed="${isUnilateral}">${isUnilateral ? "计容：单侧 ×2" : "计容：双侧 ×1"}</button>` : ""}
-                  ${rows.length > 1 || row.supersetGroup ? `<button type="button" class="secondary-button${row.supersetGroup ? " is-superset" : ""}" data-workout="toggle-superset" data-row="${index}" aria-pressed="${!!row.supersetGroup}">${row.supersetGroup ? `超级组 ${esc(row.supersetGroup)} · 取消` : "设为超级组"}</button>` : ""}
-                  ${rows.length > 1 ? `<div class="exercise-move-group">
-                    <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="-1"${index === 0 ? " disabled" : ""}>${icon("arrowUp", 14)} 上移</button>
-                    <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="1"${index === rows.length - 1 ? " disabled" : ""}>${icon("arrowDown", 14)} 下移</button>
-                  </div>` : ""}
-                  ${backup ? `<button type="button" class="secondary-button" data-workout="swap-backup" data-row="${index}">${icon("swap", 14)} 换为备选：${esc(backup.name)}</button>` : ""}
-                  <button type="button" class="secondary-button" data-workout="swap-any" data-row="${index}">${icon("swap", 14)} 替换动作</button>
-                  <button type="button" class="danger" data-workout="remove-row" data-row="${index}">移除动作</button>
-                </div>
-              </div></details>
-            <div class="plate-math" data-plate-math hidden></div>
-          </div>
-          ${renderDossierSlot(row, index)}
-          <div class="set-head"><span>组别</span><span>${timed ? "时长 / 秒" : mode === "assisted" ? "辅助 / kg" : "重量 / kg"}</span>${timed ? "" : "<span>次数</span>"}${timed ? "" : '<span class="col-rir">RIR</span>'}<span>完成</span><span></span></div>
-          ${row.sets.map((entry, i) => `<div class="set-row" data-row="${index}" data-index="${i}">
-            <div class="set-swipe-bg is-done-hint" aria-hidden="true">${icon("check", 16)}<span>${entry.completed ? "取消完成" : "完成本组"}</span></div>
-            <div class="set-swipe-bg is-del-hint" aria-hidden="true"><span>删除本组</span>${icon("close", 16)}</div>
-            <button type="button" class="set-kind" data-workout="cycle-type" data-type="${esc(entry.type)}" data-row="${index}" data-index="${i}" aria-label="第 ${i + 1} 组类型，当前${{ normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" }[entry.type] ?? "常规"}，点击切换"><strong class="kind-pip"></strong><strong>${i + 1}</strong><span>${{ normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" }[entry.type] ?? "常规"}</span></button>
-            <input aria-label="第 ${i + 1} 组${timed ? "秒数" : "重量"}" type="number" inputmode="${timed ? "numeric" : "decimal"}" enterkeyhint="${timed ? "done" : "next"}" min="0" max="${timed ? 86400 : 100000}" step="${timed ? 1 : 0.01}" data-set="${timed ? "seconds" : "weight"}" data-row="${index}" data-index="${i}" value="${timed ? entry.seconds : entry.weight}" required>
-            ${timed ? "" : `<input aria-label="第 ${i + 1} 组次数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="1000" step="1" data-set="reps" data-row="${index}" data-index="${i}" value="${entry.reps}" required>`}
-            ${timed ? "" : `<select class="col-rir set-rir-select" aria-label="第 ${i + 1} 组 RIR" data-set="rir" data-row="${index}" data-index="${i}">${options(rirValues, entry.rir ?? "")}</select>`}
-            <label class="check-set"><input type="checkbox" switch aria-label="完成第 ${i + 1} 组" data-set="completed" data-row="${index}" data-index="${i}"${entry.completed ? " checked" : ""}><span>${icon("check", 17)}</span></label>
-            <button type="button" class="quiet icon-button" data-workout="remove-set" data-row="${index}" data-index="${i}" aria-label="删除第 ${i + 1} 组">${icon("close", 15)}</button>
-            <div class="set-reference" data-row="${index}" data-index="${i}" hidden></div>
-            <div class="set-stepper-bar" data-row="${index}" data-index="${i}">
+
+        const warmupIndices = [];
+        const workIndices = [];
+        row.sets.forEach((entry, i) => {
+          if (entry.type === "warmup") warmupIndices.push(i);
+          else workIndices.push(i);
+        });
+
+        const renderSetItem = (i, displayNum) => {
+          const entry = row.sets[i];
+          const isSmallEquip = ["dumbbell", "kettlebell", "cable", "band"].includes(equipKey) || (entry.weight > 0 && entry.weight <= 15);
+          const wtStep = isSmallEquip ? 1 : 2.5;
+          const badgeTag = typeBadges[entry.type] ?? "";
+          return `<div class="set-block" data-row="${index}" data-index="${i}">
+            <div class="set-row" data-row="${index}" data-index="${i}">
+              <div class="set-swipe-bg is-done-hint" aria-hidden="true">${icon("check", 16)}<span>${entry.completed ? "取消完成" : "完成本组"}</span></div>
+              <div class="set-swipe-bg is-del-hint" aria-hidden="true"><span>删除本组</span>${icon("close", 16)}</div>
+              <button type="button" class="set-num-btn" data-workout="cycle-type" data-type="${esc(entry.type)}" data-row="${index}" data-index="${i}" aria-label="第 ${displayNum} 组类型，当前${typeNames[entry.type] ?? "常规"}，点击切换"><b>${displayNum}</b>${badgeTag ? `<sup class="set-kind-sup">${badgeTag}</sup>` : ""}</button>
               ${timed
-                ? `<div class="stepper-group">
-                    <button type="button" class="stepper-pill" data-step-sec="-10" data-row="${index}" data-index="${i}">-10s</button>
-                    <button type="button" class="stepper-pill" data-step-sec="+10" data-row="${index}" data-index="${i}">+10s</button>
-                    ${live && !entry.completed ? (() => {
-                      const running = activeHold && activeHold.rowId === row.id && activeHold.setId === entry.id;
-                      const holdSec = running ? Math.max(0, Math.floor((Date.now() - activeHold.startedAt) / 1000)) : 0;
-                      return `<button type="button" class="stepper-pill ${running ? "is-hold-running" : "stepper-clone"}" data-workout="hold-timer" data-row="${index}" data-index="${i}">${running ? `● <span data-hold-clock>${formatClock(holdSec)}</span> · 停止打卡` : `${icon("clock", 12)} 开始计时`}</button>`;
-                    })() : ""}
+                ? `<div class="num-stepper">
+                    <button type="button" class="num-step-btn" data-step-sec="-10" data-row="${index}" data-index="${i}" aria-label="减少 10 秒">−</button>
+                    <input aria-label="第 ${displayNum} 组秒数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="86400" step="1" data-set="seconds" data-row="${index}" data-index="${i}" value="${entry.seconds}" required>
+                    <button type="button" class="num-step-btn" data-step-sec="10" data-row="${index}" data-index="${i}" aria-label="增加 10 秒">+</button>
                   </div>`
-                : `<div class="stepper-group stepper-single-line">
-                    ${((["dumbbell", "kettlebell", "cable", "band"].includes(row.snapshot?.equipment) || (entry.weight > 0 && entry.weight <= 15))
-                      ? [-2.5, 2.5]
-                      : [-2.5, 2.5, 5]).map((d) =>
-                        `<button type="button" class="stepper-pill" data-step-wt="${d}" data-row="${index}" data-index="${i}">${d > 0 ? `+${d}kg` : `${d}kg`}</button>`).join("")}
-                    <span class="stepper-sep" aria-hidden="true"></span>
-                    <button type="button" class="stepper-pill" data-step-rep="-1" data-row="${index}" data-index="${i}">-1次</button>
-                    <button type="button" class="stepper-pill" data-step-rep="+1" data-row="${index}" data-index="${i}">+1次</button>
-                    ${i > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-step-clone="${index}" data-index="${i}" title="复制上一组重量与次数">同上</button>` : ""}
-                    ${row.sets.slice(i + 1).some((s) => !s.completed && s.type !== "warmup") ? `<button type="button" class="stepper-pill" data-step-fill-rest="${index}" data-index="${i}" title="将本组重量与次数同步到后续所有待完成组">同步后续</button>` : ""}
+                : `<div class="num-stepper">
+                    <button type="button" class="num-step-btn" data-step-wt="-${wtStep}" data-row="${index}" data-index="${i}" aria-label="减少重量 ${wtStep} kg">−</button>
+                    <input aria-label="第 ${displayNum} 组重量" type="number" inputmode="decimal" enterkeyhint="next" min="0" max="100000" step="0.01" data-set="weight" data-row="${index}" data-index="${i}" value="${entry.weight}" required>
+                    <button type="button" class="num-step-btn" data-step-wt="${wtStep}" data-row="${index}" data-index="${i}" aria-label="增加重量 ${wtStep} kg">+</button>
+                  </div>
+                  <div class="num-stepper">
+                    <button type="button" class="num-step-btn" data-step-rep="-1" data-row="${index}" data-index="${i}" aria-label="减少 1 次">−</button>
+                    <input aria-label="第 ${displayNum} 组次数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="1000" step="1" data-set="reps" data-row="${index}" data-index="${i}" value="${entry.reps}" required>
+                    <button type="button" class="num-step-btn" data-step-rep="1" data-row="${index}" data-index="${i}" aria-label="增加 1 次">+</button>
                   </div>`}
+              ${timed ? "" : `<select class="col-rir set-rir-select" aria-label="第 ${displayNum} 组 RIR" data-set="rir" data-row="${index}" data-index="${i}">${options(rirValues, entry.rir ?? "")}</select>`}
+              <label class="check-set"><input type="checkbox" switch aria-label="完成第 ${displayNum} 组" data-set="completed" data-row="${index}" data-index="${i}"${entry.completed ? " checked" : ""}><span>${icon("check", 16)}</span></label>
+              ${showDelCols ? `<button type="button" class="quiet icon-button set-del-btn" data-workout="remove-set" data-row="${index}" data-index="${i}" aria-label="删除第 ${displayNum} 组">${icon("close", 14)}</button>` : ""}
             </div>
-          </div>`).join("")}
-          <footer class="exercise-actions">
-            <button type="button" class="secondary-button add-set" data-workout="add-set" data-row="${index}"${row.sets.length >= 100 ? " disabled" : ""}>${icon("plus", 17)} 加一组</button>
-            ${!timed && row.sets.length < 100 && row.sets.some((s) => s.weight > 0) ? `${mode === "reps" ? `<button type="button" class="quiet drop-add-btn" data-workout="add-drop-set" data-row="${index}">${icon("bolt", 13)} + 递减组</button>` : ""}<button type="button" class="quiet rp-add-btn" data-workout="add-rest-pause" data-row="${index}">${icon("clock", 13)} + 休停组</button>` : ""}
-            ${mode === "reps" && row.sets.some((s) => s.type !== "warmup" && s.weight > 20) && !row.sets.some((s) => s.type === "warmup") ? `<button type="button" class="quiet warmup-gen-btn" data-workout="gen-warmups" data-row="${index}">${icon("bolt", 13)} 一键热身组</button>` : ""}
-            <button type="button" class="quiet" data-workout="use-workout-reference" data-row="${index}" hidden>沿用上次数据</button>
-            <small class="set-swipe-tip">右滑完成 · 左滑删组</small>
-          </footer>
+            <div class="set-inline-meta" data-inline-meta="${index}:${i}" hidden></div>
+          </div>`;
+        };
+
+        const warmupRowsHtml = warmupIndices.length
+          ? `<div class="sets-group-label">热身</div>${warmupIndices.map((sIdx, pos) => renderSetItem(sIdx, pos + 1)).join("")}`
+          : "";
+        const dividerHtml = warmupIndices.length && workIndices.length ? '<div class="sets-divider" aria-hidden="true"></div>' : "";
+        const workRowsHtml = workIndices.map((sIdx, pos) => renderSetItem(sIdx, pos + 1)).join("");
+
+        return `<section class="exercise-editor${timed ? " timed-exercise" : ""}${ssBadge ? " has-superset" : ""}${showDelCols ? " has-delete-cols" : ""}" data-row-index="${index}"${row.supersetGroup ? ` data-superset="${esc(row.supersetGroup)}"` : ""}>
+          <header class="ex-hero-head">
+            <button type="button" class="ex-hero-thumb${thumbUrl ? "" : " is-fallback"}" data-workout="toggle-motion" data-row="${index}" data-ex-thumb="${index}" aria-label="展开或收起动作示范" aria-pressed="${openMotions.has(row.id)}">
+              ${thumbUrl ? `<img src="${esc(thumbUrl)}" width="54" height="54" decoding="async" alt="">` : `${icon("workout", 22)}`}
+              <span class="ex-thumb-badge" aria-hidden="true">${icon("more", 10)}</span>
+            </button>
+            <div class="ex-hero-title-col">
+              <div class="ex-hero-title-row">
+                <h3 tabindex="-1">${esc(exerciseLabel(row))}${enName ? ` <small class="ex-en-name">(${esc(enName)})</small>` : ""}</h3>
+                <span class="ex-set-ratio" data-exercise-count></span>
+              </div>
+              <div class="ex-hero-tags">
+                ${muscleLabel ? `<span class="ex-tag">${esc(muscleLabel)}</span>` : ""}
+                ${equipLabel ? `<span class="ex-tag">${esc(equipLabel)}</span>` : ""}
+                <span class="ex-tag is-best" data-exercise-best hidden></span>
+                ${ssBadge ? `<span class="superset-pill">超级组 ${esc(ssBadge)}</span>` : ""}
+                ${isUnilateral ? `<span class="unilateral-pill">单侧 ×2</span>` : ""}
+              </div>
+            </div>
+            <button type="button" class="workout-circle-btn ex-more-btn" data-workout="toggle-ex-menu" data-row="${index}" aria-label="动作选项与休息设置" aria-expanded="${exMenuOpen}">${icon("more", 17)}</button>
+          </header>
+
+          <div class="ex-context-stack">
+            <div class="exercise-cue-slot" data-cue-slot>${cuePillMarkup(savedNote, index)}</div>
+            <div class="ex-last-row" data-ex-last-summary hidden></div>
+            ${prog ? `<div class="ex-prog-row">
+              <span class="ex-prog-line is-${prog.status === "progress_weight" || prog.status === "progress_reps" ? "up" : prog.status === "plateau_deload" ? "warn" : "base"}" title="${esc(prog.forecast ?? "")}">${icon("bolt", 13)} <span>${esc(prog.statusLabel)}${prog.forecast ? ` · ${esc(prog.forecast)}` : ""}</span></span>
+              ${prog.deloadWeight != null ? `<button type="button" class="quiet deload-btn" data-workout="apply-deload" data-row="${index}">降载 ${fmt(prog.deloadWeight)}kg</button>` : ""}
+            </div>` : ""}
+            <div class="exercise-telemetry-row">
+              <small class="exercise-1rm" data-exercise-1rm></small>
+              <small class="exercise-vol" data-exercise-vol></small>
+              <small class="exercise-pr-line" data-exercise-pr></small>
+            </div>
+          </div>
+
+          <div class="exercise-settings"${exMenuOpen ? "" : " hidden"} data-ex-menu="${index}">
+            <div class="exercise-settings-body">
+              <div class="rest-preset-row">
+                <label>组间休息 <input aria-label="休息秒数" data-rest="${index}" type="number" inputmode="numeric" min="0" max="900" value="${row.restSeconds}" required> 秒</label>
+                <div class="rest-quick-pills" role="group" aria-label="常用休息时长">${[60, 90, 120, 180].map((sec) =>
+                  `<button type="button" class="stepper-pill" data-workout="set-rest" data-row="${index}" data-seconds="${sec}" aria-pressed="${row.restSeconds === sec}">${sec}s</button>`).join("")}
+                  ${live && row.restSeconds > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-workout="start-rest" data-row="${index}">立即计时</button>` : ""}
+                </div>
+              </div>
+              <div class="exercise-manage-row">
+                <button type="button" class="secondary-button${dossierOpen ? " is-active" : ""}" data-workout="toggle-dossier" data-row="${index}">${icon("analytics", 14)} 备忘/历史</button>
+                <button type="button" class="secondary-button${openMotions.has(row.id) ? " is-active" : ""}" data-workout="toggle-motion" data-row="${index}">${icon("play", 14)} ${openMotions.has(row.id) ? "收起示范" : "动作示范"}</button>
+                ${partnerIdx >= 0 ? `<button type="button" class="secondary-button" data-workout="focus-row" data-row="${partnerIdx}">切搭档 ${esc(ssBadges[partnerIdx])}</button>` : ""}
+                ${!timed && mode === "reps" ? `<button type="button" class="secondary-button${isUnilateral ? " is-active" : ""}" data-workout="toggle-unilateral" data-row="${index}" aria-pressed="${isUnilateral}">${isUnilateral ? "计容：单侧 ×2" : "计容：双侧 ×1"}</button>` : ""}
+                ${rows.length > 1 || row.supersetGroup ? `<button type="button" class="secondary-button${row.supersetGroup ? " is-superset" : ""}" data-workout="toggle-superset" data-row="${index}" aria-pressed="${!!row.supersetGroup}">${row.supersetGroup ? `超级组 ${esc(row.supersetGroup)} · 取消` : "设为超级组"}</button>` : ""}
+                ${!timed && row.sets.length < 100 && row.sets.some((s) => s.weight > 0) ? `${mode === "reps" ? `<button type="button" class="secondary-button" data-workout="add-drop-set" data-row="${index}">${icon("bolt", 13)} + 递减组</button>` : ""}<button type="button" class="secondary-button" data-workout="add-rest-pause" data-row="${index}">${icon("clock", 13)} + 休停组</button>` : ""}
+                ${rows.length > 1 ? `<div class="exercise-move-group">
+                  <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="-1"${index === 0 ? " disabled" : ""}>${icon("arrowUp", 14)} 上移</button>
+                  <button type="button" class="quiet" data-workout="move-row" data-row="${index}" data-dir="1"${index === rows.length - 1 ? " disabled" : ""}>${icon("arrowDown", 14)} 下移</button>
+                </div>` : ""}
+                ${backup ? `<button type="button" class="secondary-button" data-workout="swap-backup" data-row="${index}">${icon("swap", 14)} 换为备选：${esc(backup.name)}</button>` : ""}
+                <button type="button" class="secondary-button" data-workout="swap-any" data-row="${index}">${icon("swap", 14)} 替换动作</button>
+                <button type="button" class="danger" data-workout="remove-row" data-row="${index}">移除动作</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="plate-math" data-plate-math hidden></div>
+          <div class="workout-motion-slot" data-motion-slot="${index}"${openMotions.has(row.id) ? "" : " hidden"}>${renderMotionMarkup(row)}</div>
+          ${renderDossierSlot(row, index)}
+
+          <div class="sets-card">
+            <div class="set-head"><span></span><span>${timed ? "时长 (秒)" : mode === "assisted" ? "辅助 (kg)" : "重量 (kg)"}</span>${timed ? "" : "<span>次数</span>"}${timed ? "" : '<span class="col-rir">RIR</span>'}<span></span>${showDelCols ? "<span></span>" : ""}</div>
+            ${warmupRowsHtml}${dividerHtml}${workRowsHtml}
+            <footer class="sets-card-foot">
+              <button type="button" class="sets-add-btn" data-workout="add-set" data-row="${index}"${row.sets.length >= 100 ? " disabled" : ""}>${icon("plus", 15)} 加一组</button>
+              <div class="sets-foot-tools">
+                ${mode === "reps" && row.sets.some((s) => s.type !== "warmup" && s.weight > 20) && !row.sets.some((s) => s.type === "warmup") ? `<button type="button" class="quiet sets-foot-pill" data-workout="gen-warmups" data-row="${index}">+ 热身组</button>` : ""}
+                ${row.sets.filter((s) => !s.completed && s.type !== "warmup").length > 1 ? `<button type="button" class="quiet sets-foot-pill" data-workout="sync-rest-sets" data-row="${index}" title="将已输入重量和次数同步到后续未完成组">同步后续</button>` : ""}
+                ${row.sets.length > 0 ? `<button type="button" class="quiet sets-foot-pill${showDelCols ? " is-active" : ""}" data-workout="toggle-del-sets" data-row="${index}" aria-pressed="${showDelCols}">${showDelCols ? "完成删组" : "删组"}</button>` : ""}
+              </div>
+            </footer>
+          </div>
           ${live ? `<div class="exercise-complete-banner" data-complete-callout hidden></div>` : ""}</section>`;
       }).join("") || `<div class="empty workout-empty-state"><strong>还没有训练动作</strong><p>从动作库选择今日要练的动作开始记录</p><button type="button" class="primary-button" data-workout="open-picker">${icon("plus", 16)} 添加第一个动作</button></div>`;
       updateProgress();
@@ -1546,9 +1737,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     const liveClock = $("[data-live-clock]", form);
     const restBanner = $(".rest-clock", form);
     const dialOverlay = $(".rest-dial-overlay", form);
-    const miniRing = $(".rest-mini-ring", form);
     const dialSvg = $(".rest-dial-svg", form);
-    let restSoundedEndAt = rest && rest.end <= Date.now() ? rest.end : 0;
+    let restSoundedEndAt = rest && rest.end <= Date.now() && rest.pausedLeftMs == null ? rest.end : 0;
     form.addEventListener("touchend", () => audio.unlock(), { passive: true });
     form.addEventListener("click", () => audio.unlock(), { passive: true });
     const wake = supportsWake ? keepWorkoutScreenAwake(() => !!$('[name="keepScreen"]', form)?.checked
@@ -1593,17 +1783,22 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         }
       }
       if (liveClock) {
-        liveClock.hidden = dateInput.value !== today();
-        const elapsed = formatClock(elapsedAt(timing, now));
-        const face = $("strong", liveClock);
-        if (face.textContent !== elapsed) face.innerHTML = matrix(elapsed);
-        const label = timing.runningSince ? "暂停计时" : timing.elapsedSeconds ? "继续计时" : "开始计时";
-        const labelEl = $("[data-clock-label]", liveClock) ?? $("button", liveClock);
-        if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
+        const showTimer = dateInput.value === today();
+        const clockTextEl = $("[data-live-clock-text]", liveClock);
+        const sepEl = $(".clock-sep", liveClock);
+        if (clockTextEl) {
+          clockTextEl.hidden = !showTimer;
+          const elapsed = formatClock(elapsedAt(timing, now));
+          const displayElapsed = elapsed.startsWith("0") && elapsed.length === 5 ? elapsed.slice(1) : elapsed;
+          if (clockTextEl.textContent !== displayElapsed) clockTextEl.textContent = displayElapsed;
+        }
+        if (sepEl) sepEl.hidden = !showTimer;
+        liveClock.classList.toggle("is-paused", !timing.runningSince);
       }
       const showRest = !!rest && !reviewing && dateInput.value === today();
       restBanner.hidden = !showRest;
       dialOverlay.hidden = !showRest || !dialOpen;
+      syncDockVisibility();
       if (!showRest) {
         if (activeHold) {
           const holdElapsed = Math.max(0, Math.floor((now - activeHold.startedAt) / 1000));
@@ -1613,34 +1808,49 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         }
         return;
       }
-      const { total, fraction: remainingFrac, seconds: time } = restProgress(rest, now);
+      const { total, fraction: remainingFrac, seconds: time, paused } = restProgress(rest, now);
       const formatted = time ? formatClock(time) : "00:00";
-      document.title = time ? `[${formatted}] 休息中 · 铁记` : "休息结束！· 铁记";
-      if (time === 0 && rest.end && restSoundedEndAt !== rest.end) {
+      const compactTime = formatted.startsWith("0") && formatted.length === 5 ? formatted.slice(1) : formatted;
+      document.title = paused ? `[❚❚ ${compactTime}] 已暂停 · 铁记` : time ? `[${compactTime}] 休息中 · 铁记` : "休息结束！· 铁记";
+      if (!paused && time === 0 && rest.end && restSoundedEndAt !== rest.end) {
         restSoundedEndAt = rest.end;
         audio.play(true);
       }
-      if (time === 0 && rest.end && restNotifiedEndAt !== rest.end) {
+      if (!paused && time === 0 && rest.end && restNotifiedEndAt !== rest.end) {
         restNotifiedEndAt = rest.end;
         fireRestNotification();
       }
-      if (lastRest !== time) {
-        if (time > 0 && time <= 3 && lastRest !== null && time < lastRest) {
+      const fillEl = $("[data-rest-progress-fill]", restBanner);
+      if (fillEl) {
+        fillEl.style.width = `${(remainingFrac * 100).toFixed(2)}%`;
+      }
+      const pauseBtn = $('[data-clock="pause-rest"]', restBanner);
+      if (pauseBtn) {
+        pauseBtn.setAttribute("aria-pressed", String(paused));
+        pauseBtn.setAttribute("aria-label", paused ? "继续休息计时" : "暂停休息计时");
+        pauseBtn.innerHTML = icon(paused ? "play" : "pause", 14);
+      }
+      if (lastRest !== time || restBanner.dataset.pausedState !== String(paused)) {
+        if (!paused && time > 0 && time <= 3 && lastRest !== null && time < lastRest) {
           audio.play(false);
         }
-        $("strong", restBanner).innerHTML = time ? matrix(formatted) : "休息结束";
+        const restTimeEl = $("[data-rest-time]", restBanner);
+        if (restTimeEl) restTimeEl.textContent = time ? compactTime : "0:00";
+        const restLabelEl = $("[data-rest-label]", restBanner);
+        if (restLabelEl) restLabelEl.innerHTML = `${paused ? "已暂停" : time ? "休息" : "休息结束"} ${icon("arrowDown", 11)}`;
         restBanner.classList.toggle("rest-done", time === 0);
+        restBanner.classList.toggle("is-paused", paused);
+        restBanner.dataset.pausedState = String(paused);
         $("[data-rest-announcement]", restBanner).textContent = time === 0 ? "组间休息结束" : "";
         if ($("[data-dial-time]", dialOverlay)) {
           $("[data-dial-time]", dialOverlay).innerHTML = matrix(formatted);
-          $("[data-dial-sub]", dialOverlay).textContent = time ? `组间恢复 · 共 ${formatClock(Math.round(total / 1000))}` : "休息结束";
+          $("[data-dial-sub]", dialOverlay).textContent = paused ? "休息已暂停" : time ? `组间恢复 · 共 ${formatClock(Math.round(total / 1000))}` : "休息结束";
           dialOverlay.classList.toggle("rest-done", time === 0);
           $$("[data-clock-preset]", dialOverlay).forEach((btn) =>
             btn.setAttribute("aria-pressed", String(Math.round(total / 1000) === Number(btn.dataset.clockPreset))));
         }
         lastRest = time;
       }
-      syncDialTicks(miniRing, remainingFrac);
       if (dialSvg && !dialOverlay.hidden) {
         syncDialTicks(dialSvg, remainingFrac);
         const nextText = nextPendingDescription();
@@ -1669,6 +1879,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     closeWorkout = () => {
       activeHold = null;
       if (ticks) clearInterval(ticks);
+      dialog.classList.remove("is-live-workout");
       document.title = originalTitle;
       clearTimeout(undoTimer);
       clearTimeout(advanceTimer);
@@ -1688,16 +1899,19 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         banner.hidden = false;
         banner.innerHTML = `<span>已删除「${esc(pendingUndo.label)}」第 ${pendingUndo.index + 1} 组</span>
           <button type="button" class="quiet" data-workout="undo-set">撤销</button>`;
+        syncDockVisibility();
         return;
       }
       if (stepNotice) {
         banner.hidden = false;
         banner.innerHTML = `<span>${esc(stepNotice.message)}</span>
           <button type="button" class="quiet" data-workout="focus-row" data-row="${stepNotice.backRowIndex}">返回查看</button>`;
+        syncDockVisibility();
         return;
       }
       banner.hidden = true;
       banner.innerHTML = "";
+      syncDockVisibility();
     }
 
     function clearSwapMode() {
@@ -1736,6 +1950,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       $$("[data-picker-equipment]", form).forEach((el) =>
         el.setAttribute("aria-pressed", String(el.dataset.pickerEquipment === pickerEquipment)));
       dialOpen = false;
+      sessionMenuOpen = false;
+      const menuEl = $("[data-session-menu]", form);
+      if (menuEl) menuEl.hidden = true;
       const adaptModal = $("[data-adapt-overlay]", form);
       if (adaptModal) adaptModal.hidden = true;
       pickerEl.hidden = false;
@@ -1802,9 +2019,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       return true;
     }
 
-    function completeSetEffects(row, entry, wasComplete) {
+    function completeSetEffects(row, entry, wasComplete, { viaNativeSwitch = false } = {}) {
       if (activeHold?.setId === entry.id) activeHold = null;
-      haptic("success");
       const curRowIdx = rows.indexOf(row);
       let supersetHandled = false;
       if (dateInput.value === today()) {
@@ -1877,6 +2093,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         }
       }
       const prHits = setBeatenPrs(row, entry);
+      let isPrHit = false;
       if (prHits.length) {
         const freshHits = prHits.filter((hit) => {
           const prKey = `${row.exerciseId}:${hit.metric}:${hit.cur}`;
@@ -1885,9 +2102,15 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           return true;
         });
         if (freshHits.length) {
-          haptic("pr");
+          isPrHit = true;
+          audio.tap("pr");
+          haptic("pr", { skipIosSwitch: viaNativeSwitch });
           notify(`新纪录！${exerciseLabel(row)} · ${freshHits[0].label}`);
         }
+      }
+      if (!isPrHit) {
+        audio.tap("check");
+        haptic("success", { skipIosSwitch: viaNativeSwitch });
       }
       updateProgress();
       if (!supersetHandled && live && guided && !wasComplete && isRowCompleted(row) && curRowIdx === focusRow) {
@@ -1904,6 +2127,27 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           }, 650);
         }
       }
+    }
+
+    function removeSetAt(index, setIndex) {
+      const row = rows[index];
+      const targetSet = row?.sets[setIndex];
+      if (!row || !targetSet) return;
+      if (targetSet.id === rest?.setId) {
+        rest = null;
+        dialOpen = false;
+        renderClocks();
+      }
+      if (activeHold?.setId === targetSet.id) activeHold = null;
+      const [removed] = row.sets.splice(setIndex, 1);
+      if (removed) {
+        pendingUndo = { rowId: row.id, index: setIndex, entry: removed, label: exerciseLabel(row) };
+        clearTimeout(undoTimer);
+        undoTimer = setTimeout(() => { pendingUndo = null; renderUndoBanner(); }, 5000);
+        renderUndoBanner();
+      }
+      renderRows();
+      markDirty();
     }
 
     scroller?.addEventListener("focusin", ({ target }) => {
@@ -1941,7 +2185,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         touchStartY = e.touches[0].clientY;
         touchStartTime = Date.now();
         swipeAxisLocked = "";
-        const inStepper = e.target.closest?.(".set-stepper-bar, .muscle-pills, .exercise-jump");
+        const inStepper = e.target.closest?.(".num-step-btn, .muscle-pills, .exercise-jump");
         swipeSetEl = inStepper ? null : e.target.closest?.(".set-row");
         if (swipeSetEl) {
           swipeSetEl.style.transition = "none";
@@ -2002,8 +2246,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             }
           } else {
             // Swipe Left -> Delete set (with 5-second undo banner)
-            const removeBtn = $('[data-workout="remove-set"]', targetSetEl);
-            if (removeBtn) removeBtn.click();
+            audio.tap("skip");
+            haptic("light");
+            removeSetAt(Number(targetSetEl.dataset.row), Number(targetSetEl.dataset.index));
           }
           return;
         }
@@ -2016,21 +2261,33 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       if (duration < 450 && Math.abs(deltaX) > 64 && Math.abs(deltaX) > 1.8 * Math.abs(deltaY)) {
         if (deltaX < 0 && focusRow < rows.length - 1) {
           jumpTo(focusRow + 1, true);
+          audio.tap("tick");
           haptic("light");
         } else if (deltaX > 0 && focusRow > 0) {
           jumpTo(focusRow - 1, true);
+          audio.tap("tick");
           haptic("light");
         }
       }
     }, { passive: true });
 
-    form.addEventListener("input", ({ target }) => {
+    form.addEventListener("input", (event) => {
+      const { target } = event;
+      if (target.matches?.("[data-quick-notes]")) {
+        const mainNotes = $('[name="notes"]', form);
+        if (mainNotes) mainNotes.value = target.value;
+        markDirty();
+        return;
+      }
       if (target.dataset.rest !== undefined) {
         const seconds = Number(target.value);
         rows[Number(target.dataset.rest)].restSeconds = seconds;
-        $("[data-rest-text]", target.closest(".exercise-settings")).textContent = `休息 ${seconds} 秒`;
       }
       if (target.name === "title" && live) $("[data-session-title]", form).textContent = target.value.trim() || "自由训练";
+      if (target.name === "notes") {
+        const quickNotesEl = $("[data-quick-notes]", form);
+        if (quickNotesEl && quickNotesEl.value !== target.value) quickNotesEl.value = target.value;
+      }
       if (target.name === "feeling") $('[data-workout="clear-feeling"]', form).hidden = false;
       if (!target.dataset.set) return;
       const row = rows[Number(target.dataset.row)];
@@ -2061,25 +2318,23 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       }
 
       if (key === "completed") {
+        const viaNativeSwitch = Boolean(event.isTrusted);
         if (target.checked) {
-          completeSetEffects(row, entry, wasComplete);
+          completeSetEffects(row, entry, wasComplete, { viaNativeSwitch });
         } else {
           if (activeHold?.setId === entry.id) activeHold = null;
-          haptic("light");
+          audio.tap("uncheck");
+          haptic("light", { skipIosSwitch: viaNativeSwitch });
           delete entry.completedAt;
           clearAutoAdvance();
           if (rest?.setId === entry.id) { rest = null; dialOpen = false; renderClocks(); }
           updateProgress();
         }
         if (live && row.snapshot?.mode === "timed") {
-          const setRowEl = target.closest(".set-row");
-          const holdBtn = $('[data-workout="hold-timer"]', setRowEl);
-          if (target.checked) holdBtn?.remove();
-          else if (!holdBtn) {
-            const rowIdx = Number(target.dataset.row), setIdx = Number(target.dataset.index);
-            $('.stepper-group', setRowEl)?.insertAdjacentHTML("beforeend",
-              `<button type="button" class="stepper-pill stepper-clone" data-workout="hold-timer" data-row="${rowIdx}" data-index="${setIdx}">${icon("clock", 12)} 开始计时</button>`);
-          }
+          const rIdx = Number(target.dataset.row);
+          const sIdx = Number(target.dataset.index);
+          const secEl = $(`[data-row-index="${rIdx}"]`, list);
+          if (secEl) updateSetInlineMetas(secEl, row, rIdx);
         }
       } else if (key === "weight" || key === "reps" || key === "seconds" || key === "rir") {
         updateReferences();
@@ -2088,6 +2343,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       if (error.dataset.finishRequired && hasCompletedSet()) {
         error.hidden = true;
         delete error.dataset.finishRequired;
+        syncDockVisibility();
       }
     });
     form.addEventListener("input", ({ target }) => {
@@ -2115,6 +2371,13 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           event.preventDefault();
           event.stopPropagation();
           adaptModal.hidden = true;
+          return;
+        }
+        if (sessionMenuOpen) {
+          event.preventDefault();
+          event.stopPropagation();
+          sessionMenuOpen = false;
+          updateProgress();
           return;
         }
         if (dialOverlay && !dialOverlay.hidden) {
@@ -2221,6 +2484,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         showFinish(false);
         notify("请补全空白的训练组或日期/标题必填项");
       }
+      if (target.closest("[data-session-menu]")) {
+        sessionMenuOpen = true;
+        const menuEl = $("[data-session-menu]", form);
+        if (menuEl) menuEl.hidden = false;
+      }
       const details = target.closest("details");
       if (details) {
         if (details.classList.contains("training-details")) settingsOpen = true;
@@ -2237,16 +2505,25 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     }
     function canFinish() {
       if (hasCompletedSet()) return true;
-      error.textContent = "至少完成一组有效训练，或在训练设置中存为草稿。";
+      error.textContent = "至少完成一组有效训练，或在更多设置中存为草稿。";
       error.hidden = false;
       error.dataset.finishRequired = "true";
+      syncDockVisibility();
       return false;
     }
     function showFinish(openReview) {
       const panel = $(".finish-panel", form);
       reviewing = openReview;
       dialOpen = false;
-      if (openReview) renderFinishSummary();
+      sessionMenuOpen = false;
+      if (openReview) {
+        const quickNotesEl = $("[data-quick-notes]", form);
+        const mainNotesEl = $('[name="notes"]', panel);
+        if (quickNotesEl && mainNotesEl && quickNotesEl.value !== mainNotesEl.value) {
+          mainNotesEl.value = quickNotesEl.value;
+        }
+        renderFinishSummary();
+      }
       panel.hidden = !openReview;
       updateProgress();
       renderClocks();
@@ -2262,6 +2539,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const clockControl = target.closest("[data-clock]")?.dataset.clock;
       if (clockControl) {
         const instant = Date.now();
+        audio.unlock();
+        audio.tap(clockControl === "skip" || clockControl === "pause-rest" ? "skip" : "tick");
+        haptic("light");
         if (clockControl === "skip") { rest = null; dialOpen = false; }
         if (clockControl === "dial-open") { dialOpen = true; lastRest = null; }
         if (clockControl === "dial-close") { dialOpen = false; }
@@ -2270,14 +2550,18 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           lastRest = null;
           restSoundedEndAt = 0;
           restNotifiedEndAt = 0;
-          audio.unlock();
         }
         if (clockControl === "sub15" && rest) {
           rest = shiftRestTimer(rest, -15, instant);
           lastRest = null;
           restSoundedEndAt = 0;
           restNotifiedEndAt = 0;
-          audio.unlock();
+        }
+        if (clockControl === "pause-rest" && rest) {
+          rest = rest.pausedLeftMs != null ? resumeRestTimer(rest, instant) : pauseRestTimer(rest, instant);
+          lastRest = null;
+          restSoundedEndAt = 0;
+          restNotifiedEndAt = 0;
         }
         if (clockControl === "train") timing = timing.runningSince ? pauseAt(timing, instant)
           : { ...timing, runningSince: new Date(instant).toISOString() };
@@ -2291,9 +2575,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const sec = Number(clockPreset.dataset.clockPreset);
         if (sec > 0) {
           dialOpen = true;
+          audio.unlock();
+          audio.tap("tick");
+          haptic("light");
           beginRest(sec, rest?.setId ?? null);
           markDirty();
-          haptic("light");
         }
         return;
       }
@@ -2305,6 +2591,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const targetRow = rows[rIdx];
         const targetSet = targetRow?.sets[sIdx];
         if (targetSet) {
+          audio.unlock();
+          audio.tap("tick");
+          haptic("light");
           untouchedWeights.delete(targetSet);
           const curVal = Number(targetSet.weight) || 0;
           const nextVal = Math.max(0, Math.round((curVal + delta) * 100) / 100);
@@ -2314,7 +2603,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           updateReferences();
           updateLiveMetrics();
           markDirty();
-          haptic("light");
         }
         return;
       }
@@ -2326,6 +2614,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const targetRow = rows[rIdx];
         const targetSet = targetRow?.sets[sIdx];
         if (targetSet) {
+          audio.unlock();
+          audio.tap("tick");
+          haptic("light");
           const curVal = Number(targetSet.reps) || 0;
           const nextVal = Math.max(0, Math.round(curVal + delta));
           targetSet.reps = nextVal;
@@ -2334,7 +2625,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           updateReferences();
           updateLiveMetrics();
           markDirty();
-          haptic("light");
         }
         return;
       }
@@ -2346,6 +2636,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const targetRow = rows[rIdx];
         const targetSet = targetRow?.sets[sIdx];
         if (targetSet) {
+          audio.unlock();
+          audio.tap("tick");
+          haptic("light");
           const curVal = Number(targetSet.seconds) || 0;
           const nextVal = Math.max(0, curVal + delta);
           targetSet.seconds = nextVal;
@@ -2354,7 +2647,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           updateReferences();
           updateLiveMetrics();
           markDirty();
-          haptic("light");
         }
         return;
       }
@@ -2432,6 +2724,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       }
       const button = target.closest("[data-workout]");
       if (!button) return;
+      audio.unlock();
+      audio.tap(button.dataset.workout === "remove-set" || button.dataset.workout === "remove-row" ? "skip" : "tick");
+      haptic("light");
       const snapWarmupWeight = (target, isBarbell) => {
         if (isBarbell) {
           if (target <= barWeight) return barWeight;
@@ -2546,16 +2841,32 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         markDirty();
         return;
       }
+      if (button.dataset.workout === "toggle-session-menu") {
+        sessionMenuOpen = !sessionMenuOpen;
+        updateProgress();
+        return;
+      }
+      if (button.dataset.workout === "close-session-menu") {
+        sessionMenuOpen = false;
+        updateProgress();
+        return;
+      }
+      if (button.dataset.workout === "open-notes") {
+        quickNotesOpen = !quickNotesOpen;
+        const box = $("[data-quick-note-box]", form);
+        if (box) box.hidden = !quickNotesOpen;
+        button.setAttribute("aria-expanded", String(quickNotesOpen));
+        if (quickNotesOpen) $("[data-quick-notes]", box)?.focus();
+        return;
+      }
       if (button.dataset.workout === "toggle-layout") {
         guided = !guided;
         updateProgress();
-        haptic("light");
         return;
       }
       if (button.dataset.workout === "toggle-settings") {
         settingsOpen = !settingsOpen;
         updateProgress();
-        haptic("light");
         if (settingsOpen) {
           requestAnimationFrame(() => {
             $(".training-details", form)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -2565,12 +2876,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       }
       if (button.dataset.workout === "open-picker") {
         openPickerOverlay(-1);
-        haptic("light");
         return;
       }
       if (button.dataset.workout === "close-picker") {
         closePickerOverlay();
-        haptic("light");
         return;
       }
       if (button.dataset.workout === "step") {
@@ -2639,27 +2948,62 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const index = Number(button.dataset.row);
       const row = rows[index];
       const setIndex = Number(button.dataset.index);
+      if (button.dataset.workout === "toggle-ex-menu" && row) {
+        if (openExMenus.has(row.id)) openExMenus.delete(row.id);
+        else openExMenus.add(row.id);
+        const isOpen = openExMenus.has(row.id);
+        const menuPanel = $(`[data-ex-menu="${index}"]`, list);
+        if (menuPanel) menuPanel.hidden = !isOpen;
+        button.setAttribute("aria-expanded", String(isOpen));
+        return;
+      }
+      if (button.dataset.workout === "toggle-del-sets" && row) {
+        if (deleteSetMode.has(row.id)) deleteSetMode.delete(row.id);
+        else deleteSetMode.add(row.id);
+        renderRows();
+        return;
+      }
+      if (button.dataset.workout === "sync-rest-sets" && row) {
+        const src = row.sets.findLast((s) => s.completed && s.type !== "warmup")
+          ?? row.sets.find((s) => !s.completed && s.type !== "warmup" && s.weight > 0)
+          ?? row.sets.find((s) => !s.completed && s.type !== "warmup");
+        const srcIdx = src ? row.sets.indexOf(src) : -1;
+        if (src && srcIdx >= 0) {
+          let filled = 0;
+          for (let k = srcIdx + 1; k < row.sets.length; k++) {
+            const dst = row.sets[k];
+            if (dst.completed || dst.type === "warmup") continue;
+            dst.weight = src.weight;
+            dst.reps = src.reps;
+            dst.seconds = src.seconds;
+            untouchedWeights.delete(dst);
+            filled++;
+          }
+          if (filled > 0) {
+            renderRows();
+            markDirty();
+            notify(`已将 ${fmt(src.weight)} kg × ${src.reps} 同步至后续 ${filled} 组`);
+          } else {
+            notify("当前动作没有可同步的后续工作组");
+          }
+        }
+        return;
+      }
       if (button.dataset.workout === "set-rest" && row) {
         const sec = Number(button.dataset.seconds);
         row.restSeconds = sec;
-        const inputEl = $(`[data-rest="${index}"]`, form);
-        if (inputEl) inputEl.value = String(sec);
-        const settingsDetails = button.closest(".exercise-settings");
-        const textEl = $("[data-rest-text]", settingsDetails);
-        if (textEl) textEl.textContent = `休息 ${sec} 秒`;
-        $$('[data-workout="set-rest"]', settingsDetails).forEach((b) =>
-          b.setAttribute("aria-pressed", String(Number(b.dataset.seconds) === sec)));
-        if (settingsDetails) settingsDetails.open = false;
+        openExMenus.delete(row.id);
+        renderRows();
         markDirty();
-        haptic("light");
+        notify(`组间休息已设为 ${sec} 秒`);
         return;
       }
       if (button.dataset.workout === "start-rest" && row && live) {
-        const settingsDetails = button.closest(".exercise-settings");
-        if (settingsDetails) settingsDetails.open = false;
+        openExMenus.delete(row.id);
+        const menuPanel = $(`[data-ex-menu="${index}"]`, list);
+        if (menuPanel) menuPanel.hidden = true;
         if (row.restSeconds > 0) {
           beginRest(row.restSeconds, row.sets.at(-1)?.id ?? row.id);
-          haptic("light");
           notify(`已开启 ${row.restSeconds} 秒组间休息`);
         }
         return;
@@ -2673,7 +3017,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           else if (focusRow === targetPos) focusRow = index;
           renderRows();
           markDirty();
-          haptic("light");
         }
         return;
       }
@@ -2684,17 +3027,14 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         jumpTo(index);
         return;
       }
-      if (button.dataset.workout === "cycle-type") {
+      if (button.dataset.workout === "cycle-type" && row && row.sets[setIndex]) {
         const order = ["normal", "warmup", "failure", "drop", "rest_pause"];
         const labels = { normal: "常规", warmup: "热身", failure: "力竭", drop: "递减", rest_pause: "休停" };
         const entry = row.sets[setIndex];
         entry.type = order[(order.indexOf(entry.type) + 1) % order.length];
-        button.dataset.type = entry.type;
-        button.setAttribute("aria-label", `第 ${setIndex + 1} 组类型，当前${labels[entry.type]}，点击切换`);
-        $("span", button).textContent = labels[entry.type];
-        updateReferences();
-        updateLiveMetrics();
+        renderRows();
         markDirty();
+        notify(`已切换为${labels[entry.type]}组`);
         return;
       }
       if (button.dataset.workout === "toggle-unilateral" && row) {
@@ -2705,7 +3045,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         row.snapshot.volumeMultiplier = (row.snapshot.volumeMultiplier ?? 1) >= 2 ? 1 : 2;
         renderRows();
         markDirty();
-        haptic("light");
         notify(row.snapshot.volumeMultiplier === 2 ? "已切换为单侧双倍计容（每组重量 × 2）" : "已切换为标准总重计容（× 1）");
         return;
       }
@@ -2713,7 +3052,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         toggleSupersetAt(index);
         renderRows();
         markDirty();
-        haptic("light");
         notify(row.supersetGroup ? `已编入超级组 ${row.supersetGroup}` : "已取消超级组配对");
         return;
       }
@@ -2721,11 +3059,18 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         if (openMotions.has(row.id)) openMotions.delete(row.id);
         else openMotions.add(row.id);
         const nowOpen = openMotions.has(row.id);
+        openExMenus.delete(row.id);
         const slot = $(`[data-motion-slot="${index}"]`, list);
-        if (slot) slot.hidden = isMobileViewport() && !nowOpen;
-        button.classList.toggle("is-active", nowOpen);
-        button.setAttribute("aria-pressed", String(nowOpen));
-        button.innerHTML = `${icon("play", 12)} ${nowOpen ? "收起示范" : "动作示范"}`;
+        if (slot) slot.hidden = !nowOpen;
+        const menuPanel = $(`[data-ex-menu="${index}"]`, list);
+        if (menuPanel) menuPanel.hidden = true;
+        const thumbBtn = $(`[data-ex-thumb="${index}"]`, list);
+        if (thumbBtn) thumbBtn.setAttribute("aria-pressed", String(nowOpen));
+        $$(`[data-workout="toggle-motion"][data-row="${index}"]`, list).forEach((el) => {
+          if (el === thumbBtn) return;
+          el.classList.toggle("is-active", nowOpen);
+          el.innerHTML = `${icon("play", 14)} ${nowOpen ? "收起示范" : "动作示范"}`;
+        });
         return;
       }
       if (button.dataset.workout === "toggle-dossier" && row) {
@@ -2892,8 +3237,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           notify("该动作已全部完成，无法替换剩余组");
           return;
         }
-        const settingsDetails = button.closest(".exercise-settings");
-        if (settingsDetails) settingsDetails.open = false;
+        openExMenus.delete(row.id);
+        const menuPanel = $(`[data-ex-menu="${index}"]`, list);
+        if (menuPanel) menuPanel.hidden = true;
         openPickerOverlay(index);
         return;
       }
@@ -2931,19 +3277,19 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           else Object.assign(entry, { weight: value.weight, reps: value.reps });
         });
       }
-      if ((button.dataset.workout === "remove-row" && row.sets.some((entry) => entry.id === rest?.setId))
-        || (button.dataset.workout === "remove-set" && row.sets[setIndex]?.id === rest?.setId)) {
+      if (button.dataset.workout === "remove-row" && row.sets.some((entry) => entry.id === rest?.setId)) {
         rest = null;
         dialOpen = false;
         renderClocks();
       }
-      if ((button.dataset.workout === "remove-row" && activeHold?.rowId === row?.id)
-        || (button.dataset.workout === "remove-set" && activeHold?.setId === row?.sets[setIndex]?.id)) {
+      if (button.dataset.workout === "remove-row" && activeHold?.rowId === row?.id) {
         activeHold = null;
       }
       if (button.dataset.workout === "remove-row") {
         if (swapTargetRow === index) clearSwapMode();
         else if (swapTargetRow > index) swapTargetRow--;
+        openExMenus.delete(row.id);
+        deleteSetMode.delete(row.id);
         rows.splice(index, 1);
         cleanSupersetOrphans();
         if (index < focusRow) focusRow--;
@@ -2951,13 +3297,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         renderUndoBanner();
       }
       if (button.dataset.workout === "remove-set") {
-        const removed = row.sets.splice(setIndex, 1)[0];
-        if (removed) {
-          pendingUndo = { rowId: row.id, index: setIndex, entry: removed, label: exerciseLabel(row) };
-          clearTimeout(undoTimer);
-          undoTimer = setTimeout(() => { pendingUndo = null; renderUndoBanner(); }, 5000);
-          renderUndoBanner();
-        }
+        removeSetAt(index, setIndex);
+        return;
       }
       if (button.dataset.workout === "add-set" && row.sets.length < 100) {
         pendingUndo = null;
@@ -3001,7 +3342,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const tracked = pauseAt(timing, nowDate.getTime());
       const recordedTime = elapsed !== null ? { elapsedSeconds: elapsed, runningSince: null }
         : (date === today() || (date === initialDate && tracked.elapsedSeconds > 0)) ? tracked : undefined;
-      const resting = rest?.end > nowDate.getTime() && date === today();
+      const resting = rest?.pausedLeftMs == null && rest?.end > nowDate.getTime() && date === today();
       const payload = {
         ...data,
         date,
@@ -3033,6 +3374,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         return;
       }
       dialOpen = false;
+      sessionMenuOpen = false;
+      const menuEl = $("[data-session-menu]", form);
+      if (menuEl) menuEl.hidden = true;
       activeAdapt = null;
       adaptProposal.hidden = true;
       adaptProposal.innerHTML = "";
@@ -3226,6 +3570,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         results = [];
         closePickerOverlay();
         renderRows();
+        audio.tap("check");
         haptic("success");
         if (!changed) return;
         if (guided) {
@@ -3251,7 +3596,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const recordedTime = elapsed !== null ? { elapsedSeconds: elapsed, runningSince: null }
         : live && (date === today() || (date === initialDate && tracked.elapsedSeconds > 0)) ? tracked : undefined;
       const durationUnknown = recordedTime === undefined && status === "completed";
-      const resting = status === "active" && rest?.end > nowDate.getTime() && date === today();
+      const resting = status === "active" && rest?.pausedLeftMs == null && rest?.end > nowDate.getTime() && date === today();
       const updated = { ...data, date, title: values.get("title").trim(), startedAt: sessionStart, endedAt, status, durationUnknown,
         notes: values.get("notes"), feeling: values.get("feeling") || null, exercises: rows,
         adjustments: activeRecord?.data?.adjustments ?? data.adjustments ?? [],
