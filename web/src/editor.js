@@ -545,8 +545,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       ${live ? `<div class="session-control-stack" hidden>
         <div class="exercise-jump" role="group" aria-label="切换动作"></div>
         <div class="session-step-tools">
-          <span class="workout-step-badge" data-step-badge></span>
-          ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? "全部动作" : "聚焦单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部动作" : "聚焦单步"}</button>`}
+          <span class="workout-step-badge" data-step-badge hidden></span>
+          ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? `全部 · ${focusRow + 1}/${rows.length}` : "聚焦单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部动作" : "聚焦单步"}</button>`}
           <button type="button" class="quiet" data-workout="open-picker">+ 加动作</button>
         </div>
       </div>` : ""}
@@ -995,12 +995,16 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const controlStack = $(".session-control-stack", form);
         controlStack.hidden = reviewing || rows.length === 0;
         const stepBadge = $("[data-step-badge]", form);
-        if (stepBadge) stepBadge.textContent = rows.length ? `${focusRow + 1} / ${rows.length}` : "";
+        const stepRatio = rows.length ? `${focusRow + 1}/${rows.length}` : "";
+        if (stepBadge) {
+          stepBadge.textContent = stepRatio;
+          stepBadge.hidden = true;
+        }
         const layoutBtn = $('[data-workout="toggle-layout"]', form);
         if (layoutBtn) {
           layoutBtn.hidden = rows.length < 2;
           layoutBtn.setAttribute("aria-pressed", String(!guided));
-          layoutBtn.textContent = guided ? "全部动作" : "聚焦单步";
+          layoutBtn.textContent = guided ? `全部 · ${stepRatio}` : `单步 · ${stepRatio}`;
         }
         const openPickerBtn = $('[data-workout="open-picker"]', form);
         const pickerEl = $(".workout-picker", form);
@@ -1028,7 +1032,13 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       $$(".exercise-jump button", form).forEach((button, index) => {
         const sets = rows[index]?.sets ?? [];
         button.classList.toggle("finished", sets.length > 0 && sets.every((entry) => entry.completed));
-        button.setAttribute("aria-pressed", String(index === focusRow));
+        const isCurrent = index === focusRow;
+        button.setAttribute("aria-pressed", String(isCurrent));
+        if (isCurrent) {
+          requestAnimationFrame(() => {
+            try { button.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" }); } catch {}
+          });
+        }
       });
       const allDone = rows.length > 0 && rows.every((row) => isRowCompleted(row));
       const nextPending = findNextPendingRow(focusRow);
@@ -1532,11 +1542,33 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     const dialOverlay = $(".rest-dial-overlay", form);
     const miniRing = $(".rest-mini-ring", form);
     const dialSvg = $(".rest-dial-svg", form);
+    let restSoundedEndAt = rest && rest.end <= Date.now() ? rest.end : 0;
+    form.addEventListener("pointerdown", () => audio.unlock(), { passive: true });
     const wake = supportsWake ? keepWorkoutScreenAwake(() => !!$('[name="keepScreen"]', form)?.checked
       && !!timing.runningSince && dateInput.value === today(), (locked) => {
         $("[data-wake-status]", form).textContent = locked ? "屏幕常亮已启用" : "";
         $('[name="keepScreen"]', form)?.closest("label").classList.toggle("wake-active", locked);
       }) : null;
+
+    function fireRestNotification() {
+      if (!("Notification" in window) || Notification.permission !== "granted" || localStorage.getItem(notifyPreference) === "off") return;
+      const titleText = "铁记 · 组间休息结束";
+      const opts = {
+        body: nextPendingDescription() || "准备好开始下一组！",
+        icon: "./icon-192.png",
+        badge: "./icon-192.png",
+        tag: "ironlog-rest",
+        renotify: true,
+        vibrate: [200, 100, 200],
+      };
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.ready
+          .then((reg) => reg?.showNotification ? reg.showNotification(titleText, opts) : new Notification(titleText, opts))
+          .catch(() => { try { new Notification(titleText, opts); } catch {} });
+      } else {
+        try { new Notification(titleText, opts); } catch {}
+      }
+    }
 
     function renderClocks() {
       const now = Date.now();
@@ -1577,25 +1609,18 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const { total, fraction: remainingFrac, seconds: time } = restProgress(rest, now);
       const formatted = time ? formatClock(time) : "00:00";
       document.title = time ? `[${formatted}] 休息中 · 铁记` : "休息结束！· 铁记";
-      if (
-        time === 0 &&
-        rest.end &&
-        restNotifiedEndAt !== rest.end &&
-        document.hidden &&
-        "Notification" in window &&
-        Notification.permission === "granted" &&
-        localStorage.getItem(notifyPreference) !== "off"
-      ) {
+      if (time === 0 && rest.end && restSoundedEndAt !== rest.end) {
+        restSoundedEndAt = rest.end;
+        audio.play(true);
+      }
+      if (time === 0 && rest.end && restNotifiedEndAt !== rest.end) {
         restNotifiedEndAt = rest.end;
-        try {
-          new Notification("铁记 · 组间休息结束", {
-            body: nextPendingDescription() || "准备好开始下一组！",
-            tag: "ironlog-rest",
-          });
-        } catch {}
+        fireRestNotification();
       }
       if (lastRest !== time) {
-        if (lastRest !== null && lastRest - 1 === time && time <= 3) audio.play(time === 0);
+        if (time > 0 && time <= 3 && lastRest !== null && time < lastRest) {
+          audio.play(false);
+        }
         $("strong", restBanner).innerHTML = time ? matrix(formatted) : "休息结束";
         restBanner.classList.toggle("rest-done", time === 0);
         $("[data-rest-announcement]", restBanner).textContent = time === 0 ? "组间休息结束" : "";
@@ -1621,8 +1646,12 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     function beginRest(seconds, setId) {
       rest = createRestTimer(seconds, setId, Date.now());
       lastRest = null;
+      restSoundedEndAt = 0;
       if (localStorage.getItem(dialPreference) === "on") dialOpen = true;
       audio.unlock();
+      if ("Notification" in window && Notification.permission === "default" && localStorage.getItem(notifyPreference) !== "off") {
+        void Notification.requestPermission().catch(() => {});
+      }
       renderClocks();
     }
     renderClocks();

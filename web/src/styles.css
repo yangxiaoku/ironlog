@@ -994,11 +994,11 @@ dialog.workout-dialog .dialog-head { flex: none; padding: 12px 18px; border-bott
 .session-progress > span { flex: none; white-space: nowrap; }
 .rir-toggle { flex: none; white-space: nowrap; min-height: 26px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--edge); background: var(--surface); color: var(--muted); font: 600 11px var(--mono); }
 .rir-toggle[aria-pressed="true"] { background: var(--red-wash); border-color: color-mix(in srgb, var(--red) 55%, var(--edge)); color: var(--red-ink); }
-.session-control-stack { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 18px; border-bottom: 1px solid var(--edge); background: var(--surface); }
-.session-step-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+.session-control-stack { flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 14px; border-bottom: 1px solid var(--edge); background: var(--surface); }
+.session-step-tools { display: flex; align-items: center; gap: 6px; flex: none; padding-left: 8px; border-left: 1px solid var(--edge); }
 .workout-step-badge { padding: 3px 8px; border-radius: 999px; border: 1px solid var(--edge); background: var(--inset); color: var(--ink); font: 650 11px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.session-step-tools button { min-height: 30px; padding: 0 9px; border: 1px dashed var(--edge); border-radius: 999px; font-size: 12px; color: var(--ink); }
-.exercise-jump { display: flex; align-items: center; gap: 5px; overflow: auto; padding: 2px 0; scrollbar-width: none; }
+.session-step-tools button { min-height: 32px; padding: 0 10px; border: 1px solid var(--edge); background: var(--inset); border-radius: 999px; font-size: 12px; font-weight: 550; color: var(--ink); white-space: nowrap; }
+.exercise-jump { display: flex; align-items: center; gap: 6px; overflow-x: auto; padding: 2px 4px 2px 0; scrollbar-width: none; }
 .exercise-jump::-webkit-scrollbar { display: none; }
 .exercise-jump button { flex: none; border: 1px solid var(--edge); border-radius: 999px; min-height: 34px; padding: 0 10px; font-size: 13px; }
 .exercise-jump button[aria-pressed="true"] { border-color: var(--soft); background: var(--inset); color: var(--ink); font-weight: 600; }
