@@ -1221,21 +1221,37 @@ dialog.workout-dialog .dialog-head { flex: none; padding: 12px 18px; border-bott
 .training-details > summary { color: var(--muted); font-size: 13px; }
 .training-details .details-body :is(.input-unit, input:not([type="checkbox"]), select) { background-color: var(--surface); }
 .training-details .details-body .input-unit input { background-color: transparent; }
-.session-clock { display: flex; flex-shrink: 0; align-items: center; gap: 6px; }
-.session-clock strong { font: 620 20px/1 var(--mono); letter-spacing: -.04em; }
-.session-clock button, .session-options { color: var(--muted); }
+.session-clock { display: flex; flex-shrink: 0; align-items: center; gap: 8px; border: 1px solid transparent; border-radius: 10px; background: none; padding: 4px 8px; cursor: pointer; color: var(--ink); transition: border-color .15s ease, background .15s ease; }
+.session-clock:hover, .session-clock:active { border-color: var(--edge); background: var(--inset); }
+.session-clock strong { font: 620 20px/1 var(--mono); letter-spacing: -.04em; color: var(--ink); }
+.session-clock [data-clock-label], .session-clock button, .session-options { color: var(--muted); font-size: 12px; }
 .session-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; font-size: 13px; }
 .switch-chip { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 42px; padding: 0 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); cursor: pointer; transition: border-color .15s ease, color .15s ease; }
 .switch-chip:hover { border-color: var(--soft); }
 .switch-chip:has(input:checked) { color: var(--ink); border-color: color-mix(in srgb, var(--red) 40%, var(--edge)); }
 .switch-chip.wake-active { color: var(--ink); }
-.workout-picker { border: 1px dashed var(--edge); border-radius: 12px; padding: 2px 12px; min-width: 0; max-width: 100%; }
-.workout-picker[open] { padding-bottom: 12px; border-style: solid; border-color: color-mix(in srgb, var(--red) 45%, var(--edge)); background: var(--surface); }
-.workout-form.is-picking .workout-picker { order: -1; box-shadow: 0 8px 24px rgba(0, 0, 0, .28); }
-.picker-close-hint { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--muted); }
+.picker-overlay { position: absolute; inset: 0; z-index: 8; background: var(--surface); display: flex; flex-direction: column; gap: 10px; padding: 14px 16px max(14px, env(safe-area-inset-bottom)); min-height: 0; min-width: 0; box-sizing: border-box; }
+.picker-overlay[hidden] { display: none !important; }
+.picker-overlay-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-bottom: 6px; border-bottom: 1px solid var(--rule); }
+.picker-overlay-head strong { display: inline-flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 700; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-close-btn { flex: none; min-height: 34px; padding: 0 12px; font-size: 12.5px; border-radius: 999px; }
+.picker-search { flex: none; margin: 0; }
+.picker-overlay .picker-muscles, .picker-overlay .picker-equipment { flex: none; margin: 0; display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.picker-overlay .picker-muscles::-webkit-scrollbar, .picker-overlay .picker-equipment::-webkit-scrollbar { display: none; }
+.picker-overlay .picker-muscles button, .picker-overlay .picker-equipment button { flex: none; white-space: nowrap; }
+.picker-overlay .picker-results { flex: 1; min-height: 0; max-height: none; overflow-y: auto; -webkit-overflow-scrolling: touch; display: grid; align-content: start; gap: 6px; margin-top: 2px; padding-right: 2px; }
+.picker-overlay .picker-results button { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 52px; text-align: left; border: 1px solid var(--rule); border-radius: 11px; padding: 9px 12px; background: var(--inset); transition: border-color .15s ease, transform .1s ease; }
+.picker-overlay .picker-results button:hover, .picker-overlay .picker-results button:active { border-color: var(--soft); background: var(--raised); }
+.picker-item-main { display: grid; gap: 2px; min-width: 0; flex: 1; }
+.picker-item-main strong { font-size: 14px; font-weight: 650; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.picker-item-main small { margin: 0; font-size: 11.5px; color: var(--muted); }
+.picker-add-chip { flex: none; display: inline-flex; align-items: center; justify-content: center; min-height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--edge); background: var(--surface); color: var(--ink); font: 600 12px var(--mono); white-space: nowrap; }
+.picker-overlay-foot { flex: none; padding-top: 6px; border-top: 1px solid var(--rule); }
+.picker-overlay-foot .picker-create-custom { margin-top: 0; }
+.workout-inline-add-btn { width: 100%; justify-content: center; min-height: 44px; border-style: dashed; border-radius: 12px; font-size: 13.5px; }
+.workout-empty-state { display: grid; justify-items: center; gap: 8px; padding: 28px 18px; text-align: center; }
+.workout-empty-state .primary-button { margin-top: 6px; min-height: 44px; padding: 0 18px; border-radius: 999px; }
 .session-step-tools button[aria-pressed="true"] { border-style: solid; border-color: color-mix(in srgb, var(--red) 45%, var(--edge)); background: var(--red-wash); color: var(--red-ink); font-weight: 600; }
-.workout-picker > summary span { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 550; }
-.workout-picker > summary::-webkit-details-marker { display: none; }
 .picker-muscles { margin-bottom: 8px; max-width: 100%; min-width: 0; }
 .undo-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 10px 6px 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--inset); font-size: 12px; color: var(--ink); }
 .undo-banner button { min-height: 30px; padding: 0 10px; font-size: 12px; font-weight: 650; color: var(--red-ink); border-color: color-mix(in srgb, var(--red) 45%, var(--edge)); border-radius: 999px; }
@@ -1631,8 +1647,8 @@ dialog.workout-dialog .dialog-head { flex: none; padding: 12px 18px; border-bott
   .rest-clock { padding: 6px 8px; }
   .rest-dock-trigger strong { font-size: 22px; }
   .rest-dock-buttons button { padding: 0 9px; min-height: 36px; }
-  .session-clock { flex-direction: column; align-items: flex-end; gap: 1px; }
-  .session-clock button { min-height: 28px; font-size: 12px; }
+  .session-clock { flex-direction: column; align-items: flex-end; gap: 2px; padding: 4px 6px; min-height: 42px; justify-content: center; }
+  .session-clock [data-clock-label], .session-clock button { min-height: 0; font-size: 11px; line-height: 1.1; }
   .session-clock strong { font-size: 17px; }
   .heading-actions { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
   .heading-actions button { width: 100%; justify-content: center; min-height: 42px; }
@@ -2946,7 +2962,8 @@ dialog {
 .session-control-stack,
 .dialog-form .session-dock,
 .rest-dial-overlay,
-.ai-adapt-overlay {
+.ai-adapt-overlay,
+.picker-overlay {
   background: var(--bg);
 }
 .set-kind,
@@ -3016,7 +3033,7 @@ dialog {
 
 /* Light Theme Hardware Elevation */
 :root[data-theme="light"] :is(
-  dialog, .dialog-head, .session-control-stack, .dialog-form .session-dock, .rest-dial-overlay, .ai-adapt-overlay,
+  dialog, .dialog-head, .session-control-stack, .dialog-form .session-dock, .rest-dial-overlay, .ai-adapt-overlay, .picker-overlay,
   .today-training, .today-tile, .kpis, .iron-dial,
   .panel, .routine-card, .badge-card, .today-apple, .apple-daily-strip,
   .coach-summary-strip, .apple-overview-ribbon, .plan-shortcut, .exercise-tile, .exercise-art,

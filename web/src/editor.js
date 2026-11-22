@@ -523,6 +523,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     const isMobileViewport = () => matchMedia("(max-width: 630px)").matches;
     let readinessDismissed = false, swapTargetRow = -1, activeHold = null;
     let reviewing = false, pickerMuscle = "", pickerEquipment = "", pendingUndo = null, undoTimer = 0;
+    let settingsOpen = !live || initialDate !== today();
     const celebratedPrKeys = new Set();
     const plannedMeta = new Map();
     seedExerciseMeta.forEach((meta, idx) => { if (meta) plannedMeta.set(meta.exerciseId + ":" + idx, meta); });
@@ -534,11 +535,12 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     open(record && !isActive ? "编辑训练" : isActive ? "继续训练" : "记录训练", `<form id="editor-form" class="dialog-form workout-form${live && focusRow < rows.length - 1 ? " has-next" : ""}${showRir ? " show-rir" : ""}">
       ${live ? `<section class="session-overview" aria-label="本次训练概况">
         <header><div class="session-title-group"><h3 data-session-title>${esc(title)}</h3><span class="session-live-meta" data-live-volume></span></div>
-          <div class="session-clock" data-live-clock><strong role="timer" aria-label="训练时长">${matrix("00:00")}</strong>
-            <button type="button" class="quiet" data-clock="train">暂停计时</button></div></header>
+          <button type="button" class="session-clock" data-live-clock data-clock="train" aria-label="暂停或继续训练计时"><strong role="timer" aria-label="训练时长">${matrix("00:00")}</strong>
+            <span data-clock-label>暂停计时</span></button></header>
         <div class="session-progress"><progress max="1" value="0" aria-label="训练组数进度"></progress><span data-set-count></span>
           ${live ? `<button type="button" class="rir-toggle ai-adapt-btn" data-adapt="open">${icon("bolt", 12)} AI 调整</button>` : ""}
-          <button type="button" class="rir-toggle" data-workout="toggle-rir" aria-pressed="${showRir}">RIR</button></div>
+          <button type="button" class="rir-toggle" data-workout="toggle-rir" aria-pressed="${showRir}">RIR</button>
+          <button type="button" class="rir-toggle" data-workout="toggle-settings" aria-pressed="${settingsOpen}">设置</button></div>
         <div class="session-live-muscles" data-live-muscles hidden></div>
       </section>` : ""}
       ${live ? `<div class="session-control-stack" hidden>
@@ -546,34 +548,15 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         <div class="session-step-tools">
           <span class="workout-step-badge" data-step-badge hidden></span>
           ${rows.length > 1 ? `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}">${guided ? "全部" : "单步"}</button>` : `<button type="button" class="quiet" data-workout="toggle-layout" aria-pressed="${!guided}" hidden>${guided ? "全部" : "单步"}</button>`}
-          <button type="button" class="quiet" data-workout="open-picker">+ 动作</button>
+          <button type="button" class="quiet add-exercise-pill" data-workout="open-picker">+ 动作</button>
         </div>
       </div>` : ""}
       <div class="workout-scroll">
         ${local ? '<p class="draft-note">已恢复此设备上的草稿 <button class="quiet" type="button" id="discard-local">丢弃草稿</button></p>' : ""}
         <div id="readiness-slot"></div>
         <div id="workout-rows"></div>
-        <details class="picker workout-picker"${rows.length ? "" : " open"}>
-          <summary><span>${icon("plus", 17)} 添加动作</span><span class="picker-close-hint">展开 / 收起 ${icon("chevron", 14)}</span></summary>
-          <div class="swap-mode-banner" data-swap-banner hidden></div>
-          <div class="muscle-pills picker-muscles" role="group" aria-label="按肌群快速筛选">${Object.entries({ "": "全部", __fav__: "★ 收藏", chest: "胸", back: "背", legs: "腿", shoulders: "肩", arms: "臂", core: "核心" }).map(([val, label]) =>
-            `<button type="button" data-picker-muscle="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>
-          ${(() => {
-            const userEquip = getUserEquipment?.() ?? [];
-            const equipOpts = [
-              ["", "全部器械"],
-              ...(userEquip.length ? [["__mine__", "我的器械"]] : []),
-              ["barbell", "杠铃"], ["dumbbell", "哑铃"], ["machine", "器械"], ["cable", "绳索"],
-              ["bodyweight", "自重"], ["kettlebell", "壶铃"], ["band", "弹力带"],
-            ];
-            return `<div class="muscle-pills picker-equipment" role="group" aria-label="按器械筛选">${equipOpts.map(([val, label]) =>
-              `<button type="button" data-picker-equipment="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>`;
-          })()}
-          <label class="search">${icon("search")}<input id="exercise-query" type="search" maxlength="120" placeholder="输入动作名称或直接从上方点选" aria-label="搜索动作"></label>
-          <div id="matches" class="picker-results"></div>
-          ${onCreateCustomExercise ? `<button type="button" class="quiet picker-create-custom" data-workout="create-custom-exercise">${icon("plus", 15)} 没找到想要的？新建自定义动作</button>` : ""}
-        </details>
-        <details class="training-details"${!live || initialDate !== today() ? " open" : ""}><summary><span>${live ? "训练设置与草稿" : "训练信息"}</span>${icon("chevron", 14)}</summary>
+        <button type="button" class="secondary-button workout-inline-add-btn" data-workout="open-picker"${(live && guided) || rows.length === 0 ? " hidden" : ""}>${icon("plus", 16)} 添加训练动作</button>
+        <details class="training-details"${settingsOpen ? " open" : ""}${live && !settingsOpen ? " hidden" : ""}><summary><span>${live ? "训练设置与草稿" : "训练信息"}</span>${icon("chevron", 14)}</summary>
         <div class="details-body">
           ${field("训练名称", input("title", title, 'maxlength="120" required'))}
           <div class="fields">${commonFields("workout", { date: initialDate }, record)}
@@ -595,6 +578,29 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             <button class="quiet" type="button" data-workout="clear-feeling"${selectedFeeling ? "" : " hidden"}>清除体感</button></fieldset>
           ${field("备注（可选）", `<textarea name="notes" maxlength="4000" rows="2" placeholder="记录本次组间体感或下次调整…">${esc(local?.notes ?? data.notes)}</textarea>`)}
         </section>
+      </div>
+      <div class="picker-overlay workout-picker" data-picker-overlay${rows.length ? " hidden" : ""} aria-label="添加动作">
+        <header class="picker-overlay-head">
+          <strong data-picker-title>${icon("plus", 16)} 添加训练动作</strong>
+          <button type="button" class="secondary-button picker-close-btn" data-workout="close-picker">返回训练</button>
+        </header>
+        <div class="swap-mode-banner" data-swap-banner hidden></div>
+        <label class="search picker-search">${icon("search")}<input id="exercise-query" type="search" maxlength="120" placeholder="搜索动作名称或别名（如 卧推、深蹲、划船）" aria-label="搜索动作"></label>
+        <div class="muscle-pills picker-muscles" role="group" aria-label="按肌群快速筛选">${Object.entries({ "": "全部", __fav__: "★ 收藏", chest: "胸", back: "背", legs: "腿", shoulders: "肩", arms: "臂", core: "核心" }).map(([val, label]) =>
+          `<button type="button" data-picker-muscle="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>
+        ${(() => {
+          const userEquip = getUserEquipment?.() ?? [];
+          const equipOpts = [
+            ["", "全部器械"],
+            ...(userEquip.length ? [["__mine__", "我的器械"]] : []),
+            ["barbell", "杠铃"], ["dumbbell", "哑铃"], ["machine", "器械"], ["cable", "绳索"],
+            ["bodyweight", "自重"], ["kettlebell", "壶铃"], ["band", "弹力带"],
+          ];
+          return `<div class="muscle-pills picker-equipment" role="group" aria-label="按器械筛选">${equipOpts.map(([val, label]) =>
+            `<button type="button" data-picker-equipment="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>`;
+        })()}
+        <div id="matches" class="picker-results"></div>
+        ${onCreateCustomExercise ? `<footer class="picker-overlay-foot"><button type="button" class="quiet picker-create-custom" data-workout="create-custom-exercise">${icon("plus", 15)} 没找到想要的？新建自定义动作</button></footer>` : ""}
       </div>
       <div class="rest-dial-overlay" hidden aria-label="组间休息表盘">
         <span class="crosshair tl" aria-hidden="true"></span><span class="crosshair br" aria-hidden="true"></span>
@@ -988,6 +994,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const total = rows.reduce((sum, row) => sum + row.sets.length, 0);
       form.dataset.layout = guided ? "focus" : "list";
       form.classList.toggle("show-rir", showRir);
+      const pickerEl = $("[data-picker-overlay]", form);
+      const pickerOpen = Boolean(pickerEl && !pickerEl.hidden);
+      const inlineAddBtn = $(".workout-inline-add-btn", form);
+      if (inlineAddBtn) inlineAddBtn.hidden = reviewing || (live && guided) || rows.length === 0;
       if (live) {
         $("[data-set-count]", form).textContent = `${done} / ${total} 组`;
         $(".session-progress progress", form).value = total ? done / total : 0;
@@ -1005,11 +1015,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           layoutBtn.setAttribute("aria-pressed", String(!guided));
           layoutBtn.textContent = guided ? "全部" : "单步";
         }
-        const openPickerBtn = $('[data-workout="open-picker"]', form);
-        const pickerEl = $(".workout-picker", form);
-        if (openPickerBtn && pickerEl) {
-          openPickerBtn.setAttribute("aria-pressed", String(pickerEl.open));
-          openPickerBtn.textContent = pickerEl.open ? "收起" : "+ 动作";
+        const openPickerBtn = $('.session-step-tools [data-workout="open-picker"]', form);
+        if (openPickerBtn) {
+          openPickerBtn.setAttribute("aria-pressed", String(pickerOpen));
         }
         const previous = $('[data-step="-1"]', form), next = $('[data-step="1"]', form);
         previous.hidden = reviewing || !guided || rows.length < 2;
@@ -1023,10 +1031,14 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const dockBack = $('.session-dock [data-workout="back-from-finish"]', form);
         if (dockBack) dockBack.hidden = !reviewing;
         $(".finish-save", form).hidden = !reviewing;
-        if (pickerEl) pickerEl.hidden = reviewing;
+        if (pickerEl && reviewing) pickerEl.hidden = true;
         const detailsEl = $(".training-details", form);
-        if (detailsEl) detailsEl.hidden = reviewing;
+        if (detailsEl) {
+          detailsEl.hidden = reviewing || !settingsOpen;
+          detailsEl.open = settingsOpen;
+        }
         $('[data-workout="toggle-rir"]', form)?.setAttribute("aria-pressed", String(showRir));
+        $('[data-workout="toggle-settings"]', form)?.setAttribute("aria-pressed", String(settingsOpen));
       }
       $$(".exercise-jump button", form).forEach((button, index) => {
         const sets = rows[index]?.sets ?? [];
@@ -1518,7 +1530,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             <small class="set-swipe-tip">右滑完成 · 左滑删组</small>
           </footer>
           ${live ? `<div class="exercise-complete-banner" data-complete-callout hidden></div>` : ""}</section>`;
-      }).join("") || empty("还没有动作", "从下方搜索并添加训练动作。");
+      }).join("") || `<div class="empty workout-empty-state"><strong>还没有训练动作</strong><p>从动作库选择今日要练的动作开始记录</p><button type="button" class="primary-button" data-workout="open-picker">${icon("plus", 16)} 添加第一个动作</button></div>`;
       updateProgress();
       updateReferences();
       const jumpBar = $(".exercise-jump", form), activeChip = jumpBar?.children[focusRow];
@@ -1586,8 +1598,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         const face = $("strong", liveClock);
         if (face.textContent !== elapsed) face.innerHTML = matrix(elapsed);
         const label = timing.runningSince ? "暂停计时" : timing.elapsedSeconds ? "继续计时" : "开始计时";
-        const button = $("button", liveClock);
-        if (button.textContent !== label) button.textContent = label;
+        const labelEl = $("[data-clock-label]", liveClock) ?? $("button", liveClock);
+        if (labelEl && labelEl.textContent !== label) labelEl.textContent = label;
       }
       const showRest = !!rest && !reviewing && dateInput.value === today();
       restBanner.hidden = !showRest;
@@ -1695,6 +1707,54 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         banner.hidden = true;
         banner.innerHTML = "";
       }
+      const titleEl = $("[data-picker-title]", form);
+      if (titleEl) titleEl.innerHTML = `${icon("plus", 16)} 添加训练动作`;
+    }
+
+    function openPickerOverlay(swapIdx = -1) {
+      const pickerEl = $("[data-picker-overlay]", form);
+      if (!pickerEl) return;
+      const queryEl = $("#exercise-query", form);
+      if (swapIdx >= 0 && rows[swapIdx]) {
+        const targetRow = rows[swapIdx];
+        swapTargetRow = swapIdx;
+        pickerMuscle = targetRow.snapshot?.muscle ?? "";
+        pickerEquipment = "";
+        const titleEl = $("[data-picker-title]", form);
+        if (titleEl) titleEl.innerHTML = `${icon("swap", 16)} 替换「${esc(exerciseLabel(targetRow))}」`;
+        const banner = $("[data-swap-banner]", form);
+        if (banner) {
+          banner.hidden = false;
+          banner.innerHTML = `<span>点选下方任一动作即可替换「<b>${esc(exerciseLabel(targetRow))}</b>」</span>
+            <button type="button" class="quiet" data-workout="cancel-swap">取消替换</button>`;
+        }
+      } else {
+        clearSwapMode();
+      }
+      $$("[data-picker-muscle]", form).forEach((el) =>
+        el.setAttribute("aria-pressed", String(el.dataset.pickerMuscle === pickerMuscle)));
+      $$("[data-picker-equipment]", form).forEach((el) =>
+        el.setAttribute("aria-pressed", String(el.dataset.pickerEquipment === pickerEquipment)));
+      dialOpen = false;
+      const adaptModal = $("[data-adapt-overlay]", form);
+      if (adaptModal) adaptModal.hidden = true;
+      pickerEl.hidden = false;
+      form.classList.add("is-picking");
+      updateProgress();
+      renderClocks();
+      void find(queryEl?.value.trim() ?? "");
+      if (!isMobileViewport()) {
+        requestAnimationFrame(() => queryEl?.focus({ preventScroll: true }));
+      }
+    }
+
+    function closePickerOverlay() {
+      const pickerEl = $("[data-picker-overlay]", form);
+      if (!pickerEl) return;
+      clearSwapMode();
+      pickerEl.hidden = true;
+      form.classList.remove("is-picking");
+      updateProgress();
     }
 
     function applyExerciseSwap(rowIndex, nextId, nextSnapshot) {
@@ -1848,7 +1908,13 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
 
     scroller?.addEventListener("focusin", ({ target }) => {
       if (target.matches('.set-row input[type="number"]')) {
+        target.dataset.justFocused = "1";
         try { target.select(); } catch {}
+        setTimeout(() => {
+          if (document.activeElement === target) {
+            try { target.select(); } catch {}
+          }
+        }, 25);
       }
       if (matchMedia("(max-width: 630px)").matches && target.matches("input, select, textarea")) {
         setTimeout(() => {
@@ -1856,6 +1922,14 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             (target.closest(".set-row") ?? target).scrollIntoView({ block: "nearest", behavior: "smooth" });
           }
         }, 120);
+      }
+    });
+    scroller?.addEventListener("mouseup", (e) => {
+      const target = e.target;
+      if (target?.matches?.('.set-row input[type="number"]') && target.dataset.justFocused === "1") {
+        delete target.dataset.justFocused;
+        e.preventDefault();
+        try { target.select(); } catch {}
       }
     });
 
@@ -1899,6 +1973,15 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     };
     scroller?.addEventListener("touchcancel", resetSetSwipe, { passive: true });
     scroller?.addEventListener("touchend", (e) => {
+      if (e.target?.matches?.('.set-row input[type="number"]') && e.target.dataset.justFocused === "1") {
+        const numInput = e.target;
+        setTimeout(() => {
+          delete numInput.dataset.justFocused;
+          if (document.activeElement === numInput) {
+            try { numInput.select(); } catch {}
+          }
+        }, 0);
+      }
       if (e.changedTouches.length !== 1) { resetSetSwipe(); return; }
       const touchEndX = e.changedTouches[0].clientX;
       const touchEndY = e.changedTouches[0].clientY;
@@ -2019,6 +2102,29 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       if (event.key === "Enter" && event.target.matches?.("input")) event.preventDefault();
     }, true);
     form.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && !event.isComposing) {
+        const pickerOverlay = $("[data-picker-overlay]", form);
+        if (pickerOverlay && !pickerOverlay.hidden) {
+          event.preventDefault();
+          event.stopPropagation();
+          closePickerOverlay();
+          return;
+        }
+        const adaptModal = $("[data-adapt-overlay]", form);
+        if (adaptModal && !adaptModal.hidden) {
+          event.preventDefault();
+          event.stopPropagation();
+          adaptModal.hidden = true;
+          return;
+        }
+        if (dialOverlay && !dialOverlay.hidden) {
+          event.preventDefault();
+          event.stopPropagation();
+          dialOpen = false;
+          renderClocks();
+          return;
+        }
+      }
       if (event.key !== "Enter" || event.isComposing) return;
       const noteEl = event.target.closest?.("[data-dossier-note]");
       if (noteEl) {
@@ -2116,7 +2222,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         notify("请补全空白的训练组或日期/标题必填项");
       }
       const details = target.closest("details");
-      if (details) details.open = true;
+      if (details) {
+        if (details.classList.contains("training-details")) settingsOpen = true;
+        details.hidden = false;
+        details.open = true;
+      }
       const section = target.closest("[data-row-index]");
       if (section?.hidden) jumpTo(Number(section.dataset.rowIndex), false);
       setTimeout(() => { if (form.isConnected && target.isConnected) target.focus({ preventScroll: false }); }, 0);
@@ -2442,22 +2552,25 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         haptic("light");
         return;
       }
-      if (button.dataset.workout === "open-picker") {
-        const pickerEl = $(".workout-picker", form);
-        if (pickerEl) {
-          pickerEl.hidden = false;
-          const willOpen = !pickerEl.open;
-          pickerEl.open = willOpen;
-          form.classList.toggle("is-picking", willOpen);
-          updateProgress();
-          if (willOpen) {
-            if (!results.length) void find(query.value.trim());
-            requestAnimationFrame(() => {
-              if (scroller) scroller.scrollTo({ top: 0, behavior: "smooth" });
-              query?.focus({ preventScroll: true });
-            });
-          }
+      if (button.dataset.workout === "toggle-settings") {
+        settingsOpen = !settingsOpen;
+        updateProgress();
+        haptic("light");
+        if (settingsOpen) {
+          requestAnimationFrame(() => {
+            $(".training-details", form)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          });
         }
+        return;
+      }
+      if (button.dataset.workout === "open-picker") {
+        openPickerOverlay(-1);
+        haptic("light");
+        return;
+      }
+      if (button.dataset.workout === "close-picker") {
+        closePickerOverlay();
+        haptic("light");
         return;
       }
       if (button.dataset.workout === "step") {
@@ -2531,15 +2644,19 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         row.restSeconds = sec;
         const inputEl = $(`[data-rest="${index}"]`, form);
         if (inputEl) inputEl.value = String(sec);
-        const textEl = $("[data-rest-text]", button.closest(".exercise-settings"));
+        const settingsDetails = button.closest(".exercise-settings");
+        const textEl = $("[data-rest-text]", settingsDetails);
         if (textEl) textEl.textContent = `休息 ${sec} 秒`;
-        $$('[data-workout="set-rest"]', button.closest(".exercise-settings")).forEach((b) =>
+        $$('[data-workout="set-rest"]', settingsDetails).forEach((b) =>
           b.setAttribute("aria-pressed", String(Number(b.dataset.seconds) === sec)));
+        if (settingsDetails) settingsDetails.open = false;
         markDirty();
         haptic("light");
         return;
       }
       if (button.dataset.workout === "start-rest" && row && live) {
+        const settingsDetails = button.closest(".exercise-settings");
+        if (settingsDetails) settingsDetails.open = false;
         if (row.restSeconds > 0) {
           beginRest(row.restSeconds, row.sets.at(-1)?.id ?? row.id);
           haptic("light");
@@ -2775,38 +2892,13 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           notify("该动作已全部完成，无法替换剩余组");
           return;
         }
-        swapTargetRow = index;
-        pickerMuscle = row.snapshot?.muscle ?? "";
-        pickerEquipment = "";
-        $$("[data-picker-muscle]", form).forEach((el) =>
-          el.setAttribute("aria-pressed", String(el.dataset.pickerMuscle === pickerMuscle)));
-        $$("[data-picker-equipment]", form).forEach((el) =>
-          el.setAttribute("aria-pressed", String(el.dataset.pickerEquipment === "")));
-        const banner = $("[data-swap-banner]", form);
-        if (banner) {
-          banner.hidden = false;
-          banner.innerHTML = `<span>正在替换「<b>${esc(exerciseLabel(row))}</b>」— 请在下方选择替代动作</span>
-            <button type="button" class="quiet" data-workout="cancel-swap">取消替换</button>`;
-        }
-        const pickerEl = $(".workout-picker", form);
-        if (pickerEl) {
-          pickerEl.hidden = false;
-          pickerEl.open = true;
-          form.classList.add("is-picking");
-          updateProgress();
-          void find(query.value.trim());
-          requestAnimationFrame(() => pickerEl.scrollIntoView({ behavior: "smooth", block: "start" }));
-        }
+        const settingsDetails = button.closest(".exercise-settings");
+        if (settingsDetails) settingsDetails.open = false;
+        openPickerOverlay(index);
         return;
       }
       if (button.dataset.workout === "cancel-swap") {
-        clearSwapMode();
-        const pickerEl = $(".workout-picker", form);
-        if (pickerEl) {
-          pickerEl.open = false;
-          form.classList.remove("is-picking");
-          updateProgress();
-        }
+        closePickerOverlay();
         return;
       }
       if (button.dataset.workout === "swap-backup") {
@@ -3032,7 +3124,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         }
       }
     });
-    const picker = $(".workout-picker", form);
+    const picker = $("[data-picker-overlay]", form);
     let results = [];
     let debounce;
     function matchesPickerQuery(item, q) {
@@ -3060,11 +3152,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           pool = [...customFavs, ...builtinFavs];
         } else {
           const customMatches = customList.filter((ex) => (!pickerMuscle || ex.muscle === pickerMuscle) && matchesEquip(ex) && matchesPickerQuery(ex, value));
-          const params = new URLSearchParams({ q: value, limit: pickerEquipment === "__mine__" ? "48" : "12" });
+          const params = new URLSearchParams({ q: value, limit: pickerEquipment === "__mine__" ? "48" : "18" });
           if (pickerMuscle) params.set("muscle", pickerMuscle);
           if (pickerEquipment && pickerEquipment !== "__mine__") params.set("equipment", pickerEquipment);
           const { items = [] } = await api("/api/catalogue/exercises?" + params);
-          pool = [...customMatches, ...items.filter((ex) => !customIds.has(ex.id) && matchesEquip(ex))].slice(0, 20);
+          pool = [...customMatches, ...items.filter((ex) => !customIds.has(ex.id) && matchesEquip(ex))].slice(0, 24);
           // If no search query and viewing "全部", bubble favorites to top cleanly
           if (!value && !pickerMuscle && favIds.size) {
             const missingFavs = [...favIds].filter((id) => !pool.some((p) => p.id === id) && !customIds.has(id)).slice(0, 6);
@@ -3077,8 +3169,9 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         if (seq !== searching || !form.isConnected) return;
         const ranked = prioritizeExact(pool, value);
         results = ranked.sort((a, b) => (value ? 0 : Number(favIds.has(b.id)) - Number(favIds.has(a.id))));
+        const swapping = swapTargetRow >= 0 && !!rows[swapTargetRow];
         $("#matches", form).innerHTML = results.map((item, i) =>
-          `<button type="button" data-result="${i}"><span>${favIds.has(item.id) ? '<b class="fav-pip" aria-label="已收藏">★</b> ' : ""}${esc(item.name)}${item.custom ? ' <em class="custom-badge">自定义</em>' : ""}</span><small>${esc(muscles[item.muscle] ?? item.muscle)} · ${esc(equipment[item.equipment] ?? item.equipment)}</small>${icon("plus", 16)}</button>`).join("")
+          `<button type="button" data-result="${i}"><span class="picker-item-main"><strong>${favIds.has(item.id) ? '<b class="fav-pip" aria-label="已收藏">★</b> ' : ""}${esc(item.name)}${item.custom ? ' <em class="custom-badge">自定义</em>' : ""}</strong><small>${esc(muscles[item.muscle] ?? item.muscle)} · ${esc(equipment[item.equipment] ?? item.equipment)}</small></span><span class="picker-add-chip">${swapping ? "替换" : "+ 添加"}</span></button>`).join("")
           || `<p class="muted">${pickerMuscle === "__fav__" ? "还没有符合筛选条件的收藏动作。" : "没有匹配动作，试试切换肌群/器械或新建自定义动作。"}</p>`;
       } catch (problem) { if (seq === searching && form.isConnected) $("#matches", form).textContent = problem.message; }
     }
@@ -3096,22 +3189,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       $$("[data-picker-equipment]", form).forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.pickerEquipment === pickerEquipment)));
       void find(query.value.trim());
     });
-    if (picker?.open) void find("");
-    picker?.addEventListener("toggle", () => {
-      if (!picker.open && swapTargetRow >= 0) clearSwapMode();
-      form.classList.toggle("is-picking", Boolean(picker.open));
-      updateProgress();
-      if (!picker.open) return;
-      if (!results.length) void find(query.value.trim());
-      requestAnimationFrame(() => {
-        if (scroller) {
-          const top = picker.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-          if (top > scroller.clientHeight * 0.35 || top < 0) {
-            scroller.scrollTo({ top: Math.max(0, scroller.scrollTop + top - 8), behavior: "smooth" });
-          }
-        }
-      });
-    });
+    if (picker && !picker.hidden) void find("");
     query.addEventListener("input", () => { searching++; clearTimeout(debounce); debounce = setTimeout(() => find(query.value.trim()), 180); });
     query.addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.isComposing) event.preventDefault(); });
     query.addEventListener("focus", () => { if (!results.length) void find(query.value.trim()); });
@@ -3142,13 +3220,13 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             snapshot: newSnapshot,
             sets: initialSets });
           if (guided) focusRow = rows.length - 1;
+          notify(`已添加「${name}」`);
         }
-        renderRows();
-        $("#matches", form).innerHTML = "";
         query.value = "";
         results = [];
-        query.closest("details").open = false;
-        form.classList.remove("is-picking");
+        closePickerOverlay();
+        renderRows();
+        haptic("success");
         if (!changed) return;
         if (guided) {
           jumpTo(focusRow);
