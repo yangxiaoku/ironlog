@@ -147,10 +147,24 @@ function triggerIosSwitchHaptic() {
   } catch {}
 }
 
-export function haptic(type = "light", { skipIosSwitch = false } = {}) {
+export function triggerHaptic(type = "light", { skipIosSwitch = false, fromUserGesture = true } = {}) {
+  const nativeHaptics = globalThis.Capacitor?.Plugins?.Haptics ?? globalThis.Haptics;
+  if (nativeHaptics) {
+    try {
+      if ((type === "success" || type === "pr" || type === "timer") && typeof nativeHaptics.notification === "function") {
+        void Promise.resolve(nativeHaptics.notification({ type: type === "timer" ? "WARNING" : "SUCCESS" })).catch(() => {});
+        return;
+      }
+      if (typeof nativeHaptics.impact === "function") {
+        const style = type === "light" ? "LIGHT" : type === "medium" ? "MEDIUM" : "HEAVY";
+        void Promise.resolve(nativeHaptics.impact({ style })).catch(() => {});
+        return;
+      }
+    } catch {}
+  }
   if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
     try {
-      if (type === "light") navigator.vibrate(12);
+      if (type === "light") navigator.vibrate(15);
       else if (type === "medium") navigator.vibrate(28);
       else if (type === "success") navigator.vibrate([16, 40, 20]);
       else if (type === "pr") navigator.vibrate([30, 45, 45, 45, 60]);
@@ -158,67 +172,53 @@ export function haptic(type = "light", { skipIosSwitch = false } = {}) {
       return;
     } catch {}
   }
-  if (!skipIosSwitch) triggerIosSwitchHaptic();
+  if (!skipIosSwitch && fromUserGesture) triggerIosSwitchHaptic();
 }
 
-function buildChimeWavDataUri(tones, sampleRate = 22050) {
-  const totalSec = tones.reduce((max, [, delay, len]) => Math.max(max, delay + len), 0) + 0.04;
-  const numSamples = Math.max(1, Math.floor(totalSec * sampleRate));
-  const pcm = new Int16Array(numSamples);
-  for (const [freq, delay, len] of tones) {
-    const startIdx = Math.floor(delay * sampleRate);
-    const count = Math.floor(len * sampleRate);
-    for (let i = 0; i < count && startIdx + i < numSamples; i++) {
-      const t = i / sampleRate;
-      const attack = Math.min(1, t / 0.012);
-      const decay = Math.exp((-3.2 * t) / len);
-      const sample = Math.sin(2 * Math.PI * freq * t) * attack * decay * 0.42;
-      const mixed = pcm[startIdx + i] + Math.round(sample * 32767);
-      pcm[startIdx + i] = Math.max(-32768, Math.min(32767, mixed));
+export const haptic = triggerHaptic;
+
+let sharedAudioCtx = null;
+let sharedAudioPrimed = false;
+
+function setAmbientAudioSession() {
+  try {
+    if (typeof navigator !== "undefined" && navigator.audioSession && navigator.audioSession.type !== "ambient") {
+      navigator.audioSession.type = "ambient";
     }
-  }
-  const byteLen = pcm.length * 2;
-  const buf = new ArrayBuffer(44 + byteLen);
-  const view = new DataView(buf);
-  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + byteLen, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, byteLen, true);
-  for (let i = 0; i < pcm.length; i++) view.setInt16(44 + i * 2, pcm[i], true);
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-  return "data:audio/wav;base64," + btoa(binary);
+  } catch {}
 }
 
-let cachedCompleteWav = null;
-let cachedTickWav = null;
-let cachedSilentWav = null;
+/** Lazily initialize and unlock a single ambient Web Audio context inside user gestures. */
+export function primeSharedAudio() {
+  setAmbientAudioSession();
+  const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
+  if (!Context) return null;
+  try {
+    if (!sharedAudioCtx || sharedAudioCtx.state === "closed") {
+      sharedAudioCtx = new Context();
+      sharedAudioPrimed = false;
+    }
+    if (sharedAudioCtx.state === "suspended") {
+      void sharedAudioCtx.resume().then(() => {
+        sharedAudioPrimed = true;
+      }).catch(() => {});
+    }
+    if (!sharedAudioPrimed) {
+      const silent = sharedAudioCtx.createBuffer(1, 1, 22050);
+      const src = sharedAudioCtx.createBufferSource();
+      src.buffer = silent;
+      src.connect(sharedAudioCtx.destination);
+      src.start(0);
+      if (sharedAudioCtx.state === "running") sharedAudioPrimed = true;
+    }
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
 
 export function createRestAudio(enabled) {
-  let audio;
-  let htmlAudio = null;
-  let webAudioPrimed = false;
-
-  function setAmbientAudioSession() {
-    try {
-      if (typeof navigator !== "undefined" && navigator.audioSession && navigator.audioSession.type !== "ambient") {
-        navigator.audioSession.type = "ambient";
-      }
-    } catch {}
-  }
-
-  function scheduleWebAudioTones(tones, wave = "sine", peak = 0.36) {
+  function scheduleWebAudioTones(audio, tones, wave = "sine", peak = 0.36) {
     if (!audio) return false;
     try {
       const baseTime = Math.max(audio.currentTime, 0);
@@ -241,7 +241,7 @@ export function createRestAudio(enabled) {
     }
   }
 
-  function emitTap(kind) {
+  function emitTap(audio, kind) {
     if (!audio) return false;
     try {
       if (kind === "tick") {
@@ -260,15 +260,15 @@ export function createRestAudio(enabled) {
         return true;
       }
       if (kind === "check") {
-        return scheduleWebAudioTones([[660, 0, 0.05], [1046, 0.055, 0.10]], "sine", 0.30);
+        return scheduleWebAudioTones(audio, [[660, 0, 0.05], [1046, 0.055, 0.10]], "sine", 0.30);
       }
       if (kind === "uncheck") {
-        return scheduleWebAudioTones([[520, 0, 0.04], [380, 0.04, 0.05]], "sine", 0.16);
+        return scheduleWebAudioTones(audio, [[520, 0, 0.04], [380, 0.04, 0.05]], "sine", 0.16);
       }
       if (kind === "pr") {
-        return scheduleWebAudioTones([[880, 0, 0.08], [1175, 0.08, 0.09], [1568, 0.17, 0.18]], "sine", 0.36);
+        return scheduleWebAudioTones(audio, [[880, 0, 0.08], [1175, 0.08, 0.09], [1568, 0.17, 0.18]], "sine", 0.36);
       }
-      return scheduleWebAudioTones([[740, 0, 0.04]], "triangle", 0.20);
+      return scheduleWebAudioTones(audio, [[740, 0, 0.04]], "triangle", 0.20);
     } catch {
       return false;
     }
@@ -276,79 +276,43 @@ export function createRestAudio(enabled) {
 
   function unlock() {
     if (!enabled()) return;
-    setAmbientAudioSession();
-    const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-    if (Context) {
-      try {
-        audio ??= new Context();
-        if (audio.state !== "running") {
-          void audio.resume().then(() => {
-            webAudioPrimed = true;
-          }).catch(() => {});
-        }
-        if (!webAudioPrimed) {
-          const silent = audio.createBuffer(1, 1, 22050);
-          const src = audio.createBufferSource();
-          src.buffer = silent;
-          src.connect(audio.destination);
-          src.start(0);
-          if (audio.state === "running") webAudioPrimed = true;
-        }
-      } catch {}
-    }
+    primeSharedAudio();
   }
 
   function tap(kind = "tick") {
     if (!enabled()) return;
-    setAmbientAudioSession();
-    const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-    if (!Context) return;
+    const audio = primeSharedAudio();
+    if (!audio) return;
     try {
-      audio ??= new Context();
       if (audio.state === "running") {
-        emitTap(kind);
+        emitTap(audio, kind);
       } else {
         void audio.resume().then(() => {
-          webAudioPrimed = true;
-          emitTap(kind);
+          sharedAudioPrimed = true;
+          emitTap(audio, kind);
         }).catch(() => {});
       }
     } catch {}
   }
 
   function play(complete) {
-    if (complete) haptic("timer");
+    if (complete) triggerHaptic("timer", { fromUserGesture: false });
     if (!enabled()) return;
-    setAmbientAudioSession();
+    const audio = primeSharedAudio();
+    if (!audio) return;
     const tones = complete
       ? [[880, 0, 0.13], [1175, 0.13, 0.15], [1568, 0.28, 0.24], [1175, 0.56, 0.13], [1568, 0.70, 0.28]]
       : [[784, 0, 0.07]];
-
-    const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
-    if (Context) {
-      try {
-        audio ??= new Context();
-        if (audio.state === "running") {
-          scheduleWebAudioTones(tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
-        } else {
-          void audio.resume().then(() => {
-            webAudioPrimed = true;
-            scheduleWebAudioTones(tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
-          }).catch(() => {});
-        }
-        return;
-      } catch {}
-    }
-    if (typeof Audio !== "undefined") {
-      try {
-        cachedCompleteWav ??= buildChimeWavDataUri(tones);
-        cachedTickWav ??= buildChimeWavDataUri([[784, 0, 0.07]]);
-        htmlAudio ??= new Audio();
-        htmlAudio.volume = 1;
-        htmlAudio.src = complete ? cachedCompleteWav : cachedTickWav;
-        void htmlAudio.play().catch(() => {});
-      } catch {}
-    }
+    try {
+      if (audio.state === "running") {
+        scheduleWebAudioTones(audio, tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
+      } else {
+        void audio.resume().then(() => {
+          sharedAudioPrimed = true;
+          scheduleWebAudioTones(audio, tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
+        }).catch(() => {});
+      }
+    } catch {}
   }
   return { unlock, play, tap };
 }

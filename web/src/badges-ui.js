@@ -142,7 +142,7 @@ export function renderBadgesView(rawSummary, options = "") {
       <button type="button" data-action="badge-status" data-value="unlocked" aria-pressed="${opts.status === "unlocked"}">已点亮</button>
       <button type="button" data-action="badge-status" data-value="chasing" aria-pressed="${opts.status === "chasing"}">冲刺中</button>
     </div>
-    <label class="search badge-search">${icon("search", 15)}<input id="badge-search" type="search" maxlength="60" value="${esc(opts.query)}" placeholder="搜索 105 枚徽章名称或条件…" aria-label="搜索徽章"></label>
+    <label class="search badge-search">${icon("search", 15)}<input id="badge-search" type="search" enterkeyhint="search" maxlength="60" value="${esc(opts.query)}" placeholder="搜索 105 枚徽章名称或条件…" aria-label="搜索徽章"></label>
   </div>`;
 
   const progressBand = `<section class="panel badge-overview-band">

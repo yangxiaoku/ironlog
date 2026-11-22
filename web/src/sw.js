@@ -1,4 +1,4 @@
-const CACHE = "ironlog-app-98";
+const CACHE = "ironlog-app-99";
 const assets = ["./", "./styles.css", "./app.js", "./analytics-ui.js", "./charts.js", "./ui.js", "./badges-ui.js", "./ai-ui.js", "./plan-ui.js", "./calendar-ui.js", "./calc-ui.js", "./editor.js", "./workout-clock.js", "./display.js", "./matrix-data.js",
   "./session-ui.js", "./apple-health-ui.js", "./onboarding-ui.js", "./shortcut-gen.js", "./app.webmanifest", "./icon-192.png", "./icon-512.png", "./athlete-halftone.jpg", "./athlete-halftone-light.jpg",
   "./plate-halftone.jpg", "./plate-halftone-light.jpg", "./nutrition-halftone.jpg", "./nutrition-halftone-light.jpg",

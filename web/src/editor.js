@@ -49,7 +49,7 @@ function syncDialTicks(svg, fraction) {
   for (let i = 0; i < ticks.length; i++) ticks[i].classList.toggle("is-lit", i < activeCount);
 }
 
-export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment }) {
+export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment, pushOverlay = () => null, popOverlay = () => {} }) {
   let searching = 0, closeWorkout;
   const audio = createRestAudio(() => localStorage.getItem(soundPreference) !== "off");
   dialog.addEventListener("close", () => {
@@ -526,6 +526,12 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     let reviewing = false, pickerMuscle = "", pickerEquipment = "", pendingUndo = null, undoTimer = 0;
     let settingsOpen = !live || initialDate !== today();
     let sessionMenuOpen = false, quickNotesOpen = false;
+    let pickerOverlayToken = null, sessionMenuToken = null, dialOverlayToken = null, adaptOverlayToken = null;
+    function syncOverlayToken(currentToken, shouldBeOpen, onClose) {
+      if (shouldBeOpen && currentToken == null) return pushOverlay(onClose);
+      if (!shouldBeOpen && currentToken != null) { popOverlay(currentToken); return null; }
+      return currentToken;
+    }
     const openExMenus = new Set(), deleteSetMode = new Set();
     const celebratedPrKeys = new Set();
     const plannedMeta = new Map();
@@ -629,7 +635,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           <button type="button" class="secondary-button picker-close-btn" data-workout="close-picker">返回训练</button>
         </header>
         <div class="swap-mode-banner" data-swap-banner hidden></div>
-        <label class="search picker-search">${icon("search")}<input id="exercise-query" type="search" maxlength="120" placeholder="搜索动作名称或别名（如 卧推、深蹲、划船）" aria-label="搜索动作"></label>
+        <label class="search picker-search">${icon("search")}<input id="exercise-query" type="search" enterkeyhint="search" maxlength="120" placeholder="搜索动作名称或别名（如 卧推、深蹲、划船）" aria-label="搜索动作"></label>
         <div class="muscle-pills picker-muscles" role="group" aria-label="按肌群快速筛选">${Object.entries({ "": "全部", __fav__: "★ 收藏", chest: "胸", back: "背", legs: "腿", shoulders: "肩", arms: "臂", core: "核心" }).map(([val, label]) =>
           `<button type="button" data-picker-muscle="${val}" aria-pressed="${val === ""}">${label}</button>`).join("")}</div>
         ${(() => {
@@ -1155,6 +1161,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           if (reviewing) sessionMenuOpen = false;
           menuEl.hidden = !sessionMenuOpen;
           $('[data-workout="toggle-session-menu"]', form)?.setAttribute("aria-expanded", String(sessionMenuOpen));
+          sessionMenuToken = syncOverlayToken(sessionMenuToken, !menuEl.hidden, () => {
+            sessionMenuOpen = false;
+            sessionMenuToken = null;
+            updateProgress();
+          });
         }
         const rirMenuBtn = $('.session-menu-overlay [data-workout="toggle-rir"]', form);
         if (rirMenuBtn) {
@@ -1614,7 +1625,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
               ${timed
                 ? `<div class="num-stepper">
                     <button type="button" class="num-step-btn" data-step-sec="-10" data-row="${index}" data-index="${i}" aria-label="减少 10 秒">−</button>
-                    <input aria-label="第 ${displayNum} 组秒数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="86400" step="1" data-set="seconds" data-row="${index}" data-index="${i}" value="${entry.seconds}" required>
+                    <input aria-label="第 ${displayNum} 组秒数" type="number" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" min="0" max="86400" step="1" data-set="seconds" data-row="${index}" data-index="${i}" value="${entry.seconds}" required>
                     <button type="button" class="num-step-btn" data-step-sec="10" data-row="${index}" data-index="${i}" aria-label="增加 10 秒">+</button>
                   </div>`
                 : `<div class="num-stepper">
@@ -1624,7 +1635,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
                   </div>
                   <div class="num-stepper">
                     <button type="button" class="num-step-btn" data-step-rep="-1" data-row="${index}" data-index="${i}" aria-label="减少 1 次">−</button>
-                    <input aria-label="第 ${displayNum} 组次数" type="number" inputmode="numeric" enterkeyhint="done" min="0" max="1000" step="1" data-set="reps" data-row="${index}" data-index="${i}" value="${entry.reps}" required>
+                    <input aria-label="第 ${displayNum} 组次数" type="number" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" min="0" max="1000" step="1" data-set="reps" data-row="${index}" data-index="${i}" value="${entry.reps}" required>
                     <button type="button" class="num-step-btn" data-step-rep="1" data-row="${index}" data-index="${i}" aria-label="增加 1 次">+</button>
                   </div>`}
               ${timed ? "" : `<select class="col-rir set-rir-select" aria-label="第 ${displayNum} 组 RIR" data-set="rir" data-row="${index}" data-index="${i}">${options(rirValues, entry.rir ?? "")}</select>`}
@@ -1680,7 +1691,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           <div class="exercise-settings"${exMenuOpen ? "" : " hidden"} data-ex-menu="${index}">
             <div class="exercise-settings-body">
               <div class="rest-preset-row">
-                <label>组间休息 <input aria-label="休息秒数" data-rest="${index}" type="number" inputmode="numeric" min="0" max="900" value="${row.restSeconds}" required> 秒</label>
+                <label>组间休息 <input aria-label="休息秒数" data-rest="${index}" type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="900" value="${row.restSeconds}" required> 秒</label>
                 <div class="rest-quick-pills" role="group" aria-label="常用休息时长">${[60, 90, 120, 180].map((sec) =>
                   `<button type="button" class="stepper-pill" data-workout="set-rest" data-row="${index}" data-seconds="${sec}" aria-pressed="${row.restSeconds === sec}">${sec}s</button>`).join("")}
                   ${live && row.restSeconds > 0 ? `<button type="button" class="stepper-pill stepper-clone" data-workout="start-rest" data-row="${index}">立即计时</button>` : ""}
@@ -1779,7 +1790,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         if (activeHold.targetSeconds > 0 && holdElapsed >= activeHold.targetSeconds && !activeHold.beeped) {
           activeHold.beeped = true;
           audio.play(true);
-          haptic("timer");
+          haptic("timer", { fromUserGesture: false });
         }
       }
       if (liveClock) {
@@ -1798,6 +1809,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       const showRest = !!rest && !reviewing && dateInput.value === today();
       restBanner.hidden = !showRest;
       dialOverlay.hidden = !showRest || !dialOpen;
+      dialOverlayToken = syncOverlayToken(dialOverlayToken, !dialOverlay.hidden, () => {
+        dialOpen = false;
+        dialOverlayToken = null;
+        renderClocks();
+      });
       syncDockVisibility();
       if (!showRest) {
         if (activeHold) {
@@ -1874,11 +1890,28 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     renderClocks();
     wake?.update();
     const ticks = live ? setInterval(renderClocks, 180) : null;
+    function onForegroundResume() {
+      if (document.visibilityState === "hidden") return;
+      renderClocks();
+      wake?.update();
+    }
+    if (live) {
+      document.addEventListener("visibilitychange", onForegroundResume);
+      window.addEventListener("focus", onForegroundResume);
+    }
     function checkpoint() { if (dirty && !form.dataset.saved) remember(); }
     window.addEventListener("pagehide", checkpoint);
     closeWorkout = () => {
       activeHold = null;
       if (ticks) clearInterval(ticks);
+      if (live) {
+        document.removeEventListener("visibilitychange", onForegroundResume);
+        window.removeEventListener("focus", onForegroundResume);
+      }
+      pickerOverlayToken = null;
+      sessionMenuToken = null;
+      dialOverlayToken = null;
+      adaptOverlayToken = null;
       dialog.classList.remove("is-live-workout");
       document.title = originalTitle;
       clearTimeout(undoTimer);
@@ -1957,6 +1990,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       if (adaptModal) adaptModal.hidden = true;
       pickerEl.hidden = false;
       form.classList.add("is-picking");
+      pickerOverlayToken = syncOverlayToken(pickerOverlayToken, true, () => {
+        pickerOverlayToken = null;
+        closePickerOverlay();
+      });
       updateProgress();
       renderClocks();
       void find(queryEl?.value.trim() ?? "");
@@ -1971,6 +2008,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       clearSwapMode();
       pickerEl.hidden = true;
       form.classList.remove("is-picking");
+      pickerOverlayToken = syncOverlayToken(pickerOverlayToken, false);
       updateProgress();
     }
 
@@ -2160,13 +2198,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           }
         }, 25);
       }
-      if (matchMedia("(max-width: 630px)").matches && target.matches("input, select, textarea")) {
-        setTimeout(() => {
-          if (form.isConnected && document.activeElement === target) {
-            (target.closest(".set-row") ?? target).scrollIntoView({ block: "nearest", behavior: "smooth" });
-          }
-        }, 120);
-      }
     });
     scroller?.addEventListener("mouseup", (e) => {
       const target = e.target;
@@ -2181,6 +2212,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     let swipeSetEl = null, swipeAxisLocked = "";
     scroller?.addEventListener("touchstart", (e) => {
       if (e.touches.length === 1) {
+        if (e.touches[0].clientX < 20) {
+          touchStartX = -1;
+          swipeSetEl = null;
+          return;
+        }
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
         touchStartTime = Date.now();
@@ -2193,7 +2229,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       }
     }, { passive: true });
     scroller?.addEventListener("touchmove", (e) => {
-      if (!swipeSetEl || e.touches.length !== 1) return;
+      if (touchStartX < 0 || !swipeSetEl || e.touches.length !== 1) return;
       const dx = e.touches[0].clientX - touchStartX;
       const dy = e.touches[0].clientY - touchStartY;
       if (!swipeAxisLocked) {
@@ -2226,6 +2262,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           }
         }, 0);
       }
+      if (touchStartX < 0) { resetSetSwipe(); return; }
       if (e.changedTouches.length !== 1) { resetSetSwipe(); return; }
       const touchEndX = e.changedTouches[0].clientX;
       const touchEndY = e.changedTouches[0].clientY;
@@ -3385,6 +3422,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       adaptAskBtn.textContent = "获取 AI 建议";
       adaptError.hidden = true;
       adaptOverlay.hidden = false;
+      adaptOverlayToken = syncOverlayToken(adaptOverlayToken, true, () => {
+        adaptOverlayToken = null;
+        adaptOverlay.hidden = true;
+      });
       renderClocks();
       adaptInput?.focus();
     }
@@ -3398,7 +3439,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     form.addEventListener("click", async ({ target }) => {
       const adaptAction = target.closest("[data-adapt]")?.dataset.adapt;
       if (adaptAction === "open") { openAdaptOverlay(); return; }
-      if (adaptAction === "close") { adaptOverlay.hidden = true; return; }
+      if (adaptAction === "close") {
+        adaptOverlay.hidden = true;
+        adaptOverlayToken = syncOverlayToken(adaptOverlayToken, false);
+        return;
+      }
       if (adaptAction === "ask") {
         const text = adaptInput?.value.trim();
         if (!text) { adaptError.textContent = "请先填写当前状态或时间要求"; adaptError.hidden = false; return; }

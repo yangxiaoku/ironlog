@@ -1,12 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  createRestAudio,
   createRestTimer,
   normalizeRestTimer,
   pauseRestTimer,
   restProgress,
   resumeRestTimer,
   shiftRestTimer,
+  triggerHaptic,
 } from "../web/src/workout-clock.js";
 
 test("组间休息加减时间（-15s / +15s）按参考总时长正确更新圆环比例", () => {
@@ -115,4 +117,97 @@ test("暂停与继续组间休息及暂停时加减时间", () => {
   assert.equal(restProgress(resumed, later).paused, false);
   assert.equal(restProgress(resumed, later).seconds, 45);
   assert.equal(restProgress(resumed, later + 15_000).seconds, 30);
+});
+
+test("triggerHaptic 按桥接与平台路由并限制非手势触发 iOS 开关", () => {
+  const prevNavDesc = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const prevCapDesc = Object.getOwnPropertyDescriptor(globalThis, "Capacitor");
+  const prevDocDesc = Object.getOwnPropertyDescriptor(globalThis, "document");
+
+  try {
+    const calls = [];
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      writable: true,
+      value: { vibrate: (pattern) => { calls.push(["vibrate", pattern]); return true; } },
+    });
+    Object.defineProperty(globalThis, "Capacitor", {
+      configurable: true,
+      writable: true,
+      value: {
+        Plugins: {
+          Haptics: {
+            impact: (opts) => { calls.push(["impact", opts.style]); },
+            notification: (opts) => { calls.push(["notification", opts.type]); },
+          },
+        },
+      },
+    });
+
+    // 原生 Capacitor/WebView 优先于 navigator.vibrate
+    triggerHaptic("light");
+    triggerHaptic("success");
+    assert.deepEqual(calls, [["impact", "LIGHT"], ["notification", "SUCCESS"]]);
+
+    // 无原生桥接时回落到 Android Web vibrate(15)
+    delete globalThis.Capacitor;
+    calls.length = 0;
+    triggerHaptic("light");
+    assert.deepEqual(calls, [["vibrate", 15]]);
+
+    // 非用户手势（如异步定时器到期）禁止触发 iOS switch 控件模拟点击
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      writable: true,
+      value: {},
+    });
+    let docQueried = false;
+    Object.defineProperty(globalThis, "document", {
+      configurable: true,
+      writable: true,
+      value: {
+        querySelector: () => { docQueried = true; return null; },
+        body: null,
+      },
+    });
+    triggerHaptic("timer", { fromUserGesture: false });
+    assert.equal(docQueried, false);
+  } finally {
+    if (prevNavDesc) Object.defineProperty(globalThis, "navigator", prevNavDesc);
+    else delete globalThis.navigator;
+    if (prevCapDesc) Object.defineProperty(globalThis, "Capacitor", prevCapDesc);
+    else delete globalThis.Capacitor;
+    if (prevDocDesc) Object.defineProperty(globalThis, "document", prevDocDesc);
+    else delete globalThis.document;
+  }
+});
+
+test("createRestAudio 仅使用 Web Audio 且在缺少 AudioContext 时不构造 <audio>", () => {
+  const prevAudioDesc = Object.getOwnPropertyDescriptor(globalThis, "Audio");
+  const prevCtxDesc = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  const prevWebkitDesc = Object.getOwnPropertyDescriptor(globalThis, "webkitAudioContext");
+
+  try {
+    let htmlAudioConstructed = false;
+    Object.defineProperty(globalThis, "Audio", {
+      configurable: true,
+      writable: true,
+      value: class MockAudio {
+        constructor() { htmlAudioConstructed = true; }
+      },
+    });
+    delete globalThis.AudioContext;
+    delete globalThis.webkitAudioContext;
+
+    const restAudio = createRestAudio(() => true);
+    restAudio.unlock();
+    restAudio.tap("tick");
+    restAudio.play(true);
+    assert.equal(htmlAudioConstructed, false);
+  } finally {
+    if (prevAudioDesc) Object.defineProperty(globalThis, "Audio", prevAudioDesc);
+    else delete globalThis.Audio;
+    if (prevCtxDesc) Object.defineProperty(globalThis, "AudioContext", prevCtxDesc);
+    if (prevWebkitDesc) Object.defineProperty(globalThis, "webkitAudioContext", prevWebkitDesc);
+  }
 });

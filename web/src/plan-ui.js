@@ -197,23 +197,23 @@ function mountPlannedExerciseList({ api, host, items, catalogueMap, prMap, onCha
           </div>
         </div>
         <div class="plan-ex-grid">
-          <label><span>组数</span><input type="number" min="1" max="50" step="1" data-ex-field="sets" data-idx="${index}" value="${row.sets}"></label>
+          <label><span>组数</span><input type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="50" step="1" data-ex-field="sets" data-idx="${index}" value="${row.sets}"></label>
           ${timed
-            ? `<label><span>目标时长 (秒)</span><input type="number" min="1" max="3600" step="5" data-ex-field="seconds" data-idx="${index}" value="${row.seconds || 45}"></label>`
-            : `<label><span>最低次</span><input type="number" min="1" max="200" step="1" data-ex-field="repsMin" data-idx="${index}" value="${row.repsMin}"></label>
-               <label><span>上限次</span><input type="number" min="1" max="200" step="1" data-ex-field="repsMax" data-idx="${index}" value="${row.repsMax}"></label>
-               <label><span>目标 kg</span><input type="number" min="0" max="1000" step="0.5" placeholder="自动" data-ex-field="weight" data-idx="${index}" value="${row.weight ?? ""}"></label>`}
-          <label><span>休息秒</span><input type="number" min="0" max="600" step="15" data-ex-field="restSeconds" data-idx="${index}" value="${row.restSeconds}"></label>
+            ? `<label><span>目标时长 (秒)</span><input type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="3600" step="5" data-ex-field="seconds" data-idx="${index}" value="${row.seconds || 45}"></label>`
+            : `<label><span>最低次</span><input type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="200" step="1" data-ex-field="repsMin" data-idx="${index}" value="${row.repsMin}"></label>
+               <label><span>上限次</span><input type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="200" step="1" data-ex-field="repsMax" data-idx="${index}" value="${row.repsMax}"></label>
+               <label><span>目标 kg</span><input type="number" inputmode="decimal" min="0" max="1000" step="0.5" placeholder="自动" data-ex-field="weight" data-idx="${index}" value="${row.weight ?? ""}"></label>`}
+          <label><span>休息秒</span><input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="600" step="15" data-ex-field="restSeconds" data-idx="${index}" value="${row.restSeconds}"></label>
         </div>
         ${timed ? "" : `<div class="plan-prog-bar">
           <label><span>渐进规则</span>
             <select data-ex-field="progression" data-idx="${index}">${options(progressionNames, row.progression ?? "double")}</select>
           </label>
           <label><span>每次增量 kg</span>
-            <input type="number" min="0" max="20" step="0.25" data-ex-field="increment" data-idx="${index}" value="${row.increment ?? 2.5}"${manual ? " disabled" : ""}>
+            <input type="number" inputmode="decimal" min="0" max="20" step="0.25" data-ex-field="increment" data-idx="${index}" value="${row.increment ?? 2.5}"${manual ? " disabled" : ""}>
           </label>
           <label><span>目标 RIR</span>
-            <input type="number" min="0" max="10" step="1" data-ex-field="targetRir" data-idx="${index}" value="${row.targetRir ?? 2}"${manual ? " disabled" : ""}>
+            <input type="number" inputmode="numeric" pattern="[0-9]*" min="0" max="10" step="1" data-ex-field="targetRir" data-idx="${index}" value="${row.targetRir ?? 2}"${manual ? " disabled" : ""}>
           </label>
           <div class="plan-backup-slot">
             <span>替补动作</span>
@@ -238,7 +238,7 @@ function mountPlannedExerciseList({ api, host, items, catalogueMap, prMap, onCha
           `<button type="button" data-picker-m="${val}" aria-pressed="${pickerMuscle === val}">${label}</button>`).join("")}</div>
         <div class="muscle-pills picker-equipment" role="group" aria-label="按器械筛选">${Object.entries(equipPills).map(([val, label]) =>
           `<button type="button" data-picker-eq="${val}" aria-pressed="${pickerEquipment === val}">${label}</button>`).join("")}</div>
-        <label class="search">${icon("search", 16)}<input type="search" maxlength="120" data-ex-query placeholder="搜索动作名，例如 卧推 / 深蹲 / 划船" aria-label="搜索训练动作"></label>
+        <label class="search">${icon("search", 16)}<input type="search" enterkeyhint="search" maxlength="120" data-ex-query placeholder="搜索动作名，例如 卧推 / 深蹲 / 划船" aria-label="搜索训练动作"></label>
         <div class="picker-results" data-ex-results></div>
       </div>`;
   }
@@ -752,7 +752,7 @@ export async function openPlanBuilder({ api, existingPlan, catalogueMap: initial
   open(isEdit ? "编辑训练计划" : "新建训练计划", `<form id="plan-builder-form" class="dialog-form scheduler-form">
     <div class="plan-builder-top">
       <label class="field"><span>计划名称</span><input name="name" maxlength="120" required value="${esc(planDraft.name)}"></label>
-      <label class="field"><span>周期周数</span><input name="weeks" type="number" min="1" max="52" required value="${planDraft.weeks}"></label>
+      <label class="field"><span>周期周数</span><input name="weeks" type="number" inputmode="numeric" pattern="[0-9]*" min="1" max="52" required value="${planDraft.weeks}"></label>
       <label class="field"><span>排期模式</span><select name="schedule">${options({ rotation: "按顺序轮换", weekdays: "按固定星期" }, planDraft.schedule)}</select></label>
     </div>
     <label class="field"><span>计划说明 / 渐进思路</span><textarea name="rationale" rows="2" maxlength="8000" required>${esc(planDraft.rationale)}</textarea></label>

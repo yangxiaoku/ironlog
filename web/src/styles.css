@@ -25,8 +25,19 @@
   --food: url("./nutrition-halftone-light.jpg"); --equipment: url("./equipment-halftone-light.jpg");
 }
 *, *::before, *::after { box-sizing: border-box; }
-html { scroll-padding-top: 20px; }
-body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.52 var(--font); font-variant-numeric: tabular-nums; caret-color: var(--red); -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+html { scroll-padding-top: 20px; overscroll-behavior-y: none; overflow-x: clip; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.52 var(--font); font-variant-numeric: tabular-nums; caret-color: var(--red); overscroll-behavior-y: none; overflow-x: clip; -webkit-tap-highlight-color: transparent; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+button, a, summary, label, input, select { touch-action: manipulation; }
+.no-select, button, nav, a, summary, .kpi, .badge-card, .badge-mini, .today-tile, .week-pill, .jump-circle, .set-num-btn, .check-set, .workout-topbar, .rest-clock {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+main, .workout-scroll, .picker-results { touch-action: pan-y; }
+.exercise-jump, .workspace-tabs, .workout-filter-bar .muscle-pills, .settings-sections .segments, .muscle-pills.badge-filters, .plan-sections .segments { touch-action: pan-x; }
+:is(.primary-button, .secondary-button, .quiet, .danger, .icon-button, .segments button, .workout-bottom-row, .up-next-card, .ex-hero-thumb):active:not(:disabled) {
+  transform: scale(0.97);
+}
 ::selection { background: var(--red); color: #fff; }
 ::-webkit-scrollbar { width: 7px; height: 7px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -37,7 +48,7 @@ button { cursor: pointer; color: inherit; }
 button:disabled { cursor: default; opacity: .44; }
 a { color: inherit; text-decoration: none; }
 button:focus-visible, a:focus-visible, input[type="checkbox"]:focus-visible, input[type="radio"]:focus-visible, summary:focus-visible, .chart-hit:focus-visible { outline: 2px solid var(--red); outline-offset: 2px; }
-button, a { -webkit-tap-highlight-color: transparent; }
+button, a, summary { -webkit-tap-highlight-color: transparent; }
 [hidden] { display: none !important; }
 h1, h2, h3, p { margin: 0; }
 h1, h2, h3 { text-wrap: balance; }
@@ -995,13 +1006,14 @@ dialog.workout-dialog {
 dialog.workout-dialog[open] { display: flex; flex-direction: column; height: min(88dvh, 900px); max-height: min(88dvh, 900px); overflow: hidden; padding: 0; }
 dialog.workout-dialog .dialog-head { flex: none; padding: 12px 18px; border-bottom: 1px solid var(--edge); margin-bottom: 0; z-index: 4; }
 dialog.workout-dialog.is-live-workout .dialog-head { display: none; }
-.workout-form { display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0; height: auto; overflow: hidden; position: relative; gap: 0; }
+.workout-form { display: flex; flex-direction: column; flex: 1 1 0%; min-height: 0; height: 100%; overflow: hidden; position: relative; gap: 0; }
 
 /* Unified Sticky Live Top Bar */
 .workout-topbar { flex: none; z-index: 4; padding: 12px 16px 8px; background: var(--bg); border-bottom: 1px solid var(--rule); }
 :root[data-theme="light"] .workout-topbar { background: var(--surface); }
 .workout-topbar-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; }
-.workout-circle-btn { width: 34px; height: 34px; min-height: 34px; border-radius: 999px; border: 0; background: var(--workout-capsule); color: var(--ink); display: grid; place-items: center; padding: 0; flex: none; cursor: pointer; transition: transform .1s ease, background-color .15s ease; }
+.workout-circle-btn { position: relative; width: 34px; height: 34px; min-height: 34px; border-radius: 999px; border: 0; background: var(--workout-capsule); color: var(--ink); display: grid; place-items: center; padding: 0; flex: none; cursor: pointer; transition: transform .1s ease, background-color .15s ease; }
+.workout-circle-btn::after { content: ""; position: absolute; inset: -5px; }
 .workout-circle-btn:active { transform: scale(0.9); }
 .workout-topbar-center { display: grid; justify-items: center; text-align: center; min-width: 0; border: 0; background: none; padding: 2px 4px; color: var(--ink); cursor: pointer; gap: 2px; }
 .workout-topbar-center strong { font-size: 14.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; line-height: 1.25; }
@@ -1145,25 +1157,26 @@ dialog.workout-dialog.is-live-workout .dialog-head { display: none; }
 .set-row { position: relative; border: 1px solid transparent; padding: 5px 2px; border-radius: 11px; }
 .set-row.is-next { background: color-mix(in srgb, var(--workout-capsule) 42%, transparent); }
 .set-num-btn { position: relative; width: 28px; height: 28px; min-height: 28px; border-radius: 999px; border: 0; background: var(--workout-capsule); color: var(--muted); font: 700 12.5px/1 var(--mono); display: grid; place-items: center; padding: 0; cursor: pointer; justify-self: center; font-variant-numeric: tabular-nums; transition: transform .1s ease, background-color .15s ease, color .15s ease; }
+.set-num-btn::after { content: ""; position: absolute; inset: -8px; }
 .set-num-btn:active { transform: scale(0.9); }
 .set-row.is-complete .set-num-btn { background: var(--workout-accent); color: var(--workout-accent-ink); }
 .set-num-btn[data-type="failure"] { box-shadow: inset 0 0 0 1.5px var(--red); }
 .set-num-btn[data-type="warmup"] { border: 1px dashed var(--soft); }
 .set-kind-sup { position: absolute; right: -4px; bottom: -3px; font-size: 8.5px; font-weight: 800; line-height: 1; padding: 2px 3px; border-radius: 999px; background: var(--bg); color: var(--ink); border: 1px solid var(--edge); }
 
-.num-stepper { display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; align-items: center; height: 42px; border-radius: 11px; background: var(--workout-capsule); overflow: hidden; min-width: 0; }
-.num-step-btn { height: 100%; width: 100%; min-height: 42px; border: 0; background: transparent; color: var(--muted); font: 400 19px/1 var(--font); display: grid; place-items: center; padding: 0; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; transition: background-color .1s ease, color .1s ease; }
+.num-stepper { display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; align-items: center; height: 44px; border-radius: 11px; background: var(--workout-capsule); overflow: hidden; min-width: 0; }
+.num-step-btn { height: 100%; width: 100%; min-height: 44px; border: 0; background: transparent; color: var(--muted); font: 400 19px/1 var(--font); display: grid; place-items: center; padding: 0; cursor: pointer; user-select: none; -webkit-tap-highlight-color: transparent; transition: background-color .1s ease, color .1s ease; }
 .num-step-btn:active { background: color-mix(in srgb, var(--ink) 14%, transparent); color: var(--ink); }
 .num-stepper input[type="number"] { width: 100%; min-width: 0; height: 100%; min-height: 0; border: 0; border-radius: 0; background: transparent; text-align: center; padding: 0 2px; font: 650 16px/1 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); box-shadow: none; appearance: textfield; -moz-appearance: textfield; }
 .num-stepper input[type="number"]::-webkit-inner-spin-button,
 .num-stepper input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .num-stepper input[type="number"]:focus { background: color-mix(in srgb, var(--ink) 8%, transparent); box-shadow: none; }
 
-.set-row select.set-rir-select { appearance: none; -webkit-appearance: none; background-image: none; min-height: 42px; height: 42px; width: 100%; border: 0; border-radius: 10px; background-color: var(--workout-capsule); color: var(--ink); text-align: center; text-align-last: center; padding: 0 2px; font: 600 13.5px/42px var(--mono); }
+.set-row select.set-rir-select { appearance: none; -webkit-appearance: none; background-image: none; min-height: 44px; height: 44px; width: 100%; border: 0; border-radius: 10px; background-color: var(--workout-capsule); color: var(--ink); text-align: center; text-align-last: center; padding: 0 2px; font: 600 13.5px/44px var(--mono); }
 .set-row select.set-rir-select::picker-icon { display: none; }
-.set-del-btn { width: 28px; min-height: 36px; padding: 0; color: var(--muted); }
-.check-set { display: grid; place-items: center; position: relative; width: 34px; height: 34px; cursor: pointer; user-select: none; justify-self: center; }
-.check-set input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0.0001; z-index: 2; cursor: pointer; }
+.set-del-btn { width: 28px; min-height: 44px; padding: 0; color: var(--muted); }
+.check-set { display: grid; place-items: center; position: relative; width: 34px; height: 34px; cursor: pointer; user-select: none; justify-self: center; overflow: visible; }
+.check-set input { position: absolute; inset: -5px; width: calc(100% + 10px); height: calc(100% + 10px); margin: 0; opacity: 0.0001; z-index: 2; cursor: pointer; }
 .check-set span { position: relative; z-index: 1; display: grid; place-items: center; width: 30px; height: 30px; border: 1.8px solid var(--soft); border-radius: 999px; background: transparent; color: transparent; pointer-events: none; transition: transform .14s cubic-bezier(0.22, 1, 0.36, 1), background-color .15s ease, border-color .15s ease, color .15s ease; }
 .check-set:active span { transform: scale(0.86); }
 .check-set input:not(:checked) + span svg { opacity: 0; }
@@ -1683,7 +1696,7 @@ dialog.workout-dialog.is-live-workout .dialog-head { display: none; }
   .cal-cell-work { font-size: 9.5px; padding: 1px 2px; min-height: 15px; line-height: 1.25; text-overflow: clip; letter-spacing: -.03em; text-align: center; }
   .cal-cell-kcal { font-size: 9px; min-height: 12px; text-align: center; }
   .cal-legend-hint { display: none; }
-  .calendar-header button { min-height: 36px; }
+  .calendar-header button { min-height: 44px; min-width: 44px; }
   .calendar-detail .panel-head { gap: 5px; }
   .sync-caption { display: grid; gap: 1px; }
   .today-apple { margin-top: 8px; }
@@ -1721,16 +1734,16 @@ dialog.workout-dialog.is-live-workout .dialog-head { display: none; }
   .exercise-editor.timed-exercise { --workout-columns: 28px minmax(0, 1fr) 34px; }
   .exercise-editor.timed-exercise.has-delete-cols { --workout-columns: 26px minmax(0, 1fr) 32px 26px; }
   .set-head, .set-row { gap: 5px; }
-  .num-stepper { grid-template-columns: 27px minmax(0, 1fr) 27px; height: 42px; }
+  .num-stepper { grid-template-columns: 27px minmax(0, 1fr) 27px; height: 44px; }
   .workout-form.show-rir .num-stepper { grid-template-columns: 24px minmax(0, 1fr) 24px; }
-  .num-stepper input[type="number"] { font-size: 15.5px; padding: 0 1px; }
+  .num-stepper input[type="number"] { font-size: 16px; padding: 0 1px; }
   .picker-results { max-height: 46dvh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .picker-results button { min-height: 50px; padding: 10px 6px; }
   .dialog-form:not(.is-live) .session-dock { padding: 7px 12px max(10px, env(safe-area-inset-bottom)); }
   .rest-clock-inner { padding: 9px 12px max(10px, env(safe-area-inset-bottom)); gap: 6px; }
   .rest-dock-trigger strong { font-size: 24px; }
-  .rest-pill-btn { padding: 0 8px; font-size: 12.5px; }
-  .rest-skip-btn { padding: 0 13px; font-size: 13px; }
+  .rest-pill-btn { min-height: 44px; padding: 0 8px; font-size: 12.5px; }
+  .rest-skip-btn { min-height: 44px; padding: 0 13px; font-size: 13px; }
   .heading-actions { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 8px; }
   .heading-actions button { width: 100%; justify-content: center; min-height: 42px; }
   .diet-toolbar { flex-direction: column; align-items: stretch; gap: 8px; }
@@ -5426,9 +5439,8 @@ button.exercise-cue-pill:hover {
   .finish-uncheck-alert { flex-direction: column; align-items: stretch; }
 
   /* Global touch ergonomics, iOS anti-zoom & safe bottom-sheet handles */
-  button, a, summary, label, input, select { touch-action: manipulation; }
   :where(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select, textarea) { font-size: max(16px, 1em); }
-  .top-actions .icon-button { min-width: 40px; min-height: 40px; }
+  .top-actions .icon-button { min-width: 44px; min-height: 44px; }
   .quick-record-pill { min-height: 38px; padding: 0 15px 0 12px; }
   .live-resume-pill { min-height: 38px; padding: 0 10px; font-size: 12px; gap: 5px; }
   .dialog-head { touch-action: none; }
@@ -5444,7 +5456,7 @@ button.exercise-cue-pill:hover {
     border-radius: 999px;
     background: var(--edge);
   }
-  .dialog-head .icon-button[data-action="close"] { min-width: 42px; min-height: 42px; }
+  .dialog-head .icon-button[data-action="close"] { min-width: 44px; min-height: 44px; }
 
   /* Live Workout Editor compact chrome & larger gym tap targets */
   .workout-dialog .dialog-head { padding: 10px 14px; }
@@ -5527,10 +5539,10 @@ button.exercise-cue-pill:hover {
   .measure-line { align-items: flex-start; min-height: 44px; padding-block: 10px; }
   .measure-line time { padding-top: 2px; }
   .measure-line span strong { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.45; }
-  .exercise-fav-btn { width: 38px; height: 38px; top: 10px; right: 10px; }
-  .calendar-header button { min-height: 38px; min-width: 38px; }
+  .exercise-fav-btn { width: 44px; height: 44px; top: 8px; right: 8px; }
+  .calendar-header button { min-height: 44px; min-width: 44px; }
   .plan-ex-order .icon-button,
-  .plan-backup-actions .icon-button { width: 36px; min-height: 36px; }
+  .plan-backup-actions .icon-button { width: 44px; min-height: 44px; }
   .workout-filter-bar .muscle-pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; width: 100%; }
   .workout-filter-bar .muscle-pills::-webkit-scrollbar { display: none; }
   .macro-steppers .micro-chip,
@@ -5541,7 +5553,7 @@ button.exercise-cue-pill:hover {
   .scale-stepper-btn { min-height: 40px; font-size: 12.5px; }
   .macro-calc-apply { min-height: 34px; padding: 0 10px; font-size: 12.5px; }
   .set-reference button { min-height: 32px; padding: 0 10px; font-size: 12px; }
-  .panel-option-order .icon-button { min-width: 38px; min-height: 38px; }
+  .panel-option-order .icon-button { min-width: 44px; min-height: 44px; }
   .shortcut-config-grid,
   .shortcut-pair { grid-template-columns: minmax(0, 1fr); }
   .health-import-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -5893,4 +5905,86 @@ dialog.onboarding-dialog { width: min(680px, calc(100% - 22px)); }
   .workout-dialog .rest-dock-buttons button { min-height: 28px; padding: 0 7px; }
   .workout-dialog .session-dock-actions button { min-height: 36px; padding-inline: 8px; }
   .workout-dialog .session-dock-actions .icon-button { flex: 0 0 36px; }
+}
+
+/* Delayed Skeleton Loading Screen (>300ms reveal, replaces spinner) */
+@keyframes skeleton-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-page {
+  display: grid;
+  gap: 14px;
+  padding: 6px 0 24px;
+  opacity: 0;
+  animation: skeleton-reveal 0.18s ease 0.3s forwards;
+}
+.skeleton-hero {
+  height: 124px;
+  border-radius: 16px;
+}
+.skeleton-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.skeleton-kpi {
+  height: 82px;
+  border-radius: 14px;
+}
+.skeleton-list {
+  display: grid;
+  gap: 10px;
+}
+.skeleton-row {
+  height: 68px;
+  border-radius: 14px;
+}
+.skeleton-block {
+  border: 1px solid var(--rule);
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    var(--raised) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.35s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-page { animation: none; opacity: 1; }
+  .skeleton-block { animation: none; }
+}
+
+/* Explicit-Verb Destructive Confirmation Dialog */
+.confirm-dialog-body {
+  display: grid;
+  gap: 18px;
+  padding-top: 6px;
+}
+.confirm-dialog-message {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.confirm-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.confirm-dialog-foot button {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+.confirm-dialog-foot .danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #ffffff;
+  font-weight: 650;
 }

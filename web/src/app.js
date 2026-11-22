@@ -4,6 +4,7 @@ import { matrix } from "./display.js";
 import { appleDailyDetailsModal, appleLine, appleWorkoutDetails, openDeviceSetupDialog, openHealthDataImport, openHealthDataWebhook, renderAppleDailyStrip } from "./apple-health-ui.js";
 import { badgesOverviewStrip, filterVisibleBadges, renderBadgeSections, renderBadgesView, badgeDetailModal } from "./badges-ui.js";
 import { onboardingSeenKey, welcomeDismissedKey, renderWelcomeChecklist, openOnboardingGuide } from "./onboarding-ui.js";
+import { primeSharedAudio, triggerHaptic } from "./workout-clock.js";
 
 const zhWeekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const formatWeekdayZh = (date) => zhWeekdays[(new Date(date + "T00:00:00Z").getUTCDay() + 6) % 7] ?? "";
@@ -73,7 +74,11 @@ const state = {
   cacheMeta: {}, planCache: null, recordsCache: {}, calendarCache: null,
 };
 let requestId = 0, dataEpoch = 0, notices = 0, reportApple = null;
-const loadingMarkup = () => `${workspaceTabsHtml()}<div class="empty loading" role="status">正在读取记录…</div>`;
+const loadingMarkup = () => `${workspaceTabsHtml()}<div class="skeleton-page" role="status" aria-label="正在加载内容">
+  <div class="skeleton-block skeleton-hero"></div>
+  <div class="skeleton-kpis"><div class="skeleton-block skeleton-kpi"></div><div class="skeleton-block skeleton-kpi"></div></div>
+  <div class="skeleton-list"><div class="skeleton-block skeleton-row"></div><div class="skeleton-block skeleton-row"></div><div class="skeleton-block skeleton-row"></div></div>
+</div>`;
 const readOnlyPostPaths = new Set([
   "/api/catalogue/exercises/lookup",
   "/api/catalogue/exercises/details",
@@ -107,7 +112,7 @@ function notify(message, action = null) {
   toast.classList.add("shown");
   setTimeout(() => {
     if (id === notices) toast.classList.remove("shown", "has-action");
-  }, hasAction ? 5200 : 3300);
+  }, hasAction ? 4500 : 1900);
 }
 async function api(path, { method = "GET", body, token = state.demoToken, timeout = 15000 } = {}) {
   const response = await fetch(path, {
@@ -133,7 +138,50 @@ async function api(path, { method = "GET", body, token = state.demoToken, timeou
   }
   return data;
 }
+let modalSeq = 0, modalHistoryDepth = 0, closingFromPopstate = false, suppressNextHistoryBack = false, expectedProgrammaticPops = 0;
+const overlayStack = [];
+
+function pushOverlay(onClose) {
+  const id = ++modalSeq;
+  overlayStack.push({ id, onClose });
+  try {
+    history.pushState({ ...(history.state ?? {}), ironlogOverlay: id }, "", location.href);
+    modalHistoryDepth++;
+  } catch {}
+  return id;
+}
+
+function popOverlay(id) {
+  const idx = overlayStack.findIndex((item) => item.id === id);
+  if (idx >= 0) overlayStack.splice(idx, 1);
+  if (!closingFromPopstate && history.state?.ironlogOverlay === id) {
+    modalHistoryDepth = Math.max(0, modalHistoryDepth - 1);
+    expectedProgrammaticPops++;
+    try { history.back(); } catch { expectedProgrammaticPops = Math.max(0, expectedProgrammaticPops - 1); }
+  }
+}
+
+window.addEventListener("popstate", () => {
+  if (expectedProgrammaticPops > 0) {
+    expectedProgrammaticPops--;
+    return;
+  }
+  if (overlayStack.length > 0) {
+    const top = overlayStack.pop();
+    modalHistoryDepth = Math.max(0, modalHistoryDepth - 1);
+    closingFromPopstate = true;
+    try { top?.onClose?.(); } finally { closingFromPopstate = false; }
+    return;
+  }
+  if (dialog.open && modalHistoryDepth > 0) {
+    modalHistoryDepth = 0;
+    closingFromPopstate = true;
+    try { dialog.close(); } finally { closingFromPopstate = false; }
+  }
+});
+
 function open(title, body, wide = false, layout = "") {
+  const wasOpen = dialog.open;
   dialog.classList.toggle("wide-dialog", wide);
   dialog.classList.toggle("mobile-sheet", layout === "menu");
   dialog.classList.toggle("workout-dialog", layout === "workout");
@@ -145,7 +193,47 @@ function open(title, body, wide = false, layout = "") {
     ${layout === "exercise" ? `<button class="quiet copy-exercise" type="button" data-action="copy-exercise" data-value="${esc(title)}">复制动作名</button>` : ""}
     <button type="button" class="icon-button" data-action="close" aria-label="关闭"${layout === "workout" ? " autofocus" : ""}>${icon("close")}</button></header>${body}`;
   if (!dialog.open) dialog.showModal();
+  if (!wasOpen) {
+    try {
+      history.pushState({ ...(history.state ?? {}), ironlogModal: ++modalSeq }, "", location.href);
+      modalHistoryDepth = 1;
+    } catch {}
+  } else {
+    overlayStack.length = 0;
+  }
   dialog.scrollTop = 0;
+}
+
+function openConfirmDialog({ title, message, confirmLabel = "确认删除", onConfirm }) {
+  open(title, `<div class="confirm-dialog-body">
+    <p class="confirm-dialog-message">${esc(message)}</p>
+    <p class="form-error" data-confirm-error role="alert" hidden></p>
+    <footer class="confirm-dialog-foot">
+      <button type="button" class="quiet" data-confirm-cancel>取消</button>
+      <button type="button" class="danger" data-confirm-ok>${esc(confirmLabel)}</button>
+    </footer>
+  </div>`);
+  const cancelBtn = $("[data-confirm-cancel]", dialog);
+  const okBtn = $("[data-confirm-ok]", dialog);
+  const errEl = $("[data-confirm-error]", dialog);
+  cancelBtn?.addEventListener("click", () => dialog.close());
+  okBtn?.addEventListener("click", async () => {
+    if (!okBtn || okBtn.disabled) return;
+    okBtn.disabled = true;
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (errEl) errEl.hidden = true;
+    try {
+      await onConfirm();
+      if (dialog.open) dialog.close();
+    } catch (error) {
+      if (errEl) {
+        errEl.textContent = error?.message || "操作失败，请重试";
+        errEl.hidden = false;
+      }
+      okBtn.disabled = false;
+      if (cancelBtn) cancelBtn.disabled = false;
+    }
+  });
 }
 function setTheme(theme) {
   document.documentElement.dataset.theme = theme;
@@ -155,7 +243,7 @@ function setTheme(theme) {
 setTheme(localStorage.getItem("ironlog-web-theme") === "light" ? "light" : "dark");
 sessionStorage.removeItem("ironlog-web-token");
 function clearUser() {
-  if (dialog.open) dialog.close();
+  if (dialog.open) { suppressNextHistoryBack = true; dialog.close(); }
   requestId++;
   reportApple = null;
   dataEpoch = 0;
@@ -600,7 +688,7 @@ function openMore() {
   </div>`, false, "menu");
   $('[data-action="more-menu"]')?.setAttribute("aria-expanded", "true");
   $(".more-sheet-body", dialog)?.addEventListener("click", ({ target }) => {
-    if (target.closest("a")) dialog.close();
+    if (target.closest("a")) { suppressNextHistoryBack = true; dialog.close(); }
   });
   $$("[data-more-action]", dialog).forEach((btn) => btn.addEventListener("click", async () => {
     const { moreAction, value } = btn.dataset;
@@ -618,6 +706,15 @@ dialog.addEventListener("close", () => {
   $('[data-action="more-menu"]')?.setAttribute("aria-expanded", "false");
   dialog.style.transform = "";
   dialog.style.transition = "";
+  overlayStack.length = 0;
+  const depth = modalHistoryDepth;
+  modalHistoryDepth = 0;
+  const suppress = suppressNextHistoryBack;
+  suppressNextHistoryBack = false;
+  if (depth > 0 && !closingFromPopstate && !suppress && (history.state?.ironlogModal || history.state?.ironlogOverlay)) {
+    expectedProgrammaticPops++;
+    try { history.go(-depth); } catch { expectedProgrammaticPops = Math.max(0, expectedProgrammaticPops - 1); }
+  }
   nav();
 });
 dialog.addEventListener("click", (event) => {
@@ -1175,7 +1272,7 @@ function renderWorkoutHistory() {
     `<section class="training-history" aria-label="历史训练"><header class="history-bar"><h2>已完成</h2>
       ${hasAppleWorkouts ? segments({ all: "全部来源", ironlog: "铁记", apple: "Apple 健康" }, source, "training-source") : ""}</header>
       <div class="workout-filter-bar">
-        <label class="search workout-search">${icon("search", 15)}<input id="workout-search" type="search" maxlength="80" value="${esc(state.workoutQuery)}" placeholder="搜索训练标题、动作名或备注…" aria-label="搜索训练记录"></label>
+        <label class="search workout-search">${icon("search", 15)}<input id="workout-search" type="search" enterkeyhint="search" maxlength="80" value="${esc(state.workoutQuery)}" placeholder="搜索训练标题、动作名或备注…" aria-label="搜索训练记录"></label>
         <div class="muscle-pills" role="group" aria-label="按目标肌群筛选历史训练">${Object.entries(filterMuscles).map(([val, lbl]) =>
           `<button type="button" data-action="workout-muscle" data-value="${val}" aria-pressed="${state.workoutMuscle === val}">${lbl}</button>`).join("")}</div>
       </div>
@@ -1976,11 +2073,13 @@ function openCalendarDayModal(targetDate) {
     let startX = 0, startY = 0;
     dossier.addEventListener("touchstart", (e) => {
       if (e.touches.length === 1) {
+        if (e.touches[0].clientX < 20) { startX = -1; return; }
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
       }
     }, { passive: true });
     dossier.addEventListener("touchend", (e) => {
+      if (startX < 0) return;
       if (e.changedTouches.length === 1) {
         const dx = e.changedTouches[0].clientX - startX;
         const dy = e.changedTouches[0].clientY - startY;
@@ -2520,12 +2619,12 @@ function settingsPanels(preferences, profile, devices, aiStatus, aiSettingsCard,
     <div class="details-body">
     ${switchField("energy", "启用能量估算", !!info)}
     <fieldset class="form-fieldset" id="energy-fields"${info ? "" : " disabled"}><div class="fields">
-    ${field("身高", inputGroup("heightCm", info?.heightCm, "cm", 'type="number" min="50" max="250" step="0.1" required'))}
-    ${field("参考体重", inputGroup("weightKg", info?.weightKg, "kg", 'type="number" min="1" max="500" step="0.01" required'))}
+    ${field("身高", inputGroup("heightCm", info?.heightCm, "cm", 'type="number" inputmode="decimal" min="50" max="250" step="0.1" required'))}
+    ${field("参考体重", inputGroup("weightKg", info?.weightKg, "kg", 'type="number" inputmode="decimal" min="1" max="500" step="0.01" required'))}
     ${field("测量日期", input("weightDate", info?.weightDate, `type="date" max="${today()}" required`))}
     ${field("出生日期", input("birthDate", info?.birthDate, `type="date" max="${today()}" required`))}
     ${field("性别", `<select name="sex">${options({ male: "男", female: "女" }, info?.sex ?? "male")}</select>`)}
-    ${field("活动系数", input("activityFactor", info?.activityFactor ?? 1.55, 'type="number" step="0.01" min="1.4" max="2.5" required'))}
+    ${field("活动系数", input("activityFactor", info?.activityFactor ?? 1.55, 'type="number" inputmode="decimal" step="0.01" min="1.4" max="2.5" required'))}
     ${field("生理状态", `<select name="context">${options({ general: "一般成人", pregnant: "妊娠期", breastfeeding: "哺乳期" }, info?.context ?? "general")}</select>`)}</div></fieldset></div></details>
     <p class="form-error" role="alert" hidden></p><footer class="form-foot"><button class="primary-button">保存目标</button></footer></form></section>
   <section class="panel" ${section("devices")}><header class="panel-head"><h2>Apple 健康</h2></header>
@@ -2794,7 +2893,7 @@ async function renderRoute() {
       content.innerHTML = heading("动作库", "", exActions) +
         `<div class="catalogue-shell">
           <form id="catalogue-search" class="catalogue-toolbar">
-            <div class="search">${icon("search")}<input name="query" maxlength="120" type="search" value="${esc(state.query)}" aria-label="搜索动作" placeholder="搜索中文名或英文名"></div>
+            <div class="search">${icon("search")}<input name="query" maxlength="120" type="search" enterkeyhint="search" value="${esc(state.query)}" aria-label="搜索动作" placeholder="搜索中文名或英文名"></div>
             ${state.userId ? segments({ all: "全部", trained: "已练/PR", favorites: "★ 收藏", custom: "自定义" }, state.catalogueScope, "catalogue-scope") : ""}
             <select name="equipment" aria-label="训练器械">${options({ "": "全部器械", ...(state.userId ? { __mine__: "我的器械" } : {}), ...equipment }, state.catalogueEquipment)}</select>
             <button type="button" class="quiet" data-clear-catalogue>清除筛选</button>
@@ -3290,7 +3389,7 @@ function openPlanImportModal() {
 function getEditor() {
   return (editorPromise ??= import("./editor.js").then(({ makeEditor }) => makeEditor({
     api, dialog, open, notify, owner: () => state.userId,
-    showReport,
+    showReport, pushOverlay, popOverlay,
     onDraft: () => { nav(); if (state.view === "overview" && state.data) overview(state.data); },
     appDate: () => ["diet", "calendar"].includes(state.view) ? state.date : today(),
     getLatestWeight: () => {
@@ -3741,6 +3840,12 @@ function resetContentSwipe() {
 
 content.addEventListener("touchstart", (e) => {
   if (e.touches.length !== 1) return;
+  if (e.touches[0].clientX < 20) {
+    contentTouchX = -1;
+    activeSwipeRow = null;
+    activeSwipeBtn = null;
+    return;
+  }
   contentTouchX = e.touches[0].clientX;
   contentTouchY = e.touches[0].clientY;
   contentTouchAt = Date.now();
@@ -3756,7 +3861,7 @@ content.addEventListener("touchstart", (e) => {
 }, { passive: true });
 
 content.addEventListener("touchmove", (e) => {
-  if (!activeSwipeRow || !activeSwipeBtn || e.touches.length !== 1) return;
+  if (contentTouchX < 0 || !activeSwipeRow || !activeSwipeBtn || e.touches.length !== 1) return;
   const dx = e.touches[0].clientX - contentTouchX;
   const dy = e.touches[0].clientY - contentTouchY;
   if (!contentSwipeAxis) {
@@ -3774,6 +3879,7 @@ content.addEventListener("touchmove", (e) => {
 content.addEventListener("touchcancel", resetContentSwipe, { passive: true });
 
 content.addEventListener("touchend", (e) => {
+  if (contentTouchX < 0) { resetContentSwipe(); return; }
   if (e.changedTouches.length !== 1) { resetContentSwipe(); return; }
   const dx = e.changedTouches[0].clientX - contentTouchX;
   const dy = e.changedTouches[0].clientY - contentTouchY;
@@ -3872,7 +3978,7 @@ document.addEventListener("click", async (event) => {
   const { action, value } = button.dataset;
   try {
     if (action === "route") route(value);
-    if (action === "settings-open") { if (dialog.open) dialog.close(); state.settingsSection = value; route("settings"); }
+    if (action === "settings-open") { if (dialog.open) { suppressNextHistoryBack = true; dialog.close(); } state.settingsSection = value; route("settings"); }
     if (action === "plan-section" || action === "settings-section") {
       state[action === "plan-section" ? "planSection" : "settingsSection"] = value;
       $$("[data-section]", content).forEach((panel) => { panel.hidden = panel.dataset.section !== value; });
@@ -3903,22 +4009,20 @@ document.addEventListener("click", async (event) => {
     if (action === "delete-workout-template") {
       const tpl = state.planCache?.templates?.find((r) => r.id === value);
       if (tpl) {
-        if (button.dataset.confirm !== "true") {
-          button.dataset.confirm = "true";
-          button.textContent = "删";
-          button.classList.add("danger");
-          return;
-        }
-        button.disabled = true;
-        try {
-          await api("/api/records", {
-            method: "POST",
-            body: { opId: crypto.randomUUID(), id: tpl.id, kind: "template", baseVersion: tpl.version, deleted: true, data: tpl.data },
-          });
-          state.planCache = null;
-          await loadPlan(requestId);
-          notify(`已删除模板「${tpl.data.name}」`);
-        } finally { button.disabled = false; }
+        openConfirmDialog({
+          title: "删除训练模板",
+          message: `确定要删除模板「${tpl.data.name}」吗？删除后将无法通过模板列表一键复用。`,
+          confirmLabel: "删除模板",
+          onConfirm: async () => {
+            await api("/api/records", {
+              method: "POST",
+              body: { opId: crypto.randomUUID(), id: tpl.id, kind: "template", baseVersion: tpl.version, deleted: true, data: tpl.data },
+            });
+            state.planCache = null;
+            await loadPlan(requestId);
+            notify(`已删除模板「${tpl.data.name}」`);
+          },
+        });
       }
     }
     if (action === "more-menu") openMore();
@@ -4384,7 +4488,7 @@ document.addEventListener("click", async (event) => {
         renderCalendar();
       }
     }
-    if (action === "quick-record-sheet") { openQuickRecordSheet(); }
+    if (action === "quick-record-sheet") { triggerHaptic("light"); openQuickRecordSheet(); }
     if (action === "open-day-dossier") { openCalendarDayModal(value || state.date); }
     if (action === "share-day-record") {
       button.disabled = true;
@@ -4492,12 +4596,18 @@ document.addEventListener("click", async (event) => {
     if (action === "delete-meal-template") {
       const tpl = state.mealTemplates.find((r) => r.id === value);
       if (tpl) {
-        if (button.dataset.confirm !== "true") { button.dataset.confirm = "true"; button.textContent = "删"; return; }
-        await api("/api/records", { method: "POST", body: { opId: crypto.randomUUID(), id: tpl.id, kind: "mealTemplate", baseVersion: tpl.version, deleted: true, data: tpl.data } });
-        state.mealTemplates = state.mealTemplates.filter((r) => r.id !== tpl.id);
-        if (state.recordsCache.diet) state.recordsCache.diet.mealTemplates = state.mealTemplates;
-        renderDiet();
-        notify(`已删除餐单「${tpl.data.name}」`);
+        openConfirmDialog({
+          title: "删除常用餐单",
+          message: `确定要删除餐单「${tpl.data.name}」吗？此操作不可撤销。`,
+          confirmLabel: "删除餐单",
+          onConfirm: async () => {
+            await api("/api/records", { method: "POST", body: { opId: crypto.randomUUID(), id: tpl.id, kind: "mealTemplate", baseVersion: tpl.version, deleted: true, data: tpl.data } });
+            state.mealTemplates = state.mealTemplates.filter((r) => r.id !== tpl.id);
+            if (state.recordsCache.diet) state.recordsCache.diet.mealTemplates = state.mealTemplates;
+            renderDiet();
+            notify(`已删除餐单「${tpl.data.name}」`);
+          },
+        });
       }
     }
     if (action === "edit-meal-template") {
@@ -4916,4 +5026,28 @@ async function start() {
   }
   if ("serviceWorker" in navigator && !state.demo) navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
+const unlockAudioOnce = () => {
+  primeSharedAudio();
+  document.removeEventListener("pointerdown", unlockAudioOnce, true);
+  document.removeEventListener("touchstart", unlockAudioOnce, true);
+};
+document.addEventListener("pointerdown", unlockAudioOnce, { capture: true, passive: true });
+document.addEventListener("touchstart", unlockAudioOnce, { capture: true, passive: true });
+
+document.addEventListener("focusin", ({ target }) => {
+  if (!matchMedia("(max-width: 630px)").matches) return;
+  if (!target?.matches?.('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]), textarea, select')) return;
+  setTimeout(() => {
+    if (target.isConnected && document.activeElement === target) {
+      try {
+        (target.closest(".set-row") ?? target).scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {}
+    }
+  }, 300);
+});
+
+$("#sidebar")?.addEventListener("click", ({ target }) => {
+  if (target.closest?.(".mobile-nav :is(a, button)")) triggerHaptic("light");
+});
+
 void start();
