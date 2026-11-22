@@ -1899,10 +1899,73 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       document.addEventListener("visibilitychange", onForegroundResume);
       window.addEventListener("focus", onForegroundResume);
     }
+    let stepHoldDelay = 0, stepHoldInterval = 0, suppressStepClickUntil = 0;
+    function stopStepRepeat() {
+      clearTimeout(stepHoldDelay);
+      clearInterval(stepHoldInterval);
+      stepHoldDelay = 0;
+      stepHoldInterval = 0;
+    }
+    function applyStepperButton(btn, { fromRepeat = false } = {}) {
+      const rIdx = Number(btn.dataset.row);
+      const sIdx = Number(btn.dataset.index);
+      const targetSet = rows[rIdx]?.sets[sIdx];
+      if (!targetSet) return false;
+      audio.unlock();
+      audio.tap("tick");
+      haptic("light", { fromUserGesture: !fromRepeat });
+      if (btn.hasAttribute("data-step-wt")) {
+        const delta = Number(btn.dataset.stepWt);
+        untouchedWeights.delete(targetSet);
+        const nextVal = Math.max(0, Math.round(((Number(targetSet.weight) || 0) + delta) * 100) / 100);
+        targetSet.weight = nextVal;
+        const inputEl = $(`[data-set="weight"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+        if (inputEl) inputEl.value = String(nextVal);
+      } else if (btn.hasAttribute("data-step-rep")) {
+        const delta = Number(btn.dataset.stepRep);
+        const nextVal = Math.max(0, Math.round((Number(targetSet.reps) || 0) + delta));
+        targetSet.reps = nextVal;
+        const inputEl = $(`[data-set="reps"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+        if (inputEl) inputEl.value = String(nextVal);
+      } else if (btn.hasAttribute("data-step-sec")) {
+        const delta = Number(btn.dataset.stepSec);
+        const nextVal = Math.max(0, (Number(targetSet.seconds) || 0) + delta);
+        targetSet.seconds = nextVal;
+        const inputEl = $(`[data-set="seconds"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
+        if (inputEl) inputEl.value = String(nextVal);
+      } else {
+        return false;
+      }
+      updateReferences();
+      updateLiveMetrics();
+      markDirty();
+      return true;
+    }
+    form.addEventListener("pointerdown", (e) => {
+      const btn = e.target.closest?.(".num-step-btn");
+      if (!btn || (e.button !== undefined && e.button !== 0)) return;
+      stopStepRepeat();
+      stepHoldDelay = setTimeout(() => {
+        if (!btn.isConnected || !form.isConnected) { stopStepRepeat(); return; }
+        applyStepperButton(btn, { fromRepeat: true });
+        suppressStepClickUntil = Date.now() + 400;
+        stepHoldInterval = setInterval(() => {
+          if (!btn.isConnected || !form.isConnected) { stopStepRepeat(); return; }
+          applyStepperButton(btn, { fromRepeat: true });
+          suppressStepClickUntil = Date.now() + 400;
+        }, 105);
+      }, 360);
+    });
+    form.addEventListener("pointerup", stopStepRepeat);
+    form.addEventListener("pointercancel", stopStepRepeat);
+    form.addEventListener("pointerleave", stopStepRepeat);
+    window.addEventListener("blur", stopStepRepeat);
     function checkpoint() { if (dirty && !form.dataset.saved) remember(); }
     window.addEventListener("pagehide", checkpoint);
     closeWorkout = () => {
       activeHold = null;
+      stopStepRepeat();
+      window.removeEventListener("blur", stopStepRepeat);
       if (ticks) clearInterval(ticks);
       if (live) {
         document.removeEventListener("visibilitychange", onForegroundResume);
@@ -2620,71 +2683,14 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         }
         return;
       }
-      const wtBtn = target.closest("[data-step-wt]");
-      if (wtBtn) {
-        const rIdx = Number(wtBtn.dataset.row);
-        const sIdx = Number(wtBtn.dataset.index);
-        const delta = Number(wtBtn.dataset.stepWt);
-        const targetRow = rows[rIdx];
-        const targetSet = targetRow?.sets[sIdx];
-        if (targetSet) {
-          audio.unlock();
-          audio.tap("tick");
-          haptic("light");
-          untouchedWeights.delete(targetSet);
-          const curVal = Number(targetSet.weight) || 0;
-          const nextVal = Math.max(0, Math.round((curVal + delta) * 100) / 100);
-          targetSet.weight = nextVal;
-          const inputEl = $(`[data-set="weight"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
-          if (inputEl) inputEl.value = String(nextVal);
-          updateReferences();
-          updateLiveMetrics();
-          markDirty();
+      const stepBtn = target.closest("[data-step-wt], [data-step-rep], [data-step-sec]");
+      if (stepBtn) {
+        stopStepRepeat();
+        if (Date.now() < suppressStepClickUntil) {
+          suppressStepClickUntil = 0;
+          return;
         }
-        return;
-      }
-      const repBtn = target.closest("[data-step-rep]");
-      if (repBtn) {
-        const rIdx = Number(repBtn.dataset.row);
-        const sIdx = Number(repBtn.dataset.index);
-        const delta = Number(repBtn.dataset.stepRep);
-        const targetRow = rows[rIdx];
-        const targetSet = targetRow?.sets[sIdx];
-        if (targetSet) {
-          audio.unlock();
-          audio.tap("tick");
-          haptic("light");
-          const curVal = Number(targetSet.reps) || 0;
-          const nextVal = Math.max(0, Math.round(curVal + delta));
-          targetSet.reps = nextVal;
-          const inputEl = $(`[data-set="reps"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
-          if (inputEl) inputEl.value = String(nextVal);
-          updateReferences();
-          updateLiveMetrics();
-          markDirty();
-        }
-        return;
-      }
-      const secBtn = target.closest("[data-step-sec]");
-      if (secBtn) {
-        const rIdx = Number(secBtn.dataset.row);
-        const sIdx = Number(secBtn.dataset.index);
-        const delta = Number(secBtn.dataset.stepSec);
-        const targetRow = rows[rIdx];
-        const targetSet = targetRow?.sets[sIdx];
-        if (targetSet) {
-          audio.unlock();
-          audio.tap("tick");
-          haptic("light");
-          const curVal = Number(targetSet.seconds) || 0;
-          const nextVal = Math.max(0, curVal + delta);
-          targetSet.seconds = nextVal;
-          const inputEl = $(`[data-set="seconds"][data-row="${rIdx}"][data-index="${sIdx}"]`, list);
-          if (inputEl) inputEl.value = String(nextVal);
-          updateReferences();
-          updateLiveMetrics();
-          markDirty();
-        }
+        applyStepperButton(stepBtn, { fromRepeat: false });
         return;
       }
       const cloneBtn = target.closest("[data-step-clone]");
@@ -2707,6 +2713,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             updateReferences();
             updateLiveMetrics();
             markDirty();
+            audio.unlock();
+            audio.tap("tick");
             haptic("light");
           }
         }
@@ -2731,6 +2739,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
           if (filled > 0) {
             renderRows();
             markDirty();
+            audio.unlock();
+            audio.tap("tick");
             haptic("light");
             notify(`已将 ${fmt(src.weight)} kg × ${src.reps} 同步至后续 ${filled} 组`);
           }
@@ -2742,6 +2752,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         barWeight = Number(barSelect.dataset.plateBar);
         localStorage.setItem(barPreference, String(barWeight));
         updateLiveMetrics();
+        audio.unlock();
+        audio.tap("tick");
         haptic("light");
         return;
       }
@@ -2756,6 +2768,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         }
         localStorage.setItem(platesPreference, JSON.stringify(enabledPlates));
         updateLiveMetrics();
+        audio.unlock();
+        audio.tap("tick");
         haptic("light");
         return;
       }

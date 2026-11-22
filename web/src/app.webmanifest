@@ -6,11 +6,18 @@
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait-primary",
   "theme_color": "#000000",
   "background_color": "#000000",
   "lang": "zh-CN",
   "icons": [
-    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
-    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png" }
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "shortcuts": [
+    { "name": "记录训练", "short_name": "记训练", "url": "./#workout", "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "记录饮食", "short_name": "记饮食", "url": "./#diet", "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "记录体重", "short_name": "记体重", "url": "./#weight", "icons": [{ "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" }] }
   ]
 }

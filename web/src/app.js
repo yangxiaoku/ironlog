@@ -584,7 +584,7 @@ function nav() {
     : `<strong>${destinations[state.view]}</strong>`;
   $("#top").innerHTML = `<div class="breadcrumb"><span>铁记</span>${icon("chevron", 14)}${breadcrumbTrail}</div>
     <a href="#overview" class="phone-brand" aria-label="铁记首页">${matrix("IRONLOG")}<strong>铁记</strong></a>
-    <div class="top-actions"><span class="local-date">${icon("calendar", 16)} <time datetime="${today()}">${today().slice(0, 4)} / ${today().slice(5).replace("-", ".")}</time></span>${state.userId ?
+    <div class="top-actions">${typeof navigator !== "undefined" && !navigator.onLine ? '<span class="offline-pill" role="status" aria-label="当前离线">离线</span>' : ""}<span class="local-date">${icon("calendar", 16)} <time datetime="${today()}">${today().slice(0, 4)} / ${today().slice(5).replace("-", ".")}</time></span>${state.userId ?
       `${resumePillHtml}<button type="button" class="quick-record-pill" data-action="quick-record-sheet" aria-label="快捷速记">${icon("plus", 14)}<span>速记</span></button>
        <button type="button" class="icon-button top-theme" data-action="theme" aria-label="切换浅色与深色">${themeIcon}</button>` :
       `<button type="button" class="icon-button" data-action="theme" aria-label="切换浅色与深色">${themeIcon}</button>`}</div>`;
@@ -3780,9 +3780,21 @@ async function handleRecordSwipe(rowEl, direction) {
   const recordId = rowEl.dataset.recordId;
   const record = state.records.find((r) => r.id === recordId && (!kind || r.kind === kind));
   if (!record) return;
-  try {
-    if (direction === "left") {
-      // Swipe Left -> Quick Delete with Undo toast
+  if (direction === "left") {
+    const prevRecords = state.records.slice();
+    const prevCache = state.recordsCache[record.kind];
+    const wasDietDone = state.dietDone;
+    triggerHaptic("medium");
+    state.records = state.records.filter((r) => !(r.id === record.id && r.kind === record.kind));
+    delete state.recordsCache[record.kind];
+    if (record.kind === "diet") {
+      state.dietDone = false;
+      renderDiet();
+    } else if (record.kind === "weight") {
+      renderWeight();
+    }
+    try {
+      // Swipe Left -> Quick Delete with Undo toast (optimistic removal + rollback on error)
       const res = await api("/api/records", {
         method: "POST",
         body: { opId: crypto.randomUUID(), id: record.id, kind: record.kind, baseVersion: record.version, deleted: true, data: record.data },
@@ -3803,13 +3815,22 @@ async function handleRecordSwipe(rowEl, direction) {
         }
       };
       if (record.kind === "diet") {
-        await loadRecords("diet", requestId);
         notify(`已删除「${record.data.name}」`, { label: "撤销", onClick: restore });
       } else if (record.kind === "weight") {
-        await loadRecords("weight", requestId);
         notify(`已删除 ${shortDate(record.data.date)} 体重记录`, { label: "撤销", onClick: restore });
       }
-    } else if (direction === "right" && record.kind === "diet") {
+    } catch (err) {
+      state.records = prevRecords;
+      if (prevCache !== undefined) state.recordsCache[record.kind] = prevCache;
+      state.dietDone = wasDietDone;
+      if (record.kind === "diet") renderDiet();
+      else if (record.kind === "weight") renderWeight();
+      notify(err?.message || "网络异常，已恢复该记录");
+    }
+    return;
+  }
+  try {
+    if (direction === "right" && record.kind === "diet") {
       // Swipe Right on Diet item -> Duplicate (+1 serving)
       await copyDietFoods({
         date: record.data.date,
@@ -4869,25 +4890,34 @@ document.addEventListener("click", async (event) => {
       if (existing) openCreateExerciseModal({ existing });
     }
     if (action === "toggle-favorite" || action === "toggle-favorite-modal") {
+      if (!state.userId) { notify("请先登录后收藏动作"); return; }
+      const currentlyFav = button.classList.contains("is-faved")
+        || button.classList.contains("is-active")
+        || button.getAttribute("aria-pressed") === "true";
+      const applyFavUi = (isFav) => {
+        if (action === "toggle-favorite-modal") {
+          button.classList.toggle("is-faved", isFav);
+          button.innerHTML = `${icon(isFav ? "starFilled" : "star", 15)} ${isFav ? "已收藏" : "收藏动作"}`;
+        } else {
+          button.classList.toggle("is-active", isFav);
+          button.setAttribute("aria-pressed", String(isFav));
+          button.setAttribute("aria-label", isFav ? "取消收藏" : "收藏动作");
+          button.innerHTML = icon(isFav ? "starFilled" : "star", 15);
+          button.closest(".exercise-card-shell")?.classList.toggle("is-fav", isFav);
+        }
+      };
+      triggerHaptic("light");
+      applyFavUi(!currentlyFav);
       button.disabled = true;
       try {
         const nowFav = await toggleFavorite(value);
-        if (action === "toggle-favorite-modal") {
-          button.classList.toggle("is-faved", nowFav);
-          button.innerHTML = `${icon(nowFav ? "starFilled" : "star", 15)} ${nowFav ? "已收藏" : "收藏动作"}`;
-          if (state.view === "exercises") void catalogueSearch();
-        } else {
-          if (state.view === "exercises") {
-            if (state.catalogueScope === "favorites" && !nowFav) void catalogueSearch();
-            else {
-              button.classList.toggle("is-active", nowFav);
-              button.setAttribute("aria-pressed", String(nowFav));
-              button.setAttribute("aria-label", nowFav ? "取消收藏" : "收藏动作");
-              button.innerHTML = icon(nowFav ? "starFilled" : "star", 15);
-              button.closest(".exercise-card-shell")?.classList.toggle("is-fav", nowFav);
-            }
-          }
+        applyFavUi(nowFav);
+        if (state.view === "exercises" && (action === "toggle-favorite-modal" || (state.catalogueScope === "favorites" && !nowFav))) {
+          void catalogueSearch();
         }
+      } catch (err) {
+        applyFavUi(currentlyFav);
+        notify(err?.message || "收藏状态更新失败");
       } finally { button.disabled = false; }
     }
     if (action === "copy-exercise") {
@@ -5024,7 +5054,16 @@ async function start() {
   if (!state.demo && state.userId && state.isNewUser && !localStorage.getItem(onboardingSeenKey(state.userId))) {
     triggerOpenOnboarding(1);
   }
-  if ("serviceWorker" in navigator && !state.demo) navigator.serviceWorker.register("./sw.js").catch(() => {});
+  if ("serviceWorker" in navigator && !state.demo) {
+    const hadController = Boolean(navigator.serviceWorker.controller);
+    let swNotified = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || swNotified) return;
+      swNotified = true;
+      notify("铁记已更新到最新版", { label: "刷新", onClick: () => location.reload() });
+    });
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  }
 }
 const unlockAudioOnce = () => {
   primeSharedAudio();
@@ -5046,8 +5085,27 @@ document.addEventListener("focusin", ({ target }) => {
   }, 300);
 });
 
-$("#sidebar")?.addEventListener("click", ({ target }) => {
-  if (target.closest?.(".mobile-nav :is(a, button)")) triggerHaptic("light");
+window.addEventListener("offline", () => {
+  nav();
+  notify("当前处于离线模式，训练进度仍会保存在本地");
+});
+window.addEventListener("online", () => {
+  nav();
+  notify("网络已恢复");
+  if (!dialog.open && state.userId) {
+    dataEpoch++;
+    void renderRoute();
+  }
+});
+
+$("#sidebar")?.addEventListener("click", (event) => {
+  const navTarget = event.target.closest?.(".mobile-nav :is(a, button)");
+  if (!navTarget) return;
+  triggerHaptic("light");
+  if (navTarget.matches('a[aria-current="page"]')) {
+    event.preventDefault();
+    try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { window.scrollTo(0, 0); }
+  }
 });
 
 void start();
