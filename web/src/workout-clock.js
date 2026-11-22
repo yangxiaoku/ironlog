@@ -157,11 +157,43 @@ function buildChimeWavDataUri(tones, sampleRate = 22050) {
 
 let cachedCompleteWav = null;
 let cachedTickWav = null;
+let cachedSilentWav = null;
 
 export function createRestAudio(enabled) {
   let audio;
   let htmlAudio = null;
-  let unlocked = false;
+  let webAudioPrimed = false;
+  let htmlAudioPrimed = false;
+  let playingChimeUntil = 0;
+
+  function ensureWavs() {
+    cachedCompleteWav ??= buildChimeWavDataUri([[784, 0, 0.14], [988, 0.14, 0.16], [1175, 0.30, 0.28]]);
+    cachedTickWav ??= buildChimeWavDataUri([[660, 0, 0.08]]);
+    cachedSilentWav ??= buildChimeWavDataUri([[440, 0, 0.005]]);
+  }
+
+  function scheduleWebAudioTones(tones, complete) {
+    if (!audio) return false;
+    try {
+      const baseTime = Math.max(audio.currentTime, 0);
+      for (const [frequency, delay, length] of tones) {
+        const start = baseTime + delay;
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.type = "triangle";
+        oscillator.frequency.value = frequency;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.linearRampToValueAtTime(complete ? 0.36 : 0.18, start + 0.015);
+        gain.gain.exponentialRampToValueAtTime(0.001, start + length);
+        oscillator.connect(gain).connect(audio.destination);
+        oscillator.start(start);
+        oscillator.stop(start + length + 0.02);
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
 
   function unlock() {
     if (!enabled()) return;
@@ -174,29 +206,34 @@ export function createRestAudio(enabled) {
     if (Context) {
       try {
         audio ??= new Context();
-        if (audio.state === "suspended") void audio.resume().catch(() => {});
-        // Play a 1-sample silent buffer inside user gesture to unlock iOS WebKit AudioContext
-        const silent = audio.createBuffer(1, 1, 22050);
-        const src = audio.createBufferSource();
-        src.buffer = silent;
-        src.connect(audio.destination);
-        src.start(0);
+        if (audio.state !== "running") {
+          void audio.resume().catch(() => {});
+        }
+        if (!webAudioPrimed || audio.state !== "running") {
+          const silent = audio.createBuffer(1, 1, 22050);
+          const src = audio.createBufferSource();
+          src.buffer = silent;
+          src.connect(audio.destination);
+          src.start(0);
+          if (audio.state === "running") webAudioPrimed = true;
+        }
       } catch {}
     }
-    if (typeof Audio !== "undefined" && !unlocked) {
+    if (typeof Audio !== "undefined" && !htmlAudioPrimed && Date.now() >= playingChimeUntil) {
       try {
-        cachedCompleteWav ??= buildChimeWavDataUri([[784, 0, 0.14], [988, 0.14, 0.16], [1175, 0.30, 0.28]]);
-        cachedTickWav ??= buildChimeWavDataUri([[660, 0, 0.08]]);
+        ensureWavs();
         htmlAudio ??= new Audio();
         htmlAudio.volume = 0.01;
-        htmlAudio.src = buildChimeWavDataUri([[440, 0, 0.01]]);
+        htmlAudio.src = cachedSilentWav;
         const p = htmlAudio.play();
         if (p && typeof p.then === "function") {
           p.then(() => {
-            htmlAudio.pause();
-            htmlAudio.currentTime = 0;
+            htmlAudioPrimed = true;
+            if (Date.now() >= playingChimeUntil) {
+              htmlAudio.pause();
+              htmlAudio.currentTime = 0;
+            }
             htmlAudio.volume = 1;
-            unlocked = true;
           }).catch(() => {});
         }
       } catch {}
@@ -209,33 +246,26 @@ export function createRestAudio(enabled) {
     const tones = complete
       ? [[784, 0, 0.14], [988, 0.14, 0.16], [1175, 0.30, 0.28]]
       : [[660, 0, 0.08]];
+    playingChimeUntil = Date.now() + (complete ? 650 : 150);
 
+    const Context = globalThis.AudioContext ?? globalThis.webkitAudioContext;
     let playedViaWebAudio = false;
-    if (audio) {
+    if (Context) {
       try {
-        if (audio.state === "suspended") void audio.resume().catch(() => {});
+        audio ??= new Context();
         if (audio.state === "running") {
-          for (const [frequency, delay, length] of tones) {
-            const start = audio.currentTime + delay;
-            const oscillator = audio.createOscillator();
-            const gain = audio.createGain();
-            oscillator.type = "triangle";
-            oscillator.frequency.value = frequency;
-            gain.gain.setValueAtTime(0.0001, start);
-            gain.gain.linearRampToValueAtTime(complete ? 0.36 : 0.18, start + 0.015);
-            gain.gain.exponentialRampToValueAtTime(0.001, start + length);
-            oscillator.connect(gain).connect(audio.destination);
-            oscillator.start(start);
-            oscillator.stop(start + length + 0.02);
-          }
-          playedViaWebAudio = true;
+          playedViaWebAudio = scheduleWebAudioTones(tones, complete);
+        } else {
+          void audio.resume().then(() => {
+            scheduleWebAudioTones(tones, complete);
+          }).catch(() => {});
         }
       } catch {}
     }
-    if (!playedViaWebAudio && htmlAudio) {
+    if (!playedViaWebAudio && typeof Audio !== "undefined") {
       try {
-        cachedCompleteWav ??= buildChimeWavDataUri([[784, 0, 0.14], [988, 0.14, 0.16], [1175, 0.30, 0.28]]);
-        cachedTickWav ??= buildChimeWavDataUri([[660, 0, 0.08]]);
+        ensureWavs();
+        htmlAudio ??= new Audio();
         htmlAudio.volume = 1;
         htmlAudio.src = complete ? cachedCompleteWav : cachedTickWav;
         void htmlAudio.play().catch(() => {});

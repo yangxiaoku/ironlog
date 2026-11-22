@@ -1537,7 +1537,8 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     const miniRing = $(".rest-mini-ring", form);
     const dialSvg = $(".rest-dial-svg", form);
     let restSoundedEndAt = rest && rest.end <= Date.now() ? rest.end : 0;
-    form.addEventListener("pointerdown", () => audio.unlock(), { passive: true });
+    form.addEventListener("touchend", () => audio.unlock(), { passive: true });
+    form.addEventListener("click", () => audio.unlock(), { passive: true });
     const wake = supportsWake ? keepWorkoutScreenAwake(() => !!$('[name="keepScreen"]', form)?.checked
       && !!timing.runningSince && dateInput.value === today(), (locked) => {
         $("[data-wake-status]", form).textContent = locked ? "屏幕常亮已启用" : "";
@@ -2157,11 +2158,16 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         if ((clockControl === "add15" || clockControl === "add") && rest) {
           rest = shiftRestTimer(rest, 15, instant);
           lastRest = null;
+          restSoundedEndAt = 0;
+          restNotifiedEndAt = 0;
           audio.unlock();
         }
         if (clockControl === "sub15" && rest) {
           rest = shiftRestTimer(rest, -15, instant);
           lastRest = null;
+          restSoundedEndAt = 0;
+          restNotifiedEndAt = 0;
+          audio.unlock();
         }
         if (clockControl === "train") timing = timing.runningSince ? pauseAt(timing, instant)
           : { ...timing, runningSince: new Date(instant).toISOString() };
