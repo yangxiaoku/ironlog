@@ -342,7 +342,7 @@ function graph(rows, series, cfg = {}) {
   return `<svg class="chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(axisLabel || series.map((item) => item.label).join("与"))}">${defs}${grid}${labels}${goal === null ? "" : `<path d="M${left},${y(goal)}H${width - right}" class="goal-line"><title>目标 ${fmt(goal)}</title></path>`}${plots}</svg>`;
 }
 
-export function weightChart(rows, { from, to, goal = null, showAverage = false } = {}) {
+export function weightChart(rows, { from = undefined, to = undefined, goal = null, showAverage = false } = {}) {
   const series = [{ key: "weight", label: "称重", css: "primary" }];
   if (showAverage) series.push({ key: "average", label: "滚动平均", css: "secondary" });
   return graph(rows, series, { from, to, goal, compact: showAverage, unit: "kg", axisLabel: showAverage ? "称重与滚动平均，单位千克" : "称重趋势，单位千克" });

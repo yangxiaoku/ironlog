@@ -93,6 +93,7 @@ function normalizeOpts(arg) {
   };
 }
 
+/** @param {any} rawSummary @param {any} [options] */
 export function renderBadgeSections(rawSummary, options = "") {
   const { category, status, query, pinnedIds, appleHealthConnected } = normalizeOpts(options);
   const summary = filterVisibleBadges(rawSummary, appleHealthConnected);
@@ -125,6 +126,7 @@ export function renderBadgeSections(rawSummary, options = "") {
   return sections || empty("没有匹配的成就徽章", "试试切换筛选状态或更换关键词。");
 }
 
+/** @param {any} rawSummary @param {any} [options] */
 export function renderBadgesView(rawSummary, options = "") {
   const opts = normalizeOpts(options);
   const summary = filterVisibleBadges(rawSummary, opts.appleHealthConnected);

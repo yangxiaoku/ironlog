@@ -1,0 +1,1223 @@
+/* ==== Nothing Hardware OS Visual System ==== */
+
+/* Typography & Matrix Scaling */
+h1, h2, .primary-button, .segments button[aria-pressed="true"],
+.muscle-pills button[aria-pressed="true"], .quick-record-pill { font-weight: 600; }
+.matrix { max-width: 100%; }
+.matrix svg { max-width: 100%; height: auto; }
+
+/* Viewfinder Corner Brackets */
+.vf-c {
+  position: absolute; width: 12px; height: 12px; pointer-events: none; z-index: 2;
+  border-color: rgba(255, 255, 255, 0.45); border-style: solid; border-width: 0;
+}
+:root[data-theme="light"] .vf-c { border-color: rgba(10, 10, 10, 0.35); }
+.vf-c.tl { top: 12px; left: 12px; border-top-width: 1.5px; border-left-width: 1.5px; }
+.vf-c.tr { top: 12px; right: 12px; border-top-width: 1.5px; border-right-width: 1.5px; }
+.vf-c.bl { bottom: 12px; left: 12px; border-bottom-width: 1.5px; border-left-width: 1.5px; }
+.vf-c.br { bottom: 12px; right: 12px; border-bottom-width: 1.5px; border-right-width: 1.5px; }
+
+/* Pure OLED Sidebar & Slim Topbar */
+.sidebar { background: var(--bg); border-right: 1px solid var(--rule); padding: 20px 14px 16px; }
+.brand { margin: 0 0 20px 10px; }
+.desktop-nav { border-top: 1px solid var(--rule); padding-top: 12px; gap: 2px; }
+.nav-divider { display: block; height: 1px; background: var(--rule); margin: 8px 8px; }
+.desktop-nav a { min-height: 40px; border: 0; border-radius: 10px; font-weight: 500; }
+.desktop-nav a:hover { background: var(--inset); }
+.desktop-nav a[aria-current="page"] { background: var(--inset); border-color: transparent; color: var(--ink); font-weight: 600; }
+.nav-dot { width: 5px; height: 5px; background: var(--ink); }
+.sidebar footer { border-top: 1px solid var(--rule); }
+.top { min-height: 56px; border-bottom: 1px solid var(--rule); background: var(--bg); }
+.local-date { border: 0; background: transparent; padding: 0 4px; color: var(--muted); }
+.quick-record-pill {
+  min-height: 34px; padding: 0 15px 0 12px; border-radius: 999px;
+  background: var(--white-button); border: 1px solid var(--white-button); color: var(--bg);
+}
+
+/* Framed Halftone Mastheads & Hero */
+.page-heading { border-bottom: 1px solid var(--rule); }
+.hero,
+.page-heading:is(.masthead-workout, .masthead-plan, .masthead-diet, .masthead-exercises, .masthead-badges, .masthead-calendar) {
+  border: 1px solid var(--edge); border-radius: 20px; background-color: var(--hero-base);
+}
+.hero { min-height: 256px; padding: 22px 24px; }
+.hero::before { mask-image: linear-gradient(90deg, transparent 40%, rgba(0, 0, 0, 0.36) 60%, #000 88%); }
+[data-theme="light"] .hero::before { mask-image: linear-gradient(90deg, transparent 44%, rgba(0, 0, 0, 0.44) 68%, #000 94%); }
+.hero h1 { font-weight: 600; letter-spacing: -0.02em; }
+.hero-sublink {
+  display: inline-flex; align-items: center; gap: 5px; width: fit-content;
+  padding: 0; border: 0; background: transparent; color: var(--hero-muted); font-size: 14px; font-weight: 500;
+}
+.hero-sublink:hover { color: var(--hero-ink); }
+.hero-status { border-color: var(--edge); background: color-mix(in srgb, var(--hero-base) 85%, transparent); }
+
+/* Borderless 7-Day Strip (only Today wears solid capsule) */
+.hero-week { border-top: 1px solid var(--rule); padding-top: 12px; width: min(100%, 440px); }
+.hero-week-head > span { background: transparent; padding: 0; }
+.hero-week-head b, .week-detail-btn { background: transparent; border-color: var(--edge); }
+.week-pill {
+  border: 0; border-radius: 14px; background: transparent; min-height: 50px; padding: 6px 2px;
+}
+.week-pill:hover:not(:disabled):not(.is-today) { background: var(--inset); }
+.week-pill.is-future { border: 0; background: transparent; opacity: 1; }
+.week-pill.is-future span { color: var(--hero-muted); }
+.week-pill.is-future b { color: var(--hero-ink); opacity: 0.78; }
+.week-pill.is-today { background: var(--white-button); border-radius: 14px; }
+.week-pill.is-today span, .week-pill.is-today b { color: var(--bg); }
+.week-pill.is-active i { background: var(--ink); }
+.week-pill.is-today i { background: var(--bg); }
+.week-pill.is-planned i { border-color: var(--muted); }
+.week-pill.is-manual-schedule i { border-color: var(--ink); background: transparent; }
+
+/* Signature Today Hub */
+.overview-lead { gap: 16px; }
+.today-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: auto 1fr; gap: 12px; }
+.today-training {
+  grid-column: 1 / -1;
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px;
+  padding: 14px 16px; border: 1px solid var(--edge); border-radius: 20px; background: var(--bg);
+  text-align: left; width: 100%;
+}
+.today-training:hover { border-color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.play-squircle {
+  width: 50px; height: 50px; border-radius: 14px; display: grid; place-items: center; flex: none;
+  background: var(--white-button); color: var(--bg);
+}
+.today-training-main { display: grid; gap: 2px; min-width: 0; }
+.today-caption { display: inline-flex; align-items: center; justify-content: flex-start; gap: 6px; font: 11px/1.2 var(--mono); color: var(--muted); }
+.today-caption .training-led { width: 6px; height: 6px; }
+.today-training-main strong { font-size: 16px; font-weight: 600; color: var(--ink); margin: 0; }
+.today-training-main small { font-size: 12px; color: var(--muted); }
+.today-training > svg { color: var(--muted); flex: none; }
+
+.today-tile {
+  display: grid; align-content: space-between; gap: 6px; min-width: 0;
+  padding: 16px; border: 1px solid var(--edge); border-radius: 18px; background: var(--bg); text-align: left;
+}
+.today-tile:hover { border-color: color-mix(in srgb, var(--ink) 45%, transparent); }
+.today-tile .tile-head { font-size: 12px; color: var(--muted); }
+.today-tile strong { display: flex; align-items: baseline; gap: 5px; margin: 2px 0 0; min-width: 0; font-weight: 500; }
+.today-tile .matrix { font-size: clamp(22px, 2.1vw, 30px); line-height: 1; color: var(--ink); }
+.today-tile strong em { font: 12px var(--mono); color: var(--muted); font-style: normal; }
+.today-tile small { font: 11px var(--mono); color: var(--muted); }
+.tile-badge { background: transparent; border-color: var(--edge); color: var(--muted); }
+.mini-spark { width: 100%; height: 28px; display: block; margin-top: 2px; overflow: visible; }
+
+/* Sculptural Hardware KPI Band */
+.kpis { background: var(--bg); border: 1px solid var(--edge); border-radius: 18px; overflow: hidden; margin-bottom: 18px; }
+.kpi { min-height: 98px; padding: 16px 18px; }
+.kpi + .kpi { border-left: 1px solid var(--rule); }
+.kpi > div { font-size: 12px; color: var(--muted); }
+.kpi > strong { margin: 8px 0 8px; gap: 6px; font-weight: 500; }
+.kpi-num { display: inline-flex; align-items: baseline; max-width: 100%; min-width: 0; }
+.kpi-num .matrix { font-size: clamp(20px, 1.9vw, 26px); line-height: 1; color: var(--ink); }
+.comparison {
+  display: inline-flex; align-items: center; border: 1px solid var(--edge); border-radius: 6px;
+  padding: 2px 7px; font: 11px/1.3 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums;
+}
+.comparison.gain { color: var(--ink); border-color: color-mix(in srgb, var(--ink) 32%, transparent); font-weight: 500; }
+
+/* Framed Hardware Widgets vs. Open Unboxed Lists */
+.dashboard, .dashboard-row { gap: 16px; }
+.panel, .routine-card, .badge-card, .today-apple, .apple-daily-strip, .coach-summary-strip,
+.apple-overview-ribbon, .scale-hero-card, .bodyfat-card, .plan-shortcut {
+  background: var(--bg); border: 1px solid var(--edge); border-radius: 18px; padding: 18px 20px; box-shadow: none;
+}
+.panel.recent, .history-entries, .weight-log, .panel.meal-card, .panel.meal-templates-panel,
+.panel.analytics-panel, .panel.badges-strip, .panel.calendar-detail, .settings-content .panel {
+  background: transparent; border: 0; border-top: 1px solid var(--edge); border-radius: 0; padding: 18px 0;
+}
+.panel.meal-card { padding: 14px 0 8px; }
+.history-entries, .weight-log { padding: 0; border-top-color: var(--rule); }
+.panel.recent { margin-top: 18px; padding-bottom: 4px; }
+.settings-content .form-section { background: transparent; border: 0; border-top: 1px solid var(--rule); border-radius: 0; padding: 14px 0 4px; }
+.panel-option-row { background: transparent; border: 0; border-bottom: 1px solid var(--rule); border-radius: 0; padding: 9px 4px; }
+.toggle-row { background: transparent; border: 1px solid var(--rule); border-radius: 12px; }
+.plan-rationale { background: transparent; border: 0; border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); border-radius: 0; padding: 0; }
+.analytics-subnav { border-top: 0; padding: 2px 0 12px; }
+.kpi-card + .kpi-card, .apple-ribbon-cell { border-color: var(--rule); border-style: solid; }
+.overview-more > summary {
+  background: transparent; border: 0; border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge);
+  border-radius: 0; padding: 12px 0;
+}
+.overview-more > summary:hover { background: transparent; }
+.record-icon { width: auto; height: auto; background: none; border: 0; border-radius: 0; }
+.routine-card.is-next { border-color: color-mix(in srgb, var(--ink) 55%, transparent); }
+.plan-next-tag { color: var(--ink); }
+.plan-shortcut .shortcut-meta i { background: var(--ink); }
+.weight-summary { border-color: var(--edge); }
+.apple-weight-sync-strip { border: 0; border-top: 1px solid var(--rule); border-radius: 0; background: transparent; padding: 12px 0 0; }
+
+/* Charts: Capsule Bars, Hollow Line Nodes & Single Signal Red Indicator */
+.chart-info strong .matrix { font-size: clamp(22px, 2.3vw, 30px); line-height: 1; color: var(--ink); }
+.bars, .panel-load .bars, .panel-load .bar-latest { fill: var(--ink); }
+.bar-latest-dot { fill: var(--red); }
+.trace.primary { stroke: var(--ink); stroke-width: 1.8; }
+.trace.secondary { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 2 4; }
+.node-primary { fill: var(--bg); stroke: var(--ink); stroke-width: 2; }
+.node-secondary { fill: var(--muted); }
+.chart-hit:hover, .chart-hit.is-active, .chart-hit:focus-visible { fill: color-mix(in srgb, var(--ink) 12%, transparent); stroke: var(--ink); }
+.chart-readout, .load-delta.is-gain { color: var(--ink); }
+.legend i.red { background: var(--ink); }
+.panel-load .legend i.red { background: var(--red); }
+.legend i.faded { background: var(--soft); opacity: 0.65; }
+
+/* Monochrome Meters & Muscle Atlas */
+.thin-meter { display: block; width: 100%; height: 3px; border-radius: 999px; background: var(--rule); overflow: hidden; }
+.thin-meter > i { display: block; height: 100%; border-radius: 999px; background: var(--ink); transition: width .2s ease; }
+.dot-meter { display: flex; align-items: center; justify-content: space-between; gap: 3px; width: 100%; margin-top: 8px; }
+.dot-meter i { flex: 1 1 auto; max-width: 5px; min-width: 2px; height: 5px; border-radius: 999px; background: var(--soft); opacity: 0.35; border: 0; }
+.dot-meter i.lit { background: var(--ink); opacity: 1; }
+
+.atlas-pill { background: transparent; border-color: var(--edge); color: var(--muted); }
+.atlas-layer.is-hot { background: var(--ink); }
+.atlas-layer.is-hovered, .atlas-layer.is-selected { background: var(--red); opacity: 0.95; }
+.muscle-line.is-selected { border-color: var(--edge); background: var(--inset); }
+.muscle-line.is-selected > span:first-child { color: var(--red-ink); }
+
+/* Diet & Weight Typography */
+.diet-energy .matrix { font-size: clamp(32px, 3.6vw, 44px); line-height: 1; color: var(--ink); }
+.diet-macros-list { display: grid; gap: 12px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.macro-row { display: grid; gap: 6px; }
+.macro-row-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 13px; }
+.macro-row-head span { color: var(--muted); }
+.macro-row-head strong { font: 550 13px/1.2 var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
+.macro-row-head strong small { font-weight: 400; color: var(--muted); }
+.weight-number .matrix { font-size: clamp(34px, 4.2vw, 48px); line-height: 1; color: var(--ink); }
+
+/* Signal-Only Red Restraint Across Sub-Pages & Controls */
+input.switch[type="checkbox"]:checked { background: var(--white-button); border-color: var(--white-button); }
+input.switch[type="checkbox"]:checked::after { background: var(--bg); }
+.heatmap button.worked { background: var(--ink); border-color: var(--ink); }
+.heatmap button[aria-pressed="true"] { outline: 2px solid var(--red); outline-offset: 1px; }
+.heatmap-open:hover, .heatmap-add, .heatmap-add:hover { color: var(--ink); }
+.feeling-split .seg-balanced, .feeling-dot.is-balanced { background: var(--muted); }
+.led-work { background: var(--ink); }
+.led-plan { border-color: var(--muted); }
+.cal-cell-leds em, .cal-mast-matrix { color: var(--muted); }
+.calendar-grid .cal-cell.has-manual-plan { border-color: var(--edge); }
+.calendar-grid .cal-cell.is-today .cal-day-num { background: var(--white-button); color: var(--bg); }
+.dossier-today-chip { border-color: var(--edge); background: var(--inset); color: var(--ink); }
+.diet-done, .ai-inline-btn, .coach-summary-head, .apple-line .record-icon, .apple-status,
+.apple-plan-result > svg, .apple-baseline-note svg, .sci-insight-head { color: var(--ink); }
+.sci-insight-list li::before { background: var(--muted); }
+.apple-telemetry .is-heart span svg, .apple-list-btn > span:first-child svg, .apple-daily-head > span svg,
+.more-quick-btn svg, .ai-tool-btn svg,
+.exercise-instructions li::marker, .pose-grid figcaption span, .biblio-takeaway svg { color: var(--muted); }
+.pose-anim-hero figcaption span, .shortcut-tag, .status-pill {
+  background: var(--inset); border-color: var(--edge); color: var(--muted);
+}
+.workout-accent, .diet-accent, .weight-accent { background: var(--inset); color: var(--ink); }
+[data-theme="dark"] .diet-accent, [data-theme="dark"] .weight-accent { color: var(--ink); }
+.badge-card.is-unlocked { background: var(--bg); }
+.badge-card.is-unlocked .badge-dot { background: var(--ink); border-color: var(--ink); }
+.badge-mini.is-unlocked small, .badge-pct, .badge-card.is-unlocked .badge-foot > span,
+.badge-modal.is-unlocked .badge-modal-progress b { color: var(--ink); }
+.badge-modal.is-unlocked .badge-stage-status { border-color: var(--edge); color: var(--ink); }
+.badge-modal.is-unlocked .badge-stage-status i { background: var(--ink); }
+.badge-modal.is-unlocked .badge-stage {
+  background-image: radial-gradient(var(--edge) 1px, transparent 1px); background-size: 12px 12px;
+}
+.kpi-pill.is-sweet { color: var(--ink); border-color: var(--edge); background: var(--inset); }
+.zone-bar.sweet { background: var(--muted); }
+.muscle-dose-bar.is-sweet, .apple-comp-bar .comp-lean, .apple-activity-track i,
+.apple-gauge-pin.is-sweet, .ipf-level .dot.is-sweet { background: var(--ink); }
+.apple-gauge-opt { background: color-mix(in srgb, var(--ink) 20%, transparent); }
+.apple-readiness-banner.is-sweet .apple-readiness-matrix { color: var(--ink); }
+.apple-source-tag.is-device { background: var(--inset); color: var(--ink); border-color: var(--edge); }
+.apple-inline-sync { border-color: var(--edge); color: var(--ink); }
+.apple-delta-tag.is-warn, .apple-trend-meta b.is-down { color: var(--muted); }
+.more-links a[aria-current="page"] svg:last-child { color: var(--ink); }
+.record-line:hover strong { color: var(--ink); }
+
+@media (min-width: 851px) {
+  .diet-layout, .weight-layout, .calendar-layout { column-gap: 36px; }
+  .meal-grid { gap: 12px 32px; }
+  .routine-grid { gap: 14px 20px; }
+  .badge-grid { gap: 14px 20px; }
+}
+
+@media (max-width: 630px) {
+  .sidebar {
+    inset: auto 0 0; width: auto; border: 0; border-top: 1px solid var(--edge); border-radius: 0;
+    padding: 4px 6px calc(4px + env(safe-area-inset-bottom));
+    background: color-mix(in srgb, var(--bg) 92%, transparent);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    box-shadow: none;
+  }
+  .mobile-nav :is(a, button)[aria-current]::after { background: var(--ink); }
+  .hero { padding: 18px 16px; border-radius: 18px; }
+  .today-strip { gap: 10px; }
+  .today-training { padding: 12px 14px; gap: 12px; border-radius: 18px; }
+  .play-squircle { width: 44px; height: 44px; border-radius: 12px; }
+  .today-tile { padding: 14px; border-radius: 16px; }
+  .today-tile .matrix { font-size: clamp(20px, 6vw, 26px); }
+  .kpis { border-radius: 16px; }
+  .kpi { padding: 13px 14px; min-height: 86px; }
+  .kpi-num .matrix { font-size: clamp(18px, 5vw, 23px); }
+  .kpi:nth-child(odd) { padding-left: 14px; border-left: 0; }
+  .kpi:nth-child(n+3) { border-top: 1px solid var(--rule); }
+  .panel, .routine-card, .badge-card, .today-apple, .apple-daily-strip, .plan-shortcut { padding: 15px 16px; border-radius: 16px; }
+  .panel.recent, .panel.analytics-panel, .panel.meal-card, .panel.meal-templates-panel,
+  .panel.badges-strip, .panel.calendar-detail, .settings-content .panel,
+  .history-entries, .weight-log { padding-left: 0; padding-right: 0; border-radius: 0; }
+}
+
+/* Analytics Sub-navigation & Progressive Disclosure Drawers */
+.analytics-subnav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 10px 0;
+  border-top: 1px solid var(--edge);
+  border-bottom: 1px solid var(--edge);
+}
+.analytics-subnav .segments {
+  flex-wrap: wrap;
+}
+.analytics-subnav-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.sci-sub-drawer {
+  margin-top: 12px;
+  border-top: 1px dotted var(--rule);
+  padding-top: 10px;
+}
+.sci-sub-drawer.is-compact {
+  margin-top: 8px;
+  padding-top: 8px;
+}
+.sci-sub-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+.sci-sub-summary::-webkit-details-marker {
+  display: none;
+}
+.sci-sub-summary span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink);
+}
+.sci-sub-summary small {
+  font: 11px var(--mono);
+  color: var(--muted);
+  padding: 2px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+}
+.sci-sub-drawer[open] > .sci-sub-summary {
+  margin-bottom: 10px;
+}
+.sci-sub-body {
+  display: grid;
+  gap: 10px;
+}
+
+/* Ironlog 270° Segmented Telemetry Dial ("铁记三环闭环仪") */
+.iron-dial {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: 168px minmax(0, 1fr);
+  align-items: center;
+  gap: 20px;
+  padding: 14px 20px;
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  background: var(--bg);
+}
+.iron-dial-stage {
+  position: relative;
+  width: 152px;
+  height: 144px;
+  justify-self: center;
+  display: grid;
+  place-items: center;
+}
+.iron-dial-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.iron-dial-svg .dial-tick {
+  stroke: var(--soft);
+  stroke-width: 1.3;
+  opacity: 0.6;
+}
+.dial-track {
+  fill: none;
+  stroke: var(--rule);
+  stroke-width: 8.5;
+  stroke-linecap: butt;
+}
+.dial-fill {
+  fill: none;
+  stroke-width: 8.5;
+  stroke-linecap: butt;
+}
+.dial-fill.is-red {
+  stroke: var(--red);
+}
+.dial-fill.is-ink {
+  stroke: var(--ink);
+}
+.dial-fill.is-silver {
+  stroke: var(--muted);
+}
+.dial-pin {
+  stroke: var(--bg);
+  stroke-width: 1.8;
+}
+.dial-pin.is-red {
+  fill: var(--red);
+}
+.dial-pin.is-ink {
+  fill: var(--ink);
+}
+.dial-pin.is-silver {
+  fill: var(--muted);
+}
+.iron-dial-core {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-top: 4px;
+  pointer-events: none;
+  text-align: center;
+}
+.iron-dial-core strong {
+  display: inline-flex;
+  align-items: baseline;
+  color: var(--ink);
+}
+.iron-dial-core strong .matrix {
+  font-size: 24px;
+  line-height: 1;
+  color: var(--ink);
+}
+.iron-dial-core strong em {
+  font: 500 12px/1 var(--mono);
+  font-style: normal;
+  color: var(--muted);
+  margin-left: 3px;
+  letter-spacing: 0;
+}
+.iron-dial-legend {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0;
+  align-items: stretch;
+  min-width: 0;
+}
+.dial-pill {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: start;
+  column-gap: 10px;
+  row-gap: 4px;
+  width: 100%;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  text-align: left;
+}
+.dial-pill + .dial-pill {
+  border-left: 1px solid var(--rule);
+  border-radius: 0;
+}
+.dial-pill:hover {
+  background: var(--inset);
+}
+.dial-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-top: 4px;
+}
+.dial-dot.is-red {
+  background: var(--red);
+}
+.dial-dot.is-ink {
+  background: var(--ink);
+}
+.dial-dot.is-silver {
+  background: var(--muted);
+}
+.dial-pill-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.dial-pill-copy small {
+  font: 500 12px/1.2 var(--font);
+  color: var(--muted);
+}
+.dial-pill-copy small b {
+  font: 600 12px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+.dial-pill-copy strong {
+  font: 600 16px/1.25 var(--mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: visible;
+}
+.dial-pill > em {
+  grid-column: 2;
+  font: 12px/1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
+  font-style: normal;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@media (max-width: 850px) {
+  .iron-dial {
+    grid-template-columns: 144px minmax(0, 1fr);
+    gap: 14px;
+    padding: 14px 16px;
+  }
+  .iron-dial-stage {
+    width: 144px;
+    height: 136px;
+  }
+  .iron-dial-legend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dial-pill {
+    grid-template-columns: 8px minmax(0, 1fr) auto;
+    grid-template-rows: auto;
+    align-items: center;
+    padding: 8px 6px;
+  }
+  .dial-pill + .dial-pill {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
+  }
+  .dial-dot {
+    margin-top: 0;
+  }
+  .dial-pill-copy strong {
+    font-size: 14px;
+  }
+  .dial-pill > em {
+    grid-column: auto;
+    align-self: center;
+  }
+}
+@media (max-width: 630px) {
+  .iron-dial {
+    margin-top: 10px;
+    grid-template-columns: 122px minmax(0, 1fr);
+    gap: 12px;
+    padding: 12px;
+    border-radius: 16px;
+  }
+  .iron-dial-stage {
+    width: 122px;
+    height: 116px;
+  }
+  .iron-dial-core strong .matrix {
+    font-size: 19px;
+  }
+  .dial-pill > em {
+    display: none;
+  }
+}
+
+/* Mobile Touch & Swipe Gesture Layers (Workout Sets, Diet Rows, Weight Rows) */
+.set-row {
+  position: relative;
+  touch-action: pan-y;
+}
+.set-swipe-bg {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font: 600 12px/1 var(--font);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+  z-index: 0;
+}
+.set-swipe-bg.is-done-hint {
+  left: -92px;
+  width: 88px;
+  justify-content: flex-start;
+  background: var(--white-button);
+  color: var(--bg);
+}
+.set-swipe-bg.is-del-hint {
+  right: -92px;
+  width: 88px;
+  justify-content: flex-end;
+  background: var(--red);
+  color: #fff;
+}
+.set-row.is-swiping-right .set-swipe-bg.is-done-hint,
+.set-row.is-swiping-left .set-swipe-bg.is-del-hint {
+  opacity: 1;
+}
+.set-swipe-tip {
+  font-size: 11px;
+  color: var(--soft);
+  margin-left: auto;
+  display: none;
+}
+@media (hover: none), (max-width: 630px) {
+  .set-swipe-tip {
+    display: inline-block;
+  }
+}
+
+.swipe-row {
+  position: relative;
+  overflow: hidden;
+  border-radius: 8px;
+  touch-action: pan-y;
+}
+.swipe-row + .swipe-row .record-line {
+  border-top: 1px solid var(--rule);
+}
+.swipe-row .record-line {
+  position: relative;
+  z-index: 1;
+  background: var(--bg);
+}
+.swipe-bg {
+  position: absolute;
+  inset: 1px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  font: 600 12px/1 var(--font);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease;
+  z-index: 0;
+  border-radius: 8px;
+}
+.swipe-bg.is-copy-hint {
+  justify-content: flex-start;
+  background: var(--inset);
+  border: 1px solid var(--edge);
+  color: var(--ink);
+}
+.swipe-bg.is-del-hint {
+  justify-content: flex-end;
+  background: var(--red);
+  color: #fff;
+}
+.swipe-row.is-swiping-right .swipe-bg.is-copy-hint,
+.swipe-row.is-swiping-left .swipe-bg.is-del-hint {
+  opacity: 1;
+}
+
+/* ==== Sub-Page Clarity & Structure Pass ==== */
+
+/* 1. Analytics Subnav, ACWR Legend & Deck Rhythm */
+.analytics-subnav {
+  border-top: 0;
+  border-bottom: 1px solid var(--edge);
+  padding: 4px 0 14px;
+  margin-bottom: 18px;
+}
+.acwr-gauge-strip {
+  margin: 12px 0 16px;
+  padding-top: 28px;
+}
+.acwr-zone-meter {
+  padding-top: 0;
+  height: 6px;
+  align-items: center;
+}
+.acwr-zone-meter .zone-bar {
+  height: 6px;
+  min-height: 6px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+}
+.acwr-pointer {
+  top: auto;
+  bottom: 10px;
+  flex-direction: column-reverse;
+}
+.acwr-pointer b {
+  margin-top: 0;
+  margin-bottom: 2px;
+}
+.acwr-zone-legend {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 10px;
+  font: 11px/1.3 var(--mono);
+  color: var(--muted);
+}
+.analytics-deck {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px 36px;
+}
+@media (max-width: 1180px) {
+  .analytics-deck {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.apple-signal-top, .inol-top, .physio-top {
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+.kpi-pill {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.muscle-dose-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--rule);
+}
+.muscle-dose-bar {
+  border-radius: 999px;
+}
+.muscle-dose-advice {
+  font-size: 11.5px;
+  color: var(--soft);
+}
+.sci-insight-box {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  padding: 12px 0 0;
+}
+
+/* 2. Exercise Catalogue: Single Top Toolbar & Full-Width Gallery */
+.catalogue-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+.catalogue-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+.catalogue-toolbar .search {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.catalogue-toolbar select {
+  min-height: 40px;
+  border-radius: 999px;
+  background-color: var(--bg);
+  padding: 8px 34px 8px 14px;
+  line-height: 1.35;
+  font-size: 13px;
+  width: auto;
+}
+.catalogue-pills-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.catalogue-pills-bar .muscle-pills {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+.catalogue-pills-bar .catalogue-status {
+  flex: none;
+  margin: 0;
+  font: 12px var(--mono);
+  color: var(--muted);
+}
+.tile-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 200px), 1fr));
+  gap: 12px;
+}
+.exercise-tile {
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  padding: 10px;
+}
+.exercise-art {
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--rule) 0.7px, transparent 0.7px);
+}
+@media (max-width: 630px) {
+  .catalogue-toolbar .segments {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .catalogue-toolbar .segments button {
+    padding-inline: 5px;
+    font-size: 11.5px;
+    white-space: nowrap;
+  }
+  .catalogue-toolbar select {
+    flex: 1;
+  }
+  .tile-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+/* 3. Workout History: Monthly Chapters & Pagination */
+.history-month {
+  display: grid;
+  gap: 0;
+  margin-top: 18px;
+}
+.history-month:first-of-type {
+  margin-top: 6px;
+}
+.history-month-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--edge);
+}
+.history-month-head h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.history-month-head span {
+  font: 12px var(--mono);
+  color: var(--soft);
+}
+.history-day {
+  border-top: 1px solid var(--rule);
+  padding: 12px 0;
+}
+.history-month > .history-day:first-of-type {
+  border-top: 0;
+}
+.history-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 18px;
+}
+
+/* 4. Calendar Dossier & Compact Apple Health Strip */
+.dossier-meal-list {
+  gap: 0;
+}
+.dossier-meal-row {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  padding: 9px 2px;
+}
+.dossier-meal-row:first-child {
+  border-top: 0;
+}
+.dossier-meal-row:hover {
+  background: var(--inset);
+  border-radius: 8px;
+}
+.dossier-workout-card, .dossier-kcal-summary, .dossier-kpis {
+  background: var(--bg);
+  border-color: var(--edge);
+  border-radius: 14px;
+}
+.apple-daily-strip.is-compact {
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--rule);
+  border-radius: 0;
+  padding: 12px 0 0;
+}
+.apple-daily-strip.is-compact .apple-daily-pills {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  background: var(--bg);
+  border-color: var(--rule);
+}
+.apple-daily-strip.is-compact .apple-daily-pill {
+  padding: 8px 9px;
+}
+.apple-daily-strip.is-compact .apple-daily-pill strong {
+  font-size: 13px;
+}
+
+/* 5. Plan, Diet, Badges & Settings Cohesion */
+.plan-summary {
+  border-bottom: 0;
+  padding-bottom: 4px;
+}
+@media (min-width: 851px) {
+  .diet-summary {
+    position: sticky;
+    top: 18px;
+  }
+}
+.badge-section-head {
+  border-bottom: 1px solid var(--rule);
+}
+.badge-sections {
+  gap: 28px;
+}
+.settings-sections .segments {
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  padding: 6px;
+}
+
+/* ==== Modals, Logging Flows & Light Theme Polish ==== */
+
+/* Dialog & Logging Surfaces */
+dialog {
+  background: var(--bg);
+  border: 1px solid var(--edge);
+  border-radius: 20px;
+}
+.dialog-head {
+  background: var(--bg);
+}
+.meal-segmented-control {
+  background: var(--bg);
+  border-color: var(--edge);
+  border-radius: 12px;
+}
+.meal-pill[aria-pressed="true"] {
+  background: var(--white-button);
+  color: var(--bg);
+  box-shadow: none;
+  font-weight: 600;
+}
+.preset-chip {
+  background: var(--bg);
+}
+.preset-chip.is-recent {
+  border-color: var(--soft);
+  background: var(--inset);
+}
+.preset-tag {
+  font: 600 10px/1 var(--mono);
+  color: var(--muted);
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.macro-card {
+  background: var(--bg);
+  border-color: var(--edge);
+  border-radius: 14px;
+}
+.macro-card:focus-within {
+  border-color: var(--ink);
+  background: var(--bg);
+  box-shadow: none;
+}
+.macro-card-value input {
+  font: 600 24px/1 var(--mono);
+}
+.macro-calc-bar {
+  background: transparent;
+  border: 1px dashed var(--edge);
+}
+.macro-calc-apply {
+  color: var(--ink);
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+.scale-display input {
+  font: 550 40px/1 var(--mono);
+  letter-spacing: -0.02em;
+}
+.scale-unit {
+  font: 500 16px var(--mono);
+}
+.scale-stepper-btn,
+.date-pill,
+.micro-chip {
+  background: var(--bg);
+  box-shadow: none;
+}
+.session-overview,
+.training-details,
+.finish-panel,
+.ai-result-box,
+.ai-preview-list,
+.ai-setup-box,
+.ai-status-card,
+.ai-adapt-item {
+  background: var(--bg);
+  border-color: var(--edge);
+  border-radius: 14px;
+}
+.session-control-stack,
+.dialog-form:not(.is-live) .session-dock,
+.rest-dial-overlay,
+.ai-adapt-overlay,
+.picker-overlay,
+.session-menu-overlay {
+  background: var(--bg);
+}
+.stepper-pill {
+  box-shadow: none;
+}
+
+/* Monochrome restraint inside Workout, Plan & AI dialogs */
+.exercise-1rm,
+.exercise-cue-details summary,
+.exercise-cue-body ol li::marker,
+.picker-create-custom,
+.set-reference button,
+.stepper-pill.stepper-clone,
+.undo-banner button,
+.ai-adapt-btn,
+.forecast-num i {
+  color: var(--muted);
+  border-color: var(--edge);
+}
+.exercise-cue-details summary,
+.set-reference button,
+.stepper-pill.stepper-clone,
+.undo-banner button,
+.ai-adapt-btn {
+  color: var(--ink);
+}
+.rir-toggle[aria-pressed="true"],
+.session-step-tools button[aria-pressed="true"],
+.rest-quick-pills button[aria-pressed="true"],
+.feeling-choices input:checked + span {
+  background: var(--white-button);
+  border-color: var(--white-button);
+  color: var(--bg);
+  font-weight: 600;
+}
+.switch-chip:has(input:checked),
+.workout-picker[open] {
+  border-color: var(--ink);
+}
+.exercise-complete-banner {
+  background: var(--workout-card);
+  border-color: var(--edge);
+  color: var(--ink);
+}
+.ai-pill.is-ready {
+  border-color: var(--ink);
+  background: var(--inset);
+  color: var(--ink);
+}
+
+/* Motion GIF / Pose frames in Dark Mode */
+:root:not([data-theme="light"]) .workout-motion-media,
+:root:not([data-theme="light"]) .pose-anim-hero img,
+:root:not([data-theme="light"]) .cue-frames img {
+  background: #dcdcd8;
+}
+:root:not([data-theme="light"]) .workout-motion-media img.workout-motion-gif {
+  mix-blend-mode: multiply;
+}
+
+/* Light Theme Hardware Elevation */
+:root[data-theme="light"] :is(
+  dialog, .dialog-head, .session-control-stack, .dialog-form:not(.is-live) .session-dock, .rest-dial-overlay, .ai-adapt-overlay, .picker-overlay, .session-menu-overlay,
+  .today-training, .today-tile, .kpis, .iron-dial,
+  .panel, .routine-card, .badge-card, .today-apple, .apple-daily-strip,
+  .coach-summary-strip, .apple-overview-ribbon, .plan-shortcut, .exercise-tile, .exercise-art,
+  .dossier-workout-card, .dossier-kcal-summary, .dossier-kpis, .settings-sections .segments,
+  .scale-hero-card, .bodyfat-card, .macro-card, .session-overview, .finish-panel,
+  .preset-chip, .scale-stepper-btn, .date-pill, .micro-chip, .ai-result-box, .ai-preview-list, .ai-setup-box, .ai-status-card
+) {
+  background: var(--surface);
+}
+:root[data-theme="light"] .date-pill[aria-pressed="true"] {
+  background: var(--white-button);
+  border-color: var(--white-button);
+  color: var(--bg);
+}
+:root[data-theme="light"] :is(
+  .panel.recent, .history-entries, .weight-log, .panel.meal-card, .panel.meal-templates-panel,
+  .panel.analytics-panel, .panel.badges-strip, .panel.calendar-detail, .settings-content .panel,
+  .apple-daily-strip.is-compact
+) {
+  background: transparent;
+}
+:root[data-theme="light"] .node-primary {
+  fill: var(--surface);
+}
+:root[data-theme="light"] .badge-card.is-unlocked {
+  background: var(--surface);
+}
+:root[data-theme="light"] .quick-sheet-card {
+  background: var(--bg);
+}
+
+/* Numeric Spinners, Settings Panel Grouping & Mobile Polish */
+:is(.scale-display, .bodyfat-body, .macro-card-value) input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+:is(.scale-display, .bodyfat-body, .macro-card-value) input[type="number"]::-webkit-inner-spin-button,
+:is(.scale-display, .bodyfat-body, .macro-card-value) input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.panel-order-hint {
+  font-size: 12px;
+  margin: -4px 0 6px;
+}
+.panel-slot-tag {
+  font: 500 10.5px/1 var(--mono);
+  font-style: normal;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  padding: 3px 7px;
+  margin-left: 6px;
+}
+@media (max-width: 630px) {
+  .calendar-grid .cal-cell-work {
+    padding: 1px 2px;
+    font-size: 9.5px;
+  }
+  .cal-work-full { display: none; }
+  .cal-work-short { display: inline; }
+}
+
+/* Workspace Navigation Consolidation & Mobile Shortcuts */
+.workspace-tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 3px;
+  margin: 0 0 14px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--surface);
+}
+.workspace-tabs::-webkit-scrollbar {
+  display: none;
+}
+.workspace-tabs a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: color .15s ease, background-color .15s ease;
+}
+.workspace-tabs a:hover {
+  color: var(--ink);
+}
+.workspace-tabs a[aria-current="page"] {
+  background: var(--white-button);
+  color: var(--bg);
+  font-weight: 600;
+}
+.workspace-tab-count {
+  font: 600 11px/1 var(--mono);
+  opacity: 0.72;
+}
+.breadcrumb-group {
+  color: var(--muted);
+  transition: color .15s ease;
+}
+.breadcrumb-group:hover {
+  color: var(--ink);
+}
+.analytics-meta-bar {
+  margin-top: 16px;
+}
+.more-shortcuts-head {
+  margin: 14px 0 8px;
+  font: 600 11px/1 var(--mono);
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.more-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.more-shortcuts a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+.more-shortcuts a svg {
+  color: var(--muted);
+  flex: none;
+}
+.more-shortcuts a[aria-current="page"] {
+  border-color: var(--ink);
+  background: var(--inset);
+  font-weight: 600;
+}
+:root[data-theme="light"] .more-shortcuts a {
+  background: var(--bg);
+}
+:root[data-theme="light"] .more-shortcuts a[aria-current="page"] {
+  background: var(--inset);
+}
+@media (max-width: 630px) {
+  .workspace-tabs a {
+    padding: 0 12px;
+    font-size: 12.5px;
+  }
+}
+

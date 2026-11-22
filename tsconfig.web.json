@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "rootDirs": ["web/src", "web/types"],
+    "types": [],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "noResolve": false
+  },
+  "include": [
+    "web/src/*.js",
+    "web/types/*.d.ts"
+  ],
+  "exclude": [
+    "web/src/sw.js"
+  ]
+}

@@ -6,12 +6,30 @@ import sharp from "sharp";
 const root = new URL("../", import.meta.url);
 const src = new URL("web/src/", root);
 const out = new URL("web/dist/", root);
+
+async function bundleCss(entryUrl) {
+  const raw = await readFile(entryUrl, "utf8");
+  const importRe = /^@import\s+["'](\.[^"']+)["'];?\s*$/gm;
+  let result = "";
+  let lastIndex = 0;
+  for (const match of raw.matchAll(importRe)) {
+    result += raw.slice(lastIndex, match.index);
+    const childUrl = new URL(match[1], entryUrl);
+    result += await bundleCss(childUrl);
+    lastIndex = match.index + match[0].length;
+    if (raw[lastIndex] === "\r") lastIndex++;
+    if (raw[lastIndex] === "\n") lastIndex++;
+  }
+  result += raw.slice(lastIndex);
+  return result;
+}
+
 await mkdir(out, { recursive: true });
 await Promise.all((await readdir(src, { withFileTypes: true })).filter((file) => file.isFile()).map(async ({ name }) => {
   const inUrl = new URL(name, src);
   const outUrl = new URL(name, out);
   if ((name.endsWith(".js") && name !== "sw.js") || name.endsWith(".css")) {
-    const source = await readFile(inUrl, "utf8");
+    const source = name.endsWith(".css") ? await bundleCss(inUrl) : await readFile(inUrl, "utf8");
     const result = await transform(source, { loader: name.endsWith(".css") ? "css" : "js", minify: true, target: "es2020" });
     await writeFile(outUrl, result.code, "utf8");
   } else {

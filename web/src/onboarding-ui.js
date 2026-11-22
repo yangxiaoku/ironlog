@@ -12,7 +12,7 @@ const EQUIP_PRESETS = {
 
 const EQUIP_KEYS = ["barbell", "dumbbell", "machine", "cable", "bodyweight", "kettlebell", "band", "weighted"];
 
-export function renderWelcomeChecklist({ userId, data, currentDay, hasPlan = false, appleHealthConnected = false } = {}) {
+export function renderWelcomeChecklist({ userId = "", data = null, currentDay = null, hasPlan = false, appleHealthConnected = false } = {}) {
   if (!userId || localStorage.getItem(welcomeDismissedKey(userId)) === "1") return "";
   const setupDone = localStorage.getItem(setupSavedKey(userId)) === "1"
     || Boolean(data?.goals?.targetWeight != null)

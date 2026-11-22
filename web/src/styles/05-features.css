@@ -1,0 +1,1308 @@
+/* ============================================================
+   /goal Feature Enhancements
+   ============================================================ */
+
+/* 105-Badge Wall Filter, Search & Pinned Showcase */
+.badge-filters { margin-bottom: 10px; }
+.badge-subtoolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.badge-subtoolbar .segments { flex: none; }
+.badge-search { flex: 1 1 220px; max-width: 340px; min-height: 38px; }
+.badge-mini { position: relative; }
+.badge-mini.is-pinned { border-color: color-mix(in srgb, var(--red) 45%, var(--edge)); }
+.badge-mini-pin {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font: 600 9.5px/1 var(--font);
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
+  color: var(--red-ink);
+}
+.badge-card.is-pinned { border-color: color-mix(in srgb, var(--red) 50%, var(--edge)); }
+.badge-pin-tag {
+  font: 600 10.5px/1 var(--font);
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
+  color: var(--red-ink);
+}
+.badge-modal-actions {
+  margin-top: 6px;
+  display: flex;
+}
+.badge-modal-actions button {
+  width: 100%;
+  justify-content: center;
+  min-height: 42px;
+  gap: 6px;
+}
+
+/* Drop Sets ("drop") & Supersets ("supersetGroup") */
+.set-kind[data-type="drop"] {
+  border-color: color-mix(in srgb, #e59a24 68%, var(--edge));
+  background: color-mix(in srgb, #e59a24 10%, var(--surface));
+}
+.set-kind[data-type="drop"] .kind-pip { background: #e59a24; }
+.set-kind[data-type="drop"] span { color: #f5b942; font-weight: 600; }
+:root[data-theme="light"] .set-kind[data-type="drop"] span { color: #9a5d00; }
+
+.exercise-title-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.superset-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font: 650 11px/1.2 var(--mono);
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 48%, var(--edge));
+  color: var(--red-ink);
+  white-space: nowrap;
+}
+.exercise-jump button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.jump-ss-tag {
+  font: 700 10px/1 var(--mono);
+  font-style: normal;
+  padding: 2px 5px;
+  border-radius: 6px;
+  background: var(--red-wash);
+  color: var(--red-ink);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--edge));
+}
+.exercise-editor.has-superset {
+  border-left: 3px solid var(--red);
+}
+.exercise-subbar-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+.subbar-pill {
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.subbar-pill:hover { border-color: var(--soft); color: var(--ink); }
+.subbar-pill.is-active {
+  border-color: var(--ink);
+  background: var(--inset);
+  color: var(--ink);
+  font-weight: 600;
+}
+.subbar-pill.is-superset {
+  border-color: color-mix(in srgb, var(--red) 55%, var(--edge));
+  background: var(--red-wash);
+  color: var(--red-ink);
+  font-weight: 600;
+}
+
+/* Exercise Cue Notes, Inline History Dossier & Readiness Deload Banner */
+.exercise-cue-slot:empty { display: none; }
+.exercise-cue-pill {
+  margin: 4px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.exercise-cue-pill svg { color: var(--red-ink); flex: none; }
+
+.exercise-dossier {
+  margin: 6px 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--inset);
+  display: grid;
+  gap: 10px;
+}
+.dossier-note-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.dossier-note-row input {
+  flex: 1 1 200px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 9px;
+}
+.dossier-note-row button {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  flex: none;
+}
+.dossier-history-box {
+  display: grid;
+  gap: 8px;
+}
+.dossier-loading, .dossier-empty {
+  margin: 0;
+  font-size: 12px;
+}
+.dossier-chart-wrap {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  display: grid;
+  gap: 4px;
+}
+.dossier-chart-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.dossier-chart-head strong {
+  font: 650 12.5px var(--mono);
+  color: var(--red-ink);
+  font-variant-numeric: tabular-nums;
+}
+.dossier-sparkline {
+  width: 100%;
+  height: 54px;
+  display: block;
+}
+.dossier-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.dossier-history-list li {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  font-size: 12px;
+}
+.dossier-history-list time {
+  font: 600 11.5px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.dossier-history-list span {
+  font: 600 12px var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.dossier-history-list small {
+  font: 550 11px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.readiness-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+}
+.readiness-banner.is-warn {
+  border-color: color-mix(in srgb, var(--red) 48%, var(--edge));
+  background: var(--red-wash);
+}
+.readiness-banner-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 200px;
+}
+.readiness-banner-copy strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.readiness-banner.is-warn .readiness-banner-copy strong svg { color: var(--red-ink); }
+.readiness-banner-copy small {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.readiness-banner-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.readiness-banner-actions .secondary-button {
+  min-height: 34px;
+  padding: 0 11px;
+  font-size: 12.5px;
+}
+
+/* Workout Report Share Card Preview */
+.report-exercises article h4 {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.share-card-modal { gap: 14px; }
+.share-style-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 8px;
+}
+.share-style-tab {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .12s ease;
+}
+.share-style-tab strong { font-size: 13px; font-weight: 650; }
+.share-style-tab small { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.share-style-tab:hover { border-color: var(--edge-hi); }
+.share-style-tab.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--inset));
+}
+.share-style-tab.is-active strong { color: var(--accent); }
+.share-card-frame {
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  display: grid;
+  place-items: center;
+  transition: opacity .15s ease;
+}
+.share-card-frame[aria-busy="true"] { opacity: .65; }
+.dossier-share-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 6px;
+}
+.dossier-share-foot .secondary-button {
+  width: 100%;
+  justify-content: center;
+}
+.share-card-preview {
+  display: block;
+  width: auto;
+  max-width: 100%;
+  max-height: 60dvh;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  object-fit: contain;
+}
+.share-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.share-card-actions .primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+/* Diet Quick Hydration Box */
+.hydration-box {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dotted var(--rule);
+  display: grid;
+  gap: 8px;
+}
+.hydration-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.hydration-head strong {
+  font: 650 15px var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.hydration-head small {
+  font: 500 12px var(--mono);
+  color: var(--muted);
+}
+.hydration-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.hydration-reset {
+  margin-left: auto;
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Body Circumference Measurements */
+.measurements-panel {
+  margin-top: 14px;
+  display: grid;
+  gap: 12px;
+}
+.measurements-panel .panel-head p {
+  font-size: 12.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.measure-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+.measure-tile {
+  padding: 10px 11px;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--inset);
+  display: grid;
+  gap: 3px;
+}
+.measure-tile > span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.measure-tile > strong {
+  font: 700 19px/1.15 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.measure-tile > strong small {
+  font: 500 11px var(--font);
+  color: var(--muted);
+}
+.measure-diff {
+  font: 550 11px var(--mono);
+  color: var(--soft);
+  font-variant-numeric: tabular-nums;
+}
+.measure-diff.is-down { color: var(--red-ink); }
+.measure-history-list {
+  display: grid;
+  gap: 4px;
+}
+.measure-line {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 16px;
+  align-items: center;
+  gap: 10px;
+}
+.measure-line time {
+  font: 600 12px var(--mono);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.measure-line span strong {
+  font-size: 13px;
+  font-weight: 550;
+  color: var(--ink);
+}
+.measure-line span small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* Settings CSV Export */
+.csv-export-section {
+  margin: 14px 0 6px;
+  padding-top: 12px;
+  border-top: 1px dotted var(--rule);
+}
+.csv-export-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+.csv-export-grid button {
+  justify-content: center;
+  gap: 6px;
+  min-height: 40px;
+}
+
+:root[data-theme="light"] :is(.exercise-dossier, .measure-tile, .readiness-banner, .dossier-chart-wrap) {
+  background: var(--surface);
+}
+:root[data-theme="light"] .badge-pin-tag,
+:root[data-theme="light"] .badge-mini-pin {
+  background: color-mix(in srgb, var(--red) 10%, var(--bg));
+}
+
+.stepper-pill.is-hold-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--red-wash);
+  color: var(--red-ink);
+  border-color: color-mix(in srgb, var(--red) 55%, var(--edge));
+  font-weight: 700;
+}
+
+.swap-mode-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 4px 0 10px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
+  color: var(--ink);
+  font-size: 13px;
+}
+.swap-mode-banner span,
+.swap-mode-banner p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.swap-mode-banner .quiet {
+  min-height: 30px;
+  padding: 0 10px;
+  flex-shrink: 0;
+  background: var(--surface);
+  border-color: var(--edge);
+  font-size: 12px;
+}
+
+.drop-add-btn {
+  min-height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--muted);
+  border: 1px dashed var(--edge);
+  background: transparent;
+}
+.drop-add-btn:hover {
+  border-style: solid;
+  border-color: var(--soft);
+  color: var(--ink);
+  background: var(--inset);
+}
+
+.dossier-pct-strip {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dotted var(--rule);
+}
+.dossier-pct-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.dossier-pct-head span {
+  font-weight: 600;
+  color: var(--ink);
+}
+.dossier-pct-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dossier-pct-pills .stepper-pill {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 9px;
+  line-height: 1.2;
+}
+.dossier-pct-pills .stepper-pill b {
+  font: 650 12px/1.2 var(--mono);
+  color: var(--ink);
+}
+.dossier-pct-pills .stepper-pill small {
+  font: 500 11px/1.2 var(--mono);
+  color: var(--muted);
+}
+.dossier-pct-pills .stepper-pill:hover {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--edge));
+}
+
+.report-comparison-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 10px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  font-size: 12px;
+}
+.report-comparison-bar span {
+  color: var(--muted);
+}
+.report-comparison-bar b {
+  font: 650 13px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.report-comparison-bar b.is-up,
+.report-comparison-bar .is-up {
+  color: var(--red-ink);
+}
+.report-comparison-bar b.is-down,
+.report-comparison-bar .is-down {
+  color: var(--muted);
+}
+.report-comparison-bar small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.report-muscles {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dotted var(--edge);
+}
+.report-muscles-label {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 550;
+}
+.report-muscles-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.report-muscles-chips span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  font-size: 12px;
+  color: var(--muted);
+}
+.report-muscles-chips b {
+  font: 650 12px/1 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.workout-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 12px;
+  margin-bottom: 12px;
+}
+.workout-search {
+  flex: 1 1 240px;
+  min-width: 0;
+  max-width: 360px;
+}
+.workout-filter-bar .muscle-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+}
+.workout-filter-stats {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.workout-filter-stats b {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.routine-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.routine-head-actions [data-action="delete-workout-template"] {
+  min-height: 32px;
+  min-width: 32px;
+  padding: 0;
+  color: var(--muted);
+}
+.routine-head-actions [data-action="delete-workout-template"].danger {
+  color: var(--red-ink);
+  border-color: color-mix(in srgb, var(--red) 45%, var(--edge));
+  background: var(--red-wash);
+}
+
+/* Atlas 3-mode (Volume / Recovery / Recency) */
+.atlas-head-controls {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex-shrink: 0;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.atlas-readout-bar .atlas-pill {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.3;
+  background: var(--red-wash);
+  border-color: color-mix(in srgb, var(--red) 40%, var(--edge));
+  color: var(--red-ink);
+}
+.atlas-layer.is-toned { opacity: var(--heat, .55); }
+.atlas-layer.is-toned[data-tone="fatigued"] { background: var(--red); }
+.atlas-layer.is-toned[data-tone="recovering"] { background: #d97706; }
+.atlas-layer.is-toned[data-tone="ready"] { background: #10b981; }
+.atlas-layer.is-toned[data-tone="detrained"] { background: var(--soft); opacity: .28; }
+.atlas-layer.is-toned.is-dimmed { opacity: .16; }
+.atlas-layer.is-toned.is-hovered { opacity: .92; }
+.atlas-layer.is-toned.is-selected { opacity: 1; filter: saturate(1.15); }
+:root[data-theme="light"] .atlas-layer.is-toned[data-tone="recovering"] { background: #b45309; }
+:root[data-theme="light"] .atlas-layer.is-toned[data-tone="ready"] { background: #047857; }
+.muscle-line[data-tone] {
+  grid-template-columns: 40px minmax(36px, 1fr) auto;
+}
+.muscle-line[data-tone="fatigued"] .thin-meter i { background: var(--red); }
+.muscle-line[data-tone="recovering"] .thin-meter i { background: #d97706; }
+.muscle-line[data-tone="ready"] .thin-meter i { background: #10b981; }
+.muscle-line[data-tone="detrained"] .thin-meter i { background: var(--soft); }
+.muscle-line[data-tone="fatigued"] strong small { color: var(--red-ink); font-weight: 550; }
+.muscle-line[data-tone="recovering"] strong small { color: #f59e0b; font-weight: 550; }
+.muscle-line[data-tone="ready"] strong small { color: #10b981; font-weight: 550; }
+:root[data-theme="light"] .muscle-line[data-tone="recovering"] strong small { color: #b45309; }
+:root[data-theme="light"] .muscle-line[data-tone="ready"] strong small { color: #047857; }
+
+/* Rest-pause set type */
+.set-kind[data-type="rest_pause"] {
+  border-style: dotted;
+  border-color: color-mix(in srgb, #f59e0b 65%, var(--edge));
+  background: color-mix(in srgb, #f59e0b 9%, var(--surface));
+}
+.set-kind[data-type="rest_pause"] .kind-pip { background: #f59e0b; }
+.set-kind[data-type="rest_pause"] span { color: #fbbf24; font-weight: 600; }
+:root[data-theme="light"] .set-kind[data-type="rest_pause"] span { color: #b45309; }
+
+/* Visual Barbell Plate Sleeve & Inventory Popover */
+.plate-visual {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 24px;
+  padding: 0 4px;
+}
+.plate-bar-rod {
+  display: inline-block;
+  width: 10px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--soft);
+  margin-right: 1px;
+}
+.plate-disc {
+  display: inline-block;
+  border-radius: 2px;
+  width: 5px;
+  height: 14px;
+  background: var(--ink);
+  border: 1px solid rgba(0, 0, 0, .28);
+}
+.plate-disc[data-plate="25"] { width: 7px; height: 22px; background: var(--red); }
+.plate-disc[data-plate="20"] { width: 6px; height: 21px; background: #2563eb; }
+.plate-disc[data-plate="15"] { width: 6px; height: 19px; background: #eab308; }
+.plate-disc[data-plate="10"] { width: 5px; height: 17px; background: #16a34a; }
+.plate-disc[data-plate="5"] { width: 4px; height: 14px; background: var(--ink); }
+.plate-disc[data-plate="2_5"] { width: 4px; height: 12px; background: var(--muted); }
+.plate-disc[data-plate="1_25"] { width: 3px; height: 10px; background: var(--soft); }
+.plate-disc[data-plate="0_5"] { width: 3px; height: 8px; background: var(--soft); }
+
+.plate-config-pop {
+  flex-basis: 100%;
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--edge);
+}
+.plate-inv-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  font-size: 12px;
+}
+.plate-inv-row > span {
+  color: var(--muted);
+  min-width: 72px;
+  font-weight: 550;
+}
+.plate-inv-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.plate-inv-pills .stepper-pill[aria-pressed="true"] {
+  border-color: var(--red);
+  background: var(--red-wash);
+  color: var(--red-ink);
+  font-weight: 700;
+}
+
+/* Equipment Picker Row & Live Session Muscle Chips */
+.picker-equipment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+@media (max-width: 630px) {
+  .exercise-settings[open] { width: 100%; }
+}
+@media (max-width: 400px) {
+  .session-live-muscles { display: none !important; }
+}
+.session-live-muscles {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  font-size: 11px;
+}
+.live-muscles-tag {
+  color: var(--soft);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.session-live-muscles span:not(.live-muscles-tag) {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: var(--workout-card, var(--inset));
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.session-live-muscles b {
+  font: 650 11px/1 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Classic Starter Plans Grid (#plan -> 经典方案) */
+.starter-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 14px;
+}
+.starter-card {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.starter-card-head {
+  display: grid;
+  gap: 5px;
+}
+.starter-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.starter-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 42%, var(--edge));
+  color: var(--red-ink);
+  font: 600 11px var(--font);
+}
+.starter-card-meta small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.starter-equip-row,
+.starter-muscles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.starter-equip-row span,
+.starter-muscles span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.starter-muscles b {
+  font: 650 11.5px/1 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.starter-card details > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 34px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 550;
+}
+.starter-card details > summary::-webkit-details-marker { display: none; }
+.starter-card details[open] > summary svg:last-child { transform: rotate(90deg); }
+.starter-routines {
+  display: grid;
+  gap: 8px;
+  padding-top: 6px;
+}
+.starter-routine-block {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  display: grid;
+  gap: 5px;
+}
+.starter-routine-block strong { font-size: 12.5px; }
+.starter-routine-block ol {
+  margin: 0;
+  padding-left: 1.25em;
+  display: grid;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.starter-routine-block li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.starter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px dotted var(--rule);
+}
+.starter-actions .primary-button,
+.starter-actions .secondary-button {
+  flex: 1;
+  justify-content: center;
+}
+
+/* Third-party CSV Importer Modal */
+.csv-import-box {
+  display: grid;
+  gap: 12px;
+}
+.csv-file-drop {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 14px 12px;
+  border: 1px dashed var(--edge);
+  border-radius: 12px;
+  background: var(--inset);
+  cursor: pointer;
+  text-align: center;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+.csv-file-drop:hover {
+  border-color: var(--red);
+  background: var(--surface);
+}
+.csv-file-drop input[type="file"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  overflow: hidden;
+}
+.csv-file-drop span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.csv-file-drop small {
+  color: var(--muted);
+  font-size: 12px;
+}
+.csv-import-box textarea {
+  width: 100%;
+  font: 12px/1.45 var(--mono);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--ink);
+  resize: vertical;
+}
+.csv-import-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.csv-preview-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--inset);
+  border: 1px solid var(--edge);
+}
+.csv-preview-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.csv-preview-head small { color: var(--muted); font-size: 12px; }
+.csv-preview-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.csv-preview-stats > div {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  display: grid;
+  gap: 2px;
+}
+.csv-preview-stats span { font-size: 11px; color: var(--muted); }
+.csv-preview-stats strong { font: 650 16px/1.2 var(--mono); color: var(--ink); font-variant-numeric: tabular-nums; }
+.csv-preview-stats strong small { font: 400 11px var(--font); color: var(--muted); }
+.csv-custom-note,
+.csv-warn-note { font-size: 12px; margin: 0; }
+.csv-preview-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+}
+.csv-preview-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 10px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  font-size: 12px;
+}
+.csv-preview-list small { color: var(--muted); }
+
+/* Gym Equipment Preferences */
+.equip-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.equip-presets .quiet {
+  min-height: 30px;
+  padding: 0 11px;
+  font-size: 12px;
+  border: 1px solid var(--edge);
+}
+.equip-check-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.equip-check-pill {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.equip-check-pill input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+.equip-check-pill span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 12.5px;
+  transition: border-color .15s ease, background-color .15s ease, color .15s ease;
+}
+.equip-check-pill input:checked + span {
+  border-color: color-mix(in srgb, var(--red) 60%, var(--edge));
+  background: var(--red-wash);
+  color: var(--red-ink);
+  font-weight: 600;
+}
+.equip-check-pill input:focus-visible + span {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+/* Exercise Detail Dossier (KPIs, 1RM Sparkline, Cue Note, History) */
+.ex-detail-dossier {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--inset);
+  border: 1px solid var(--edge);
+}
+.ex-detail-dossier h3 {
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.ex-detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 8px;
+}
+.ex-detail-kpis > div {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  display: grid;
+  gap: 3px;
+}
+.ex-detail-kpis span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.ex-detail-kpis strong {
+  font: 650 17px/1.2 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ex-detail-kpis strong small {
+  font: 400 11px var(--font);
+  color: var(--muted);
+}
+.ex-detail-chart {
+  padding: 9px 10px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  display: grid;
+  gap: 4px;
+  color: var(--red-ink);
+}
+.ex-chart-head,
+.ex-chart-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ex-chart-head span { font-weight: 550; color: var(--ink); }
+.ex-detail-chart svg {
+  width: 100%;
+  height: 60px;
+  display: block;
+}
+.ex-detail-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ex-detail-note input {
+  flex: 1;
+  min-width: 0;
+}
+.ex-detail-note button {
+  flex-shrink: 0;
+}
+.ex-detail-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.ex-detail-history li {
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  display: grid;
+  gap: 5px;
+}
+.ex-hist-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  font-size: 12px;
+}
+.ex-hist-head b { font-family: var(--mono); color: var(--ink); }
+.ex-hist-head small { margin-left: auto; font-family: var(--mono); color: var(--muted); font-size: 11px; }
+.ex-hist-sets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.ex-hist-sets span {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  font: 550 11px var(--mono);
+  color: var(--muted);
+}
+
+/* Unilateral Badge & Plan Routine Muscles / Export-Import */
+.unilateral-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
+  color: var(--red-ink);
+  font: 600 11px var(--mono);
+  white-space: nowrap;
+}
+.routine-muscles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+.routine-muscles span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.routine-muscles b {
+  font: 650 11.5px/1 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.plan-summary-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.plan-import-box {
+  display: grid;
+  gap: 12px;
+}
+.plan-import-box textarea {
+  width: 100%;
+  font: 12px/1.45 var(--mono);
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--ink);
+  resize: vertical;
+}
+

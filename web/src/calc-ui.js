@@ -145,7 +145,7 @@ export function openStrengthCalculator({ open, dialog }) {
       heroEl.innerHTML = `<div class="calc-1rm-main"><span>估算极限 1RM</span><strong>${fmt(rmRoundedKg)} <small>kg</small></strong></div>
         <div class="calc-1rm-sub"><span>≈ ${fmt(rmLb)} lb</span>${rir > 0 ? `<span>按有效次数 ${effReps} 次折算</span>` : ""}</div>`;
       pctsEl.innerHTML = PCT_ZONES.map(([pct, repTxt, ratio]) => {
-        const loadKg = Math.max(2.5, Math.round((rmKg * ratio) / 2.5) * 2.5);
+        const loadKg = Math.max(2.5, Math.round((rmKg * Number(ratio)) / 2.5) * 2.5);
         return `<button type="button" class="calc-pct-btn${activePct === pct ? " is-active" : ""}" data-calc-pct="${pct}" data-calc-load="${loadKg}">
           <span class="calc-pct-top"><b>${pct}%</b><small>${repTxt}</small></span>
           <strong>${fmt(loadKg)} kg</strong>

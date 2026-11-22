@@ -2,55 +2,13 @@ import { $, $$, esc, fmt, today, workoutSeconds, field, input, inputGroup, optio
 import { createRestAudio, createRestTimer, elapsedAt, formatClock, normalizeRestTimer, pauseAt, pauseRestTimer, recoverClock, restProgress, resolveSetRestSeconds, resumeRestTimer, shiftRestTimer, keepWorkoutScreenAwake, haptic } from "./workout-clock.js";
 import { matrix } from "./display.js";
 import { isNetworkError } from "./offline-queue.js";
+import { round2, numeric, soundPreference, screenPreference, rirPreference, dialPreference, notifyPreference, barPreference, platesPreference, ALL_PLATES, BAR_PRESETS, forgetDraft, renderDialTicks, syncDialTicks, exerciseLabel, plateDeltaLabel, snapWarmupWeight } from "./workout-helpers.js";
+import { commonFields as baseCommonFields, openSimpleRecordEditor } from "./simple-editors.js";
 
-function round2(v) { return Math.round(v * 100) / 100; }
-
-const numeric = 'type="number" inputmode="decimal" step="0.1" min="0" max="100000" required';
 const uuid = () => crypto.randomUUID();
 const set = () => ({ id: uuid(), type: "normal", weight: 0, reps: 8, seconds: 0, completed: false, rir: null });
-const soundPreference = "ironlog-web-rest-sound";
-const screenPreference = "ironlog-web-workout-screen";
-const rirPreference = "ironlog-web-show-rir";
-const dialPreference = "ironlog-web-auto-rest-dial";
-const notifyPreference = "ironlog-web-rest-notify";
-const barPreference = "ironlog-web-bar-weight";
-const platesPreference = "ironlog-web-plates";
-const ALL_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25, 0.5];
-const BAR_PRESETS = [[20, "20kg杆"], [15, "15kg杆"], [10, "10kg曲杆"], [25, "25kg六角"], [0, "0kg纯挂片"]];
 
-function forgetDraft(key) {
-  if (!key) return;
-  localStorage.removeItem(key);
-  sessionStorage.removeItem(key);
-}
-
-function renderDialTicks(fraction, { count = 48, cx = 130, r1 = 104, r2 = 120, r1Major = 99 } = {}) {
-  const clamped = Math.max(0, Math.min(1, fraction));
-  const activeCount = clamped <= 0 ? 0 : Math.max(1, Math.round(clamped * count));
-  const lines = [];
-  for (let i = 0; i < count; i++) {
-    const angle = (i / count) * Math.PI * 2 - Math.PI / 2;
-    const major = i % (count / 12) === 0;
-    const inner = major ? r1Major : r1;
-    const x1 = (cx + Math.cos(angle) * inner).toFixed(1);
-    const y1 = (cx + Math.sin(angle) * inner).toFixed(1);
-    const x2 = (cx + Math.cos(angle) * r2).toFixed(1);
-    const y2 = (cx + Math.sin(angle) * r2).toFixed(1);
-    const lit = i < activeCount;
-    lines.push(`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="dial-tick${major ? " is-major" : ""}${lit ? " is-lit" : ""}"/>`);
-  }
-  return lines.join("");
-}
-
-function syncDialTicks(svg, fraction) {
-  const ticks = svg?.children;
-  if (!ticks?.length) return;
-  const clamped = Math.max(0, Math.min(1, fraction));
-  const activeCount = clamped <= 0 ? 0 : Math.max(1, Math.round(clamped * ticks.length));
-  for (let i = 0; i < ticks.length; i++) ticks[i].classList.toggle("is-lit", i < activeCount);
-}
-
-export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment, pushOverlay = () => null, popOverlay = () => {}, openConfirmDialog, queueOfflineRecord }) {
+export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft, showReport, appDate, getLatestWeight, getRecentFoods, getFavoriteIds, getCustomExercises, onCreateCustomExercise, getReadinessHint, getUserEquipment, pushOverlay = /** @type {(fn?: any) => any} */ (() => null), popOverlay = /** @type {(id?: any) => void} */ (() => {}), openConfirmDialog, queueOfflineRecord }) {
   let searching = 0, closeWorkout;
   const audio = createRestAudio(() => localStorage.getItem(soundPreference) !== "off");
   dialog.addEventListener("close", () => {
@@ -61,19 +19,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     searching++;
   });
 
-  function shiftDateStr(base, delta) {
-    try {
-      const d = new Date(base + "T00:00:00Z");
-      d.setUTCDate(d.getUTCDate() + delta);
-      return d.toISOString().slice(0, 10);
-    } catch {
-      return base;
-    }
+  function commonFields(kind, data, record) {
+    return baseCommonFields(kind, data, record, appDate);
   }
 
-  function commonFields(kind, data, record) {
-    return field("日期", input("date", data.date ?? appDate(), `type="date" min="1902-01-01" max="${today()}" required ${kind === "weight" && record ? "readonly" : ""}`));
-  }
   function edit(kind, record, settings = {}, seed) {
     const prevClose = closeWorkout;
     closeWorkout = undefined;
@@ -81,353 +30,10 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     dialog.classList.remove("is-live-workout");
     const data = record?.data ?? seed ?? {};
     if (kind === "workout") return editWorkout(record, data, settings);
-    const weight = kind === "weight";
-    const title = (record ? "编辑" : "添加") + (weight ? "体重" : "饮食");
-    const activeWeightDate = weight ? (data.date ?? appDate()) : "";
-
-    if (weight) {
-      const curDate = activeWeightDate;
-      const fallbackWeight = !record && (data.weight == null || data.weight === "") ? (getLatestWeight?.() ?? null) : null;
-      const initialWeight = data.weight ?? (fallbackWeight ?? "");
-      open(title, `<form id="editor-form" class="dialog-form modern-weight-form">
-        <div class="date-quick-strip weight-date-strip">
-          <div class="date-pill-group">
-            <button type="button" class="date-pill" data-set-date="${today()}" aria-pressed="${curDate === today()}">今天</button>
-            <button type="button" class="date-pill" data-set-date="${shiftDateStr(today(), -1)}" aria-pressed="${curDate === shiftDateStr(today(), -1)}">昨天</button>
-            <button type="button" class="date-pill" data-set-date="${shiftDateStr(today(), -2)}" aria-pressed="${curDate === shiftDateStr(today(), -2)}">前天</button>
-          </div>
-          <input class="date-input-inline" type="date" name="date" value="${esc(curDate)}" min="1902-01-01" max="${today()}" required>
-        </div>
-
-        <div class="scale-hero-card">
-          <div class="scale-head">
-            <span class="scale-label">${icon("weight", 16)} 晨起空腹体重</span>
-            <span class="scale-mode-pill">KG</span>
-          </div>
-          <div class="scale-display">
-            <input name="weight" type="number" inputmode="decimal" min="1" max="500" step="0.01" required autofocus value="${initialWeight}" placeholder="00.00">
-            <span class="scale-unit">kg</span>
-          </div>
-          ${fallbackWeight ? `<small class="scale-prev-hint">已记忆上次记录：${fmt(fallbackWeight, 2)} kg · 可直接点下方微调</small>` : ""}
-          <div class="scale-stepper-row">
-            <button type="button" class="scale-stepper-btn" data-scale-bump="-1.0">-1.0</button>
-            <button type="button" class="scale-stepper-btn" data-scale-bump="-0.5">-0.5</button>
-            <button type="button" class="scale-stepper-btn" data-scale-bump="-0.1">-0.1</button>
-            <button type="button" class="scale-stepper-btn" data-scale-bump="+0.1">+0.1</button>
-            <button type="button" class="scale-stepper-btn" data-scale-bump="+0.5">+0.5</button>
-            <button type="button" class="scale-stepper-btn" data-scale-bump="+1.0">+1.0</button>
-          </div>
-        </div>
-
-        <div class="bodyfat-card">
-          <div class="bodyfat-head">
-            <span>体脂率（可选）</span>
-            <span class="bodyfat-unit">%</span>
-          </div>
-          <div class="bodyfat-body">
-            <input name="bodyFat" type="number" inputmode="decimal" min="1" max="99" step="0.1" value="${data.bodyFat ?? ""}" placeholder="15.0">
-            <div class="bodyfat-steppers">
-              <button type="button" class="micro-chip" data-bf-bump="-0.5">-0.5%</button>
-              <button type="button" class="micro-chip" data-bf-bump="+0.5">+0.5%</button>
-            </div>
-          </div>
-        </div>
-
-        <p class="form-error" role="alert" hidden></p>
-        <footer class="dialog-foot${record ? " has-remove" : ""}">
-          ${record ? '<button type="button" class="danger" id="remove-record">删除记录</button>' : ""}
-          <button class="primary-button" type="submit">保存体重记录</button>
-        </footer>
-      </form>`);
-    } else {
-      const curMeal = data.meal ?? "lunch";
-      const curDate = data.date ?? appDate();
-      const builtinPresets = [
-        { short: "蛋白粉", name: "乳清蛋白粉 (1勺)", protein: 24, carbs: 3, fat: 1.5, calories: 120, hint: "24P·120k" },
-        { short: "鸡蛋2颗", name: "水煮蛋 (2颗)", protein: 12, carbs: 1.2, fat: 10, calories: 140, hint: "12P·140k" },
-        { short: "鸡胸150g", name: "香煎鸡胸肉 (150g)", protein: 34, carbs: 0, fat: 3.5, calories: 165, hint: "34P·165k" },
-        { short: "白米饭 200g", name: "蒸白米饭 (200g)", protein: 5, carbs: 52, fat: 0.6, calories: 230, hint: "52C·230k" },
-        { short: "燕麦50g", name: "纯燕麦片 (50g)", protein: 6.5, carbs: 33, fat: 3.5, calories: 190, hint: "33C·190k" },
-        { short: "香蕉1根", name: "香蕉 (中等1根)", protein: 1.3, carbs: 27, fat: 0.4, calories: 105, hint: "27C·105k" },
-      ];
-      const builtinNames = new Set(builtinPresets.map((p) => p.name));
-      const recentFoods = (getRecentFoods?.() ?? []).filter((f) => f.name && !builtinNames.has(f.name)).slice(0, 6);
-      const presetChip = (item, isRecent = false) => `<button type="button" class="preset-chip${isRecent ? " is-recent" : ""}" data-diet-preset="${esc(JSON.stringify([item.name, item.protein, item.carbs, item.fat, item.calories]))}">${isRecent ? '<span class="preset-tag">常吃</span>' : ""}${esc(item.short ?? item.name)} <small>${esc(item.hint ?? `${Math.round(item.calories)}k`)}</small></button>`;
-      open(title, `<form id="editor-form" class="dialog-form modern-diet-form">
-        <div class="diet-top-bar">
-          <div class="meal-segmented-control" role="group" aria-label="选择餐次">
-            ${Object.entries(meals).map(([val, label]) => `
-              <button type="button" class="meal-pill" data-meal-choice="${val}" aria-pressed="${curMeal === val}">${label}</button>
-            `).join("")}
-            <input type="hidden" name="meal" value="${esc(curMeal)}">
-          </div>
-          <div class="date-quick-strip">
-            <button type="button" class="date-pill" data-set-date="${today()}" aria-pressed="${curDate === today()}">今天</button>
-            <button type="button" class="date-pill" data-set-date="${shiftDateStr(today(), -1)}" aria-pressed="${curDate === shiftDateStr(today(), -1)}">昨天</button>
-            <input class="date-input-inline" type="date" name="date" value="${esc(curDate)}" min="1902-01-01" max="${today()}" required>
-          </div>
-        </div>
-
-        <label class="field food-name-field">
-          <span>食物名称</span>
-          <div class="food-input-group">
-            <span class="food-icon" aria-hidden="true">${icon("diet", 17)}</span>
-            <input name="name" maxlength="120" required autofocus value="${esc(data.name ?? "")}" placeholder="例如：香煎鸡胸肉糙米饭 / 蛋白粉燕麦">
-          </div>
-        </label>
-
-        <div class="diet-quick-presets" role="group" aria-label="常见健身餐快捷填入">
-          <span class="preset-label">${recentFoods.length ? "近期常吃与预设：" : "快捷预设："}</span>
-          <div class="preset-chips">
-            ${recentFoods.map((f) => presetChip(f, true)).join("")}${builtinPresets.map((p) => presetChip(p, false)).join("")}
-          </div>
-        </div>
-
-        <div class="macro-deck" aria-label="四大营养宏量">
-          <div class="macro-card macro-calories">
-            <div class="macro-card-head">
-              <span class="macro-badge badge-kcal"><i class="macro-dot"></i> 热量</span>
-              <span class="macro-unit">kcal</span>
-            </div>
-            <div class="macro-card-value">
-              <input type="number" inputmode="decimal" name="calories" min="0" max="100000" step="1" value="${data.calories ?? ""}" placeholder="0" required>
-            </div>
-            <div class="macro-steppers">
-              <button type="button" class="micro-chip" data-macro-bump="calories" data-val="50">+50</button>
-              <button type="button" class="micro-chip" data-macro-bump="calories" data-val="100">+100</button>
-              <button type="button" class="micro-chip" data-macro-bump="calories" data-val="200">+200</button>
-            </div>
-          </div>
-
-          <div class="macro-card macro-protein">
-            <div class="macro-card-head">
-              <span class="macro-badge badge-protein"><i class="macro-dot"></i> 蛋白质</span>
-              <span class="macro-unit">g</span>
-            </div>
-            <div class="macro-card-value">
-              <input type="number" inputmode="decimal" name="protein" min="0" max="1000" step="0.1" value="${data.protein ?? (record ? 0 : "")}" placeholder="0">
-            </div>
-            <div class="macro-steppers">
-              <button type="button" class="micro-chip" data-macro-bump="protein" data-val="10">+10</button>
-              <button type="button" class="micro-chip" data-macro-bump="protein" data-val="20">+20</button>
-              <button type="button" class="micro-chip" data-macro-bump="protein" data-val="30">+30</button>
-            </div>
-          </div>
-
-          <div class="macro-card macro-carbs">
-            <div class="macro-card-head">
-              <span class="macro-badge badge-carbs"><i class="macro-dot"></i> 碳水化合物</span>
-              <span class="macro-unit">g</span>
-            </div>
-            <div class="macro-card-value">
-              <input type="number" inputmode="decimal" name="carbs" min="0" max="1000" step="0.1" value="${data.carbs ?? (record ? 0 : "")}" placeholder="0">
-            </div>
-            <div class="macro-steppers">
-              <button type="button" class="micro-chip" data-macro-bump="carbs" data-val="10">+10</button>
-              <button type="button" class="micro-chip" data-macro-bump="carbs" data-val="25">+25</button>
-              <button type="button" class="micro-chip" data-macro-bump="carbs" data-val="50">+50</button>
-            </div>
-          </div>
-
-          <div class="macro-card macro-fat">
-            <div class="macro-card-head">
-              <span class="macro-badge badge-fat"><i class="macro-dot"></i> 优质脂肪</span>
-              <span class="macro-unit">g</span>
-            </div>
-            <div class="macro-card-value">
-              <input type="number" inputmode="decimal" name="fat" min="0" max="1000" step="0.1" value="${data.fat ?? (record ? 0 : "")}" placeholder="0">
-            </div>
-            <div class="macro-steppers">
-              <button type="button" class="micro-chip" data-macro-bump="fat" data-val="5">+5</button>
-              <button type="button" class="micro-chip" data-macro-bump="fat" data-val="10">+10</button>
-              <button type="button" class="micro-chip" data-macro-bump="fat" data-val="15">+15</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="macro-calc-bar">
-          <div class="macro-calc-hint">
-            <span>宏量折算：<strong data-macro-sum>0</strong> kcal <small>(4P + 4C + 9F)</small></span>
-          </div>
-          <button type="button" class="quiet macro-calc-apply" data-apply-macro-calc>按折算填入热量</button>
-        </div>
-
-        <p class="form-error" role="alert" hidden></p>
-        <footer class="dialog-foot${record ? " has-remove" : ""}">
-          ${record ? '<button type="button" class="danger" id="remove-record">删除记录</button>' : '<button type="button" class="secondary-button" data-save-continue>保存并继续</button>'}
-          <button class="primary-button" type="submit">保存饮食记录</button>
-        </footer>
-      </form>`);
-    }
-
-    const form = $("#editor-form");
-    let keepOpenAfterSave = false;
-    let dateSwitchSeq = 0;
-
-    function syncDatePills() {
-      const cur = $('[name="date"]', form)?.value ?? "";
-      $$(".date-pill", form).forEach((pill) => {
-        pill.setAttribute("aria-pressed", String(pill.dataset.setDate === cur));
-      });
-    }
-    syncDatePills();
-
-    async function switchWeightDate(nextDate) {
-      if (!weight || !nextDate || !/^\d{4}-\d{2}-\d{2}$/.test(nextDate) || nextDate === activeWeightDate) return;
-      const seq = ++dateSwitchSeq;
-      const dateControls = [...$$(".date-pill", form), $('[name="date"]', form)].filter(Boolean);
-      dateControls.forEach((el) => { el.disabled = true; });
-      try {
-        const existing = await api("/api/web/records/weight/weight_" + encodeURIComponent(nextDate) + "?includeDeleted=1").catch(() => null);
-        if (!form.isConnected || seq !== dateSwitchSeq) return;
-        const alive = existing && !existing.deleted ? existing : undefined;
-        edit("weight", alive, settings, alive ? undefined : { date: nextDate });
-      } finally {
-        if (form.isConnected) dateControls.forEach((el) => { el.disabled = false; });
-      }
-    }
-
-    function updateMacroSum() {
-      if (weight) return;
-      const p = Number($('[name="protein"]', form)?.value) || 0;
-      const c = Number($('[name="carbs"]', form)?.value) || 0;
-      const f = Number($('[name="fat"]', form)?.value) || 0;
-      const sumEl = $("[data-macro-sum]", form);
-      if (sumEl) sumEl.textContent = String(Math.round(p * 4 + c * 4 + f * 9));
-    }
-    updateMacroSum();
-    form.addEventListener("input", updateMacroSum);
-    form.addEventListener("change", ({ target }) => {
-      if (target.name !== "date") return;
-      if (weight) void switchWeightDate(target.value);
-      else syncDatePills();
+    openSimpleRecordEditor({
+      kind, record, settings, seed, api, open, appDate,
+      getLatestWeight, getRecentFoods, commit, deleteRecord, onSwitchDate: edit,
     });
-
-    form.addEventListener("click", ({ target }) => {
-      const mealChoice = target.closest("[data-meal-choice]");
-      if (mealChoice) {
-        const mealVal = mealChoice.dataset.mealChoice;
-        const hidden = $('[name="meal"]', form);
-        if (hidden) hidden.value = mealVal;
-        $$(".meal-pill", form).forEach((p) => p.setAttribute("aria-pressed", String(p === mealChoice)));
-        haptic("light");
-        return;
-      }
-      const presetBtn = target.closest("[data-diet-preset]");
-      if (presetBtn) {
-        const raw = presetBtn.dataset.dietPreset;
-        const [pName, pP, pC, pF, pCal] = raw.startsWith("[") ? JSON.parse(raw) : raw.split(",");
-        const nameInput = $('[name="name"]', form);
-        const pInput = $('[name="protein"]', form);
-        const cInput = $('[name="carbs"]', form);
-        const fInput = $('[name="fat"]', form);
-        const calInput = $('[name="calories"]', form);
-        if (nameInput) nameInput.value = pName;
-        if (pInput) pInput.value = pP;
-        if (cInput) cInput.value = pC;
-        if (fInput) fInput.value = pF;
-        if (calInput) calInput.value = pCal;
-        updateMacroSum();
-        haptic("light");
-        return;
-      }
-      const dateBtn = target.closest("[data-set-date]");
-      if (dateBtn) {
-        if (weight) {
-          haptic("light");
-          void switchWeightDate(dateBtn.dataset.setDate);
-          return;
-        }
-        const dateInput = $('[name="date"]', form);
-        if (dateInput) {
-          dateInput.value = dateBtn.dataset.setDate;
-          dateInput.dispatchEvent(new Event("change", { bubbles: true }));
-          syncDatePills();
-        }
-        haptic("light");
-        return;
-      }
-      if (target.closest("[data-save-continue]") && !record && !weight) {
-        if (!form.reportValidity()) { keepOpenAfterSave = false; return; }
-        keepOpenAfterSave = true;
-        form.requestSubmit();
-        return;
-      }
-      const macroBump = target.closest("[data-macro-bump]");
-      if (macroBump) {
-        const key = macroBump.dataset.macroBump;
-        const delta = Number(macroBump.dataset.val);
-        const inputEl = $(`[name="${key}"]`, form);
-        if (inputEl) {
-          const cur = Number(inputEl.value) || 0;
-          inputEl.value = String(Math.max(0, Math.round((cur + delta) * 10) / 10));
-          updateMacroSum();
-        }
-        haptic("light");
-        return;
-      }
-      if (target.closest("[data-apply-macro-calc]")) {
-        const sumEl = $("[data-macro-sum]", form);
-        const calInput = $('[name="calories"]', form);
-        if (sumEl && calInput) {
-          calInput.value = sumEl.textContent;
-        }
-        haptic("light");
-        return;
-      }
-      const scaleBump = target.closest("[data-scale-bump]");
-      if (scaleBump) {
-        const delta = Number(scaleBump.dataset.scaleBump);
-        const wtInput = $('[name="weight"]', form);
-        if (wtInput) {
-          const cur = Number(wtInput.value) || 70;
-          wtInput.value = String(Math.max(1, Math.round((cur + delta) * 100) / 100));
-        }
-        haptic("light");
-        return;
-      }
-      const bfBump = target.closest("[data-bf-bump]");
-      if (bfBump) {
-        const delta = Number(bfBump.dataset.bfBump);
-        const bfInput = $('[name="bodyFat"]', form);
-        if (bfInput) {
-          const cur = Number(bfInput.value) || 15;
-          bfInput.value = String(Math.max(1, Math.min(99, Math.round((cur + delta) * 10) / 10)));
-        }
-        haptic("light");
-        return;
-      }
-    });
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const keepOpen = keepOpenAfterSave && !record && !weight;
-      keepOpenAfterSave = false;
-      const values = new FormData(form);
-      const date = values.get("date");
-      const updated = weight ? {
-        date,
-        weight: Number(values.get("weight")),
-        bodyFat: values.get("bodyFat") === "" ? null : Number(values.get("bodyFat")),
-      } : {
-        ...data,
-        date,
-        name: values.get("name").trim(),
-        meal: values.get("meal"),
-        calories: Number(values.get("calories")),
-        protein: Number(values.get("protein")) || 0,
-        carbs: Number(values.get("carbs")) || 0,
-        fat: Number(values.get("fat")) || 0,
-      };
-      let baseVersion = record?.version ?? 0;
-      if (!record && weight) {
-        const prevWeight = await api("/api/web/records/weight/weight_" + encodeURIComponent(date) + "?includeDeleted=1").catch(() => null);
-        if (!form.isConnected) return;
-        if (prevWeight?.version > 0) baseVersion = prevWeight.version;
-      }
-      commit(form, { kind, id: record?.id ?? (weight ? `weight_${date}` : uuid()), baseVersion, data: updated }, kind, date, undefined, false, keepOpen);
-    });
-    $("#remove-record")?.addEventListener("click", () => deleteRecord(form, record));
   }
 
   function resetKeepOpenDietForm(form, message) {
@@ -502,7 +108,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     }
     void commit(form, mutation, record.kind, record.data.date, form.dataset.draft);
   }
-  function exerciseLabel(row) { return row.snapshot?.name ?? row.exerciseId; }
 
   function editWorkout(record, data, settings) {
     const template = data.templateKey;
@@ -788,22 +393,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       return nextRow ? `下个动作 · ${exerciseLabel(nextRow)}` : "所有预设组已完成 · 可结束训练";
     }
 
-    function plateDeltaLabel(prevWeight, curWeight) {
-      if (!(prevWeight > barWeight) || !(curWeight > barWeight) || prevWeight === curWeight) return "";
-      const prevCalc = plateBreakdown(prevWeight, barWeight, enabledPlates);
-      const curCalc = plateBreakdown(curWeight, barWeight, enabledPlates);
-      if (!prevCalc.valid || !curCalc.valid) return "";
-      const counts = new Map();
-      for (const p of curCalc.plates) counts.set(p, (counts.get(p) ?? 0) + 1);
-      for (const p of prevCalc.plates) counts.set(p, (counts.get(p) ?? 0) - 1);
-      const parts = [];
-      for (const w of [...counts.keys()].sort((a, b) => a - b)) {
-        const diff = counts.get(w) ?? 0;
-        for (let k = 0; k < Math.abs(diff); k++) parts.push(`${diff < 0 ? "-" : "+"}${w}`);
-      }
-      return parts.join(" ");
-    }
-
     function updateSetInlineMetas(section, row, rowIndex) {
       const equipKey = row.snapshot?.equipment ?? exerciseDetails.get(row.exerciseId)?.equipment;
       const mode = row.snapshot?.mode ?? "reps";
@@ -827,7 +416,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             const isFirst = prevWeight === null;
             const prefix = isFirst ? `${barWeight} kg 杠铃杆上每侧` : "每侧";
             leftHtml += `<button type="button" class="set-plate-line" data-workout="toggle-plate-config" data-row-id="${esc(row.id)}" title="设置杠铃杆与可用杠铃片">◎ ${prefix} ${esc(platesLabel)}${calc.remainder > 0 ? ` (+${calc.remainder})` : ""}</button>`;
-            const delta = prevWeight !== null ? plateDeltaLabel(prevWeight, entry.weight) : "";
+            const delta = prevWeight !== null ? plateDeltaLabel(prevWeight, entry.weight, barWeight, enabledPlates) : "";
             if (delta) rightHtml += `<span class="set-plate-delta">${esc(delta)}</span>`;
           }
         }
@@ -1528,7 +1117,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       return `<div class="dossier-pct-strip">
         <div class="dossier-pct-head"><span>%1RM 负荷速填</span><small>基准 ${fmt(ref1rm)} kg</small></div>
         <div class="dossier-pct-pills">${zones.map(([pct, label, targetReps]) => {
-          const w = Math.max(2.5, Math.round((ref1rm * pct) / 2.5) * 2.5);
+          const w = Math.max(2.5, Math.round((ref1rm * Number(pct)) / 2.5) * 2.5);
           return `<button type="button" class="stepper-pill" data-workout="apply-pct-load" data-row="${index}" data-weight="${w}" data-reps="${targetReps}"><b>${fmt(w)}kg</b><small>${label}</small></button>`;
         }).join("")}</div>
       </div>`;
@@ -1801,7 +1390,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       };
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.ready
-          .then((reg) => reg?.showNotification ? reg.showNotification(titleText, opts) : new Notification(titleText, opts))
+          .then((reg) => { if (reg?.showNotification) return reg.showNotification(titleText, opts); new Notification(titleText, opts); })
           .catch(() => { try { new Notification(titleText, opts); } catch {} });
       } else {
         try { new Notification(titleText, opts); } catch {}
@@ -2809,16 +2398,6 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
       audio.unlock();
       audio.tap(button.dataset.workout === "remove-set" || button.dataset.workout === "remove-row" ? "skip" : "tick");
       haptic("light");
-      const snapWarmupWeight = (target, isBarbell) => {
-        if (isBarbell) {
-          if (target <= barWeight) return barWeight;
-          const calc = plateBreakdown(target, barWeight, enabledPlates);
-          if (!calc.valid) return barWeight;
-          return Math.max(barWeight, round2(calc.bar + 2 * (calc.perSide - calc.remainder)));
-        }
-        const step = target < 15 ? 1 : 2.5;
-        return Math.max(step, Math.round(target / step) * step);
-      };
       if (button.dataset.workout === "gen-warmups") {
         const targetRow = rows[Number(button.dataset.row)];
         if (targetRow && (targetRow.snapshot?.mode ?? "reps") === "reps") {
@@ -2834,14 +2413,14 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
             ? [[0.55, 5], [0.75, 3], [0.88, 1]]
             : isBarbell ? [[0.55, 6], [0.75, 3]] : [[0.45, 10], [0.65, 6], [0.8, 3]];
           for (const [ratio, reps] of ratios) {
-            const w = snapWarmupWeight(maxWeight * ratio, isBarbell);
+            const w = snapWarmupWeight(maxWeight * ratio, isBarbell, barWeight, enabledPlates);
             if (w > 0 && w > prevWeight && w < maxWeight) {
               warmups.push({ ...set(), type: "warmup", weight: w, reps, completed: false });
               prevWeight = w;
             }
           }
           if (!warmups.length && maxWeight > 0) {
-            warmups.push({ ...set(), type: "warmup", weight: snapWarmupWeight(maxWeight * 0.5, isBarbell), reps: 8, completed: false });
+            warmups.push({ ...set(), type: "warmup", weight: snapWarmupWeight(maxWeight * 0.5, isBarbell, barWeight, enabledPlates), reps: 8, completed: false });
           }
           targetRow.sets.unshift(...warmups);
           renderRows();
@@ -3687,7 +3266,7 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
         : live && (date === today() || (date === initialDate && tracked.elapsedSeconds > 0)) ? tracked : undefined;
       const durationUnknown = recordedTime === undefined && status === "completed";
       const resting = status === "active" && rest?.pausedLeftMs == null && rest?.end > nowDate.getTime() && date === today();
-      const updated = { ...data, date, title: values.get("title").trim(), startedAt: sessionStart, endedAt, status, durationUnknown,
+      const updated = { ...data, date, title: String(values.get("title") ?? "").trim(), startedAt: sessionStart, endedAt, status, durationUnknown,
         notes: values.get("notes"), feeling: values.get("feeling") || null, exercises: rows,
         adjustments: activeRecord?.data?.adjustments ?? data.adjustments ?? [],
         timing: recordedTime, restEndsAt: resting ? rest.end : null, restStartedAt: resting ? rest.start : null };

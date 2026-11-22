@@ -298,6 +298,7 @@ function tokenStringXml({ text = "", outputAttachment = null, varAttachment = nu
     + `</dict>`;
 }
 
+/** @param {any[]} items @param {number} indent */
 function dictionaryFieldXml(items, indent) {
   const pad = "\t".repeat(indent);
   const serializedItems = items.map(({ key, value, itemType = 0, outputAttachment = null, varAttachment = null }) => {
@@ -822,8 +823,11 @@ function resolveWorkoutConfig({ serverOrigin, token, activityType, environment, 
   return { sport, sportLabel: sport?.label ?? activityType, resolvedEnv, resolvedLocale, cleanToken, base, distanceSpec };
 }
 
-function buildWorkoutWindowMetricsActions({ uuidFactory, dateFilter, distanceSpec = null }) {
+/** @param {{ uuidFactory: () => string, dateFilter: any, distanceSpec?: any, locale?: string }} opts */
+function buildWorkoutWindowMetricsActions({ uuidFactory, dateFilter, distanceSpec = null, locale = "zh-Hans" }) {
+  void locale;
   const actions = [];
+  /** @type {any[]} */
   const bodyItems = [
     { key: "energyKind", value: "window_estimate" },
     { key: "heartRateMethod", value: "window_samples" },
@@ -925,14 +929,14 @@ function buildWorkoutWindowMetricsActions({ uuidFactory, dateFilter, distanceSpe
  * Output targets `POST <serverOrigin>/api/integrations/apple-health/events`.
  */
 export function buildIronlogEventShortcut({
-  event,
-  serverOrigin,
-  token,
+  event = undefined,
+  serverOrigin = undefined,
+  token = undefined,
   activityType = "traditionalStrengthTraining",
-  environment,
+  environment = undefined,
   collectMetrics = true,
   locale = "zh-Hans",
-  uuids,
+  uuids = undefined,
   uuidFactory = makeUuid,
 } = {}) {
   if (!VALID_EVENTS.has(event)) throw new Error("event 必须为 start 或 end");
@@ -1062,10 +1066,10 @@ export function buildIronlogEventShortcut({
  * configured lookback window, and posts directly to `POST /api/integrations/apple-health/workouts`.
  */
 export function buildIronlogRecentWorkoutShortcut({
-  serverOrigin,
-  token,
+  serverOrigin = undefined,
+  token = undefined,
   activityType = "traditionalStrengthTraining",
-  environment,
+  environment = undefined,
   windowMinutes = 45,
   locale = "zh-Hans",
   uuidFactory = makeUuid,
@@ -1148,8 +1152,8 @@ export function buildIronlogRecentWorkoutShortcut({
  * heart rate, resting HR, HRV, VO2 Max, SpO2, respiratory rate, water, and nutrition snapshots.
  */
 export function buildIronlogDailyHealthShortcut({
-  serverOrigin,
-  token,
+  serverOrigin = undefined,
+  token = undefined,
   groups = APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id),
   metrics = null,
   locale = "zh-Hans",
@@ -1185,6 +1189,7 @@ export function buildIronlogDailyHealthShortcut({
   ].join("\n");
 
   const actions = [commentActionXml(commentText)];
+  /** @type {any[]} */
   const jsonBodyItems = [
     { key: "schemaVersion", value: "1", itemType: 3 },
     { key: "shortcutGenVersion", value: "3" },

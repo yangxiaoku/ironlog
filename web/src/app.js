@@ -6,19 +6,81 @@ import { badgesOverviewStrip, filterVisibleBadges, renderBadgeSections, renderBa
 import { onboardingSeenKey, welcomeDismissedKey, renderWelcomeChecklist, openOnboardingGuide } from "./onboarding-ui.js";
 import { primeSharedAudio, triggerHaptic } from "./workout-clock.js";
 import { clearQueue, enqueueMutation, flushQueue, isNetworkError, readQueue } from "./offline-queue.js";
+import { createModalStack } from "./modal-stack.js";
+import { renderMeasurementsSection, createDietWeightModals } from "./diet-weight-modals.js";
 
 const zhWeekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 const formatWeekdayZh = (date) => zhWeekdays[(new Date(date + "T00:00:00Z").getUTCDay() + 6) % 7] ?? "";
 
 let editorPromise, sessionUiMod, aiUiMod, planUiMod, calendarUiMod, calendarUi, analyticsUiMod, analyticsUi, calcUiMod;
+let dataModalsPromise, settingsUiMod, reportSharePromise, reportShareUi = null;
 const loadSessionUi = () => (sessionUiMod ??= import("./session-ui.js"));
 const loadAiUi = () => (aiUiMod ??= import("./ai-ui.js"));
 const loadPlanUi = () => (planUiMod ??= import("./plan-ui.js"));
 const loadCalcUi = () => (calcUiMod ??= import("./calc-ui.js"));
 const loadCalendarUi = () => (calendarUiMod ??= import("./calendar-ui.js").then((m) => (calendarUi = m)));
 const loadAnalyticsUi = () => (analyticsUiMod ??= import("./analytics-ui.js").then((m) => (analyticsUi = m)));
+const loadDataModals = () => (dataModalsPromise ??= import("./data-modals.js").then(({ downloadTextFile, createDataModals }) => ({
+  downloadTextFile,
+  ...createDataModals({
+    api,
+    open,
+    dialog,
+    notify,
+    getState: () => state,
+    onInvalidate: invalidateData,
+    onRefreshView: () => renderRoute(),
+    onPlanImported: async (mode) => {
+      state.planSection = mode === "draft" ? "drafts" : "current";
+      state.planCache = null;
+      dataEpoch++;
+      if (state.view === "plan") await loadPlan(requestId);
+      else await route("plan");
+    },
+  }),
+})));
+const loadSettingsUi = () => (settingsUiMod ??= import("./settings-ui.js"));
+const loadReportShareUi = () => (reportSharePromise ??= import("./report-share-ui.js").then(({ createReportShareUi }) =>
+  (reportShareUi = createReportShareUi({
+    api,
+    open,
+    dialog,
+    notify,
+    loadSessionUi,
+    appleRange,
+    getEditor,
+    ensureLibraryCaches,
+    getState: () => state,
+    onInvalidate: invalidateData,
+  }))));
+const showReport = async (id, record) => (await loadReportShareUi()).showReport(id, record);
+const openShareForDate = async (targetDate, opts) => (await loadReportShareUi()).openShareForDate(targetDate, opts);
 
 const content = $("#content"), dialog = $("#dialog");
+const { pushOverlay, popOverlay, open, openConfirmDialog, closeModalSilent } = createModalStack({
+  dialog,
+  onAfterClose: () => nav(),
+});
+const { openSaveMealTemplateModal, openEditMealTemplateModal, openMeasurementModal } = createDietWeightModals({
+  api,
+  open,
+  dialog,
+  notify,
+  openConfirmDialog,
+  onMealTemplateSaved: (action, record, prevId) => {
+    if (!record) return;
+    if (action === "create") state.mealTemplates.push(record);
+    else if (action === "update") {
+      state.mealTemplates = state.mealTemplates.map((r) => (r.id === prevId ? record : r));
+      if (state.recordsCache.diet) state.recordsCache.diet.mealTemplates = state.mealTemplates;
+    }
+    if (state.view === "diet") renderDiet();
+  },
+  onMeasurementChanged: async () => {
+    state.recordsCache.weight = null;
+    await loadRecords("weight", requestId);
+  },
+});
 const destinations = { overview: "首页", workout: "训练记录", plan: "训练计划", analytics: "数据分析", diet: "饮食记录", weight: "体重记录", calendar: "日历", badges: "成就徽章", exercises: "动作库", settings: "设置" };
 const workspaces = {
   overview: { label: "首页", icon: "overview", views: ["overview"] },
@@ -74,7 +136,21 @@ const state = {
   heatmapDate: "", heatmapSummary: "", dayCache: new Map(),
   cacheMeta: {}, planCache: null, recordsCache: {}, calendarCache: null,
 };
-let requestId = 0, dataEpoch = 0, notices = 0, reportApple = null;
+let requestId = 0, dataEpoch = 0, notices = 0;
+async function invalidateData({ clearAllCaches = false, clearPlanCache = false, clearDayCache = false, refreshAccount = false } = {}) {
+  dataEpoch++;
+  if (clearAllCaches) {
+    state.badges = null;
+    state.libraryLoaded = false;
+    state.planCache = null;
+    state.recordsCache = {};
+    state.dayCache.clear();
+  } else {
+    if (clearPlanCache) state.planCache = null;
+    if (clearDayCache) state.dayCache.clear();
+  }
+  if (refreshAccount) await refreshAccountMeta();
+}
 const loadingMarkup = () => `${workspaceTabsHtml()}<div class="skeleton-page" role="status" aria-label="正在加载内容">
   <div class="skeleton-block skeleton-hero"></div>
   <div class="skeleton-kpis"><div class="skeleton-block skeleton-kpi"></div><div class="skeleton-block skeleton-kpi"></div></div>
@@ -115,7 +191,7 @@ function notify(message, action = null) {
     if (id === notices) toast.classList.remove("shown", "has-action");
   }, hasAction ? 4500 : 1900);
 }
-async function api(path, { method = "GET", body, token = state.demoToken, timeout = 15000 } = {}) {
+async function api(path, { method = "GET", body = undefined, token = state.demoToken, timeout = 15000 } = {}) {
   const response = await fetch(path, {
     method, credentials: "same-origin", headers: {
       ...(token && { Authorization: "Bearer " + token }),
@@ -139,172 +215,7 @@ async function api(path, { method = "GET", body, token = state.demoToken, timeou
   }
   return data;
 }
-let modalSeq = 0, modalHistoryDepth = 0, closingFromPopstate = false, suppressNextHistoryBack = false, expectedProgrammaticPops = 0;
-const overlayStack = [];
 
-function pushOverlay(onClose) {
-  const id = ++modalSeq;
-  overlayStack.push({ id, onClose });
-  try {
-    history.pushState({ ...(history.state ?? {}), ironlogOverlay: id }, "", location.href);
-    modalHistoryDepth++;
-  } catch {}
-  return id;
-}
-
-function popOverlay(id) {
-  const idx = overlayStack.findIndex((item) => item.id === id);
-  if (idx >= 0) overlayStack.splice(idx, 1);
-  if (!closingFromPopstate && history.state?.ironlogOverlay === id) {
-    modalHistoryDepth = Math.max(0, modalHistoryDepth - 1);
-    expectedProgrammaticPops++;
-    try { history.back(); } catch { expectedProgrammaticPops = Math.max(0, expectedProgrammaticPops - 1); }
-  }
-}
-
-window.addEventListener("popstate", () => {
-  if (expectedProgrammaticPops > 0) {
-    expectedProgrammaticPops--;
-    return;
-  }
-  if (overlayStack.length > 0) {
-    const top = overlayStack.pop();
-    modalHistoryDepth = Math.max(0, modalHistoryDepth - 1);
-    closingFromPopstate = true;
-    try { top?.onClose?.(); } finally { closingFromPopstate = false; }
-    return;
-  }
-  if (dialog.open && modalHistoryDepth > 0) {
-    modalHistoryDepth = 0;
-    closingFromPopstate = true;
-    try { dialog.close(); } finally { closingFromPopstate = false; }
-  }
-});
-
-function open(title, body, wide = false, layout = "") {
-  const wasOpen = dialog.open;
-  dialog.classList.toggle("wide-dialog", wide);
-  dialog.classList.toggle("mobile-sheet", layout === "menu");
-  dialog.classList.toggle("workout-dialog", layout === "workout");
-  dialog.classList.toggle("report-dialog", layout === "report");
-  dialog.classList.toggle("badge-dialog", layout === "badge");
-  dialog.classList.toggle("exercise-dialog", layout === "exercise");
-  dialog.classList.toggle("onboarding-dialog", layout === "onboarding");
-  dialog.innerHTML = `<header class="dialog-head"><h2 id="dialog-title">${esc(title)}</h2>
-    ${layout === "exercise" ? `<button class="quiet copy-exercise" type="button" data-action="copy-exercise" data-value="${esc(title)}">复制动作名</button>` : ""}
-    <button type="button" class="icon-button" data-action="close" aria-label="关闭"${layout === "workout" ? " autofocus" : ""}>${icon("close")}</button></header>${body}`;
-  if (!dialog.open) dialog.showModal();
-  if (!wasOpen) {
-    try {
-      history.pushState({ ...(history.state ?? {}), ironlogModal: ++modalSeq }, "", location.href);
-      modalHistoryDepth = 1;
-    } catch {}
-  } else {
-    overlayStack.length = 0;
-  }
-  dialog.scrollTop = 0;
-}
-
-function openConfirmDialog({ title, message, confirmLabel = "确认删除", onConfirm }) {
-  if (dialog.open) {
-    let overlayToken = null;
-    const overlay = document.createElement("div");
-    overlay.className = "confirm-overlay";
-    overlay.setAttribute("role", "alertdialog");
-    overlay.setAttribute("aria-modal", "true");
-    overlay.setAttribute("aria-labelledby", "confirm-overlay-title");
-    overlay.innerHTML = `<div class="confirm-overlay-card">
-      <h3 id="confirm-overlay-title">${esc(title)}</h3>
-      <p class="confirm-dialog-message">${esc(message)}</p>
-      <p class="form-error" data-confirm-error role="alert" hidden></p>
-      <footer class="confirm-dialog-foot">
-        <button type="button" class="quiet" data-confirm-cancel>取消</button>
-        <button type="button" class="danger" data-confirm-ok>${esc(confirmLabel)}</button>
-      </footer>
-    </div>`;
-    dialog.appendChild(overlay);
-    const cancelBtn = $("[data-confirm-cancel]", overlay);
-    const okBtn = $("[data-confirm-ok]", overlay);
-    const errEl = $("[data-confirm-error]", overlay);
-    const onDialogCancel = (event) => {
-      event.preventDefault();
-      closeViaUser();
-    };
-    const cleanupOverlay = () => {
-      dialog.removeEventListener("cancel", onDialogCancel);
-      overlay.remove();
-    };
-    const closeViaUser = () => {
-      cleanupOverlay();
-      if (overlayToken != null && dialog.open) {
-        popOverlay(overlayToken);
-        overlayToken = null;
-      }
-    };
-    dialog.addEventListener("cancel", onDialogCancel);
-    overlayToken = pushOverlay(() => {
-      overlayToken = null;
-      cleanupOverlay();
-    });
-    overlay.addEventListener("click", (event) => {
-      if (event.target === overlay && !okBtn?.disabled) closeViaUser();
-    });
-    cancelBtn?.addEventListener("click", closeViaUser);
-    okBtn?.addEventListener("click", async () => {
-      if (!okBtn || okBtn.disabled) return;
-      okBtn.disabled = true;
-      if (cancelBtn) cancelBtn.disabled = true;
-      if (errEl) errEl.hidden = true;
-      try {
-        await onConfirm();
-        cleanupOverlay();
-        if (overlayToken != null && dialog.open) {
-          popOverlay(overlayToken);
-          overlayToken = null;
-        }
-      } catch (error) {
-        if (errEl) {
-          errEl.textContent = error?.message || "操作失败，请重试";
-          errEl.hidden = false;
-        }
-        okBtn.disabled = false;
-        if (cancelBtn) cancelBtn.disabled = false;
-      }
-    });
-    cancelBtn?.focus({ preventScroll: true });
-    return;
-  }
-
-  open(title, `<div class="confirm-dialog-body">
-    <p class="confirm-dialog-message">${esc(message)}</p>
-    <p class="form-error" data-confirm-error role="alert" hidden></p>
-    <footer class="confirm-dialog-foot">
-      <button type="button" class="quiet" data-confirm-cancel>取消</button>
-      <button type="button" class="danger" data-confirm-ok>${esc(confirmLabel)}</button>
-    </footer>
-  </div>`);
-  const cancelBtn = $("[data-confirm-cancel]", dialog);
-  const okBtn = $("[data-confirm-ok]", dialog);
-  const errEl = $("[data-confirm-error]", dialog);
-  cancelBtn?.addEventListener("click", () => dialog.close());
-  okBtn?.addEventListener("click", async () => {
-    if (!okBtn || okBtn.disabled) return;
-    okBtn.disabled = true;
-    if (cancelBtn) cancelBtn.disabled = true;
-    if (errEl) errEl.hidden = true;
-    try {
-      await onConfirm();
-      if (dialog.open) dialog.close();
-    } catch (error) {
-      if (errEl) {
-        errEl.textContent = error?.message || "操作失败，请重试";
-        errEl.hidden = false;
-      }
-      okBtn.disabled = false;
-      if (cancelBtn) cancelBtn.disabled = false;
-    }
-  });
-}
 
 let flushingOfflineQueue = false;
 function pendingQueueCount() {
@@ -356,9 +267,9 @@ function setTheme(theme) {
 setTheme(localStorage.getItem("ironlog-web-theme") === "light" ? "light" : "dark");
 sessionStorage.removeItem("ironlog-web-token");
 function clearUser() {
-  if (dialog.open) { suppressNextHistoryBack = true; dialog.close(); }
+  closeModalSilent();
   requestId++;
-  reportApple = null;
+  reportShareUi?.clearReportApple();
   dataEpoch = 0;
   if (state.userId) clearQueue(localStorage, state.userId);
   const prefix = "ironlog-web-draft:" + state.userId + ":";
@@ -547,7 +458,7 @@ async function toggleFavorite(exerciseId) {
   notify("已收藏动作 · 训练选动作时优先置顶");
   return true;
 }
-function openCreateExerciseModal({ existing = null, onDone } = {}) {
+function openCreateExerciseModal({ existing = null, onDone = null } = {}) {
   const cur = existing?.data ?? {};
   const modeLabels = { reps: "负重 / 计次", timed: "静态计时", assisted: "机械辅助（减重）" };
   open(existing ? "编辑自定义动作" : "新建自定义动作", `<form id="custom-exercise-form" class="dialog-form">
@@ -799,7 +710,7 @@ function openMore() {
   </div>`, false, "menu");
   $('[data-action="more-menu"]')?.setAttribute("aria-expanded", "true");
   $(".more-sheet-body", dialog)?.addEventListener("click", ({ target }) => {
-    if (target.closest("a")) { suppressNextHistoryBack = true; dialog.close(); }
+    if (target.closest("a")) closeModalSilent();
   });
   $$("[data-more-action]", dialog).forEach((btn) => btn.addEventListener("click", async () => {
     const { moreAction, value } = btn.dataset;
@@ -813,70 +724,6 @@ function openMore() {
     openMore();
   });
 }
-dialog.addEventListener("close", () => {
-  $('[data-action="more-menu"]')?.setAttribute("aria-expanded", "false");
-  dialog.style.transform = "";
-  dialog.style.transition = "";
-  overlayStack.length = 0;
-  const depth = modalHistoryDepth;
-  modalHistoryDepth = 0;
-  const suppress = suppressNextHistoryBack;
-  suppressNextHistoryBack = false;
-  if (depth > 0 && !closingFromPopstate && !suppress && (history.state?.ironlogModal || history.state?.ironlogOverlay)) {
-    expectedProgrammaticPops++;
-    try { history.go(-depth); } catch { expectedProgrammaticPops = Math.max(0, expectedProgrammaticPops - 1); }
-  }
-  nav();
-});
-dialog.addEventListener("click", (event) => {
-  if (event.target !== dialog || dialog.classList.contains("workout-dialog") || dialog.classList.contains("onboarding-dialog")) return;
-  const isSheet = dialog.classList.contains("mobile-sheet");
-  const isFormDialog = Boolean(dialog.querySelector("form"));
-  if (!isSheet && isFormDialog) return;
-  const rect = dialog.getBoundingClientRect();
-  const outside = event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
-  if (outside) dialog.close();
-});
-
-// Mobile bottom-sheet pull-down-to-dismiss gesture on dialog header or non-form sheets at scrollTop
-let sheetTouchY = 0, sheetTouchX = 0, sheetDragging = false;
-dialog.addEventListener("touchstart", (e) => {
-  if (e.touches.length !== 1 || dialog.classList.contains("workout-dialog")) return;
-  if (!matchMedia("(max-width: 630px)").matches) return;
-  const inHead = Boolean(e.target.closest?.(".dialog-head"));
-  const hasForm = Boolean(dialog.querySelector("form"));
-  const atTopScroll = dialog.scrollTop <= 2 && !e.target.closest?.("input, textarea, select");
-  if (!inHead && (hasForm || !atTopScroll)) return;
-  sheetTouchY = e.touches[0].clientY;
-  sheetTouchX = e.touches[0].clientX;
-  sheetDragging = true;
-  dialog.style.transition = "none";
-}, { passive: true });
-
-dialog.addEventListener("touchmove", (e) => {
-  if (!sheetDragging || e.touches.length !== 1) return;
-  const dy = e.touches[0].clientY - sheetTouchY;
-  const dx = e.touches[0].clientX - sheetTouchX;
-  if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy)) {
-    sheetDragging = false;
-    dialog.style.transform = "";
-    return;
-  }
-  if (dy > 8 && dy > Math.abs(dx) * 1.3) {
-    dialog.style.transform = `translateY(${Math.min(220, dy * 0.72).toFixed(1)}px)`;
-  }
-}, { passive: true });
-
-const endSheetDrag = (e) => {
-  if (!sheetDragging) return;
-  sheetDragging = false;
-  const dy = e.changedTouches?.[0] ? e.changedTouches[0].clientY - sheetTouchY : 0;
-  dialog.style.transition = "transform .18s ease";
-  dialog.style.transform = "";
-  if (dy >= 78) dialog.close();
-};
-dialog.addEventListener("touchend", endSheetDrag, { passive: true });
-dialog.addEventListener("touchcancel", endSheetDrag, { passive: true });
 const halftoneViews = new Set(["workout", "plan", "diet", "exercises", "badges", "calendar"]);
 function heading(title, sub = "", controls = "") {
   const brackets = halftoneViews.has(state.view)
@@ -911,7 +758,7 @@ function loginPanel() {
     if (state.authenticating) return;
     const form = event.currentTarget, button = $('button[type="submit"]', form), error = $(".form-error", form);
     const values = new FormData(form);
-    const username = values.get("username").trim(), password = values.get("password");
+    const username = String(values.get("username") ?? "").trim(), password = values.get("password");
     state.authName = username;
     if (registering && password !== values.get("confirm")) {
       error.textContent = "两次输入的密码不一致";
@@ -1502,7 +1349,7 @@ async function loadRecords(kind, version) {
   };
   renderRecords(kind);
 }
-async function copyDietFoods({ date, meal, foods, source = "copy", label = "" }) {
+async function copyDietFoods({ date, meal = undefined, foods, source = "copy", label = "" }) {
   if (!foods.length) return;
   const mutations = foods.slice(0, 100).map((f) => ({
     opId: crypto.randomUUID(),
@@ -1527,153 +1374,7 @@ async function copyDietFoods({ date, meal, foods, source = "copy", label = "" })
   await loadRecords("diet", requestId);
   notify(label || `已添加 ${mutations.length} 项饮食至 ${shortDate(date)}`);
 }
-function openSaveMealTemplateModal(meal, entries) {
-  const totalCal = Math.round(entries.reduce((s, r) => s + r.data.calories, 0));
-  const defaultName = entries.length === 1 ? entries[0].data.name : `${meals[meal]}搭配 · ${entries[0].data.name}`.slice(0, 48);
-  open("存为常用餐单", `<form id="meal-tpl-form" class="dialog-form">
-    ${field("餐单名称", input("name", defaultName, 'maxlength="120" required autofocus'))}
-    <div class="meal-tpl-preview">
-      <small>包含 ${entries.length} 项食材 · 共 ${fmt(totalCal, 0)} kcal</small>
-      <ul>${entries.map((r) => `<li><span>${esc(r.data.name)}</span><span>${fmt(r.data.calories, 0)} kcal</span></li>`).join("")}</ul>
-    </div>
-    <p class="form-error" role="alert" hidden></p>
-    <footer class="dialog-foot">
-      <button type="button" class="quiet" data-action="close">取消</button>
-      <button type="submit" class="primary-button">保存餐单模板</button>
-    </footer>
-  </form>`);
-  const form = $("#meal-tpl-form", dialog);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const name = String(new FormData(form).get("name") ?? "").trim();
-    if (!name) return;
-    const btn = $('button[type="submit"]', form);
-    const err = $(".form-error", form);
-    btn.disabled = true;
-    err.hidden = true;
-    try {
-      const foods = entries.slice(0, 30).map((r) => ({
-        name: r.data.name, calories: r.data.calories, protein: r.data.protein, carbs: r.data.carbs, fat: r.data.fat, source: "manual", rawPrompt: "",
-      }));
-      const id = "mealTpl_" + crypto.randomUUID().slice(0, 12);
-      const res = await api("/api/records", { method: "POST", body: { opId: crypto.randomUUID(), id, kind: "mealTemplate", baseVersion: 0, deleted: false, data: { name, foods } } });
-      if (res.record) state.mealTemplates.push(res.record);
-      dialog.close();
-      if (state.view === "diet") renderDiet();
-      notify(`已存为常用餐单「${name}」`);
-    } catch (error) {
-      err.textContent = error.message;
-      err.hidden = false;
-    } finally { btn.disabled = false; }
-  });
-}
-function openEditMealTemplateModal(tpl) {
-  let foods = (tpl.data.foods ?? []).map((f) => ({
-    name: f.name ?? "",
-    calories: Number(f.calories) || 0,
-    protein: Number(f.protein) || 0,
-    carbs: Number(f.carbs) || 0,
-    fat: Number(f.fat) || 0,
-  }));
-  if (!foods.length) foods = [{ name: "", calories: 0, protein: 0, carbs: 0, fat: 0 }];
 
-  open("编辑常用餐单", `<form id="edit-meal-tpl-form" class="dialog-form">
-    ${field("餐单名称", input("name", tpl.data.name ?? "", 'maxlength="120" required'))}
-    <div class="meal-tpl-edit-head">
-      <small data-tpl-totals></small>
-      <button type="button" class="quiet" id="meal-tpl-add-item">${icon("plus", 14)} 添加一项</button>
-    </div>
-    <div class="meal-tpl-edit-list" id="meal-tpl-edit-rows"></div>
-    <p class="form-error" role="alert" hidden></p>
-    <footer class="dialog-foot">
-      <button type="button" class="quiet" data-action="close">取消</button>
-      <button type="submit" class="primary-button">保存修改</button>
-    </footer>
-  </form>`, true);
-
-  const form = $("#edit-meal-tpl-form", dialog);
-  const rowsHost = $("#meal-tpl-edit-rows", form);
-  const totalsEl = $("[data-tpl-totals]", form);
-  const err = $(".form-error", form);
-
-  function syncDomToFoods() {
-    foods = $$("[data-tpl-food-row]", rowsHost).map((el) => ({
-      name: String($('[data-f="name"]', el)?.value ?? "").trim(),
-      calories: Math.max(0, Number($('[data-f="calories"]', el)?.value) || 0),
-      protein: Math.max(0, Number($('[data-f="protein"]', el)?.value) || 0),
-      carbs: Math.max(0, Number($('[data-f="carbs"]', el)?.value) || 0),
-      fat: Math.max(0, Number($('[data-f="fat"]', el)?.value) || 0),
-    }));
-  }
-
-  function updateTotals() {
-    const kcal = Math.round(foods.reduce((s, f) => s + (Number(f.calories) || 0), 0));
-    const prot = Math.round(foods.reduce((s, f) => s + (Number(f.protein) || 0), 0) * 10) / 10;
-    if (totalsEl) totalsEl.textContent = `共 ${foods.length} 项 · 约 ${fmt(kcal, 0)} kcal · 蛋白 ${fmt(prot, 1)} g`;
-  }
-
-  function drawFoodRows() {
-    rowsHost.innerHTML = foods.map((f, idx) => `<div class="meal-tpl-edit-row" data-tpl-food-row="${idx}">
-      <label class="tpl-food-name"><span>食物名称</span><input data-f="name" maxlength="120" required value="${esc(f.name)}" placeholder="例如：鸡胸肉 150g"></label>
-      <label><span>千卡</span><input data-f="calories" type="number" inputmode="decimal" min="0" max="50000" step="1" required value="${f.calories}"></label>
-      <label><span>蛋白g</span><input data-f="protein" type="number" inputmode="decimal" min="0" max="1000" step="0.1" required value="${f.protein}"></label>
-      <label><span>碳水g</span><input data-f="carbs" type="number" inputmode="decimal" min="0" max="1000" step="0.1" required value="${f.carbs}"></label>
-      <label><span>脂肪g</span><input data-f="fat" type="number" inputmode="decimal" min="0" max="1000" step="0.1" required value="${f.fat}"></label>
-      <button type="button" class="quiet icon-button tpl-food-del" data-tpl-del="${idx}" aria-label="删除第 ${idx + 1} 项"${foods.length <= 1 ? " disabled" : ""}>${icon("close", 15)}</button>
-    </div>`).join("");
-    updateTotals();
-  }
-
-  rowsHost.addEventListener("input", () => { syncDomToFoods(); updateTotals(); });
-  rowsHost.addEventListener("click", ({ target }) => {
-    const delBtn = target.closest("[data-tpl-del]");
-    if (!delBtn || foods.length <= 1) return;
-    syncDomToFoods();
-    foods.splice(Number(delBtn.dataset.tplDel), 1);
-    drawFoodRows();
-  });
-  $("#meal-tpl-add-item", form)?.addEventListener("click", () => {
-    if (foods.length >= 30) { notify("每个常用餐单最多保存 30 项食物"); return; }
-    syncDomToFoods();
-    foods.push({ name: "", calories: 0, protein: 0, carbs: 0, fat: 0 });
-    drawFoodRows();
-    $$('[data-f="name"]', rowsHost).at(-1)?.focus({ preventScroll: true });
-  });
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    syncDomToFoods();
-    err.hidden = true;
-    const name = String(form.elements.name.value ?? "").trim();
-    const cleaned = foods.filter((f) => f.name.length > 0).slice(0, 30).map((f) => ({
-      ...f, source: "manual", rawPrompt: "",
-    }));
-    if (!name || !cleaned.length) {
-      err.textContent = "请填写餐单名称并保留至少 1 项有效食物。";
-      err.hidden = false;
-      return;
-    }
-    const submitBtn = $('button[type="submit"]', form);
-    submitBtn.disabled = true;
-    try {
-      const res = await api("/api/records", {
-        method: "POST",
-        body: { opId: crypto.randomUUID(), id: tpl.id, kind: "mealTemplate", baseVersion: tpl.version, deleted: false, data: { name, foods: cleaned } },
-      });
-      if (res.record) {
-        state.mealTemplates = state.mealTemplates.map((r) => (r.id === tpl.id ? res.record : r));
-        if (state.recordsCache.diet) state.recordsCache.diet.mealTemplates = state.mealTemplates;
-      }
-      dialog.close();
-      if (state.view === "diet") renderDiet();
-      notify(`已更新常用餐单「${name}」`);
-    } catch (error) {
-      err.textContent = error.message;
-      err.hidden = false;
-    } finally { submitBtn.disabled = false; }
-  });
-
-  drawFoodRows();
-}
 const WATER_GOAL_KEY = "ironlog-web-water-goal";
 const WATER_GOALS = [2000, 2500, 3000, 3500];
 function getWaterGoalMl() {
@@ -1823,136 +1524,7 @@ function renderRecords(kind) {
   if (kind === "diet") return renderDiet();
   renderWeight();
 }
-const measurementSpecs = [
-  ["waistCm", "腰围", 30, 250],
-  ["chestCm", "胸围", 40, 250],
-  ["armCm", "臂围", 15, 100],
-  ["thighCm", "大腿围", 25, 150],
-  ["hipCm", "臀围", 40, 250],
-];
-function measureSparkSvg(values) {
-  if (values.length < 2) return "";
-  const w = 72, h = 22, p = 3;
-  const min = Math.min(...values), max = Math.max(...values);
-  const span = Math.max(0.2, max - min);
-  const pts = values.map((v, i) => {
-    const x = p + (i / (values.length - 1)) * (w - p * 2);
-    const y = h - p - ((v - min) / span) * (h - p * 2);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  });
-  const [lx, ly] = pts.at(-1).split(",");
-  return `<svg class="measure-spark" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" aria-hidden="true">
-    <polyline fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" points="${pts.join(" ")}"/>
-    <circle cx="${lx}" cy="${ly}" r="2.2" fill="currentColor"/>
-  </svg>`;
-}
-function renderMeasurementsSection(measurements = [], heightCm = state.profileHeightCm) {
-  const asc = [...measurements].reverse();
-  let latestWaist = null, latestHip = null;
-  for (const row of asc) {
-    if (row.waistCm != null) latestWaist = row.waistCm;
-    if (row.hipCm != null) latestHip = row.hipCm;
-  }
-  const whr = latestWaist && latestHip ? (latestWaist / latestHip) : null;
-  const whtr = latestWaist && heightCm ? (latestWaist / heightCm) : null;
-  const ratiosHtml = (whr || whtr) ? `<div class="measure-ratios">
-    ${whr ? `<span class="measure-ratio-chip">腰臀比 WHR <b>${whr.toFixed(2)}</b></span>` : ""}
-    ${whtr ? `<span class="measure-ratio-chip${whtr < 0.5 ? " is-good" : " is-warn"}">腰高比 WHtR <b>${whtr.toFixed(2)}</b><small>${whtr < 0.5 ? "健康区间" : "偏高"}</small></span>` : ""}
-  </div>` : "";
-  const tiles = measurementSpecs.map(([key, label]) => {
-    const vals = asc.map((r) => r[key]).filter((v) => v != null);
-    const firstVal = vals[0] ?? null;
-    const latestVal = vals.at(-1) ?? null;
-    const diff = latestVal != null && firstVal != null && vals.length > 1
-      ? Math.round((latestVal - firstVal) * 10) / 10
-      : null;
-    const diffCls = diff == null ? "" : key === "waistCm" ? (diff < 0 ? " is-good" : diff > 0 ? " is-warn" : "") : (diff > 0 ? " is-up" : diff < 0 ? " is-down" : "");
-    return `<div class="measure-tile">
-      <span>${label}</span>
-      <strong>${latestVal != null ? `${fmt(latestVal, 1)} <small>cm</small>` : "—"}</strong>
-      ${measureSparkSvg(vals)}
-      ${diff != null ? `<small class="measure-diff${diffCls}">${diff > 0 ? "+" : ""}${fmt(diff, 1)} cm</small>` : "<small class='measure-diff'>暂无对比</small>"}
-    </div>`;
-  }).join("");
 
-  return `<section class="panel measurements-panel" aria-label="身体围度档案">
-    <header class="panel-head">
-      <div><h2>身体围度档案</h2><p>${measurements.length ? `已记 ${measurements.length} 次围度 · 追踪腰围/维度重塑变化` : "记录腰围、胸围、臂围、大腿围、臀围（cm），观察减脂增肌真实变化"}</p></div>
-      <button type="button" class="secondary-button" data-action="add-measurement">${icon("plus", 15)} 记录围度</button>
-    </header>
-    ${measurements.length ? `${ratiosHtml}<div class="measure-tiles">${tiles}</div>
-      <div class="measure-history-list">${measurements.slice(0, 8).map((m) => {
-        const parts = measurementSpecs
-          .filter(([k]) => m[k] != null)
-          .map(([k, lbl]) => `${lbl} ${fmt(m[k], 1)}`);
-        return `<button type="button" class="record-line measure-line" data-action="edit-measurement" data-value="${esc(m.date)}">
-          <time datetime="${esc(m.date)}">${shortDate(m.date)}</time>
-          <span><strong>${esc(parts.join(" · "))}</strong>${m.notes ? `<small>${esc(m.notes)}</small>` : ""}</span>
-          ${icon("chevron", 15)}
-        </button>`;
-      }).join("")}</div>` : ""}
-  </section>`;
-}
-function openMeasurementModal(existing = null) {
-  const initialDate = existing?.date ?? today();
-  open(existing ? `编辑 ${shortDate(initialDate)} 围度` : "记录身体围度", `<form id="measurement-form" class="dialog-form">
-    ${field("测量日期", `<input type="date" name="date" value="${esc(initialDate)}" min="1902-01-01" max="${today()}" required ${existing ? "readonly" : ""}>`)}
-    <div class="fields">${measurementSpecs.map(([k, lbl, minVal, maxVal]) =>
-      field(lbl, inputGroup(k, existing?.[k] ?? "", "cm", `type="number" inputmode="decimal" step="0.1" min="${minVal}" max="${maxVal}"`))).join("")}</div>
-    ${field("测量备注（可选）", input("notes", existing?.notes ?? "", 'maxlength="300" placeholder="例如：晨起空腹、冷态测量"'))}
-    <p class="form-error" role="alert" hidden></p>
-    <footer class="dialog-foot${existing ? " has-remove" : ""}">
-      ${existing ? `<button type="button" class="danger" id="delete-measurement">删除记录</button>` : ""}
-      <button type="submit" class="primary-button">保存围度</button>
-    </footer>
-  </form>`);
-  const form = $("#measurement-form", dialog);
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const vals = new FormData(form);
-    const num = (key) => {
-      const raw = String(vals.get(key) ?? "").trim();
-      return raw === "" ? null : Number(raw);
-    };
-    const payload = {
-      date: String(vals.get("date")),
-      waistCm: num("waistCm"),
-      chestCm: num("chestCm"),
-      armCm: num("armCm"),
-      thighCm: num("thighCm"),
-      hipCm: num("hipCm"),
-      notes: String(vals.get("notes") ?? "").trim(),
-    };
-    const btn = $('button[type="submit"]', form);
-    const err = $(".form-error", form);
-    btn.disabled = true;
-    err.hidden = true;
-    try {
-      await api("/api/web/measurements", { method: "PUT", body: payload });
-      dialog.close();
-      state.recordsCache.weight = null;
-      await loadRecords("weight", requestId);
-      notify("身体围度已保存");
-    } catch (problem) {
-      err.textContent = problem.message;
-      err.hidden = false;
-    } finally { btn.disabled = false; }
-  });
-  $("#delete-measurement", form)?.addEventListener("click", () => {
-    openConfirmDialog({
-      title: "删除围度记录",
-      message: `确定要删除 ${shortDate(existing.date)} 的身体围度记录吗？`,
-      confirmLabel: "删除记录",
-      onConfirm: async () => {
-        await api("/api/web/measurements/" + encodeURIComponent(existing.date), { method: "DELETE" });
-        dialog.close();
-        state.recordsCache.weight = null;
-        await loadRecords("weight", requestId);
-        notify("已删除围度记录");
-      },
-    });
-  });
-}
 
 function renderWeight() {
   const records = [...state.records].sort((a, b) => b.data.date.localeCompare(a.data.date) || b.updatedAt.localeCompare(a.updatedAt));
@@ -2030,7 +1602,7 @@ function renderWeight() {
               ${data.bodyFat == null ? "<span></span>" : `<span>体脂 ${fmt(data.bodyFat)}%</span>`}${icon("chevron", 15)}</button>
           </div>`).join("")}</div></section>`).join("")}
         ${records.length > state.shownWeights ? '<button class="secondary-button" type="button" data-action="more-weights">查看更多记录</button>' : ""}
-      </section></div>${renderMeasurementsSection(state.measurements)}` : `${appleWeightStrip}${renderMeasurementsSection(state.measurements)}${empty("还没有体重记录", "添加一次称重，即可开始查看变化。")}`);
+      </section></div>${renderMeasurementsSection(state.measurements, state.profileHeightCm)}` : `${appleWeightStrip}${renderMeasurementsSection(state.measurements, state.profileHeightCm)}${empty("还没有体重记录", "添加一次称重，即可开始查看变化。")}`);
 }
 function monthDays(month) {
   const first = month + "-01";
@@ -2669,7 +2241,7 @@ function openDraft(record, map) {
     <span>${row.sets} 组 × ${row.seconds ? row.seconds + " 秒" : row.repsMin + "–" + row.repsMax + " 次"}</span></li>`).join("")}</ol></section>`;
   }).join("")}
     <footer><button class="secondary-button" type="button" id="export-draft-json">${icon("download", 14)} 导出 JSON</button><button class="primary-button" type="button" id="apply-plan">启用此计划</button></footer></div>`, true);
-  $("#export-draft-json")?.addEventListener("click", () => exportPlanAsJson(data));
+  $("#export-draft-json")?.addEventListener("click", async () => (await loadDataModals()).exportPlanAsJson(data));
   $("#apply-plan").addEventListener("click", async (event) => {
     const button = event.currentTarget;
     if (!button.dataset.confirm) { button.dataset.confirm = "true"; button.textContent = "确认启用"; return; }
@@ -2681,210 +2253,21 @@ function openDraft(record, map) {
     } catch (problem) { notify(problem.message); } finally { button.disabled = false; }
   });
 }
-function settingsPanels(preferences, profile, devices, aiStatus, aiSettingsCard, apiTokens = []) {
-  const goal = profile.profile;
-  const choice = new Set(preferences.panels);
-  const primaryOverviewPanels = new Set(["load", "muscle", "strength", "weight"]);
-  let order = [...preferences.panels, ...Object.keys(panelNames).filter((id) => !choice.has(id))];
-  function drawRows() {
-    const visibleOrder = state.appleHealthConnected ? order : order.filter((id) => id !== "apple");
-    $("#panel-options").innerHTML = visibleOrder.map((id, position) => `<div class="panel-option-row"><label class="toggle-inline"><input class="switch" type="checkbox" name="panel" value="${id}"${choice.has(id) ? " checked" : ""}><span>${panelNames[id]}</span><em class="panel-slot-tag">${primaryOverviewPanels.has(id) ? "首页主区" : "更多数据"}</em></label>
-      <div class="panel-option-order"><button type="button" class="icon-button" data-reorder="-1" data-panel="${id}" aria-label="上移${panelNames[id]}"${position === 0 ? " disabled" : ""}>${icon("arrowUp", 16)}</button>
-      <button type="button" class="icon-button" data-reorder="1" data-panel="${id}" aria-label="下移${panelNames[id]}"${position === visibleOrder.length - 1 ? " disabled" : ""}>${icon("arrowDown", 16)}</button></div></div>`).join("");
-  }
-  const info = goal.energyProfile;
-  const goalFields = (fields) => fields.map(([key, label, unit, min, max]) => {
-    const attrs = `type="number" inputmode="${["daysPerWeek", "restSeconds"].includes(key) ? "numeric" : "decimal"}" min="${min}" max="${max}" step="${["daysPerWeek", "restSeconds"].includes(key) ? 1 : "any"}" ${key === "targetWeight" ? "" : "required"}`;
-    return field(label, unit ? inputGroup(key, goal[key], unit, attrs) : input(key, goal[key], attrs));
-  }).join("");
-  const section = (id) => `data-section="${id}"${state.settingsSection === id ? "" : " hidden"}`;
-  const persistentTokens = (apiTokens ?? []).filter((t) => !t.expiresAt);
-  content.innerHTML = heading("设置") + `<div class="settings-layout">
-  <div class="page-sections settings-sections" role="group" aria-label="设置分类">${segments(settingsSections, state.settingsSection, "settings-section")}</div>
-  <div class="settings-content">
-  <section class="panel" ${section("statistics")}><header class="panel-head"><h2>统计布局与口径</h2></header><form id="preferences-form" class="settings-form">
-    ${field("默认统计周期", `<select name="days">${options(intervals, preferences.days)}</select>`)}
-    ${switchField("warmups", "热身组计入完成组数与容量", preferences.includeWarmups, "最高重量与估算 1RM 仍只统计工作组")}
-    <section class="form-section"><h3 class="form-section-title">显示卡片与顺序</h3><p class="muted panel-order-hint">主区 4 张核心图卡常驻首页，其余已启用卡片收进首页底部「更多数据」折叠区。</p><div id="panel-options" class="panel-options"></div></section>
-    <p class="form-error" role="alert" hidden></p><footer class="form-foot"><button class="primary-button">保存设置</button></footer></form></section>
-  <section class="panel" ${section("profile")}><header class="panel-head"><h2>训练与饮食目标</h2></header><form id="profile-form" class="settings-form">
-    <section class="form-section"><h3 class="form-section-title">饮食目标</h3><div class="fields">${goalFields([["calories", "每日热量", "kcal", 1, 20000], ["protein", "每日蛋白质", "g", 0, 100000], ["carbs", "每日碳水", "g", 0, 100000], ["fat", "每日脂肪", "g", 0, 100000]])}</div></section>
-    <section class="form-section"><h3 class="form-section-title">训练与体重</h3><div class="fields">${goalFields([["daysPerWeek", "每周训练", "天", 1, 7], ["restSeconds", "默认休息", "秒", 0, 900], ["targetWeight", "目标体重", "kg", 1, 500]])}</div></section>
-    <section class="form-section"><h3 class="form-section-title">我的训练器械</h3><p class="muted panel-order-hint">保存后，训练编辑器的「我的器械」筛选会自动优先展示匹配的动作。</p>
-      <div class="equip-presets">
-        <button type="button" class="quiet" data-equip-preset="gym">商业健身房</button>
-        <button type="button" class="quiet" data-equip-preset="home">居家哑铃</button>
-        <button type="button" class="quiet" data-equip-preset="bodyweight">徒手街头</button>
-      </div>
-      <div class="equip-check-grid">${["barbell", "dumbbell", "machine", "cable", "bodyweight", "kettlebell", "band", "weighted"].map((eqKey) => {
-        const activeEq = (goal.equipment ?? ["barbell", "dumbbell", "machine"]).includes(eqKey);
-        return `<label class="equip-check-pill"><input type="checkbox" name="equipment" value="${eqKey}"${activeEq ? " checked" : ""}><span>${esc(equipment[eqKey] ?? eqKey)}</span></label>`;
-      }).join("")}</div>
-    </section>
-    <details class="energy-details"${info ? " open" : ""}><summary><span>能量估算资料</span>${icon("chevron", 14)}</summary>
-    <div class="details-body">
-    ${switchField("energy", "启用能量估算", !!info)}
-    <fieldset class="form-fieldset" id="energy-fields"${info ? "" : " disabled"}><div class="fields">
-    ${field("身高", inputGroup("heightCm", info?.heightCm, "cm", 'type="number" inputmode="decimal" min="50" max="250" step="0.1" required'))}
-    ${field("参考体重", inputGroup("weightKg", info?.weightKg, "kg", 'type="number" inputmode="decimal" min="1" max="500" step="0.01" required'))}
-    ${field("测量日期", input("weightDate", info?.weightDate, `type="date" max="${today()}" required`))}
-    ${field("出生日期", input("birthDate", info?.birthDate, `type="date" max="${today()}" required`))}
-    ${field("性别", `<select name="sex">${options({ male: "男", female: "女" }, info?.sex ?? "male")}</select>`)}
-    ${field("活动系数", input("activityFactor", info?.activityFactor ?? 1.55, 'type="number" inputmode="decimal" step="0.01" min="1.4" max="2.5" required'))}
-    ${field("生理状态", `<select name="context">${options({ general: "一般成人", pregnant: "妊娠期", breastfeeding: "哺乳期" }, info?.context ?? "general")}</select>`)}</div></fieldset></div></details>
-    <p class="form-error" role="alert" hidden></p><footer class="form-foot"><button class="primary-button">保存目标</button></footer></form></section>
-  <section class="panel" ${section("devices")}><header class="panel-head"><h2>Apple 健康</h2></header>
-    <div class="settings-form">
-      ${!state.appleHealthConnected ? `<div class="apple-optin-banner"><strong>暂未对接 Apple 健康</strong><small>没有 Apple Watch 也能完整使用铁记，首页、数据分析、日历与徽章中的苹果健康模块已自动为你隐藏。日后如需同步，在下方导入数据或生成快捷指令即可自动开启。</small></div>` : ""}
-      <section class="form-section"><h3>Health Data Export</h3>
-        <p class="muted">导入已有体能训练，或连接 iPhone 定时同步。</p>
-        <div class="health-import-actions">
-          <button type="button" class="primary-button" data-action="import-health-data">导入训练 JSON</button>
-          <button type="button" class="secondary-button" data-action="connect-health-export">设置自动同步</button>
-        </div>
-      </section>
-      <section class="form-section"><h3>Apple 快捷指令（全量健康 + 训练打卡）</h3>
-        <p class="muted">支持一键导出「每日全量健康同步（睡眠分期、体脂、体重、步数、静息心率、HRV、血氧等）」与「单场训练打卡」快捷指令（配合 Mac 一行签名即可用）。</p>
-        <p class="device-endpoint"><code>${esc(location.origin)}/api/integrations/apple-health/daily</code></p>
-        <p class="device-endpoint"><code>${esc(location.origin)}/api/integrations/apple-health/events</code></p>
-        <button type="button" class="secondary-button" data-action="issue-device">${icon("plus")} 生成上传快捷指令</button>
-      </section>
-      <section class="form-section"><h3>上传设备</h3>
-        ${devices.length ? `<ul class="device-list">${devices.map((device) => `<li><span><strong>${esc(device.label)}</strong><small>${esc(device.expiresAt.slice(0, 10))} 到期</small></span>
-          <button type="button" class="quiet" data-action="revoke-device" data-value="${esc(device.id)}">撤销</button></li>`).join("")}</ul>` : "<p class='muted'>暂未添加设备。</p>"}
-      </section>
-    </div>
-  </section>
-  ${aiSettingsCard(aiStatus, section("ai"))}
-  <section class="panel" ${section("account")}><header class="panel-head"><h2>账号与数据</h2></header><p class="muted">${state.demo ? "当前为演示模式，修改仅保留在本次会话。" : state.username ? `用户名 ${esc(state.username)}` : "已登录铁记"}</p>
-    ${!state.demo && state.username ? `<section class="form-section">
-      <h3>登录安全 · 修改密码</h3>
-      <p class="muted">密码需为 10–128 位英文字母或数字。修改后其他设备的旧登录会话将自动失效。</p>
-      <form id="password-change-form" class="settings-form">
-        <div class="fields">
-          ${field("当前密码", '<input type="password" name="currentPassword" autocomplete="current-password" minlength="1" maxlength="128" required placeholder="输入当前登录密码">')}
-          ${field("新密码", '<input type="password" name="newPassword" autocomplete="new-password" minlength="10" maxlength="128" pattern="[A-Za-z0-9]{10,128}" required placeholder="至少 10 位字母或数字">')}
-          ${field("确认新密码", '<input type="password" name="confirmPassword" autocomplete="new-password" minlength="10" maxlength="128" pattern="[A-Za-z0-9]{10,128}" required placeholder="再次输入新密码">')}
-        </div>
-        <p class="form-error" role="alert" hidden></p>
-        <footer class="form-foot"><button type="submit" class="secondary-button">更新登录密码</button></footer>
-      </form>
-    </section>` : ""}
-    <section class="form-section api-tokens-section">
-      <h3>MCP 与 API 访问令牌</h3>
-      <p class="muted">用于连接 Claude Desktop / Cursor MCP 服务（<code>IRONLOG_TOKEN</code>）或脚本调用 REST API。令牌仅在生成时完整展示一次。</p>
-      <div class="health-import-actions">
-        <button type="button" class="secondary-button" data-action="issue-api-token">${icon("plus", 14)} 生成 MCP / API 令牌</button>
-      </div>
-      ${persistentTokens.length ? `<ul class="device-list">${persistentTokens.map((tok) => `<li><span><strong>${esc(tok.label)}</strong><small>创建于 ${esc((tok.createdAt ?? "").slice(0, 10))} · 永久有效</small></span>
-        <button type="button" class="quiet" data-action="revoke-api-token" data-value="${esc(tok.id)}">撤销</button></li>`).join("")}</ul>` : "<p class='muted'>暂未生成 MCP / API 访问令牌。</p>"}
-    </section>
-    <section class="form-section csv-export-section">
-      <h3>表格导出（Excel UTF-8 CSV）</h3>
-      <p class="muted">直接用 Excel 或 WPS 打开不会乱码，也可作为原始分析数据留档。</p>
-      <div class="csv-export-grid">
-        <button type="button" class="secondary-button" data-action="export-csv" data-value="workouts">${icon("download", 14)} 训练记录 CSV</button>
-        <button type="button" class="secondary-button" data-action="export-csv" data-value="diet">${icon("download", 14)} 饮食记录 CSV</button>
-        <button type="button" class="secondary-button" data-action="export-csv" data-value="weight">${icon("download", 14)} 体重记录 CSV</button>
-        <button type="button" class="secondary-button" data-action="export-csv" data-value="measurements">${icon("download", 14)} 身体围度 CSV</button>
-      </div>
-    </section>
-    <footer class="form-foot"><button class="secondary-button" data-action="open-onboarding" type="button">${icon("book", 14)} 查看新手入门指南</button><button class="secondary-button" data-action="open-csv-import" type="button">${icon("upload", 14)} 导入历史 CSV</button><button class="secondary-button" data-action="export" type="button">${icon("download", 14)} 导出全量 JSON</button><button class="secondary-button" data-action="open-backup-restore" type="button">${icon("upload", 14)} 恢复全量 JSON</button><button class="quiet" data-action="logout" type="button">退出账号</button></footer></section></div></div>`;
-  drawRows();
-  $("#panel-options").addEventListener("change", ({ target }) => {
-    if (target.checked) choice.add(target.value); else choice.delete(target.value);
-  });
-  $("#panel-options").addEventListener("click", ({ target }) => {
-    const button = target.closest("[data-reorder]");
-    if (!button) return;
-    const visibleOrder = state.appleHealthConnected ? order : order.filter((id) => id !== "apple");
-    const position = visibleOrder.indexOf(button.dataset.panel), next = position + Number(button.dataset.reorder);
-    if (position < 0 || next < 0 || next >= visibleOrder.length) return;
-    [visibleOrder[position], visibleOrder[next]] = [visibleOrder[next], visibleOrder[position]];
-    order = state.appleHealthConnected ? visibleOrder : [...visibleOrder, ...(order.includes("apple") ? ["apple"] : [])];
-    drawRows();
-    const replacement = $(`[data-reorder="${button.dataset.reorder}"][data-panel="${button.dataset.panel}"]`);
-    (replacement.disabled ? $(`[data-panel="${button.dataset.panel}"]:not(:disabled)`) : replacement)?.focus();
-  });
-  function submitForm(id, save) {
-    $(id).addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const form = event.currentTarget, button = $("footer button", form), error = $(".form-error", form);
-      button.disabled = true; error.hidden = true;
-      try { await save(new FormData(form)); }
-      catch (problem) { error.textContent = problem.message; error.hidden = false; }
-      finally { button.disabled = false; }
-    });
-  }
-  submitForm("#preferences-form", async (form) => {
-    const panels = order.filter((id) => choice.has(id));
-    if (!panels.length) throw new Error("至少保留一张统计卡片。");
-    state.preferences = await api("/api/web/preferences", { method: "PUT", body: {
-      revision: state.preferences.revision, days: Number(form.get("days")), includeWarmups: form.has("warmups"), panels,
-    } });
-    state.period = null;
-    notify("统计设置已保存");
-  });
-  $('[name="energy"]').addEventListener("change", ({ target }) => { $("#energy-fields").disabled = !target.checked; });
-  const equipPresetMap = {
-    gym: ["barbell", "dumbbell", "machine", "cable", "bodyweight"],
-    home: ["dumbbell", "bodyweight", "band"],
-    bodyweight: ["bodyweight"],
-  };
-  $("#profile-form").addEventListener("click", ({ target }) => {
-    const presetBtn = target.closest("[data-equip-preset]");
-    if (!presetBtn) return;
-    const chosen = new Set(equipPresetMap[presetBtn.dataset.equipPreset] ?? []);
-    $$('#profile-form input[name="equipment"]').forEach((box) => { box.checked = chosen.has(box.value); });
-  });
-  let profileVersion = profile.version;
-  submitForm("#profile-form", async (form) => {
-    const body = Object.fromEntries(["calories", "protein", "carbs", "fat", "daysPerWeek", "restSeconds"].map((name) => [name, Number(form.get(name))]));
-    body.targetWeight = form.get("targetWeight") ? Number(form.get("targetWeight")) : null;
-    body.equipment = form.getAll("equipment");
-    body.energyProfile = form.has("energy") ? {
-      heightCm: Number(form.get("heightCm")), weightKg: Number(form.get("weightKg")), weightDate: form.get("weightDate"),
-      birthDate: form.get("birthDate"), sex: form.get("sex"), context: form.get("context"), activityFactor: Number(form.get("activityFactor")),
-    } : null;
-    const updated = await api("/api/web/profile", { method: "PUT", body: { ...body, version: profileVersion, opId: crypto.randomUUID() } });
-    profileVersion = updated.version;
-    state.userEquipment = updated.profile.equipment ?? [];
-    if (state.data) state.data.goals = updated.profile;
-    notify("目标与器械配置已保存");
-  });
-  if ($("#password-change-form")) {
-    submitForm("#password-change-form", async (form) => {
-      const currentPassword = String(form.get("currentPassword") ?? "");
-      const newPassword = String(form.get("newPassword") ?? "");
-      const confirmPassword = String(form.get("confirmPassword") ?? "");
-      if (newPassword !== confirmPassword) throw new Error("两次输入的新密码不一致");
-      if (newPassword.length < 10 || /[^A-Za-z0-9]/.test(newPassword)) {
-        throw new Error("新密码需为 10–128 位英文字母和数字");
-      }
-      await api("/api/web/password", {
-        method: "POST",
-        body: { currentPassword, newPassword },
-      });
-      $("#password-change-form")?.reset();
-      notify("登录密码已更新");
-    });
-  }
-  requestAnimationFrame(() => centerActivePills(content, false));
-}
 async function loadSettings(version) {
   content.innerHTML = loadingMarkup();
-  const [preferences, profile, devices, aiStatus, { aiSettingsCard }, apiTokens] = await Promise.all([
+  const [preferences, profile, devices, aiStatus, { aiSettingsCard }, apiTokens, { renderSettingsPanels }] = await Promise.all([
     api("/api/web/preferences"),
     api("/api/web/profile"),
     api("/api/integrations/apple-health/tokens"),
     getAiStatus(true),
     loadAiUi(),
     api("/api/tokens").catch(() => []),
+    loadSettingsUi(),
   ]);
   if (version !== requestId) return;
   state.preferences = preferences;
   state.userEquipment = profile?.profile?.equipment ?? state.userEquipment;
-  settingsPanels(preferences, profile, devices, aiStatus, aiSettingsCard, apiTokens);
+  renderSettingsPanels({ content, heading, settingsSections, intervals, preferences, profile, devices, aiStatus, aiSettingsCard, apiTokens, state, api, notify, centerActivePills });
 }
 function renderAnalytics() {
   if (!state.analyticsData || !analyticsUi) return;
@@ -2927,17 +2310,6 @@ async function saveAppleWeightToRecord({ targetDate, weightKg, bodyFatPct, exist
       },
     },
   });
-}
-function downloadTextFile(text, mime, filename) {
-  const blob = new Blob([text], { type: mime });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 function renderBadges() {
   if (!state.badges) return;
@@ -3083,415 +2455,6 @@ async function openDevice() {
     userId: state.userId,
   });
 }
-function openCsvImportModal() {
-  open("导入训练记录（CSV）", `<div class="dialog-form csv-import-box">
-    <p class="muted">自动识别 <b>Strong</b>、<b>Hevy</b>、<b>FitNotes</b> 与 <b>铁记导出</b> CSV，自动换算 lbs→kg、匹配中文动作库并过滤重复场次。</p>
-    <label class="csv-file-drop">
-      <input type="file" id="csv-import-file" accept=".csv,text/csv,text/plain">
-      <span>${icon("upload", 16)} 选择 CSV 文件</span>
-      <small id="csv-file-label">或直接在下方粘贴 CSV 文本（含表头）</small>
-    </label>
-    <textarea id="csv-import-text" rows="5" placeholder="例如：Date,Workout Name,Exercise Name,Weight,Reps&#10;2026-11-20,Push Day,Bench Press (Barbell),100,5"></textarea>
-    <div class="csv-import-options">
-      <label class="switch-chip"><span>跳过同日同名重复训练</span><input class="switch" type="checkbox" id="csv-import-skip" checked></label>
-      <button type="button" class="secondary-button" id="csv-import-preview-btn">解析预览</button>
-    </div>
-    <p class="form-error" id="csv-import-error" hidden></p>
-    <div id="csv-import-preview" class="csv-preview-box" hidden></div>
-    <footer>
-      <button type="button" class="quiet" data-action="close">取消</button>
-      <button type="button" class="primary-button" id="csv-import-commit-btn" disabled>确认导入</button>
-    </footer>
-  </div>`, true);
-
-  const fileInput = $("#csv-import-file", dialog);
-  const fileLabel = $("#csv-file-label", dialog);
-  const textArea = $("#csv-import-text", dialog);
-  const skipCheck = $("#csv-import-skip", dialog);
-  const previewBtn = $("#csv-import-preview-btn", dialog);
-  const commitBtn = $("#csv-import-commit-btn", dialog);
-  const previewBox = $("#csv-import-preview", dialog);
-  const errEl = $("#csv-import-error", dialog);
-
-  async function runPreview() {
-    const csv = textArea.value.trim();
-    errEl.hidden = true;
-    commitBtn.disabled = true;
-    if (!csv) {
-      previewBox.hidden = true;
-      return;
-    }
-    previewBtn.disabled = true;
-    try {
-      const res = await api("/api/web/import-csv/preview", {
-        method: "POST",
-        body: { csv, skipDuplicates: skipCheck.checked },
-      });
-      if (!dialog.open || !textArea.isConnected) return;
-      previewBox.hidden = false;
-      previewBox.innerHTML = `<div class="csv-preview-head"><span class="starter-tag">识别格式：${esc(res.formatLabel)}</span><small>已匹配动作 ${res.matchedExercises} 个</small></div>
-        <div class="csv-preview-stats">
-          <div><span>解析场次</span><strong>${res.totalWorkouts} <small>场</small></strong></div>
-          <div><span>将导入</span><strong>${res.importableWorkouts} <small>场</small></strong></div>
-          <div><span>重复跳过</span><strong>${res.duplicateWorkouts} <small>场</small></strong></div>
-          <div><span>有效组数</span><strong>${res.totalSets} <small>组</small></strong></div>
-        </div>
-        ${res.customExercisesToCreate?.length ? `<p class="muted csv-custom-note">将自动创建自定义动作：<b>${res.customExercisesToCreate.map((n) => esc(n)).join("、")}</b></p>` : ""}
-        ${res.warnings?.length ? `<p class="muted csv-warn-note">${res.warnings.map((w) => esc(w)).join("<br>")}</p>` : ""}
-        ${res.sampleWorkouts?.length ? `<ul class="csv-preview-list">${res.sampleWorkouts.map((w) =>
-          `<li><span><b>${esc(w.date)}</b> · ${esc(w.title)}</span><small>${esc(w.exercises.slice(0, 3).join("、"))}${w.exercises.length > 3 ? ` 等 ${w.exercises.length} 项` : ""} · ${w.sets} 组</small></li>`).join("")}</ul>` : '<p class="muted">所有识别场次均为重复记录，取消勾选“跳过重复”或更换文件可强制导入。</p>'}`;
-      commitBtn.disabled = !(res.importableWorkouts > 0);
-    } catch (problem) {
-      previewBox.hidden = true;
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-    } finally {
-      previewBtn.disabled = false;
-    }
-  }
-
-  fileInput?.addEventListener("change", async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    if (file.size > 2_000_000) {
-      errEl.textContent = "CSV 文件超过 2 MB，请分批导入。";
-      errEl.hidden = false;
-      return;
-    }
-    if (fileLabel) fileLabel.textContent = `已加载：${file.name}`;
-    textArea.value = await file.text();
-    await runPreview();
-  });
-  previewBtn?.addEventListener("click", () => void runPreview());
-  skipCheck?.addEventListener("change", () => { if (textArea.value.trim()) void runPreview(); });
-  commitBtn?.addEventListener("click", async () => {
-    const csv = textArea.value.trim();
-    if (!csv) return;
-    commitBtn.disabled = true;
-    errEl.hidden = true;
-    try {
-      const res = await api("/api/web/import-csv/commit", {
-        method: "POST",
-        body: { csv, skipDuplicates: skipCheck.checked },
-      });
-      dataEpoch++;
-      state.badges = null;
-      state.libraryLoaded = false;
-      state.planCache = null;
-      state.recordsCache = {};
-      if (dialog.open) dialog.close();
-      await renderRoute();
-      notify(`已从 ${res.formatLabel} 导入 ${res.importedWorkouts} 场训练（共 ${res.importedSets} 组）`);
-    } catch (problem) {
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-      commitBtn.disabled = false;
-    }
-  });
-}
-function openBackupRestoreModal() {
-  open("恢复全量 JSON 备份", `<div class="dialog-form csv-import-box">
-    <p class="muted">支持一键恢复由「导出全量 JSON」生成的备份文件（包含训练记录、饮食、体重、训练计划、自定义动作、身体围度、动作备忘与 Apple 健康同步数据）。</p>
-    <label class="csv-file-drop">
-      <input type="file" id="backup-restore-file" accept=".json,application/json">
-      <span>${icon("upload", 16)} 选择全量 JSON 备份文件</span>
-      <small id="backup-file-label">或直接在下方粘贴备份 JSON 内容</small>
-    </label>
-    <textarea id="backup-restore-text" rows="5" placeholder='{"format":"ironlog","schemaVersion":1,"records":[...]}'></textarea>
-    <div class="csv-import-options">
-      <select id="backup-restore-strategy" aria-label="恢复策略">
-        <option value="merge">智能合并（推荐：保留现有数据，仅导入缺失或更新的记录）</option>
-        <option value="replace">完整覆盖（清空当前账号数据，完整还原至此备份）</option>
-      </select>
-      <button type="button" class="secondary-button" id="backup-restore-preview-btn">解析预览</button>
-    </div>
-    <p class="form-error" id="backup-restore-error" hidden></p>
-    <div id="backup-restore-preview" class="csv-preview-box" hidden></div>
-    <footer>
-      <button type="button" class="quiet" data-action="close">取消</button>
-      <button type="button" class="primary-button" id="backup-restore-commit-btn" disabled>确认恢复</button>
-    </footer>
-  </div>`, true);
-
-  const fileInput = $("#backup-restore-file", dialog);
-  const fileLabel = $("#backup-file-label", dialog);
-  const textArea = $("#backup-restore-text", dialog);
-  const strategySel = $("#backup-restore-strategy", dialog);
-  const previewBtn = $("#backup-restore-preview-btn", dialog);
-  const commitBtn = $("#backup-restore-commit-btn", dialog);
-  const previewBox = $("#backup-restore-preview", dialog);
-  const errEl = $("#backup-restore-error", dialog);
-  let parsedBackup = null;
-
-  async function runPreview() {
-    const raw = textArea.value.trim();
-    errEl.hidden = true;
-    commitBtn.disabled = true;
-    delete commitBtn.dataset.confirm;
-    commitBtn.textContent = "确认恢复";
-    if (!raw) {
-      previewBox.hidden = true;
-      return;
-    }
-    try {
-      parsedBackup = JSON.parse(raw);
-    } catch {
-      previewBox.hidden = true;
-      errEl.textContent = "备份内容不是合法的 JSON 格式";
-      errEl.hidden = false;
-      return;
-    }
-    previewBtn.disabled = true;
-    try {
-      const res = await api("/api/web/restore-backup", {
-        method: "POST",
-        body: { backup: parsedBackup, mode: "preview", strategy: strategySel.value },
-      });
-      if (!dialog.open || !textArea.isConnected) return;
-      const c = res.counts ?? {};
-      const d = res.diff ?? {};
-      previewBox.hidden = false;
-      previewBox.innerHTML = `<div class="csv-preview-head"><span class="starter-tag">${res.strategy === "replace" ? "策略：完整覆盖" : "策略：智能合并"}</span><small>${res.exportedAt ? `备份时间：${esc(res.exportedAt.slice(0, 16).replace("T", " "))}` : "铁记全量备份"}</small></div>
-        <div class="csv-preview-stats">
-          <div><span>力量/训练</span><strong>${c.workouts ?? 0} <small>场</small></strong></div>
-          <div><span>饮食记录</span><strong>${c.diets ?? 0} <small>条</small></strong></div>
-          <div><span>体重/围度</span><strong>${(c.weights ?? 0) + (c.measurements ?? 0)} <small>条</small></strong></div>
-          <div><span>计划/模板</span><strong>${(c.plans ?? 0) + (c.templates ?? 0)} <small>份</small></strong></div>
-        </div>
-        <p class="muted csv-custom-note">将新增 <b>${d.toImport ?? 0}</b> 项 · 更新 <b>${d.toUpdate ?? 0}</b> 项 · 已一致跳过 <b>${d.unchanged ?? 0}</b> 项${(c.appleDaily || c.appleWorkouts) ? ` · 含 Apple 健康 ${c.appleDaily ?? 0} 天 / ${c.appleWorkouts ?? 0} 场训练` : ""}</p>`;
-      commitBtn.disabled = false;
-    } catch (problem) {
-      previewBox.hidden = true;
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-    } finally {
-      previewBtn.disabled = false;
-    }
-  }
-
-  fileInput?.addEventListener("change", async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    if (file.size > 16_000_000) {
-      errEl.textContent = "备份文件超过 16 MB";
-      errEl.hidden = false;
-      return;
-    }
-    if (fileLabel) fileLabel.textContent = `已加载：${file.name}`;
-    textArea.value = await file.text();
-    await runPreview();
-  });
-  previewBtn?.addEventListener("click", () => void runPreview());
-  strategySel?.addEventListener("change", () => { if (textArea.value.trim()) void runPreview(); });
-  commitBtn?.addEventListener("click", async () => {
-    if (!parsedBackup) return;
-    if (strategySel.value === "replace" && commitBtn.dataset.confirm !== "true") {
-      commitBtn.dataset.confirm = "true";
-      commitBtn.textContent = "确认清空并覆盖恢复";
-      return;
-    }
-    commitBtn.disabled = true;
-    errEl.hidden = true;
-    try {
-      const res = await api("/api/web/restore-backup", {
-        method: "POST",
-        body: { backup: parsedBackup, mode: "commit", strategy: strategySel.value },
-      });
-      dataEpoch++;
-      state.badges = null;
-      state.libraryLoaded = false;
-      state.planCache = null;
-      state.recordsCache = {};
-      state.dayCache.clear();
-      await refreshAccountMeta();
-      if (dialog.open) dialog.close();
-      await renderRoute();
-      notify(`全量备份恢复完成：新增 ${res.imported} 项，更新 ${res.updated} 项`);
-    } catch (problem) {
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-      commitBtn.disabled = false;
-    }
-  });
-}
-function openIssueApiTokenModal() {
-  open("生成 MCP / API 访问令牌", `<form id="issue-api-token-form" class="dialog-form">
-    <p class="muted">生成后可用于配置 Claude Desktop、Cursor 的 <code>@ironlog/mcp</code> 服务或调用铁记 REST API。</p>
-    ${field("令牌名称", '<input name="label" maxlength="80" required value="Claude Desktop MCP" placeholder="例如：Claude Desktop / 命令行脚本">')}
-    <p class="form-error" role="alert" hidden></p>
-    <footer>
-      <button type="button" class="quiet" data-action="close">取消</button>
-      <button type="submit" class="primary-button">生成令牌</button>
-    </footer>
-  </form>`, true);
-  $("#issue-api-token-form", dialog)?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const label = String(new FormData(form).get("label") ?? "").trim();
-    const btn = $('button[type="submit"]', form);
-    const errEl = $(".form-error", form);
-    if (!label) return;
-    btn.disabled = true;
-    errEl.hidden = true;
-    try {
-      const res = await api("/api/tokens", { method: "POST", body: { label } });
-      const mcpConfig = JSON.stringify({
-        mcpServers: {
-          ironlog: {
-            command: "npx",
-            args: ["-y", "tsx", "packages/mcp/src/index.ts"],
-            env: {
-              IRONLOG_URL: location.origin,
-              IRONLOG_TOKEN: res.token,
-            },
-          },
-        },
-      }, null, 2);
-      open("令牌已生成（请立即保存）", `<div class="dialog-form">
-        <p class="muted">出于安全考虑，此令牌仅显示一次。关闭窗口后将无法再次查看完整明文。</p>
-        ${field("API 访问令牌 (IRONLOG_TOKEN)", `<input name="issued-api-token" readonly value="${esc(res.token)}">`)}
-        ${field("MCP 客户端配置示例", `<textarea rows="7" readonly>${esc(mcpConfig)}</textarea>`)}
-        <footer>
-          <button type="button" class="secondary-button" id="copy-mcp-config-btn">复制 MCP 配置</button>
-          <button type="button" class="primary-button" id="copy-api-token-btn">复制令牌</button>
-        </footer>
-      </div>`, true);
-      $("#copy-api-token-btn", dialog)?.addEventListener("click", async () => {
-        if (await copyText(res.token)) notify("API 访问令牌已复制");
-      });
-      $("#copy-mcp-config-btn", dialog)?.addEventListener("click", async () => {
-        if (await copyText(mcpConfig)) notify("MCP 配置 JSON 已复制");
-      });
-      if (state.view === "settings") await renderRoute();
-    } catch (problem) {
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-      btn.disabled = false;
-    }
-  });
-}
-function exportPlanAsJson(plan) {
-  if (!plan) return;
-  const payload = {
-    format: "ironlog-plan",
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    plan,
-  };
-  const safeName = String(plan.name || "plan").replace(/[\\/:*?"<>|\s]+/g, "-").slice(0, 48);
-  downloadTextFile(JSON.stringify(payload, null, 2), "application/json;charset=utf-8;", `ironlog-plan-${safeName}.json`);
-  notify(`已导出计划「${plan.name ?? "训练计划"}」JSON 文件`);
-}
-function openPlanImportModal() {
-  open("导入训练计划（JSON）", `<div class="dialog-form plan-import-box">
-    <p class="muted">导入由铁记导出的 <code>ironlog-plan</code> JSON，或任何标准计划结构（支持按动作中/英文名自动匹配动作库）。</p>
-    <label class="csv-file-drop">
-      <input type="file" id="plan-import-file" accept=".json,application/json">
-      <span>${icon("upload", 16)} 选择计划 JSON 文件</span>
-      <small id="plan-file-label">或在下方直接粘贴计划 JSON 内容</small>
-    </label>
-    <textarea id="plan-import-text" rows="5" placeholder='{"format":"ironlog-plan","version":1,"plan":{"name":"示例推拉计划","weeks":6,"schedule":"rotation","routines":[...]}}'></textarea>
-    <div class="csv-import-options">
-      <span></span>
-      <button type="button" class="secondary-button" id="plan-import-preview-btn">解析预览</button>
-    </div>
-    <p class="form-error" id="plan-import-error" hidden></p>
-    <div id="plan-import-preview" class="csv-preview-box" hidden></div>
-    <footer>
-      <button type="button" class="quiet" data-action="close">取消</button>
-      <button type="button" class="secondary-button" id="plan-import-draft-btn" disabled>存为草稿</button>
-      <button type="button" class="primary-button" id="plan-import-apply-btn" disabled>一键启用</button>
-    </footer>
-  </div>`, true);
-
-  const fileInput = $("#plan-import-file", dialog);
-  const fileLabel = $("#plan-file-label", dialog);
-  const textArea = $("#plan-import-text", dialog);
-  const previewBtn = $("#plan-import-preview-btn", dialog);
-  const draftBtn = $("#plan-import-draft-btn", dialog);
-  const applyBtn = $("#plan-import-apply-btn", dialog);
-  const previewBox = $("#plan-import-preview", dialog);
-  const errEl = $("#plan-import-error", dialog);
-
-  async function runPreview() {
-    const json = textArea.value.trim();
-    errEl.hidden = true;
-    draftBtn.disabled = true;
-    applyBtn.disabled = true;
-    applyBtn.dataset.confirm = "";
-    applyBtn.textContent = "一键启用";
-    if (!json) { previewBox.hidden = true; return; }
-    previewBtn.disabled = true;
-    try {
-      const res = await api("/api/web/plans/import-json", {
-        method: "POST",
-        body: { json, mode: "preview" },
-      });
-      if (!dialog.open || !textArea.isConnected) return;
-      const p = res.plan;
-      const names = res.exerciseNames ?? {};
-      previewBox.hidden = false;
-      previewBox.innerHTML = `<div class="csv-preview-head"><strong>${esc(p.name)}</strong><small>${p.weeks} 周 · ${p.schedule === "rotation" ? "按顺序轮换" : "按星期执行"} · ${res.routineCount} 练 / ${res.exerciseCount} 动作</small></div>
-        ${res.weeklyMuscleSets?.length ? `<div class="starter-muscles">${res.weeklyMuscleSets.map((m) => `<span>${esc(m.name)} <b>${fmt(m.sets)}</b> 组</span>`).join("")}</div>` : ""}
-        <ul class="csv-preview-list">${p.routines.map((rt) => `<li><span><b>${esc(rt.name)}</b></span><small>${esc(rt.exercises.map((ex) => names[ex.exerciseId] ?? ex.exerciseId).slice(0, 4).join("、"))}${rt.exercises.length > 4 ? ` 等 ${rt.exercises.length} 项` : ""}</small></li>`).join("")}</ul>`;
-      draftBtn.disabled = false;
-      applyBtn.disabled = false;
-    } catch (problem) {
-      previewBox.hidden = true;
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-    } finally {
-      previewBtn.disabled = false;
-    }
-  }
-
-  async function commitPlan(mode) {
-    const json = textArea.value.trim();
-    if (!json) return;
-    if (mode === "apply" && state.plan?.data && applyBtn.dataset.confirm !== "true") {
-      applyBtn.dataset.confirm = "true";
-      applyBtn.textContent = "确认覆盖当前计划";
-      return;
-    }
-    draftBtn.disabled = true;
-    applyBtn.disabled = true;
-    errEl.hidden = true;
-    try {
-      const res = await api("/api/web/plans/import-json", {
-        method: "POST",
-        body: { json, mode, expectedRevision: state.plan?.revision ?? 0 },
-      });
-      state.planSection = mode === "draft" ? "drafts" : "current";
-      state.planCache = null;
-      dataEpoch++;
-      if (dialog.open) dialog.close();
-      if (state.view === "plan") await loadPlan(requestId);
-      else await route("plan");
-      notify(mode === "draft" ? `已将「${res.plan.name}」存入计划草稿` : `已导入并启用「${res.plan.name}」`);
-    } catch (problem) {
-      errEl.textContent = problem.message;
-      errEl.hidden = false;
-      draftBtn.disabled = false;
-      applyBtn.disabled = false;
-    }
-  }
-
-  fileInput?.addEventListener("change", async () => {
-    const file = fileInput.files?.[0];
-    if (!file) return;
-    if (file.size > 500_000) {
-      errEl.textContent = "计划 JSON 文件超过 500 KB。";
-      errEl.hidden = false;
-      return;
-    }
-    if (fileLabel) fileLabel.textContent = `已加载：${file.name}`;
-    textArea.value = await file.text();
-    await runPreview();
-  });
-  previewBtn?.addEventListener("click", () => void runPreview());
-  draftBtn?.addEventListener("click", () => void commitPlan("draft"));
-  applyBtn?.addEventListener("click", () => void commitPlan("apply"));
-}
 function getEditor() {
   return (editorPromise ??= import("./editor.js").then(({ makeEditor }) => makeEditor({
     api, dialog, open, notify, owner: () => state.userId,
@@ -3519,241 +2482,6 @@ function getEditor() {
       void checkBadgeUnlocks(prevBadges);
     },
   })));
-}
-async function showReport(id, record) {
-  const [report, { workoutReport, workoutReportText, renderWorkoutShareCard }] = await Promise.all([
-    api("/api/web/workout-report/" + encodeURIComponent(id)),
-    loadSessionUi(),
-  ]);
-  reportApple = (await appleRange(report.date, report.date).catch(() => [])).find((item) => item.manualWorkoutId === id) ?? null;
-  open(report.title, workoutReport(report, reportApple), true, "report");
-  const getFullRecord = () => record ?? api("/api/web/records/workout/" + encodeURIComponent(id));
-  $("#edit-workout-from-report", dialog).addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const [current, ed] = await Promise.all([getFullRecord(), getEditor(), ensureLibraryCaches()]);
-      if (dialog.open && dialog.contains(button)) {
-        ed.edit("workout", current, state.data?.goals);
-      }
-    } catch (error) { notify(error.message); }
-    finally { button.disabled = false; }
-  });
-  $("#save-workout-template", dialog)?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const current = await getFullRecord();
-      const plannedExercises = current.data.exercises.map((row) => {
-        const mode = row.snapshot?.mode ?? "reps";
-        const workSets = row.sets.filter((s) => s.type !== "warmup");
-        const pool = workSets.length ? workSets : row.sets;
-        const maxWeight = Math.max(...pool.map((s) => s.weight || 0), 0);
-        const avgReps = Math.max(1, Math.round(pool.reduce((s, x) => s + (x.reps || 8), 0) / Math.max(1, pool.length)));
-        const maxSec = Math.max(...pool.map((s) => s.seconds || 0), mode === "timed" ? 30 : 0);
-        return {
-          exerciseId: row.exerciseId,
-          sets: Math.max(1, Math.min(100, pool.length)),
-          repsMin: mode === "timed" ? 1 : Math.max(1, avgReps - 2),
-          repsMax: mode === "timed" ? 1 : avgReps,
-          weight: maxWeight > 0 ? maxWeight : null,
-          seconds: mode === "timed" ? Math.max(1, maxSec) : 0,
-          restSeconds: row.restSeconds ?? 90,
-          targetRir: 2,
-          progression: "double",
-          increment: 2.5,
-          backupExerciseId: null,
-          supersetGroup: row.supersetGroup ?? null,
-        };
-      });
-      if (!plannedExercises.length) { notify("本场没有动作可存为模板"); button.disabled = false; return; }
-      const tplId = "tpl_" + crypto.randomUUID().slice(0, 12);
-      const name = current.data.title || "自定义训练模板";
-      await api("/api/records", {
-        method: "POST",
-        body: { opId: crypto.randomUUID(), id: tplId, kind: "template", baseVersion: 0, deleted: false, data: { id: tplId, name, exercises: plannedExercises } },
-      });
-      dataEpoch++;
-      state.planCache = null;
-      button.textContent = "已存为模板";
-      notify(`已保存「${name}」至训练计划模板库`);
-    } catch (error) { notify(error.message); button.disabled = false; }
-  });
-  $("#sync-workout-to-plan", dialog)?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    if (!button.dataset.confirm) {
-      button.dataset.confirm = "true";
-      button.textContent = "确认同步？";
-      return;
-    }
-    button.disabled = true;
-    try {
-      const res = await api("/api/web/plans/sync-routine", {
-        method: "POST",
-        body: { workoutId: id, expectedRevision: report.activePlanRevision },
-      });
-      dataEpoch++;
-      state.planCache = null;
-      state.dayCache.clear();
-      button.textContent = "已同步回计划";
-      notify(`已将本场动作、组数与超级组同步至计划「${res.syncedRoutineName}」`);
-    } catch (error) {
-      delete button.dataset.confirm;
-      button.innerHTML = `${icon("refresh", 15)} 同步回计划`;
-      button.disabled = false;
-      notify(error.message);
-    }
-  });
-  $("#repeat-workout-from-report", dialog)?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      const [current, ed] = await Promise.all([getFullRecord(), getEditor(), ensureLibraryCaches()]);
-      if (!dialog.open || !dialog.contains(button)) return;
-      const clonedExercises = current.data.exercises.map((row) => {
-        const workSets = row.sets.filter((s) => s.type !== "warmup");
-        const pool = workSets.length ? workSets : row.sets;
-        return {
-          id: crypto.randomUUID(),
-          exerciseId: row.exerciseId,
-          supersetGroup: row.supersetGroup ?? null,
-          restSeconds: row.restSeconds ?? 90,
-          snapshot: row.snapshot,
-          sets: pool.map((s) => ({
-            id: crypto.randomUUID(),
-            type: s.type === "warmup" ? "normal" : s.type,
-            weight: s.weight ?? 0,
-            reps: s.reps ?? 8,
-            seconds: s.seconds ?? 0,
-            completed: false,
-            rir: null,
-          })),
-        };
-      });
-      ed.edit("workout", undefined, state.data?.goals ?? {}, {
-        title: current.data.title,
-        date: today(),
-        exercises: clonedExercises,
-        templateKey: "repeat_" + current.id,
-      });
-    } catch (error) { notify(error.message); button.disabled = false; }
-  });
-  $("#copy-workout-report", dialog).addEventListener("click", async ({ currentTarget }) => {
-    if (await copyText(workoutReportText(report))) { currentTarget.textContent = "已复制训练摘要"; notify("训练摘要已复制"); }
-    else notify("无法复制，可以长按选中训练内容");
-  });
-  $("#share-workout-card", dialog)?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      await openShareForDate(report.date || today(), {
-        singleReport: report,
-        singleHealth: reportApple,
-        onBack: () => { void showReport(id, record); },
-      });
-    } catch (error) {
-      notify(error.message);
-      button.disabled = false;
-    }
-  });
-}
-async function openDailyShareModal(payload, { onBack = null } = {}) {
-  const { SHARE_CARD_STYLES, renderDailyShareCard } = await loadSessionUi();
-  const savedStyle = localStorage.getItem("ironlog-share-style");
-  let activeStyle = SHARE_CARD_STYLES.some((s) => s.id === savedStyle) ? savedStyle : "paper";
-  let rendered = await renderDailyShareCard(payload, activeStyle);
-  const canNativeShare = typeof navigator.canShare === "function"
-    && navigator.canShare({ files: [new File([rendered.blob], rendered.filename, { type: "image/png" })] });
-
-  const tabsHtml = `<div class="share-style-tabs" role="tablist" aria-label="切换分享记录样式">${
-    SHARE_CARD_STYLES.map((st) => `<button type="button" role="tab" class="share-style-tab${st.id === activeStyle ? " is-active" : ""}" aria-selected="${st.id === activeStyle}" data-share-style="${esc(st.id)}">
-      <strong>${esc(st.label)}</strong>
-      <small>${esc(st.desc)}</small>
-    </button>`).join("")
-  }</div>`;
-
-  open("分享记录预览", `<div class="dialog-form share-card-modal">
-    ${tabsHtml}
-    <div class="share-card-frame"><img class="share-card-preview" id="share-card-preview-img" src="${rendered.dataUrl}" alt="今日记录分享图预览"></div>
-    <footer class="report-foot-actions">
-      <div class="report-foot-secondary">
-        ${onBack ? '<button type="button" class="quiet" id="back-to-report">返回</button>' : '<button type="button" class="quiet" data-action="close">关闭</button>'}
-      </div>
-      <div class="share-card-actions">
-        ${canNativeShare ? `<button type="button" class="secondary-button" id="native-share-card">系统分享</button>` : ""}
-        <a class="primary-button" id="download-share-card" href="${rendered.dataUrl}" download="${esc(rendered.filename)}">${icon("download", 15)} 下载 PNG 图片</a>
-      </div>
-    </footer>
-  </div>`, false, "report");
-
-  let renderSeq = 0;
-  $$("[data-share-style]", dialog).forEach((tab) => {
-    tab.addEventListener("click", async () => {
-      const nextStyle = tab.dataset.shareStyle;
-      if (!nextStyle || nextStyle === activeStyle) return;
-      activeStyle = nextStyle;
-      try { localStorage.setItem("ironlog-share-style", activeStyle); } catch {}
-      $$("[data-share-style]", dialog).forEach((btn) => {
-        const isCurrent = btn.dataset.shareStyle === activeStyle;
-        btn.classList.toggle("is-active", isCurrent);
-        btn.setAttribute("aria-selected", String(isCurrent));
-      });
-      const seq = ++renderSeq;
-      const frame = $(".share-card-frame", dialog);
-      frame?.setAttribute("aria-busy", "true");
-      try {
-        const nextRendered = await renderDailyShareCard(payload, activeStyle);
-        if (seq !== renderSeq || !dialog.open) return;
-        rendered = nextRendered;
-        const imgEl = $("#share-card-preview-img", dialog);
-        const dlEl = $("#download-share-card", dialog);
-        if (imgEl) imgEl.src = rendered.dataUrl;
-        if (dlEl) {
-          dlEl.href = rendered.dataUrl;
-          dlEl.download = rendered.filename;
-        }
-      } catch (err) {
-        notify(err.message);
-      } finally {
-        if (seq === renderSeq) frame?.removeAttribute("aria-busy");
-      }
-    });
-  });
-
-  $("#back-to-report", dialog)?.addEventListener("click", () => { if (onBack) onBack(); });
-  $("#native-share-card", dialog)?.addEventListener("click", async () => {
-    try {
-      const file = new File([rendered.blob], rendered.filename, { type: "image/png" });
-      await navigator.share({ title: `${payload.dateDot} ${payload.headline}`, files: [file] });
-    } catch {}
-  });
-}
-
-async function openShareForDate(targetDate, { singleReport = null, singleHealth = null, onBack = null } = {}) {
-  const dateKey = targetDate || today();
-  const [sessionMod, workoutsAll, dietsAll, appleDay] = await Promise.all([
-    loadSessionUi(),
-    api("/api/records/workout").catch(() => []),
-    api("/api/records/diet").catch(() => []),
-    appleRange(dateKey, dateKey).catch(() => []),
-    ensureLibraryCaches(),
-  ]);
-  const dayWorkouts = workoutsAll.filter((r) => !r.deleted && r.data?.status === "completed" && r.data?.date === dateKey);
-  const dayDiets = dietsAll.filter((r) => !r.deleted && r.data?.date === dateKey);
-  const payload = sessionMod.buildDailySharePayload({
-    date: dateKey,
-    todayKey: today(),
-    workouts: singleReport ? [] : dayWorkouts,
-    appleEntries: appleDay,
-    diets: dayDiets,
-    nutrition: dateKey === state.currentDay?.date ? state.currentDay?.nutrition : null,
-    catalogueMap: state.catalogueById,
-    username: state.username,
-    isDemo: state.demo,
-    singleReport,
-    singleHealth,
-  });
-  await openDailyShareModal(payload, { onBack });
 }
 async function startRoutine(id, source = "plan", date = today()) {
   const [result, , { routinePreview }, , , statsFallback] = await Promise.all([
@@ -4101,17 +2829,18 @@ content.addEventListener("pointerout", ({ target, relatedTarget }) => {
 });
 
 document.addEventListener("click", async (event) => {
-  const quickOpenBtn = event.target.closest("[data-quick-open]");
+  const target = /** @type {any} */ (event.target);
+  const quickOpenBtn = target.closest("[data-quick-open]");
   if (quickOpenBtn) {
     await openQuickRecord(quickOpenBtn.dataset.quickOpen);
     return;
   }
-  const button = event.target.closest("[data-action]");
+  const button = target.closest("[data-action]");
   if (!button) return;
   const { action, value } = button.dataset;
   try {
     if (action === "route") route(value);
-    if (action === "settings-open") { if (dialog.open) { suppressNextHistoryBack = true; dialog.close(); } state.settingsSection = value; route("settings"); }
+    if (action === "settings-open") { closeModalSilent(); state.settingsSection = value; route("settings"); }
     if (action === "plan-section" || action === "settings-section") {
       state[action === "plan-section" ? "planSection" : "settingsSection"] = value;
       $$("[data-section]", content).forEach((panel) => { panel.hidden = panel.dataset.section !== value; });
@@ -4388,6 +3117,7 @@ document.addEventListener("click", async (event) => {
           ].map(csvCell).join(",")),
         ];
         const filterTag = state.appleWorkoutFilter === "device" ? "-仅真机" : "";
+        const { downloadTextFile } = await loadDataModals();
         downloadTextFile("\uFEFF" + lines.join("\r\n"), "text/csv;charset=utf-8;", `铁记-健康训练分析报表-${state.analyticsData?.through || today()}${filterTag}.csv`);
         notify("已导出健康与训练 CSV 报表");
       }
@@ -4408,6 +3138,7 @@ document.addEventListener("click", async (event) => {
           appleDaily: ad ?? null,
           appleWorkouts: aw ?? null,
         };
+        const { downloadTextFile } = await loadDataModals();
         downloadTextFile(JSON.stringify(payload, null, 2), "application/json;charset=utf-8;", `铁记-健康训练体检报告-${state.analyticsData?.through || today()}.json`);
         notify("已导出完整健康与训练 JSON 报告");
       }
@@ -4431,14 +3162,14 @@ document.addEventListener("click", async (event) => {
       }
     }
     if (action === "open-csv-import") {
-      openCsvImportModal();
+      (await loadDataModals()).openCsvImportModal();
     }
     if (action === "export-plan-json") {
       const planObj = state.plan?.data;
-      if (planObj) exportPlanAsJson(planObj);
+      if (planObj) (await loadDataModals()).exportPlanAsJson(planObj);
     }
     if (action === "open-plan-import") {
-      openPlanImportModal();
+      (await loadDataModals()).openPlanImportModal();
     }
     if (action === "quick-start-exercise") {
       const customRec = state.customExercises.find((r) => !r.deleted && r.id === value);
@@ -4974,7 +3705,8 @@ document.addEventListener("click", async (event) => {
       }
     }
     if (action === "apple-activity") {
-      let item = value ? [...state.appleEntries, ...(state.currentDay?.apple ?? []), ...(reportApple ? [reportApple] : [])].find((row) => row.id === value) : null;
+      const currentReportApple = reportShareUi?.getReportApple();
+      let item = value ? [...state.appleEntries, ...(state.currentDay?.apple ?? []), ...(currentReportApple ? [currentReportApple] : [])].find((row) => row.id === value) : null;
       if (!item && button.dataset.date) {
         const { date, type, title } = button.dataset;
         const pool = state.currentDay?.date === date ? (state.currentDay.apple ?? []) : await appleRange(date, date);
@@ -5058,7 +3790,7 @@ document.addEventListener("click", async (event) => {
       });
     }
     if (action === "issue-api-token") {
-      openIssueApiTokenModal();
+      (await loadDataModals()).openIssueApiTokenModal();
     }
     if (action === "revoke-api-token") {
       openConfirmDialog({
@@ -5077,7 +3809,7 @@ document.addEventListener("click", async (event) => {
       try { await syncOfflineQueue({ silent: false }); } finally { button.disabled = false; }
     }
     if (action === "open-backup-restore") {
-      openBackupRestoreModal();
+      (await loadDataModals()).openBackupRestoreModal();
     }
     if (action === "export") {
       const data = await api("/api/export");
@@ -5113,7 +3845,8 @@ document.addEventListener("click", async (event) => {
     }
   } catch (error) { if (error.status === 401) showError(error); else notify(error.message); }
 });
-document.addEventListener("input", ({ target }) => {
+document.addEventListener("input", (event) => {
+  const target = /** @type {any} */ (event.target);
   if (target.id === "badge-search") {
     state.badgeQuery = target.value;
     const host = $(".badge-sections", content);
@@ -5134,7 +3867,8 @@ document.addEventListener("input", ({ target }) => {
     if (body) body.innerHTML = renderWorkoutHistoryBody();
   }
 });
-document.addEventListener("change", async ({ target }) => {
+document.addEventListener("change", async (event) => {
+  const target = /** @type {any} */ (event.target);
   try {
     if (target.dataset.change === "through" && target.value && target.validity.valid) { state.through = target.value; await loadOverview(); }
     if (target.dataset.change === "analytics-through" && target.value && target.validity.valid) { state.analyticsThrough = target.value; await loadAnalytics(++requestId); }
@@ -5205,7 +3939,8 @@ const unlockAudioOnce = () => {
 document.addEventListener("pointerdown", unlockAudioOnce, { capture: true, passive: true });
 document.addEventListener("touchstart", unlockAudioOnce, { capture: true, passive: true });
 
-document.addEventListener("focusin", ({ target }) => {
+document.addEventListener("focusin", (event) => {
+  const target = /** @type {any} */ (event.target);
   if (!matchMedia("(max-width: 630px)").matches) return;
   if (!target?.matches?.('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="button"]):not([type="submit"]), textarea, select')) return;
   setTimeout(() => {

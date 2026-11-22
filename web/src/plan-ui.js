@@ -98,7 +98,7 @@ function buildMuscleSummaryHtml(routinesList, activeIdx, activeSanitized, catalo
  * Shared editable list of planned exercises with progression rules, PR baseline hints,
  * backup exercise selection, and inline catalogue search.
  */
-function mountPlannedExerciseList({ api, host, items, catalogueMap, prMap, onChange }) {
+function mountPlannedExerciseList({ api, host, items, catalogueMap, prMap, onChange = null }) {
   const ac = new AbortController();
   let activeSearchTimer = 0;
   let backupTargetIndex = -1;

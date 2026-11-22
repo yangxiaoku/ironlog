@@ -1,0 +1,277 @@
+@media (max-width: 630px) {
+  dialog.onboarding-dialog { width: 100%; max-width: none; }
+  .welcome-item {
+    grid-template-columns: 30px minmax(0, 1fr);
+    align-items: start;
+  }
+  .welcome-item > button,
+  .welcome-item-actions {
+    grid-column: 2 / -1;
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .welcome-item > button { grid-template-columns: none; width: fit-content; min-height: 36px; }
+  .welcome-item-actions button { width: 100%; justify-content: center; min-height: 38px; }
+  .onboarding-steps { gap: 4px; }
+  .onboarding-step-dot { padding: 6px 2px; }
+  .onboarding-step-dot b { font-size: 10.5px; }
+  .onboarding-feature-grid,
+  .onboarding-two-cols,
+  .onboarding-launch-grid { grid-template-columns: minmax(0, 1fr); }
+  .onboarding-save-bar > button { width: 100%; justify-content: center; min-height: 42px; }
+  .onboarding-foot { flex-wrap: wrap; }
+  .onboarding-foot-nav { flex: 1; justify-content: flex-end; }
+  .onboarding-foot-nav button,
+  .onboarding-foot > button { min-height: 40px; }
+}
+
+@media (max-width: 375px) {
+  .rest-clock-inner { padding: 8px 10px max(10px, env(safe-area-inset-bottom)); gap: 5px; }
+  .rest-dock-trigger strong { font-size: 17px; }
+  .rest-dock-trigger strong .matrix { font-size: 16px; }
+  .rest-dock-buttons { gap: 4px; }
+  .rest-pill-btn { padding: 0 7px; font-size: 12px; }
+  .rest-skip-btn { padding: 0 11px; font-size: 12.5px; }
+}
+
+@media (max-height: 540px) and (min-width: 631px) {
+  .sidebar {
+    padding: max(6px, env(safe-area-inset-top, 0px)) 6px max(6px, env(safe-area-inset-bottom, 0px));
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .sidebar .brand { margin: 0 auto 4px; }
+  .sidebar .brand img { width: 26px; height: 26px; border-radius: 7px; }
+  .desktop-nav { padding-top: 4px; gap: 1px; }
+  .desktop-nav a { min-height: 29px; border-radius: 8px; }
+  .sidebar footer { padding: 4px 0 0; }
+  .sidebar-foot-actions { flex-direction: row; gap: 2px; }
+  .sidebar-guide-btn,
+  .sidebar footer .icon-button {
+    width: 26px;
+    min-width: 26px;
+    height: 26px;
+    min-height: 26px;
+    padding: 0;
+  }
+}
+
+@media (max-height: 540px) {
+  dialog.workout-dialog[open] {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+  dialog.workout-dialog .dialog-head {
+    min-height: 36px;
+    padding: max(4px, env(safe-area-inset-top, 0px)) 10px 4px;
+  }
+  dialog.workout-dialog .dialog-head h2 { font-size: 14px; }
+  dialog.workout-dialog .dialog-head .icon-button[data-action="close"] {
+    min-width: 30px;
+    min-height: 30px;
+    width: 30px;
+    height: 30px;
+  }
+  .workout-dialog .session-overview {
+    margin: 4px 10px 0;
+    padding: 5px 8px;
+    gap: 3px;
+  }
+  .workout-dialog .session-overview h3 { font-size: 14px; }
+  .workout-dialog .session-live-meta,
+  .workout-dialog .session-live-muscles,
+  .workout-dialog .session-progress progress {
+    display: none !important;
+  }
+  .workout-dialog .session-clock {
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+  }
+  .workout-dialog .session-clock strong { font-size: 14px; }
+  .workout-dialog .session-clock strong .matrix { font-size: 13px; }
+  .workout-dialog .session-clock button { min-height: 22px; padding: 0 6px; font-size: 11px; }
+  .workout-dialog .session-progress { flex-wrap: nowrap; gap: 4px; overflow-x: auto; scrollbar-width: none; }
+  .workout-dialog .rir-toggle { min-height: 24px; padding: 0 7px; font-size: 11px; }
+  .workout-dialog .session-control-stack { padding: 3px 10px; }
+  .workout-dialog .exercise-jump button,
+  .workout-dialog .session-step-tools button { min-height: 26px; padding: 0 7px; font-size: 11px; }
+  .workout-dialog .workout-scroll { padding: 6px 10px 10px; gap: 6px; }
+  .workout-dialog .dialog-form .session-dock {
+    padding: 4px 10px max(6px, env(safe-area-inset-bottom, 0px));
+    gap: 4px;
+  }
+  .workout-dialog .rest-clock-inner { padding: 6px 10px max(6px, env(safe-area-inset-bottom)); }
+  .workout-dialog .rest-dock-buttons button { min-height: 36px; padding: 0 8px; }
+  .workout-dialog .session-dock-actions button { min-height: 36px; padding-inline: 8px; }
+  .workout-dialog .session-dock-actions .icon-button { flex: 0 0 36px; }
+}
+
+/* Delayed Skeleton Loading Screen (>300ms reveal, replaces spinner) */
+@keyframes skeleton-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-page {
+  display: grid;
+  gap: 14px;
+  padding: 6px 0 24px;
+  opacity: 0;
+  animation: skeleton-reveal 0.18s ease 0.3s forwards;
+}
+.skeleton-hero {
+  height: 124px;
+  border-radius: 16px;
+}
+.skeleton-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.skeleton-kpi {
+  height: 82px;
+  border-radius: 14px;
+}
+.skeleton-list {
+  display: grid;
+  gap: 10px;
+}
+.skeleton-row {
+  height: 68px;
+  border-radius: 14px;
+}
+.skeleton-block {
+  border: 1px solid var(--rule);
+  background: linear-gradient(
+    90deg,
+    var(--surface) 25%,
+    var(--raised) 50%,
+    var(--surface) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.35s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-page { animation: none; opacity: 1; }
+  .skeleton-block { animation: none; }
+}
+
+/* Explicit-Verb Destructive Confirmation Dialog */
+.confirm-dialog-body {
+  display: grid;
+  gap: 18px;
+  padding-top: 6px;
+}
+.confirm-dialog-message {
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  text-wrap: pretty;
+}
+.confirm-dialog-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.confirm-dialog-foot button {
+  min-height: 44px;
+  padding-inline: 16px;
+}
+.confirm-dialog-foot .danger {
+  background: var(--red);
+  border-color: var(--red);
+  color: #ffffff;
+  font-weight: 650;
+}
+
+/* Native Mobile Dialog Animations & Offline Badge */
+@keyframes sheet-slide-up {
+  from { transform: translateY(36px); opacity: 0.6; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes workout-slide-up {
+  from { transform: translateY(24px); opacity: 0.85; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes backdrop-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog[open],
+  dialog[open]::backdrop { animation: none !important; }
+}
+.offline-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--red-wash);
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
+  color: var(--red-ink);
+  font: 650 11.5px/1 var(--font);
+  white-space: nowrap;
+}
+
+.sync-pending-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 11.5px/1 var(--mono);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.sync-pending-pill::before {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  content: "";
+}
+
+/* Nested Destructive Confirm Overlay (preserves underlying dialog form) */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: backdrop-fade .16s ease;
+}
+.confirm-overlay-card {
+  width: min(400px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--edge);
+  border-radius: 18px;
+  padding: 18px;
+  display: grid;
+  gap: 14px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .55);
+}
+.confirm-overlay-card h3 {
+  font-size: 16.5px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .confirm-overlay { animation: none; }
+}

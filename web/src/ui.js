@@ -1,9 +1,11 @@
 if (typeof crypto !== "undefined" && typeof crypto.randomUUID !== "function") {
-  crypto.randomUUID = () =>
+  crypto.randomUUID = /** @type {any} */ (() =>
     "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
-      (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))).toString(16));
+      (+c ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (+c / 4)))).toString(16)));
 }
+/** @param {string} selector @param {ParentNode} [root] @returns {any} */
 export const $ = (selector, root = document) => root.querySelector(selector);
+/** @param {string} selector @param {ParentNode} [root] @returns {any[]} */
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 export const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
