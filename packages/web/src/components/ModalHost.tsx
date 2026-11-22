@@ -1,0 +1,346 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useUiStore } from "../store/useUiStore";
+import { Icon } from "./Icon";
+
+let overlaySeq = 0;
+
+export function ModalHost() {
+  const modals = useUiStore((s) => s.modals);
+  const confirm = useUiStore((s) => s.confirm);
+  const silentCloseSeq = useUiStore((s) => s.silentCloseSeq);
+  const closeTopModal = useUiStore((s) => s.closeTopModal);
+  const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const closeConfirm = useUiStore((s) => s.closeConfirm);
+
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const depthRef = useRef(0);
+  const closingFromPopstateRef = useRef(false);
+  const expectedPopsRef = useRef(0);
+  const lastSilentSeqRef = useRef(silentCloseSeq);
+  const overlayTokenRef = useRef<number | null>(null);
+  const dragRef = useRef({ active: false, x: 0, y: 0 });
+
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState("");
+
+  const activeModal = modals.at(-1) ?? null;
+  const standaloneConfirm = !activeModal && Boolean(confirm);
+  const nestedConfirm = Boolean(activeModal && confirm);
+  const isOpen = Boolean(activeModal || confirm);
+
+  useEffect(() => {
+    setConfirmBusy(false);
+    setConfirmError("");
+  }, [confirm]);
+
+  // Synchronize native <dialog> element open state & root browser history entry
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+
+    if (isOpen) {
+      const wasOpen = dialog.open;
+      if (!wasOpen) {
+        try {
+          dialog.showModal();
+        } catch {}
+        dialog.scrollTop = 0;
+        try {
+          history.pushState({ ...(history.state ?? {}), ironlogModal: ++overlaySeq }, "", location.href);
+          depthRef.current = 1;
+        } catch {}
+      } else {
+        dialog.scrollTop = 0;
+      }
+    } else {
+      if (dialog.open) {
+        dialog.close();
+      }
+      dialog.style.transform = "";
+      dialog.style.transition = "";
+      const suppressed = lastSilentSeqRef.current !== silentCloseSeq;
+      lastSilentSeqRef.current = silentCloseSeq;
+      overlayTokenRef.current = null;
+      const depth = depthRef.current;
+      depthRef.current = 0;
+      if (
+        depth > 0 &&
+        !closingFromPopstateRef.current &&
+        !suppressed &&
+        typeof history !== "undefined" &&
+        (history.state?.ironlogModal || history.state?.ironlogOverlay)
+      ) {
+        expectedPopsRef.current++;
+        try {
+          history.go(-depth);
+        } catch {
+          expectedPopsRef.current = Math.max(0, expectedPopsRef.current - 1);
+        }
+      }
+    }
+  }, [isOpen, activeModal?.id, silentCloseSeq]);
+
+  // Nested confirm pushes its own overlay history entry so device Back dismisses confirm first
+  useEffect(() => {
+    if (!nestedConfirm) return;
+    const id = ++overlaySeq;
+    overlayTokenRef.current = id;
+    try {
+      history.pushState({ ...(history.state ?? {}), ironlogOverlay: id }, "", location.href);
+      depthRef.current++;
+    } catch {}
+  }, [nestedConfirm]);
+
+  const dismissNestedConfirm = useCallback(() => {
+    const token = overlayTokenRef.current;
+    overlayTokenRef.current = null;
+    closeConfirm();
+    if (token != null && !closingFromPopstateRef.current && history.state?.ironlogOverlay === token) {
+      depthRef.current = Math.max(0, depthRef.current - 1);
+      expectedPopsRef.current++;
+      try {
+        history.back();
+      } catch {
+        expectedPopsRef.current = Math.max(0, expectedPopsRef.current - 1);
+      }
+    }
+  }, [closeConfirm]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      if (expectedPopsRef.current > 0) {
+        expectedPopsRef.current--;
+        return;
+      }
+      const ui = useUiStore.getState();
+      if (ui.confirm && overlayTokenRef.current != null) {
+        overlayTokenRef.current = null;
+        depthRef.current = Math.max(0, depthRef.current - 1);
+        closingFromPopstateRef.current = true;
+        try {
+          ui.closeConfirm();
+        } finally {
+          closingFromPopstateRef.current = false;
+        }
+        return;
+      }
+      if (depthRef.current > 0 && (ui.modals.length > 0 || ui.confirm)) {
+        depthRef.current = 0;
+        closingFromPopstateRef.current = true;
+        try {
+          ui.closeAllModals();
+        } finally {
+          closingFromPopstateRef.current = false;
+        }
+      }
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  useEffect(() => {
+    const mq = matchMedia("(max-width: 630px)");
+    const onMqChange = (e: MediaQueryListEvent) => {
+      if (!e.matches && activeModal?.layout === "menu") {
+        closeAllModals();
+      }
+    };
+    mq.addEventListener("change", onMqChange);
+    return () => mq.removeEventListener("change", onMqChange);
+  }, [activeModal?.layout, closeAllModals]);
+
+  const runConfirmOk = async () => {
+    if (!confirm || confirmBusy) return;
+    setConfirmBusy(true);
+    setConfirmError("");
+    try {
+      await confirm.onConfirm();
+      if (nestedConfirm) {
+        dismissNestedConfirm();
+      } else {
+        closeConfirm();
+      }
+    } catch (error) {
+      setConfirmError((error as Error)?.message || "操作失败，请重试");
+      setConfirmBusy(false);
+    }
+  };
+
+  const layout = activeModal?.layout ?? "";
+  const dialogClasses = [
+    activeModal?.wide ? "wide-dialog" : "",
+    layout === "menu" ? "mobile-sheet" : "",
+    layout === "workout" ? "workout-dialog" : "",
+    layout === "report" ? "report-dialog" : "",
+    layout === "badge" ? "badge-dialog" : "",
+    layout === "exercise" ? "exercise-dialog" : "",
+    layout === "onboarding" ? "onboarding-dialog" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const dialogTitle = activeModal ? activeModal.title : confirm?.title ?? "";
+
+  return (
+    <dialog
+      ref={dialogRef}
+      id="dialog"
+      aria-labelledby="dialog-title"
+      className={dialogClasses}
+      onCancel={(e) => {
+        e.preventDefault();
+        if (nestedConfirm) {
+          if (!confirmBusy) dismissNestedConfirm();
+          return;
+        }
+        if (standaloneConfirm) {
+          if (!confirmBusy) closeConfirm();
+          return;
+        }
+        closeAllModals();
+      }}
+      onClick={(e) => {
+        const dialog = dialogRef.current;
+        if (!dialog || e.target !== dialog) return;
+        if (layout === "workout" || layout === "onboarding") return;
+        const isSheet = dialog.classList.contains("mobile-sheet");
+        const hasForm = Boolean(dialog.querySelector("form"));
+        if (!isSheet && hasForm) return;
+        const rect = dialog.getBoundingClientRect();
+        const outside =
+          e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom;
+        if (outside) {
+          if (standaloneConfirm) {
+            if (!confirmBusy) closeConfirm();
+          } else {
+            closeAllModals();
+          }
+        }
+      }}
+      onTouchStart={(e) => {
+        const dialog = dialogRef.current;
+        if (!dialog || e.touches.length !== 1 || layout === "workout") return;
+        if (!matchMedia("(max-width: 630px)").matches) return;
+        const target = e.target as Element | null;
+        const inHead = Boolean(target?.closest(".dialog-head"));
+        const hasForm = Boolean(dialog.querySelector("form"));
+        const atTopScroll = dialog.scrollTop <= 2 && !target?.closest("input, textarea, select");
+        if (!inHead && (hasForm || !atTopScroll)) return;
+        const t = e.touches[0];
+        if (!t) return;
+        dragRef.current = { active: true, x: t.clientX, y: t.clientY };
+        dialog.style.transition = "none";
+      }}
+      onTouchMove={(e) => {
+        const dialog = dialogRef.current;
+        if (!dialog || !dragRef.current.active || e.touches.length !== 1) return;
+        const t = e.touches[0];
+        if (!t) return;
+        const dy = t.clientY - dragRef.current.y;
+        const dx = t.clientX - dragRef.current.x;
+        if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy)) {
+          dragRef.current.active = false;
+          dialog.style.transform = "";
+          return;
+        }
+        if (dy > 8 && dy > Math.abs(dx) * 1.3) {
+          dialog.style.transform = `translateY(${Math.min(220, dy * 0.72).toFixed(1)}px)`;
+        }
+      }}
+      onTouchEnd={(e) => {
+        const dialog = dialogRef.current;
+        if (!dialog || !dragRef.current.active) return;
+        dragRef.current.active = false;
+        const dy = e.changedTouches[0] ? e.changedTouches[0].clientY - dragRef.current.y : 0;
+        dialog.style.transition = "transform .18s ease";
+        dialog.style.transform = "";
+        if (dy >= 78) {
+          if (standaloneConfirm) closeConfirm();
+          else closeAllModals();
+        }
+      }}
+      onTouchCancel={() => {
+        const dialog = dialogRef.current;
+        if (!dialog || !dragRef.current.active) return;
+        dragRef.current.active = false;
+        dialog.style.transition = "transform .18s ease";
+        dialog.style.transform = "";
+      }}
+    >
+      {isOpen ? (
+        <>
+          <header className="dialog-head">
+            <h2 id="dialog-title">{dialogTitle}</h2>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="关闭"
+              autoFocus={layout === "workout"}
+              onClick={() => {
+                if (standaloneConfirm) closeConfirm();
+                else if (modals.length > 1) closeTopModal();
+                else closeAllModals();
+              }}
+            >
+              <Icon name="close" />
+            </button>
+          </header>
+
+          {activeModal?.content}
+
+          {standaloneConfirm && confirm ? (
+            <div className="confirm-dialog-body">
+              <p className="confirm-dialog-message">{confirm.message}</p>
+              <p className="form-error" role="alert" hidden={!confirmError}>
+                {confirmError}
+              </p>
+              <footer className="confirm-dialog-foot">
+                <button type="button" className="quiet" disabled={confirmBusy} onClick={() => closeConfirm()}>
+                  取消
+                </button>
+                <button type="button" className="danger" disabled={confirmBusy} onClick={() => void runConfirmOk()}>
+                  {confirm.confirmLabel ?? "确认删除"}
+                </button>
+              </footer>
+            </div>
+          ) : null}
+
+          {nestedConfirm && confirm ? (
+            <div
+              className="confirm-overlay"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="confirm-overlay-title"
+              onClick={(e) => {
+                if (e.target === e.currentTarget && !confirmBusy) dismissNestedConfirm();
+              }}
+            >
+              <div className="confirm-overlay-card">
+                <h3 id="confirm-overlay-title">{confirm.title}</h3>
+                <p className="confirm-dialog-message">{confirm.message}</p>
+                <p className="form-error" role="alert" hidden={!confirmError}>
+                  {confirmError}
+                </p>
+                <footer className="confirm-dialog-foot">
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={confirmBusy}
+                    autoFocus
+                    onClick={dismissNestedConfirm}
+                  >
+                    取消
+                  </button>
+                  <button type="button" className="danger" disabled={confirmBusy} onClick={() => void runConfirmOk()}>
+                    {confirm.confirmLabel ?? "确认删除"}
+                  </button>
+                </footer>
+              </div>
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </dialog>
+  );
+}

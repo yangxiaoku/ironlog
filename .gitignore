@@ -1,6 +1,9 @@
 node_modules/
 packages/*/dist/
 /web/dist/
+packages/web/dist/
+packages/web/public/
+packages/web/dev-dist/
 /data/
 *.db
 *.db-wal
