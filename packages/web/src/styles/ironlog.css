@@ -1287,3 +1287,186 @@ dialog.workout-dialog .workout-inline-add-btn {
     font-size: 11.5px;
   }
 }
+
+/* 5-step guided Apple Shortcuts setup wizard */
+.shortcut-wizard-stepper {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.shortcut-step-pill {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 34px;
+  padding: 0 6px;
+  border-radius: 10px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.shortcut-step-pill span {
+  flex: none;
+  font: 700 11px/1 var(--mono);
+  opacity: 0.9;
+}
+
+.shortcut-step-pill b {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shortcut-step-pill.is-active {
+  background: var(--white-button);
+  border-color: var(--white-button);
+  color: var(--bg);
+}
+
+.shortcut-step-pill.is-done {
+  border-color: color-mix(in srgb, var(--red) 42%, var(--edge));
+  color: var(--ink);
+}
+
+.shortcut-step-pill:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.shortcut-wizard-head {
+  display: grid;
+  gap: 4px;
+}
+
+.shortcut-wizard-head span {
+  font: 600 11px/1.2 var(--mono);
+  color: var(--red-ink);
+  letter-spacing: 0.04em;
+}
+
+.shortcut-wizard-head h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.shortcut-wizard-head p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.shortcut-step-body {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.shortcut-modal .segments.shortcut-sign-segments {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.shortcut-ext-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 40px;
+  text-decoration: none;
+  text-align: center;
+}
+
+.shortcut-cred-card {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+}
+
+.shortcut-cred-card.is-done {
+  border-color: color-mix(in srgb, var(--ink) 40%, var(--edge));
+}
+
+.shortcut-cred-card code {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  font: 12px/1.4 var(--mono);
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.shortcut-cred-card button {
+  width: 100%;
+  justify-content: center;
+  min-height: 38px;
+}
+
+.shortcut-verify-status {
+  margin: 0;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid var(--edge);
+}
+
+.shortcut-verify-status.is-ok {
+  background: color-mix(in srgb, var(--ink) 8%, var(--inset));
+  border-color: color-mix(in srgb, var(--ink) 35%, var(--edge));
+  color: var(--ink);
+}
+
+.shortcut-verify-status.is-wait {
+  background: var(--inset);
+  color: var(--muted);
+}
+
+.shortcut-wizard-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 12px;
+  margin-top: 2px;
+  border-top: 1px solid var(--rule);
+}
+
+.shortcut-wizard-foot button {
+  min-height: 40px;
+}
+
+@media (max-width: 630px) {
+  .shortcut-wizard-stepper {
+    gap: 4px;
+  }
+
+  .shortcut-step-pill {
+    font-size: 11px;
+    padding: 0 3px;
+    gap: 3px;
+    min-height: 32px;
+  }
+
+  .shortcut-wizard-foot > button:last-child {
+    flex: 1;
+    justify-content: center;
+  }
+}

@@ -468,3 +468,25 @@ test("AppShell, OverviewView, DietView, and WorkoutView preserve all features wi
   assert.match(css, /\.dashboard:not\(\.is-two-panel\):not\(\.is-single-panel\) > #panel-weight/);
   assert.match(css, /\.pr-wall-grid\s*\{[\s\S]*?grid-auto-flow:\s*column;/);
 });
+
+test("DeviceSetupModal implements a 5-step guided setup wizard without removing export or signing tools", () => {
+  const modal = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/AppleHealthModals.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(modal, /type WizardStep = 1 \| 2 \| 3 \| 4 \| 5;/);
+  assert.match(modal, /className="shortcut-wizard-stepper"/);
+  assert.match(modal, /className="shortcut-wizard-foot"/);
+  assert.match(modal, /shortcut-cred-card/);
+  assert.match(modal, /triggerAppleHubAction\("daily"/);
+  assert.match(modal, /https:\/\/sign\.shortcuty\.app/);
+  assert.match(modal, /https:\/\/routinehub\.co/);
+  assert.match(modal, /buildMacSignCommand/);
+  assert.match(modal, /buildIronlogDailyHealthShortcut/);
+  assert.match(modal, /buildIronlogRecentWorkoutShortcut/);
+  assert.match(modal, /buildIronlogEventShortcut/);
+
+  assert.match(css, /\.shortcut-wizard-stepper\s*\{/);
+  assert.match(css, /\.shortcut-wizard-foot\s*\{/);
+  assert.match(css, /\.shortcut-cred-card\s*\{/);
+  assert.match(css, /\.shortcut-verify-status\s*\{/);
+});
