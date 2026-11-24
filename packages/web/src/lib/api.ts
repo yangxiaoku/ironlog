@@ -37,6 +37,7 @@ export interface ApiFetchOptions {
   body?: unknown;
   token?: string;
   timeout?: number;
+  skipMutateHook?: boolean;
 }
 
 export async function apiFetch<T = unknown>(
@@ -46,6 +47,7 @@ export async function apiFetch<T = unknown>(
     body = undefined,
     token = apiHooks.getDemoToken?.() ?? "",
     timeout = 15000,
+    skipMutateHook = false,
   }: ApiFetchOptions = {},
 ): Promise<T> {
   const userId = apiHooks.getUserId?.() ?? "";
@@ -80,7 +82,7 @@ export async function apiFetch<T = unknown>(
   }
 
   const cleanPath = path.split("?")[0] ?? path;
-  if (method !== "GET" && !path.startsWith("/auth/") && !READ_ONLY_POST_PATHS.has(cleanPath)) {
+  if (!skipMutateHook && method !== "GET" && !path.startsWith("/auth/") && !READ_ONLY_POST_PATHS.has(cleanPath)) {
     apiHooks.onMutate?.(cleanPath);
   }
 

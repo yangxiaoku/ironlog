@@ -10,6 +10,7 @@ import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   ALL_PLATES,
   BAR_PRESETS,
+  PROFILE_VERSION_EVENT,
   readWorkoutPreferences,
   REST_STEP_PRESETS,
   WARMUP_REST_PRESETS,
@@ -100,8 +101,18 @@ export function SettingsView() {
   useEffect(() => {
     if (typeof window === "undefined") return;
     const syncPrefs = () => setWorkoutPrefs(readWorkoutPreferences());
+    const syncVersion = (ev: Event) => {
+      const nextVersion = (ev as CustomEvent<number>).detail;
+      if (typeof nextVersion === "number") {
+        setProfileVersion(nextVersion);
+      }
+    };
     window.addEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
-    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+    window.addEventListener(PROFILE_VERSION_EVENT, syncVersion);
+    return () => {
+      window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+      window.removeEventListener(PROFILE_VERSION_EVENT, syncVersion);
+    };
   }, []);
 
   const updateWorkoutPref = <K extends keyof WorkoutPreferences>(
@@ -802,7 +813,9 @@ export function SettingsView() {
               <header className="panel-head">
                 <div>
                   <h2>训练体验与器械规格（OpenGym 风格）</h2>
-                  <p className="muted panel-order-hint">所有改动即时生效，也可在训练中点顶部菜单随时调整。</p>
+                  <p className="muted panel-order-hint">
+                    所有改动即时生效并自动云端同步，跨设备登录后自动生效，也可在训练中随时调整。
+                  </p>
                 </div>
               </header>
               <div className="settings-form">
@@ -835,6 +848,21 @@ export function SettingsView() {
                             "autoPrefillLast",
                             e.target.checked,
                             e.target.checked ? "已开启自动沿用上次重量" : "已关闭自动沿用上次重量",
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>完组自动跳下一动作</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.autoAdvanceExercise}
+                        onChange={(e) =>
+                          updateWorkoutPref(
+                            "autoAdvanceExercise",
+                            e.target.checked,
+                            e.target.checked ? "已开启完组自动跳转下一动作" : "已关闭完组自动跳转",
                           )
                         }
                       />

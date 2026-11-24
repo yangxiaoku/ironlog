@@ -220,6 +220,47 @@ export const goalSnapshotSchema = z.object({
   daysPerWeek: z.number().int().min(1).max(7),
   targetWeight: z.number().positive().nullable(),
 });
+const workoutPrefsBase = {
+  soundOn: z.boolean(),
+  hapticsOn: z.boolean(),
+  screenAwake: z.boolean(),
+  notifyRest: z.boolean(),
+  showRir: z.boolean(),
+  autoSyncSubsequent: z.boolean(),
+  autoPrefillLast: z.boolean(),
+  autoStartRestTimer: z.boolean(),
+  autoAdvanceExercise: z.boolean(),
+  warmupRestSeconds: z.number().int().min(0).max(300),
+  restAdjustStep: z.number().int().min(5).max(120),
+  weightStepKg: z.number().min(0.25).max(20),
+  barWeight: z.number().min(0).max(100),
+  enabledPlates: z.array(z.number().positive().max(100)).min(1).max(20),
+  showPlateMath: z.boolean(),
+  warmupScheme: z.enum(["light", "standard", "heavy"]),
+};
+
+export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
+
+export const workoutPrefsSchema = z.object({
+  soundOn: workoutPrefsBase.soundOn.default(true),
+  hapticsOn: workoutPrefsBase.hapticsOn.default(true),
+  screenAwake: workoutPrefsBase.screenAwake.default(false),
+  notifyRest: workoutPrefsBase.notifyRest.default(false),
+  showRir: workoutPrefsBase.showRir.default(false),
+  autoSyncSubsequent: workoutPrefsBase.autoSyncSubsequent.default(true),
+  autoPrefillLast: workoutPrefsBase.autoPrefillLast.default(true),
+  autoStartRestTimer: workoutPrefsBase.autoStartRestTimer.default(true),
+  autoAdvanceExercise: workoutPrefsBase.autoAdvanceExercise.default(true),
+  warmupRestSeconds: workoutPrefsBase.warmupRestSeconds.default(45),
+  restAdjustStep: workoutPrefsBase.restAdjustStep.default(15),
+  weightStepKg: workoutPrefsBase.weightStepKg.default(2.5),
+  barWeight: workoutPrefsBase.barWeight.default(20),
+  enabledPlates: workoutPrefsBase.enabledPlates.default([25, 20, 15, 10, 5, 2.5, 1.25]),
+  showPlateMath: workoutPrefsBase.showPlateMath.default(true),
+  warmupScheme: workoutPrefsBase.warmupScheme.default("standard"),
+});
+export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
+
 export const profileSchema = z.object({
   calories: z.number().min(1).max(20000).default(2200),
   protein: nonnegative.default(150),
@@ -239,6 +280,7 @@ export const profileSchema = z.object({
   energyProfile: energyProfileSchema.nullable().default(null),
   calorieEstimate: calorieEstimateSchema.nullable().default(null),
   goalHistory: z.array(goalSnapshotSchema).optional(),
+  workoutPrefs: workoutPrefsSchema.optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;
 

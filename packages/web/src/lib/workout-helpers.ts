@@ -8,6 +8,7 @@ export const platesPreference = "ironlog-web-plates";
 export const autoSyncPreference = "ironlog-web-auto-sync-subsequent";
 export const autoPrefillPreference = "ironlog-web-auto-prefill-last";
 export const autoStartRestPreference = "ironlog-web-auto-start-rest";
+export const autoAdvancePreference = "ironlog-web-auto-advance-exercise";
 export const warmupRestPreference = "ironlog-web-warmup-rest-seconds";
 export const restStepPreference = "ironlog-web-rest-step-seconds";
 export const weightStepPreference = "ironlog-web-weight-step-kg";
@@ -16,6 +17,7 @@ export const plateMathPreference = "ironlog-web-show-plate-math";
 export const warmupSchemePreference = "ironlog-web-warmup-scheme";
 
 export const WORKOUT_PREFS_EVENT = "ironlog:workout-prefs-changed";
+export const PROFILE_VERSION_EVENT = "ironlog:profile-version";
 
 export const ALL_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25, 0.5] as const;
 export const DEFAULT_ENABLED_PLATES: readonly number[] = [25, 20, 15, 10, 5, 2.5, 1.25];
@@ -80,6 +82,7 @@ export interface WorkoutPreferences {
   autoSyncSubsequent: boolean;
   autoPrefillLast: boolean;
   autoStartRestTimer: boolean;
+  autoAdvanceExercise: boolean;
   warmupRestSeconds: number;
   restAdjustStep: number;
   weightStepKg: number;
@@ -98,6 +101,7 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   autoSyncSubsequent: true,
   autoPrefillLast: true,
   autoStartRestTimer: true,
+  autoAdvanceExercise: true,
   warmupRestSeconds: 45,
   restAdjustStep: 15,
   weightStepKg: 2.5,
@@ -180,6 +184,7 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     autoSyncSubsequent: readBoolPrefValue(autoSyncPreference, DEFAULT_WORKOUT_PREFERENCES.autoSyncSubsequent),
     autoPrefillLast: readBoolPrefValue(autoPrefillPreference, DEFAULT_WORKOUT_PREFERENCES.autoPrefillLast),
     autoStartRestTimer: readBoolPrefValue(autoStartRestPreference, DEFAULT_WORKOUT_PREFERENCES.autoStartRestTimer),
+    autoAdvanceExercise: readBoolPrefValue(autoAdvancePreference, DEFAULT_WORKOUT_PREFERENCES.autoAdvanceExercise),
     warmupRestSeconds: readAllowedNumberPref(
       warmupRestPreference,
       WARMUP_REST_PRESETS,
@@ -202,76 +207,172 @@ export function readWorkoutPreferences(): WorkoutPreferences {
   };
 }
 
+type WorkoutPrefsSyncPusher = (prefs: WorkoutPreferences) => Promise<void> | void;
+
+let syncPusher: WorkoutPrefsSyncPusher | null = null;
+let syncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 /**
- * Persists a single workout preference key and notifies listeners across views.
+ * Registers or clears the cloud sync handler invoked (debounced) after local workout preference updates.
+ */
+export function configureWorkoutPrefsSync(pusher: WorkoutPrefsSyncPusher | null): void {
+  syncPusher = pusher;
+  if (!pusher && syncDebounceTimer != null) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+}
+
+function scheduleWorkoutPrefsSync(): void {
+  if (!syncPusher) return;
+  if (syncDebounceTimer != null) clearTimeout(syncDebounceTimer);
+  const pusher = syncPusher;
+  syncDebounceTimer = setTimeout(() => {
+    syncDebounceTimer = null;
+    try {
+      void Promise.resolve(pusher(readWorkoutPreferences())).catch(() => {});
+    } catch {}
+  }, 400);
+}
+
+function persistSinglePreference<K extends keyof WorkoutPreferences>(
+  key: K,
+  value: WorkoutPreferences[K],
+): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    switch (key) {
+      case "soundOn":
+        localStorage.setItem(soundPreference, value ? "on" : "off");
+        break;
+      case "hapticsOn":
+        localStorage.setItem(hapticsPreference, value ? "1" : "0");
+        break;
+      case "screenAwake":
+        localStorage.setItem(screenPreference, value ? "on" : "off");
+        break;
+      case "notifyRest":
+        localStorage.setItem(notifyPreference, value ? "on" : "off");
+        break;
+      case "showRir":
+        localStorage.setItem(rirPreference, value ? "on" : "off");
+        break;
+      case "autoSyncSubsequent":
+        localStorage.setItem(autoSyncPreference, value ? "on" : "off");
+        break;
+      case "autoPrefillLast":
+        localStorage.setItem(autoPrefillPreference, value ? "on" : "off");
+        break;
+      case "autoStartRestTimer":
+        localStorage.setItem(autoStartRestPreference, value ? "on" : "off");
+        break;
+      case "autoAdvanceExercise":
+        localStorage.setItem(autoAdvancePreference, value ? "on" : "off");
+        break;
+      case "showPlateMath":
+        localStorage.setItem(plateMathPreference, value ? "on" : "off");
+        break;
+      case "warmupRestSeconds":
+        localStorage.setItem(warmupRestPreference, String(value));
+        break;
+      case "restAdjustStep":
+        localStorage.setItem(restStepPreference, String(value));
+        break;
+      case "weightStepKg":
+        localStorage.setItem(weightStepPreference, String(value));
+        break;
+      case "barWeight":
+        localStorage.setItem(barPreference, String(value));
+        break;
+      case "enabledPlates": {
+        const list = Array.isArray(value)
+          ? [...new Set(value.map(Number).filter((p) => (ALL_PLATES as readonly number[]).includes(p)))].sort(
+              (a, b) => b - a,
+            )
+          : [...DEFAULT_ENABLED_PLATES];
+        localStorage.setItem(
+          platesPreference,
+          JSON.stringify(list.length ? list : [...DEFAULT_ENABLED_PLATES]),
+        );
+        break;
+      }
+      case "warmupScheme":
+        localStorage.setItem(warmupSchemePreference, String(value));
+        break;
+    }
+  } catch {}
+}
+
+/**
+ * Persists a single workout preference key, notifies local listeners, and queues cloud sync.
  */
 export function writeWorkoutPreference<K extends keyof WorkoutPreferences>(
   key: K,
   value: WorkoutPreferences[K],
 ): void {
-  if (typeof localStorage !== "undefined") {
-    try {
-      switch (key) {
-        case "soundOn":
-          localStorage.setItem(soundPreference, value ? "on" : "off");
-          break;
-        case "hapticsOn":
-          localStorage.setItem(hapticsPreference, value ? "1" : "0");
-          break;
-        case "screenAwake":
-          localStorage.setItem(screenPreference, value ? "on" : "off");
-          break;
-        case "notifyRest":
-          localStorage.setItem(notifyPreference, value ? "on" : "off");
-          break;
-        case "showRir":
-          localStorage.setItem(rirPreference, value ? "on" : "off");
-          break;
-        case "autoSyncSubsequent":
-          localStorage.setItem(autoSyncPreference, value ? "on" : "off");
-          break;
-        case "autoPrefillLast":
-          localStorage.setItem(autoPrefillPreference, value ? "on" : "off");
-          break;
-        case "autoStartRestTimer":
-          localStorage.setItem(autoStartRestPreference, value ? "on" : "off");
-          break;
-        case "showPlateMath":
-          localStorage.setItem(plateMathPreference, value ? "on" : "off");
-          break;
-        case "warmupRestSeconds":
-          localStorage.setItem(warmupRestPreference, String(value));
-          break;
-        case "restAdjustStep":
-          localStorage.setItem(restStepPreference, String(value));
-          break;
-        case "weightStepKg":
-          localStorage.setItem(weightStepPreference, String(value));
-          break;
-        case "barWeight":
-          localStorage.setItem(barPreference, String(value));
-          break;
-        case "enabledPlates": {
-          const list = Array.isArray(value)
-            ? [...new Set(value.map(Number).filter((p) => (ALL_PLATES as readonly number[]).includes(p)))].sort(
-                (a, b) => b - a,
-              )
-            : [...DEFAULT_ENABLED_PLATES];
-          localStorage.setItem(
-            platesPreference,
-            JSON.stringify(list.length ? list : [...DEFAULT_ENABLED_PLATES]),
-          );
-          break;
-        }
-        case "warmupScheme":
-          localStorage.setItem(warmupSchemePreference, String(value));
-          break;
-      }
-    } catch {}
+  persistSinglePreference(key, value);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
+  }
+  scheduleWorkoutPrefsSync();
+}
+
+/**
+ * Applies remote profile workout preferences locally without triggering a redundant push back.
+ */
+export function applyRemoteWorkoutPreferences(
+  remote: Partial<WorkoutPreferences> | null | undefined,
+): WorkoutPreferences {
+  if (!remote || typeof remote !== "object") return readWorkoutPreferences();
+  const boolKeys = [
+    "soundOn",
+    "hapticsOn",
+    "screenAwake",
+    "notifyRest",
+    "showRir",
+    "autoSyncSubsequent",
+    "autoPrefillLast",
+    "autoStartRestTimer",
+    "autoAdvanceExercise",
+    "showPlateMath",
+  ] as const;
+  for (const key of boolKeys) {
+    if (typeof remote[key] === "boolean") persistSinglePreference(key, remote[key]!);
+  }
+  if (
+    typeof remote.warmupRestSeconds === "number" &&
+    (WARMUP_REST_PRESETS as readonly number[]).includes(remote.warmupRestSeconds)
+  ) {
+    persistSinglePreference("warmupRestSeconds", remote.warmupRestSeconds);
+  }
+  if (
+    typeof remote.restAdjustStep === "number" &&
+    (REST_STEP_PRESETS as readonly number[]).includes(remote.restAdjustStep)
+  ) {
+    persistSinglePreference("restAdjustStep", remote.restAdjustStep);
+  }
+  if (
+    typeof remote.weightStepKg === "number" &&
+    (WEIGHT_STEP_PRESETS as readonly number[]).includes(remote.weightStepKg)
+  ) {
+    persistSinglePreference("weightStepKg", remote.weightStepKg);
+  }
+  if (typeof remote.barWeight === "number" && Number.isFinite(remote.barWeight) && remote.barWeight >= 0 && remote.barWeight <= 100) {
+    persistSinglePreference("barWeight", remote.barWeight);
+  }
+  if (Array.isArray(remote.enabledPlates)) {
+    const valid = [...new Set(remote.enabledPlates.map(Number).filter((p) => (ALL_PLATES as readonly number[]).includes(p)))].sort(
+      (a, b) => b - a,
+    );
+    if (valid.length > 0) persistSinglePreference("enabledPlates", valid);
+  }
+  if (remote.warmupScheme === "light" || remote.warmupScheme === "standard" || remote.warmupScheme === "heavy") {
+    persistSinglePreference("warmupScheme", remote.warmupScheme);
   }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
+  return readWorkoutPreferences();
 }
 
 export interface SetFieldPatch {

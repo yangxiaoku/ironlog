@@ -4,10 +4,16 @@ import { AuthScreen } from "./components/AuthScreen";
 import { ModalHost } from "./components/ModalHost";
 import { ToastHost } from "./components/ToastHost";
 import { useMobileGuards } from "./hooks/useMobileGuards";
-import { configureApi } from "./lib/api";
+import { apiFetch, configureApi } from "./lib/api";
+import type { ProfileGoals } from "./lib/domain";
 import { prefetchViewChunk, viewLoaders } from "./lib/prefetch";
-import { configureQueryCache } from "./lib/query-cache";
+import { cachedApiFetch, configureQueryCache } from "./lib/query-cache";
 import { openCommandPalette } from "./lib/record-openers";
+import {
+  PROFILE_VERSION_EVENT,
+  applyRemoteWorkoutPreferences,
+  configureWorkoutPrefsSync,
+} from "./lib/workout-helpers";
 import { useAuthStore } from "./store/useAuthStore";
 import { useUiStore } from "./store/useUiStore";
 
@@ -35,6 +41,19 @@ configureQueryCache({
   getDataEpoch: () => useUiStore.getState().dataEpoch,
 });
 
+configureWorkoutPrefsSync(async (prefs) => {
+  const uid = useAuthStore.getState().userId;
+  if (!uid || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+  const res = await apiFetch<{ version?: number }>("/api/web/profile/workout-prefs", {
+    method: "PUT",
+    body: prefs,
+    skipMutateHook: true,
+  });
+  if (typeof res?.version === "number" && typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
+  }
+});
+
 export function App() {
   useMobileGuards();
 
@@ -51,6 +70,21 @@ export function App() {
       }
     });
   }, []);
+
+  useEffect(() => {
+    if (!userId) return;
+    let active = true;
+    void cachedApiFetch<{ profile?: ProfileGoals }>("/api/web/profile", { userId })
+      .then((res) => {
+        if (active && res?.profile?.workoutPrefs) {
+          applyRemoteWorkoutPreferences(res.profile.workoutPrefs);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {

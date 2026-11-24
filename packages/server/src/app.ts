@@ -23,6 +23,8 @@ import {
   starterPlans,
   trackGoals,
   workoutAdaptationSchema,
+  workoutPrefsPatchSchema,
+  workoutPrefsSchema,
   workoutSchema,
   type Diet,
   type Mutation,
@@ -586,6 +588,33 @@ export function createApp(
       });
       if (result.status === "conflict") throw new DomainError("目标已在其他设备更新，请重新加载", 409);
       return { profile, version: result.record!.version };
+    }).immediate());
+  });
+  app.put("/api/web/profile/workout-prefs", async (c) => {
+    const patch = workoutPrefsPatchSchema.parse(await c.req.json());
+    const userId = c.get("userId");
+    return c.json(db.transaction(() => {
+      const existing = store.get(userId, "profile", "settings");
+      const baseVersion = existing?.version ?? 0;
+      const previous = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
+      const nextWorkoutPrefs = workoutPrefsSchema.parse({
+        ...(previous.workoutPrefs ?? {}),
+        ...patch,
+      });
+      const nextProfile = {
+        ...previous,
+        workoutPrefs: nextWorkoutPrefs,
+      };
+      const result = store.mutate(userId, {
+        id: "settings",
+        kind: "profile",
+        opId: crypto.randomUUID(),
+        baseVersion,
+        data: nextProfile,
+        deleted: false,
+      });
+      if (result.status === "conflict") throw new DomainError("目标已在其他设备更新，请重新加载", 409);
+      return { workoutPrefs: nextWorkoutPrefs, version: result.record!.version };
     }).immediate());
   });
   app.get(`${apple}/tokens`, (c) => c.json(health.devices(c.get("userId"))));

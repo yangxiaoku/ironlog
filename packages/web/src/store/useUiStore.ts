@@ -65,6 +65,7 @@ export interface UiState {
   notify: (message: string, action?: ToastAction | null) => void;
   dismissToast: (id?: number) => void;
   openModal: (entry: Omit<ModalEntry, "id">) => number;
+  updateTopModalTitle: (title: string) => void;
   closeTopModal: () => void;
   closeAllModals: () => void;
   closeModalSilent: () => void;
@@ -223,6 +224,16 @@ export const useUiStore = create<UiState>((set, get) => ({
     const id = ++modalCounter;
     set((s) => ({ modals: [...s.modals, { ...entry, id }] }));
     return id;
+  },
+
+  updateTopModalTitle(title) {
+    set((s) => {
+      if (!s.modals.length) return s;
+      const next = [...s.modals];
+      const top = next[next.length - 1]!;
+      next[next.length - 1] = { ...top, title };
+      return { modals: next };
+    });
   },
 
   closeTopModal() {

@@ -1,9 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createApp } from "../packages/server/src/app.js";
+import { openDatabase } from "../packages/server/src/db.js";
 import {
   DEFAULT_WORKOUT_PREFERENCES,
+  applyRemoteWorkoutPreferences,
   applySetFieldUpdate,
   buildWarmupSetsPlan,
+  configureWorkoutPrefsSync,
   readWorkoutPreferences,
   writeWorkoutPreference,
 } from "../packages/web/src/lib/workout-helpers.ts";
@@ -90,11 +94,12 @@ test("resolveSetRestSeconds supports configurable warmup rest and preserves defa
   );
 });
 
-test("readWorkoutPreferences returns OpenGym defaults safely and round-trips through storage", () => {
+test("readWorkoutPreferences returns OpenGym defaults safely and round-trips through storage", async () => {
   const defaults = readWorkoutPreferences();
   assert.equal(defaults.autoSyncSubsequent, true);
   assert.equal(defaults.autoPrefillLast, true);
   assert.equal(defaults.autoStartRestTimer, true);
+  assert.equal(defaults.autoAdvanceExercise, true);
   assert.equal(defaults.warmupRestSeconds, 45);
   assert.equal(defaults.restAdjustStep, 15);
   assert.equal(defaults.weightStepKg, 2.5);
@@ -114,7 +119,25 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
   });
 
   try {
+    let pushedCount = 0;
+    configureWorkoutPrefsSync(() => {
+      pushedCount++;
+    });
+
+    const applied = applyRemoteWorkoutPreferences({
+      autoAdvanceExercise: false,
+      weightStepKg: 1.25,
+      enabledPlates: [20, 10],
+      warmupScheme: "light",
+    });
+    assert.equal(applied.autoAdvanceExercise, false);
+    assert.equal(applied.weightStepKg, 1.25);
+    assert.deepEqual(applied.enabledPlates, [20, 10]);
+    assert.equal(applied.warmupScheme, "light");
+    assert.equal(pushedCount, 0, "applying remote preferences must not echo back to cloud sync");
+
     writeWorkoutPreference("autoSyncSubsequent", false);
+    writeWorkoutPreference("autoAdvanceExercise", true);
     writeWorkoutPreference("warmupRestSeconds", 0);
     writeWorkoutPreference("restAdjustStep", 30);
     writeWorkoutPreference("weightStepKg", 1.25);
@@ -124,14 +147,112 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
 
     const updated = readWorkoutPreferences();
     assert.equal(updated.autoSyncSubsequent, false);
+    assert.equal(updated.autoAdvanceExercise, true);
     assert.equal(updated.warmupRestSeconds, 0);
     assert.equal(updated.restAdjustStep, 30);
     assert.equal(updated.weightStepKg, 1.25);
     assert.equal(updated.hapticsOn, false);
     assert.deepEqual(updated.enabledPlates, [20, 10, 5]);
     assert.equal(updated.warmupScheme, "heavy");
+
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.equal(pushedCount, 1, "debounced local preference writes trigger single cloud sync push");
   } finally {
+    configureWorkoutPrefsSync(null);
     if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
     else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves goals, and isolates accounts", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const { app, auth } = createApp(db);
+    const owner = auth.login("prefs-owner");
+    const other = auth.login("prefs-other");
+    const call = (url: string, options: { token?: string; method?: string; body?: unknown } = {}) =>
+      app.request(url, {
+        method: options.method ?? "GET",
+        headers: {
+          Authorization: "Bearer " + (options.token ?? owner.token),
+          "Content-Type": "application/json",
+        },
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      });
+
+    // Save initial profile goals via existing endpoint
+    const goalRes = await call("/api/web/profile", {
+      method: "PUT",
+      body: {
+        version: 0,
+        opId: "op-init-profile",
+        calories: 2500,
+        protein: 180,
+        carbs: 260,
+        fat: 70,
+        targetWeight: 72,
+        daysPerWeek: 4,
+        restSeconds: 120,
+        energyProfile: null,
+        equipment: ["barbell", "dumbbell"],
+      },
+    });
+    assert.equal(goalRes.status, 200);
+
+    // First partial workout-prefs update
+    const prefRes1 = await call("/api/web/profile/workout-prefs", {
+      method: "PUT",
+      body: {
+        weightStepKg: 1.25,
+        warmupRestSeconds: 0,
+        autoAdvanceExercise: false,
+        enabledPlates: [20, 10, 5],
+      },
+    });
+    assert.equal(prefRes1.status, 200);
+    const body1 = (await prefRes1.json()) as {
+      version: number;
+      workoutPrefs: Record<string, unknown>;
+    };
+    assert.equal(body1.version, 2);
+    assert.equal(body1.workoutPrefs.weightStepKg, 1.25);
+    assert.equal(body1.workoutPrefs.warmupRestSeconds, 0);
+    assert.equal(body1.workoutPrefs.autoAdvanceExercise, false);
+    assert.deepEqual(body1.workoutPrefs.enabledPlates, [20, 10, 5]);
+
+    // Second partial update preserves earlier fields + nutrition/equipment goals
+    const prefRes2 = await call("/api/web/profile/workout-prefs", {
+      method: "PUT",
+      body: { warmupScheme: "heavy" },
+    });
+    assert.equal(prefRes2.status, 200);
+
+    const profileRes = await call("/api/web/profile");
+    assert.equal(profileRes.status, 200);
+    const profBody = (await profileRes.json()) as {
+      version: number;
+      profile: {
+        calories: number;
+        equipment: string[];
+        workoutPrefs?: Record<string, unknown>;
+      };
+    };
+    assert.equal(profBody.version, 3);
+    assert.equal(profBody.profile.calories, 2500);
+    assert.deepEqual(profBody.profile.equipment, ["barbell", "dumbbell"]);
+    assert.equal(profBody.profile.workoutPrefs?.weightStepKg, 1.25);
+    assert.equal(profBody.profile.workoutPrefs?.warmupRestSeconds, 0);
+    assert.equal(profBody.profile.workoutPrefs?.autoAdvanceExercise, false);
+    assert.equal(profBody.profile.workoutPrefs?.warmupScheme, "heavy");
+
+    // Cross-account isolation
+    const otherProfileRes = await call("/api/web/profile", { token: other.token });
+    assert.equal(otherProfileRes.status, 200);
+    const otherBody = (await otherProfileRes.json()) as {
+      profile: { workoutPrefs?: unknown };
+    };
+    assert.equal(otherBody.profile.workoutPrefs, undefined);
+  } finally {
+    db.close();
   }
 });

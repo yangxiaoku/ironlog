@@ -103,12 +103,15 @@ export function CalendarView() {
   const [catalogueMap, setCatalogueMap] = useState<Map<string, CatalogueExercise>>(() => new Map());
 
   const monthSwipeRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const prevUserIdRef = useRef(userId);
 
   const maxMonth = shiftDateStr(todayKey, 365).slice(0, 7);
 
   // 1. Account-wide base records: fetched once per user/dataEpoch, unaffected by month swipes
   useEffect(() => {
     let active = true;
+    const userChanged = prevUserIdRef.current !== userId;
+    prevUserIdRef.current = userId;
     const staleBase = peekQuery<CalendarBaseSnap>(baseCacheKey, userId)?.data;
     if (staleBase) {
       setWorkouts(staleBase.workouts);
@@ -117,6 +120,15 @@ export function CalendarView() {
       setNutritionDays(staleBase.nutritionDays);
       setGoals(staleBase.goals);
       setBaseLoading(false);
+    } else if (userChanged) {
+      setWorkouts([]);
+      setDiets([]);
+      setWeights([]);
+      setNutritionDays([]);
+      setGoals(null);
+      setCatalogueMap(new Map());
+      setDaySched(null);
+      setBaseLoading(true);
     } else if (!workouts.length && !diets.length) {
       setBaseLoading(true);
     }

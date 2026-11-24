@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { fmt } from "../../lib/date";
 import { estimated1RM } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
 import {
   ALL_PLATES,
-  barPreference,
+  WORKOUT_PREFS_EVENT,
   plateBreakdown,
-  platesPreference,
+  readWorkoutPreferences,
+  writeWorkoutPreference,
 } from "../../lib/workout-helpers";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -32,26 +33,6 @@ const PCT_ZONES: ReadonlyArray<readonly [number, string, number]> = [
   [60, "热身", 0.6],
 ];
 
-function readBarWeight(): number {
-  try {
-    const raw = Number(localStorage.getItem(barPreference));
-    return Number.isFinite(raw) && raw >= 0 && raw <= 100 ? raw : 20;
-  } catch {
-    return 20;
-  }
-}
-
-function readEnabledPlates(): number[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(platesPreference) ?? "null");
-    if (Array.isArray(raw)) {
-      const valid = raw.map(Number).filter((p) => (ALL_PLATES as readonly number[]).includes(p));
-      if (valid.length) return valid;
-    }
-  } catch {}
-  return [25, 20, 15, 10, 5, 2.5, 1.25];
-}
-
 export function StrengthCalcModal() {
   const closeAllModals = useUiStore((s) => s.closeAllModals);
 
@@ -60,16 +41,20 @@ export function StrengthCalcModal() {
   const [repsInput, setRepsInput] = useState("5");
   const [rir, setRir] = useState(0);
   const [targetInput, setTargetInput] = useState("80");
-  const [barWeight, setBarWeight] = useState<number>(() => readBarWeight());
-  const [enabledPlates, setEnabledPlates] = useState<number[]>(() => readEnabledPlates());
+  const [barWeight, setBarWeight] = useState<number>(() => readWorkoutPreferences().barWeight);
+  const [enabledPlates, setEnabledPlates] = useState<number[]>(() => readWorkoutPreferences().enabledPlates);
   const [activePct, setActivePct] = useState<number | null>(null);
 
-  const saveInventory = (nextBar: number, nextPlates: number[]) => {
-    try {
-      localStorage.setItem(barPreference, String(nextBar));
-      localStorage.setItem(platesPreference, JSON.stringify(nextPlates));
-    } catch {}
-  };
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncPrefs = () => {
+      const next = readWorkoutPreferences();
+      setBarWeight(next.barWeight);
+      setEnabledPlates(next.enabledPlates);
+    };
+    window.addEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+  }, []);
 
   const rawW = Math.max(0, Number(weightInput) || 0);
   const wKg = unit === "lb" ? rawW / KG_TO_LB : rawW;
@@ -105,7 +90,7 @@ export function StrengthCalcModal() {
     triggerHaptic("light");
     const next = exists ? enabledPlates.filter((p) => p !== plate) : [...enabledPlates, plate].sort((a, b) => b - a);
     setEnabledPlates(next);
-    saveInventory(barWeight, next);
+    writeWorkoutPreference("enabledPlates", next);
   };
 
   return (
@@ -276,7 +261,7 @@ export function StrengthCalcModal() {
                 onClick={() => {
                   triggerHaptic("light");
                   setBarWeight(w);
-                  saveInventory(w, enabledPlates);
+                  writeWorkoutPreference("barWeight", w);
                 }}
               >
                 {lbl}

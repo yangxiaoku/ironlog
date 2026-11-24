@@ -681,6 +681,7 @@ export function CalendarDayModal({
   const userId = useAuthStore((s) => s.userId);
   const appleHealthConnected = useAuthStore((s) => s.appleHealthConnected);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const updateTopModalTitle = useUiStore((s) => s.updateTopModalTitle);
 
   const [date, setDate] = useState(initialDate);
   const [loading, setLoading] = useState(true);
@@ -760,6 +761,7 @@ export function CalendarDayModal({
 
   const handleStep = (nextDate: string) => {
     setDate(nextDate);
+    updateTopModalTitle(`${shortDate(nextDate)} 训练日程`);
     onDateChange?.(nextDate);
   };
 

@@ -198,6 +198,24 @@ export interface ProfileGoals {
     context: string;
     activityFactor: number;
   } | null;
+  workoutPrefs?: {
+    soundOn?: boolean;
+    hapticsOn?: boolean;
+    screenAwake?: boolean;
+    notifyRest?: boolean;
+    showRir?: boolean;
+    autoSyncSubsequent?: boolean;
+    autoPrefillLast?: boolean;
+    autoStartRestTimer?: boolean;
+    autoAdvanceExercise?: boolean;
+    warmupRestSeconds?: number;
+    restAdjustStep?: number;
+    weightStepKg?: number;
+    barWeight?: number;
+    enabledPlates?: number[];
+    showPlateMath?: boolean;
+    warmupScheme?: "light" | "standard" | "heavy";
+  };
 }
 
 export interface OverviewStatsResponse {

@@ -19,6 +19,11 @@ import {
   type WorkoutTiming,
 } from "../lib/haptics-audio";
 import { openWorkoutEditor } from "../lib/record-openers";
+import {
+  WORKOUT_PREFS_EVENT,
+  readWorkoutPreferences,
+  type WorkoutPreferences,
+} from "../lib/workout-helpers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { Icon } from "./Icon";
@@ -71,9 +76,19 @@ export function LiveWorkoutBar() {
   const [draft, setDraft] = useState<ParsedLiveDraft | null>(() => (hasWorkoutOpen ? null : readParsedDraft(userId)));
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [resuming, setResuming] = useState(false);
+  const [prefs, setPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
 
-  const audio = useMemo(() => createRestAudio(() => true), []);
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
+  const audio = useMemo(() => createRestAudio(() => prefsRef.current.soundOn), []);
   const firedRestEndRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setPrefs(readWorkoutPreferences());
+    window.addEventListener(WORKOUT_PREFS_EVENT, sync);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     if (hasWorkoutOpen || !userId) {
@@ -150,7 +165,7 @@ export function LiveWorkoutBar() {
   const handleExtendRest = () => {
     if (!draft.rest) return;
     triggerHaptic("light");
-    const nextRest = shiftRestTimer(draft.rest, 15);
+    const nextRest = shiftRestTimer(draft.rest, prefs.restAdjustStep);
     try {
       const raw = localStorage.getItem(draft.key);
       if (raw) {
@@ -185,15 +200,15 @@ export function LiveWorkoutBar() {
         <div className="live-workout-bar-rest">
           <span className="live-rest-pill">
             <Icon name="rest" size={13} />
-            休息 {formatClock(restInfo.left)}
+            休息 {formatClock(restInfo.seconds)}
           </span>
           <button
             type="button"
             className="live-rest-plus"
-            title="组间休息加 15 秒"
+            title={`组间休息加 ${prefs.restAdjustStep} 秒`}
             onClick={handleExtendRest}
           >
-            +15s
+            +{prefs.restAdjustStep}s
           </button>
         </div>
       ) : null}

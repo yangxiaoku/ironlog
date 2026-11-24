@@ -189,6 +189,7 @@ export function WorkoutEditorModal({
     autoSyncSubsequent,
     autoPrefillLast,
     autoStartRestTimer,
+    autoAdvanceExercise,
     warmupRestSeconds,
     restAdjustStep,
     weightStepKg,
@@ -225,7 +226,16 @@ export function WorkoutEditorModal({
   soundOnRef.current = soundOn;
   const audio = useMemo(() => createRestAudio(() => soundOnRef.current), []);
   const restAlarmFiredForRef = useRef<number | null>(null);
+  const autoAdvanceTimerRef = useRef<number | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
+
+  useEffect(() => {
+    return () => {
+      if (autoAdvanceTimerRef.current !== null) {
+        window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+    };
+  }, []);
 
   const isWorkoutTop = useUiStore((s) => s.modals.at(-1)?.layout === "workout");
 
@@ -477,13 +487,19 @@ export function WorkoutEditorModal({
     );
   };
 
-  const updateSetAndCascade = (exIdx: number, setIdx: number, patch: SetFieldPatch) => {
+  const updateSetAndCascade = (
+    exIdx: number,
+    setIdx: number,
+    patchOrFn: SetFieldPatch | ((cur: WorkoutSet) => SetFieldPatch),
+  ) => {
     setExercises((prev) =>
-      prev.map((row, i) =>
-        i === exIdx
-          ? { ...row, sets: applySetFieldUpdate(row.sets, setIdx, patch, { autoSyncSubsequent }) }
-          : row,
-      ),
+      prev.map((row, i) => {
+        if (i !== exIdx) return row;
+        const cur = row.sets[setIdx];
+        if (!cur) return row;
+        const patch = typeof patchOrFn === "function" ? patchOrFn(cur) : patchOrFn;
+        return { ...row, sets: applySetFieldUpdate(row.sets, setIdx, patch, { autoSyncSubsequent }) };
+      }),
     );
   };
 
@@ -516,6 +532,11 @@ export function WorkoutEditorModal({
     triggerHaptic(nextCompleted ? "success" : "light");
     audio.tap(nextCompleted ? "check" : "uncheck");
 
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+
     if (nextCompleted && !isHistoricalEdit && autoStartRestTimer) {
       const nextSet = row.sets[setIdx + 1];
       const { seconds } = resolveSetRestSeconds({
@@ -535,6 +556,27 @@ export function WorkoutEditorModal({
       completed: nextCompleted,
       ...(nextCompleted ? { completedAt: new Date().toISOString() } : { completedAt: undefined }),
     }));
+
+    if (
+      nextCompleted &&
+      !isHistoricalEdit &&
+      autoAdvanceExercise &&
+      row.sets.every((s, idx) => idx === setIdx || s.completed)
+    ) {
+      const afterIdx = exercises.findIndex((ex, idx) => idx > exIdx && ex.sets.some((s) => !s.completed));
+      const nextIdx =
+        afterIdx >= 0
+          ? afterIdx
+          : exercises.findIndex((ex, idx) => idx < exIdx && ex.sets.some((s) => !s.completed));
+      if (nextIdx >= 0) {
+        const targetId = exercises[nextIdx]!.id;
+        autoAdvanceTimerRef.current = window.setTimeout(() => {
+          autoAdvanceTimerRef.current = null;
+          setActiveExIdx(nextIdx);
+          cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }, 320);
+      }
+    }
   };
 
   const addWarmupSets = (exIdx: number) => {
@@ -848,6 +890,15 @@ export function WorkoutEditorModal({
                     type="checkbox"
                     checked={autoPrefillLast}
                     onChange={(e) => updatePref("autoPrefillLast", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>完组自动跳下一动作</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={autoAdvanceExercise}
+                    onChange={(e) => updatePref("autoAdvanceExercise", e.target.checked)}
                   />
                 </label>
                 <label className="switch-chip">
@@ -1484,9 +1535,9 @@ export function WorkoutEditorModal({
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSetAndCascade(exIdx, setIdx, {
-                                      weight: Math.max(0, round2(s.weight - weightStepKg)),
-                                    });
+                                    updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                      weight: Math.max(0, round2(cur.weight - weightStepKg)),
+                                    }));
                                   }}
                                 >
                                   −
@@ -1494,7 +1545,7 @@ export function WorkoutEditorModal({
                                 <input
                                   type="number"
                                   inputMode="decimal"
-                                  step={0.5}
+                                  step="any"
                                   min={0}
                                   max={5000}
                                   value={s.weight}
@@ -1511,9 +1562,9 @@ export function WorkoutEditorModal({
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSetAndCascade(exIdx, setIdx, {
-                                      weight: round2(s.weight + weightStepKg),
-                                    });
+                                    updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                      weight: round2(cur.weight + weightStepKg),
+                                    }));
                                   }}
                                 >
                                   +
@@ -1528,7 +1579,9 @@ export function WorkoutEditorModal({
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSetAndCascade(exIdx, setIdx, { reps: Math.max(0, s.reps - 1) });
+                                    updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                      reps: Math.max(0, cur.reps - 1),
+                                    }));
                                   }}
                                 >
                                   −
@@ -1552,7 +1605,9 @@ export function WorkoutEditorModal({
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSetAndCascade(exIdx, setIdx, { reps: Math.min(1000, s.reps + 1) });
+                                    updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                      reps: Math.min(1000, cur.reps + 1),
+                                    }));
                                   }}
                                 >
                                   +
@@ -1566,7 +1621,9 @@ export function WorkoutEditorModal({
                                 className="num-step-btn"
                                 onClick={() => {
                                   triggerHaptic("light");
-                                  updateSetAndCascade(exIdx, setIdx, { seconds: Math.max(0, s.seconds - 5) });
+                                  updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                    seconds: Math.max(0, cur.seconds - 5),
+                                  }));
                                 }}
                               >
                                 −
@@ -1588,7 +1645,9 @@ export function WorkoutEditorModal({
                                 className="num-step-btn"
                                 onClick={() => {
                                   triggerHaptic("light");
-                                  updateSetAndCascade(exIdx, setIdx, { seconds: s.seconds + 5 });
+                                  updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                    seconds: cur.seconds + 5,
+                                  }));
                                 }}
                               >
                                 +
