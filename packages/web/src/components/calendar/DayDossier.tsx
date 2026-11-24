@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
+import { cachedApiFetch } from "../../lib/query-cache";
 import { duration, fmt, formatWeekdayZh, shortDate, today } from "../../lib/date";
 import {
   FEELINGS,
@@ -163,6 +164,7 @@ export interface DayDossierProps {
   schedSummary: ScheduleDayEntry | undefined;
   catalogueMap: Map<string, CatalogueExercise>;
   inModal?: boolean;
+  loading?: boolean;
   onStepDate?: (newDate: string) => void;
 }
 
@@ -181,6 +183,7 @@ export function DayDossier({
   schedSummary,
   catalogueMap,
   inModal = false,
+  loading = false,
   onStepDate,
 }: DayDossierProps) {
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -320,7 +323,7 @@ export function DayDossier({
       onTouchStart={(e) => {
         if (!inModal || !onStepDate || e.touches.length !== 1) return;
         const t = e.touches[0]!;
-        if (t.clientX < 20) {
+        if (t.clientX < 24 || (typeof window !== "undefined" && t.clientX > window.innerWidth - 24)) {
           swipeStartRef.current = null;
           return;
         }
@@ -349,6 +352,7 @@ export function DayDossier({
           </button>
           <span className="dossier-step-date">
             <strong>{relLabel}</strong>
+            {loading ? <span className="calendar-month-sync-badge">刷新当日…</span> : null}
             {diffDays !== 0 ? (
               <button type="button" className="dossier-today-chip" onClick={() => onStepDate(todayKey)}>
                 回今天
@@ -674,12 +678,13 @@ export function CalendarDayModal({
   initialDate: string;
   onDateChange?: (d: string) => void;
 }) {
+  const userId = useAuthStore((s) => s.userId);
   const appleHealthConnected = useAuthStore((s) => s.appleHealthConnected);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
 
   const [date, setDate] = useState(initialDate);
   const [loading, setLoading] = useState(true);
-  const [propsData, setPropsData] = useState<Omit<DayDossierProps, "inModal" | "onStepDate"> | null>(null);
+  const [propsData, setPropsData] = useState<Omit<DayDossierProps, "inModal" | "loading" | "onStepDate"> | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -689,19 +694,36 @@ export function CalendarDayModal({
       try {
         const [workouts, diets, weights, nutritionDays, profileRes, appleWorkouts, dailyRes, schedRes, dayDetail] =
           await Promise.all([
-            apiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout"),
-            apiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet"),
-            apiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight").catch(() => []),
-            apiFetch<Array<RecordEnvelope<{ date: string; complete?: boolean }>>>("/api/records/nutritionDay").catch(() => []),
-            apiFetch<{ profile: ProfileGoals }>("/api/web/profile").catch(() => null),
+            cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
+            cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
+            cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }).catch(() => []),
+            cachedApiFetch<Array<RecordEnvelope<{ date: string; complete?: boolean }>>>("/api/records/nutritionDay", {
+              epoch: dataEpoch,
+              userId,
+            }).catch(() => []),
+            cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
             date <= todayKey
-              ? apiFetch<AppleWorkoutAgendaItem[]>(`/api/integrations/apple-health/agenda?from=${date}&through=${date}`).catch(() => [])
+              ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
+                  `/api/integrations/apple-health/agenda?from=${date}&through=${date}`,
+                  { epoch: dataEpoch, userId },
+                ).catch(() => [])
               : Promise.resolve([]),
             date <= todayKey
-              ? apiFetch<{ entries?: AppleDailyEntry[] }>(`/api/integrations/apple-health/daily?from=${date}&through=${date}`).catch(() => ({ entries: [] }))
+              ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
+                  `/api/integrations/apple-health/daily?from=${date}&through=${date}`,
+                  { epoch: dataEpoch, userId },
+                ).catch(() => ({ entries: [] }))
               : Promise.resolve({ entries: [] }),
-            apiFetch<{ days: ScheduleDayEntry[] }>(`/api/web/schedule?from=${date}&through=${date}`).catch(() => null),
-            date >= todayKey ? apiFetch<DayScheduleDetail>(`/api/web/schedule/${encodeURIComponent(date)}`).catch(() => null) : Promise.resolve(null),
+            cachedApiFetch<{ days: ScheduleDayEntry[] }>(`/api/web/schedule?from=${date}&through=${date}`, {
+              epoch: dataEpoch,
+              userId,
+            }).catch(() => null),
+            date >= todayKey
+              ? cachedApiFetch<DayScheduleDetail>(`/api/web/schedule/${encodeURIComponent(date)}`, {
+                  epoch: dataEpoch,
+                  userId,
+                }).catch(() => null)
+              : Promise.resolve(null),
           ]);
 
         const dayWorkouts = workouts.filter((r) => !r.deleted && r.data.status !== "cancelled" && r.data.date === date);
@@ -734,7 +756,7 @@ export function CalendarDayModal({
     return () => {
       active = false;
     };
-  }, [date, appleHealthConnected, dataEpoch]);
+  }, [date, appleHealthConnected, dataEpoch, userId]);
 
   const handleStep = (nextDate: string) => {
     setDate(nextDate);
@@ -752,5 +774,5 @@ export function CalendarDayModal({
   }
   if (!propsData) return null;
 
-  return <DayDossier {...propsData} inModal onStepDate={handleStep} />;
+  return <DayDossier {...propsData} inModal loading={loading} onStepDate={handleStep} />;
 }

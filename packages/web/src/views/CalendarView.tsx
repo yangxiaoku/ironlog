@@ -65,120 +65,192 @@ export function CalendarView() {
   const [selectedDate, setSelectedDate] = useState(todayKey);
   const [lens, setLens] = useState<CalendarLens>("all");
 
-  interface CalendarSnap {
+  interface CalendarBaseSnap {
     workouts: Array<RecordEnvelope<WorkoutData>>;
     diets: Array<RecordEnvelope<DietData>>;
     weights: Array<RecordEnvelope<WeightData>>;
     nutritionDays: Array<RecordEnvelope<{ date: string; complete?: boolean }>>;
     goals: ProfileGoals | null;
+  }
+
+  interface CalendarMonthSnap {
     appleEntries: AppleWorkoutAgendaItem[];
     appleDailyMap: Map<string, AppleDailyEntry>;
     schedDays: ScheduleDayEntry[];
-    catalogueMap: Map<string, CatalogueExercise>;
   }
-  const initCalKey = `view:calendar:${month}`;
-  const cachedCal = peekQuery<CalendarSnap>(initCalKey, userId)?.data;
 
-  const [loading, setLoading] = useState(() => !cachedCal);
+  const baseCacheKey = "view:calendar:base";
+  const monthCacheKey = `view:calendar:month:${month}`;
+  const cachedBase = peekQuery<CalendarBaseSnap>(baseCacheKey, userId)?.data;
+  const cachedMonth = peekQuery<CalendarMonthSnap>(monthCacheKey, userId)?.data;
+
+  const [baseLoading, setBaseLoading] = useState(() => !cachedBase);
+  const [monthLoading, setMonthLoading] = useState(() => !cachedMonth);
   const [error, setError] = useState("");
-  const [workouts, setWorkouts] = useState<Array<RecordEnvelope<WorkoutData>>>(() => cachedCal?.workouts ?? []);
-  const [diets, setDiets] = useState<Array<RecordEnvelope<DietData>>>(() => cachedCal?.diets ?? []);
-  const [weights, setWeights] = useState<Array<RecordEnvelope<WeightData>>>(() => cachedCal?.weights ?? []);
+  const [workouts, setWorkouts] = useState<Array<RecordEnvelope<WorkoutData>>>(() => cachedBase?.workouts ?? []);
+  const [diets, setDiets] = useState<Array<RecordEnvelope<DietData>>>(() => cachedBase?.diets ?? []);
+  const [weights, setWeights] = useState<Array<RecordEnvelope<WeightData>>>(() => cachedBase?.weights ?? []);
   const [nutritionDays, setNutritionDays] = useState<Array<RecordEnvelope<{ date: string; complete?: boolean }>>>(
-    () => cachedCal?.nutritionDays ?? [],
+    () => cachedBase?.nutritionDays ?? [],
   );
-  const [goals, setGoals] = useState<ProfileGoals | null>(() => cachedCal?.goals ?? null);
-  const [appleEntries, setAppleEntries] = useState<AppleWorkoutAgendaItem[]>(() => cachedCal?.appleEntries ?? []);
+  const [goals, setGoals] = useState<ProfileGoals | null>(() => cachedBase?.goals ?? null);
+  const [appleEntries, setAppleEntries] = useState<AppleWorkoutAgendaItem[]>(() => cachedMonth?.appleEntries ?? []);
   const [appleDailyMap, setAppleDailyMap] = useState<Map<string, AppleDailyEntry>>(
-    () => cachedCal?.appleDailyMap ?? new Map(),
+    () => cachedMonth?.appleDailyMap ?? new Map(),
   );
-  const [schedDays, setSchedDays] = useState<ScheduleDayEntry[]>(() => cachedCal?.schedDays ?? []);
+  const [schedDays, setSchedDays] = useState<ScheduleDayEntry[]>(() => cachedMonth?.schedDays ?? []);
   const [daySched, setDaySched] = useState<DayScheduleDetail | null>(null);
-  const [catalogueMap, setCatalogueMap] = useState<Map<string, CatalogueExercise>>(
-    () => cachedCal?.catalogueMap ?? new Map(),
-  );
+  const [catalogueMap, setCatalogueMap] = useState<Map<string, CatalogueExercise>>(() => new Map());
 
   const monthSwipeRef = useRef<{ x: number; y: number; time: number } | null>(null);
 
   const maxMonth = shiftDateStr(todayKey, 365).slice(0, 7);
 
+  // 1. Account-wide base records: fetched once per user/dataEpoch, unaffected by month swipes
   useEffect(() => {
     let active = true;
-    const { days } = monthDays(month);
-    const from = `${month}-01`;
-    const monthEnd = `${month}-${String(days).padStart(2, "0")}`;
-    const appleThrough = monthEnd > todayKey ? todayKey : monthEnd;
-    const viewKey = `view:calendar:${month}`;
-    const staleCal = peekQuery<CalendarSnap>(viewKey, userId)?.data;
-    if (staleCal) {
-      setWorkouts(staleCal.workouts);
-      setDiets(staleCal.diets);
-      setWeights(staleCal.weights);
-      setNutritionDays(staleCal.nutritionDays);
-      setGoals(staleCal.goals);
-      setAppleEntries(staleCal.appleEntries);
-      setAppleDailyMap(staleCal.appleDailyMap);
-      setSchedDays(staleCal.schedDays);
-      setCatalogueMap(staleCal.catalogueMap);
-      setLoading(false);
-    } else {
-      setLoading(true);
+    const staleBase = peekQuery<CalendarBaseSnap>(baseCacheKey, userId)?.data;
+    if (staleBase) {
+      setWorkouts(staleBase.workouts);
+      setDiets(staleBase.diets);
+      setWeights(staleBase.weights);
+      setNutritionDays(staleBase.nutritionDays);
+      setGoals(staleBase.goals);
+      setBaseLoading(false);
+    } else if (!workouts.length && !diets.length) {
+      setBaseLoading(true);
     }
     setError("");
     void (async () => {
       try {
-        const [wRes, dRes, wtRes, ndRes, profRes, appleActs, dailyRes, schedRes] = await Promise.all([
+        const [wRes, dRes, wtRes, ndRes, profRes] = await Promise.all([
           cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
           cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
           cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }).catch(() => []),
           cachedApiFetch<Array<RecordEnvelope<{ date: string; complete?: boolean }>>>("/api/records/nutritionDay", { epoch: dataEpoch, userId }).catch(() => []),
           cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
-          from <= todayKey
-            ? cachedApiFetch<AppleWorkoutAgendaItem[]>(`/api/integrations/apple-health/agenda?from=${from}&through=${appleThrough}`, { epoch: dataEpoch, userId }).catch(() => [])
-            : Promise.resolve([]),
-          from <= todayKey
-            ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(`/api/integrations/apple-health/daily?from=${from}&through=${appleThrough}`, { epoch: dataEpoch, userId }).catch(() => ({ entries: [] }))
-            : Promise.resolve({ entries: [] }),
-          cachedApiFetch<{ days?: ScheduleDayEntry[] }>(`/api/web/schedule?from=${from}&through=${monthEnd}`, { epoch: dataEpoch, userId }).catch(() => null),
         ]);
-        const cleanW = wRes.filter((r) => !r.deleted && r.data.status !== "cancelled");
-        const monthExIds = cleanW
-          .filter((r) => r.data.date.slice(0, 7) === month)
-          .flatMap((r) => r.data.exercises?.map((e) => e.exerciseId) ?? []);
-        const catMap = await resolveCatalogueMap(monthExIds);
         if (!active) return;
 
-        const nextSnap: CalendarSnap = {
-          workouts: cleanW,
+        const nextBase: CalendarBaseSnap = {
+          workouts: wRes.filter((r) => !r.deleted && r.data.status !== "cancelled"),
           diets: dRes.filter((r) => !r.deleted),
           weights: wtRes.filter((r) => !r.deleted),
           nutritionDays: ndRes.filter((r) => !r.deleted),
           goals: profRes?.profile ?? null,
-          appleEntries: appleActs,
-          appleDailyMap: new Map((dailyRes.entries ?? []).map((row) => [row.date, row])),
-          schedDays: schedRes?.days ?? [],
-          catalogueMap: catMap,
         };
-        writeQueryCache(viewKey, nextSnap, { userId, epoch: dataEpoch });
-        setWorkouts(nextSnap.workouts);
-        setDiets(nextSnap.diets);
-        setWeights(nextSnap.weights);
-        setNutritionDays(nextSnap.nutritionDays);
-        setGoals(nextSnap.goals);
-        setAppleEntries(nextSnap.appleEntries);
-        setAppleDailyMap(nextSnap.appleDailyMap);
-        setSchedDays(nextSnap.schedDays);
-        setCatalogueMap(nextSnap.catalogueMap);
+        writeQueryCache(baseCacheKey, nextBase, { userId, epoch: dataEpoch });
+        setWorkouts(nextBase.workouts);
+        setDiets(nextBase.diets);
+        setWeights(nextBase.weights);
+        setNutritionDays(nextBase.nutritionDays);
+        setGoals(nextBase.goals);
       } catch (err) {
         if (active) setError((err as Error)?.message || "加载日历数据失败");
       } finally {
-        if (active) setLoading(false);
+        if (active) setBaseLoading(false);
       }
     })();
     return () => {
       active = false;
     };
-  }, [userId, month, dataEpoch, todayKey]);
+  }, [userId, dataEpoch]);
+
+  // 2. Month-local incremental slice: only fetches schedule & Apple telemetry for visible month
+  useEffect(() => {
+    let active = true;
+    const fetchMonthSlice = async (targetMonth: string): Promise<CalendarMonthSnap> => {
+      const { days: mDays } = monthDays(targetMonth);
+      const from = `${targetMonth}-01`;
+      const monthEnd = `${targetMonth}-${String(mDays).padStart(2, "0")}`;
+      const appleThrough = monthEnd > todayKey ? todayKey : monthEnd;
+      const [appleActs, dailyRes, schedRes] = await Promise.all([
+        from <= todayKey
+          ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
+              `/api/integrations/apple-health/agenda?from=${from}&through=${appleThrough}`,
+              { epoch: dataEpoch, userId },
+            ).catch(() => [])
+          : Promise.resolve([]),
+        from <= todayKey
+          ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
+              `/api/integrations/apple-health/daily?from=${from}&through=${appleThrough}`,
+              { epoch: dataEpoch, userId },
+            ).catch(() => ({ entries: [] }))
+          : Promise.resolve({ entries: [] }),
+        cachedApiFetch<{ days?: ScheduleDayEntry[] }>(
+          `/api/web/schedule?from=${from}&through=${monthEnd}`,
+          { epoch: dataEpoch, userId },
+        ).catch(() => null),
+      ]);
+      return {
+        appleEntries: appleActs,
+        appleDailyMap: new Map((dailyRes.entries ?? []).map((row) => [row.date, row])),
+        schedDays: schedRes?.days ?? [],
+      };
+    };
+
+    const currentKey = `view:calendar:month:${month}`;
+    const staleMonth = peekQuery<CalendarMonthSnap>(currentKey, userId)?.data;
+    if (staleMonth) {
+      setAppleEntries(staleMonth.appleEntries);
+      setAppleDailyMap(staleMonth.appleDailyMap);
+      setSchedDays(staleMonth.schedDays);
+      setMonthLoading(false);
+    } else {
+      setMonthLoading(true);
+    }
+
+    let prefetchTimer: number | undefined;
+    void fetchMonthSlice(month)
+      .then((nextMonthSnap) => {
+        if (!active) return;
+        writeQueryCache(currentKey, nextMonthSnap, { userId, epoch: dataEpoch });
+        setAppleEntries(nextMonthSnap.appleEntries);
+        setAppleDailyMap(nextMonthSnap.appleDailyMap);
+        setSchedDays(nextMonthSnap.schedDays);
+
+        // Warm adjacent months locally so next left/right swipe is instantaneous
+        prefetchTimer = window.setTimeout(() => {
+          if (!active) return;
+          const neighbors = [shiftMonthStr(month, -1), shiftMonthStr(month, 1)].filter(
+            (m) => m <= maxMonth,
+          );
+          for (const adj of neighbors) {
+            const adjKey = `view:calendar:month:${adj}`;
+            if (peekQuery<CalendarMonthSnap>(adjKey, userId)) continue;
+            void fetchMonthSlice(adj)
+              .then((snap) => {
+                writeQueryCache(adjKey, snap, { userId, epoch: dataEpoch });
+              })
+              .catch(() => {});
+          }
+        }, 250);
+      })
+      .finally(() => {
+        if (active) setMonthLoading(false);
+      });
+
+    return () => {
+      active = false;
+      if (prefetchTimer !== undefined) window.clearTimeout(prefetchTimer);
+    };
+  }, [userId, month, dataEpoch, todayKey, maxMonth]);
+
+  // 3. Incrementally resolve exercise dictionary entries for exercises appearing in visible month
+  useEffect(() => {
+    let active = true;
+    const monthExIds = workouts
+      .filter((r) => r.data.date.slice(0, 7) === month)
+      .flatMap((r) => r.data.exercises?.map((e) => e.exerciseId) ?? []);
+    if (!monthExIds.length) return;
+    void resolveCatalogueMap(monthExIds).then((catMap) => {
+      if (!active) return;
+      setCatalogueMap((prev) => new Map([...prev, ...catMap]));
+    });
+    return () => {
+      active = false;
+    };
+  }, [workouts, month]);
 
   // Load selected date schedule telemetry when >= today
   useEffect(() => {
@@ -199,7 +271,7 @@ export function CalendarView() {
     };
   }, [selectedDate, todayKey, dataEpoch]);
 
-  if (loading && !workouts.length && !diets.length && !schedDays.length) {
+  if (baseLoading && !workouts.length && !diets.length && !schedDays.length) {
     return (
       <div className="empty loading" role="status">
         正在加载训练日历…
@@ -326,7 +398,7 @@ export function CalendarView() {
           onTouchStart={(e) => {
             if (e.touches.length !== 1) return;
             const t = e.touches[0]!;
-            if (t.clientX < 20) {
+            if (t.clientX < 24 || (typeof window !== "undefined" && t.clientX > window.innerWidth - 24)) {
               monthSwipeRef.current = null;
               return;
             }
@@ -353,6 +425,7 @@ export function CalendarView() {
               <h2>
                 {month.slice(0, 4)} 年 {Number(month.slice(5))} 月
               </h2>
+              {monthLoading ? <span className="calendar-month-sync-badge">刷新排期…</span> : null}
               <button
                 className="icon-button"
                 type="button"
@@ -403,7 +476,7 @@ export function CalendarView() {
             </div>
           </div>
 
-          <div className="calendar-grid">
+          <div className={`calendar-grid${monthLoading ? " is-month-loading" : ""}`}>
             {["一", "二", "三", "四", "五", "六", "日"].map((d) => (
               <span key={d}>周{d}</span>
             ))}

@@ -5,7 +5,20 @@ import type { AiStatus } from "../components/ai/AiModals";
 import { apiFetch } from "../lib/api";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
+import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
+import {
+  ALL_PLATES,
+  BAR_PRESETS,
+  readWorkoutPreferences,
+  REST_STEP_PRESETS,
+  WARMUP_REST_PRESETS,
+  WARMUP_SCHEMES,
+  WEIGHT_STEP_PRESETS,
+  WORKOUT_PREFS_EVENT,
+  writeWorkoutPreference,
+  type WorkoutPreferences,
+} from "../lib/workout-helpers";
 import {
   openBackupRestoreModal,
   openCsvImportModal,
@@ -82,6 +95,24 @@ export function SettingsView() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [workoutPrefs, setWorkoutPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncPrefs = () => setWorkoutPrefs(readWorkoutPreferences());
+    window.addEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+  }, []);
+
+  const updateWorkoutPref = <K extends keyof WorkoutPreferences>(
+    key: K,
+    value: WorkoutPreferences[K],
+    toastText?: string,
+  ) => {
+    writeWorkoutPreference(key, value);
+    setWorkoutPrefs(readWorkoutPreferences());
+    if (toastText) notify(toastText);
+  };
 
   // Statistics form state
   const [prefRevision, setPrefRevision] = useState(0);
@@ -540,6 +571,7 @@ export function SettingsView() {
           ) : null}
 
           {settingsTab === "profile" ? (
+            <>
             <section className="panel">
               <header className="panel-head">
                 <h2>训练与饮食目标</h2>
@@ -765,6 +797,248 @@ export function SettingsView() {
                 </footer>
               </form>
             </section>
+
+            <section className="panel settings-workout-prefs-panel">
+              <header className="panel-head">
+                <div>
+                  <h2>训练体验与器械规格（OpenGym 风格）</h2>
+                  <p className="muted panel-order-hint">所有改动即时生效，也可在训练中点顶部菜单随时调整。</p>
+                </div>
+              </header>
+              <div className="settings-form">
+                <section className="form-section">
+                  <h3 className="form-section-title">记录与自动联动</h3>
+                  <div className="session-options">
+                    <label className="switch-chip">
+                      <span>默认同步后续组</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.autoSyncSubsequent}
+                        onChange={(e) =>
+                          updateWorkoutPref(
+                            "autoSyncSubsequent",
+                            e.target.checked,
+                            e.target.checked ? "已开启默认同步后续组" : "已关闭默认同步后续组",
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>自动沿用上次重量</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.autoPrefillLast}
+                        onChange={(e) =>
+                          updateWorkoutPref(
+                            "autoPrefillLast",
+                            e.target.checked,
+                            e.target.checked ? "已开启自动沿用上次重量" : "已关闭自动沿用上次重量",
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>显示 RIR 储备</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.showRir}
+                        onChange={(e) => updateWorkoutPref("showRir", e.target.checked)}
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>杠铃配片实时提示</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.showPlateMath}
+                        onChange={(e) => updateWorkoutPref("showPlateMath", e.target.checked)}
+                      />
+                    </label>
+                  </div>
+                </section>
+
+                <section className="form-section">
+                  <h3 className="form-section-title">休息计时与提醒</h3>
+                  <div className="session-options">
+                    <label className="switch-chip">
+                      <span>完组自动倒计时</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.autoStartRestTimer}
+                        onChange={(e) => updateWorkoutPref("autoStartRestTimer", e.target.checked)}
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>提示音反馈</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.soundOn}
+                        onChange={(e) => updateWorkoutPref("soundOn", e.target.checked)}
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>触感震动反馈</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.hapticsOn}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          updateWorkoutPref("hapticsOn", next);
+                          if (next) triggerHaptic("light");
+                        }}
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>训练防息屏</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.screenAwake}
+                        onChange={(e) => updateWorkoutPref("screenAwake", e.target.checked)}
+                      />
+                    </label>
+                    <label className="switch-chip">
+                      <span>到期通知</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.notifyRest}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
+                            void Notification.requestPermission();
+                          }
+                          updateWorkoutPref("notifyRest", next);
+                        }}
+                      />
+                    </label>
+                  </div>
+                  <div className="fields">
+                    <div className="field">
+                      <span>热身组休息时长</span>
+                      <div className="segments">
+                        {WARMUP_REST_PRESETS.map((sec) => (
+                          <button
+                            key={sec}
+                            type="button"
+                            aria-pressed={workoutPrefs.warmupRestSeconds === sec}
+                            onClick={() => updateWorkoutPref("warmupRestSeconds", sec)}
+                          >
+                            {sec === 0 ? "免休" : `${sec}s`}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>休息计时增减步长</span>
+                      <div className="segments">
+                        {REST_STEP_PRESETS.map((stepSec) => (
+                          <button
+                            key={stepSec}
+                            type="button"
+                            aria-pressed={workoutPrefs.restAdjustStep === stepSec}
+                            onClick={() => updateWorkoutPref("restAdjustStep", stepSec)}
+                          >
+                            ±{stepSec}s
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="form-section">
+                  <h3 className="form-section-title">递增步长、杠铃与热身坡度</h3>
+                  <div className="field">
+                    <span>重量递增步长</span>
+                    <div className="segments">
+                      {WEIGHT_STEP_PRESETS.map((step) => (
+                        <button
+                          key={step}
+                          type="button"
+                          aria-pressed={workoutPrefs.weightStepKg === step}
+                          onClick={() => updateWorkoutPref("weightStepKg", step, `默认递增步长已设为 ±${step}kg`)}
+                        >
+                          ±{step}kg
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="field">
+                    <span>杠铃空杆规格</span>
+                    <div className="segments">
+                      {BAR_PRESETS.map(([bw, lbl]) => (
+                        <button
+                          key={bw}
+                          type="button"
+                          aria-pressed={workoutPrefs.barWeight === bw}
+                          onClick={() => updateWorkoutPref("barWeight", bw, `杠铃空杆已设为 ${lbl}`)}
+                        >
+                          {lbl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="field">
+                    <span>我的可用杠铃片（每侧自动配片）</span>
+                    <div className="plate-chip-grid">
+                      {ALL_PLATES.map((plate) => {
+                        const active = workoutPrefs.enabledPlates.includes(plate);
+                        return (
+                          <button
+                            key={plate}
+                            type="button"
+                            className="plate-chip"
+                            aria-pressed={active}
+                            onClick={() => {
+                              if (active) {
+                                if (workoutPrefs.enabledPlates.length <= 1) {
+                                  notify("至少保留一种杠铃片规格");
+                                  return;
+                                }
+                                updateWorkoutPref(
+                                  "enabledPlates",
+                                  workoutPrefs.enabledPlates.filter((p) => p !== plate),
+                                );
+                              } else {
+                                updateWorkoutPref("enabledPlates", [...workoutPrefs.enabledPlates, plate]);
+                              }
+                            }}
+                          >
+                            {plate}kg
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div className="field">
+                    <span>热身组坡度方案</span>
+                    <div className="segments">
+                      {WARMUP_SCHEMES.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          aria-pressed={workoutPrefs.warmupScheme === item.id}
+                          onClick={() => updateWorkoutPref("warmupScheme", item.id, `热身方案已切换为「${item.label}」`)}
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                    <small className="muted">
+                      当前梯度：{WARMUP_SCHEMES.find((s) => s.id === workoutPrefs.warmupScheme)?.desc ?? ""}
+                    </small>
+                  </div>
+                </section>
+              </div>
+            </section>
+            </>
           ) : null}
 
           {settingsTab === "devices" ? (

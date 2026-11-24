@@ -19,7 +19,9 @@ export function ModalHost() {
   const expectedPopsRef = useRef(0);
   const lastSilentSeqRef = useRef(silentCloseSeq);
   const overlayTokenRef = useRef<number | null>(null);
-  const dragRef = useRef({ active: false, x: 0, y: 0 });
+  const dragRef = useRef({ active: false, x: 0, y: 0, inHead: false, hasForm: false, dragging: false });
+  const savedScrollYRef = useRef(0);
+  const scrollLockedRef = useRef(false);
 
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState("");
@@ -28,6 +30,43 @@ export function ModalHost() {
   const standaloneConfirm = !activeModal && Boolean(confirm);
   const nestedConfirm = Boolean(activeModal && confirm);
   const isOpen = Boolean(activeModal || confirm);
+
+  const unlockBackgroundScroll = useCallback(() => {
+    if (!scrollLockedRef.current || typeof document === "undefined") return;
+    scrollLockedRef.current = false;
+    const scrollY = savedScrollYRef.current;
+    document.documentElement.classList.remove("modal-scroll-lock");
+    document.body.style.position = "";
+    document.body.style.top = "";
+    document.body.style.left = "";
+    document.body.style.right = "";
+    document.body.style.width = "";
+    if (typeof window !== "undefined") {
+      window.scrollTo(0, scrollY);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (isOpen) {
+      if (!scrollLockedRef.current) {
+        const scrollY =
+          (typeof window !== "undefined" ? window.scrollY : 0) || document.documentElement.scrollTop || 0;
+        savedScrollYRef.current = scrollY;
+        document.documentElement.classList.add("modal-scroll-lock");
+        document.body.style.position = "fixed";
+        document.body.style.top = `-${scrollY}px`;
+        document.body.style.left = "0";
+        document.body.style.right = "0";
+        document.body.style.width = "100%";
+        scrollLockedRef.current = true;
+      }
+    } else {
+      unlockBackgroundScroll();
+    }
+  }, [isOpen, unlockBackgroundScroll]);
+
+  useEffect(() => unlockBackgroundScroll, [unlockBackgroundScroll]);
 
   useEffect(() => {
     setConfirmBusy(false);
@@ -256,12 +295,11 @@ export function ModalHost() {
         const target = e.target as Element | null;
         const inHead = Boolean(target?.closest(".dialog-head"));
         const hasForm = Boolean(dialog.querySelector("form"));
-        const atTopScroll = dialog.scrollTop <= 2 && !target?.closest("input, textarea, select");
+        const atTopScroll = dialog.scrollTop <= 1 && !target?.closest("input, textarea, select");
         if (!inHead && (hasForm || !atTopScroll)) return;
         const t = e.touches[0];
         if (!t) return;
-        dragRef.current = { active: true, x: t.clientX, y: t.clientY };
-        dialog.style.transition = "none";
+        dragRef.current = { active: true, x: t.clientX, y: t.clientY, inHead, hasForm, dragging: false };
       }}
       onTouchMove={(e) => {
         const dialog = dialogRef.current;
@@ -270,23 +308,31 @@ export function ModalHost() {
         if (!t) return;
         const dy = t.clientY - dragRef.current.y;
         const dx = t.clientX - dragRef.current.x;
-        if (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy)) {
+        if (dy < 0 || (Math.abs(dx) > 16 && Math.abs(dx) > Math.abs(dy))) {
           dragRef.current.active = false;
+          dragRef.current.dragging = false;
           dialog.style.transform = "";
+          dialog.style.transition = "";
           return;
         }
-        if (dy > 8 && dy > Math.abs(dx) * 1.3) {
+        const canDragClose =
+          dragRef.current.inHead || (!dragRef.current.hasForm && dialog.scrollTop <= 1 && dy > 10);
+        if (canDragClose && dy > 10 && dy > Math.abs(dx) * 1.3) {
+          dragRef.current.dragging = true;
+          dialog.style.transition = "none";
           dialog.style.transform = `translateY(${Math.min(220, dy * 0.72).toFixed(1)}px)`;
         }
       }}
       onTouchEnd={(e) => {
         const dialog = dialogRef.current;
         if (!dialog || !dragRef.current.active) return;
+        const wasDragging = dragRef.current.dragging;
         dragRef.current.active = false;
+        dragRef.current.dragging = false;
         const dy = e.changedTouches[0] ? e.changedTouches[0].clientY - dragRef.current.y : 0;
         dialog.style.transition = "transform .18s ease";
         dialog.style.transform = "";
-        if (dy >= 78) {
+        if (wasDragging && dy >= 78) {
           if (standaloneConfirm) closeConfirm();
           else if (modals.length > 1) closeTopModal();
           else closeAllModals();
@@ -296,6 +342,7 @@ export function ModalHost() {
         const dialog = dialogRef.current;
         if (!dialog || !dragRef.current.active) return;
         dragRef.current.active = false;
+        dragRef.current.dragging = false;
         dialog.style.transition = "transform .18s ease";
         dialog.style.transform = "";
       }}

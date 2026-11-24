@@ -113,10 +113,18 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
 
   navigate(view) {
+    set({ view });
     if (typeof location !== "undefined" && location.hash.slice(1) !== view) {
-      location.hash = view;
-    } else {
-      set({ view });
+      try {
+        if (typeof history !== "undefined" && typeof history.replaceState === "function") {
+          const nextUrl = `${location.pathname}${location.search}#${view}`;
+          history.replaceState(history.state, "", nextUrl);
+        } else {
+          location.hash = view;
+        }
+      } catch {
+        location.hash = view;
+      }
     }
   },
 

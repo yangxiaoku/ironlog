@@ -40,16 +40,21 @@ import {
 import { enqueueMutation, isNetworkError } from "../../lib/offline-queue";
 import {
   ALL_PLATES,
+  applySetFieldUpdate,
   BAR_PRESETS,
-  barPreference,
-  notifyPreference,
+  buildWarmupSetsPlan,
   plateBreakdown,
   plateDeltaLabel,
-  rirPreference,
+  readWorkoutPreferences,
+  REST_STEP_PRESETS,
   round2,
-  screenPreference,
-  snapWarmupWeight,
-  soundPreference,
+  WARMUP_REST_PRESETS,
+  WARMUP_SCHEMES,
+  WEIGHT_STEP_PRESETS,
+  WORKOUT_PREFS_EVENT,
+  writeWorkoutPreference,
+  type SetFieldPatch,
+  type WorkoutPreferences,
 } from "../../lib/workout-helpers";
 import { openAiAdaptWorkoutModal, openExerciseDetailModal } from "../../lib/record-openers";
 import { useAuthStore } from "../../store/useAuthStore";
@@ -77,25 +82,6 @@ function defaultSet(weight = 0, reps = 8, seconds = 0): WorkoutSet {
     completed: false,
     rir: null,
   };
-}
-
-function readBoolPref(key: string, defaultOn: boolean): boolean {
-  if (typeof localStorage === "undefined") return defaultOn;
-  const v = localStorage.getItem(key);
-  if (v == null) return defaultOn;
-  return defaultOn ? v !== "off" : v === "on";
-}
-
-function writeBoolPref(key: string, val: boolean): void {
-  try {
-    localStorage.setItem(key, val ? "on" : "off");
-  } catch {}
-}
-
-function readBarWeight(): number {
-  if (typeof localStorage === "undefined") return 20;
-  const n = Number(localStorage.getItem(barPreference));
-  return Number.isFinite(n) && n >= 0 ? n : 20;
 }
 
 interface WorkoutDraftSnapshot {
@@ -193,12 +179,37 @@ export function WorkoutEditorModal({
   const [timing, setTiming] = useState<WorkoutTiming>(initialSnapshot.timing);
   const [rest, setRest] = useState<RestTimerState | null>(initialSnapshot.rest);
 
-  const [soundOn, setSoundOn] = useState(() => readBoolPref(soundPreference, true));
-  const [showRir, setShowRir] = useState(() => readBoolPref(rirPreference, false));
-  const [screenAwakePref, setScreenAwakePref] = useState(() => readBoolPref(screenPreference, false));
-  const [notifyRestPref, setNotifyRestPref] = useState(() => readBoolPref(notifyPreference, false));
-  const [barWeight, setBarWeight] = useState<number>(() => readBarWeight());
+  const [prefs, setPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
+  const {
+    soundOn,
+    hapticsOn,
+    screenAwake: screenAwakePref,
+    notifyRest: notifyRestPref,
+    showRir,
+    autoSyncSubsequent,
+    autoPrefillLast,
+    autoStartRestTimer,
+    warmupRestSeconds,
+    restAdjustStep,
+    weightStepKg,
+    barWeight,
+    enabledPlates,
+    showPlateMath,
+    warmupScheme,
+  } = prefs;
   const [wakeActive, setWakeActive] = useState(false);
+
+  const updatePref = <K extends keyof WorkoutPreferences>(key: K, value: WorkoutPreferences[K]) => {
+    writeWorkoutPreference(key, value);
+    setPrefs(readWorkoutPreferences());
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const syncPrefs = () => setPrefs(readWorkoutPreferences());
+    window.addEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
+  }, []);
 
   const [activeExIdx, setActiveExIdx] = useState(0);
   const [openMenu, setOpenMenu] = useState(false);
@@ -350,8 +361,25 @@ export function WorkoutEditorModal({
         <ExercisePickerModal
           title="添加训练动作"
           onSelect={(ex: CatalogueExercise) => {
+            const rowId = newId();
+            const isTimedEx = ex.mode === "timed";
+            const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
+            const buildInitialSets = (refList?: ExerciseReferenceEntry["sets"]) => {
+              const targetCount = Math.max(3, refList?.length ?? 0);
+              return Array.from({ length: Math.min(6, targetCount) }, (_, idx) => {
+                const ref = refList?.[idx];
+                if (ref && autoPrefillLast) {
+                  return defaultSet(
+                    isTimedEx ? 0 : ref.weight ?? 0,
+                    isTimedEx ? 0 : ref.reps || 8,
+                    isTimedEx ? ref.seconds || 30 : 0,
+                  );
+                }
+                return defaultSet(0, isTimedEx ? 0 : 8, isTimedEx ? 30 : 0);
+              });
+            };
             const newEx: WorkoutExercise = {
-              id: newId(),
+              id: rowId,
               exerciseId: ex.id,
               supersetGroup: null,
               restSeconds: goals?.restSeconds ?? 90,
@@ -362,16 +390,43 @@ export function WorkoutEditorModal({
                 mode: ex.mode,
                 volumeMultiplier: ex.volumeMultiplier ?? 1,
               },
-              sets: [
-                defaultSet(0, ex.mode === "timed" ? 0 : 8, ex.mode === "timed" ? 30 : 0),
-                defaultSet(0, ex.mode === "timed" ? 0 : 8, ex.mode === "timed" ? 30 : 0),
-                defaultSet(0, ex.mode === "timed" ? 0 : 8, ex.mode === "timed" ? 30 : 0),
-              ],
+              sets: buildInitialSets(cachedRef),
             };
             setExercises((prev) => {
               setActiveExIdx(prev.length);
               return [...prev, newEx];
             });
+            if (autoPrefillLast && !cachedRef) {
+              void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-refs", {
+                method: "POST",
+                body: {
+                  date,
+                  excludeWorkoutId: savedRecordRef.current?.id ?? record?.id ?? null,
+                  excludeStartedAt: sessionStart,
+                  exercises: [{ id: ex.id, mode: ex.mode ?? "reps" }],
+                },
+              })
+                .then((list) => {
+                  const found = list.find((entry) => entry.id === ex.id);
+                  if (!found?.sets?.length) return;
+                  setRefsByExId((prev) => {
+                    const next = new Map(prev);
+                    next.set(ex.id, found.sets);
+                    return next;
+                  });
+                  setExercises((prev) =>
+                    prev.map((row) => {
+                      if (row.id !== rowId) return row;
+                      const untouched = row.sets.every(
+                        (s) => !s.completed && s.weight === 0 && (isTimedEx ? s.seconds === 30 : s.reps === 8),
+                      );
+                      if (!untouched) return row;
+                      return { ...row, sets: buildInitialSets(found.sets) };
+                    }),
+                  );
+                })
+                .catch(() => {});
+            }
           }}
         />
       ),
@@ -422,6 +477,36 @@ export function WorkoutEditorModal({
     );
   };
 
+  const updateSetAndCascade = (exIdx: number, setIdx: number, patch: SetFieldPatch) => {
+    setExercises((prev) =>
+      prev.map((row, i) =>
+        i === exIdx
+          ? { ...row, sets: applySetFieldUpdate(row.sets, setIdx, patch, { autoSyncSubsequent }) }
+          : row,
+      ),
+    );
+  };
+
+  const syncRemainingSets = (exIdx: number) => {
+    const row = exercises[exIdx];
+    if (!row) return;
+    const src =
+      [...row.sets].reverse().find((s) => s.completed && s.type !== "warmup") ??
+      row.sets.find((s) => !s.completed && s.type !== "warmup" && (s.weight > 0 || s.reps > 0 || s.seconds > 0)) ??
+      row.sets.find((s) => !s.completed && s.type !== "warmup");
+    const srcIdx = src ? row.sets.indexOf(src) : -1;
+    if (!src || srcIdx < 0) return;
+    const nextSets = applySetFieldUpdate(
+      row.sets,
+      srcIdx,
+      { weight: src.weight, reps: src.reps, seconds: src.seconds },
+      { autoSyncSubsequent: true },
+    );
+    triggerHaptic("light");
+    setExercises((prev) => prev.map((ex, i) => (i === exIdx ? { ...ex, sets: nextSets } : ex)));
+    notify(`已将 ${src.weight > 0 ? `${fmt(src.weight)} kg × ` : ""}${src.reps} 同步至后续未完成组`);
+  };
+
   const toggleSetComplete = (exIdx: number, setIdx: number, nextCompleted: boolean) => {
     const row = exercises[exIdx];
     const targetSet = row?.sets[setIdx];
@@ -431,12 +516,13 @@ export function WorkoutEditorModal({
     triggerHaptic(nextCompleted ? "success" : "light");
     audio.tap(nextCompleted ? "check" : "uncheck");
 
-    if (nextCompleted && !isHistoricalEdit) {
+    if (nextCompleted && !isHistoricalEdit && autoStartRestTimer) {
       const nextSet = row.sets[setIdx + 1];
       const { seconds } = resolveSetRestSeconds({
         setType: targetSet.type,
         nextSetType: nextSet?.type ?? null,
         defaultRestSeconds: row.restSeconds ?? goals?.restSeconds ?? 90,
+        warmupRestSeconds,
       });
       if (seconds > 0) {
         restAlarmFiredForRef.current = null;
@@ -456,14 +542,16 @@ export function WorkoutEditorModal({
     if (!row) return;
     const isBarbell = row.snapshot?.equipment === "barbell";
     const firstWorkWeight = row.sets.find((s) => s.type !== "warmup" && s.weight > 0)?.weight ?? 60;
-    const w1 = snapWarmupWeight(firstWorkWeight * 0.5, isBarbell, barWeight, ALL_PLATES);
-    const w2 = snapWarmupWeight(firstWorkWeight * 0.75, isBarbell, barWeight, ALL_PLATES);
-    const warmups: WorkoutSet[] = [
-      { id: newId(), type: "warmup", weight: w1, reps: 8, seconds: 0, completed: false, rir: null },
-      ...(w2 > w1
-        ? [{ id: newId(), type: "warmup" as const, weight: w2, reps: 5, seconds: 0, completed: false, rir: null }]
-        : []),
-    ];
+    const planned = buildWarmupSetsPlan(firstWorkWeight, isBarbell, barWeight, enabledPlates, warmupScheme);
+    const warmups: WorkoutSet[] = planned.map((step) => ({
+      id: newId(),
+      type: "warmup",
+      weight: step.weight,
+      reps: step.reps,
+      seconds: 0,
+      completed: false,
+      rir: null,
+    }));
     triggerHaptic("light");
     setExercises((prev) =>
       prev.map((r, i) => (i === exIdx ? { ...r, sets: [...warmups, ...r.sets] } : r)),
@@ -729,92 +817,239 @@ export function WorkoutEditorModal({
             </button>
           </div>
           <div className="session-menu-body">
-            <label className="field">
-              <span>训练名称</span>
-              <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
-            </label>
-            <label className="field">
-              <span>训练日期</span>
-              <input type="date" value={date} min="1902-01-01" max={todayStr} onChange={(e) => setDate(e.target.value)} />
-            </label>
-            <div className="session-options">
-              <label className="switch-chip">
-                <span>提示音反馈</span>
-                <input
-                  className="switch"
-                  type="checkbox"
-                  checked={soundOn}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    setSoundOn(next);
-                    writeBoolPref(soundPreference, next);
-                    if (next) audio.unlock();
-                  }}
-                />
+            <div className="session-settings-group">
+              <h4 className="session-settings-group-title">基本信息</h4>
+              <label className="field">
+                <span>训练名称</span>
+                <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
               </label>
-              <label className="switch-chip">
-                <span>显示 RIR 储备</span>
-                <input
-                  className="switch"
-                  type="checkbox"
-                  checked={showRir}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    setShowRir(next);
-                    writeBoolPref(rirPreference, next);
-                  }}
-                />
-              </label>
-              <label className={`switch-chip${wakeActive ? " wake-active" : ""}`}>
-                <span>训练防息屏</span>
-                <input
-                  className="switch"
-                  type="checkbox"
-                  checked={screenAwakePref}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    setScreenAwakePref(next);
-                    writeBoolPref(screenPreference, next);
-                  }}
-                />
-              </label>
-              <label className="switch-chip">
-                <span>到期通知</span>
-                <input
-                  className="switch"
-                  type="checkbox"
-                  checked={notifyRestPref}
-                  onChange={(e) => {
-                    const next = e.target.checked;
-                    if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
-                      void Notification.requestPermission();
-                    }
-                    setNotifyRestPref(next);
-                    writeBoolPref(notifyPreference, next);
-                  }}
-                />
+              <label className="field">
+                <span>训练日期</span>
+                <input type="date" value={date} min="1902-01-01" max={todayStr} onChange={(e) => setDate(e.target.value)} />
               </label>
             </div>
-            <div className="field">
-              <span>杠铃空杆规格</span>
-              <div className="segments">
-                {BAR_PRESETS.map(([bw, lbl]) => (
-                  <button
-                    key={bw}
-                    type="button"
-                    aria-pressed={barWeight === bw}
-                    onClick={() => {
-                      setBarWeight(bw);
-                      try {
-                        localStorage.setItem(barPreference, String(bw));
-                      } catch {}
-                    }}
-                  >
-                    {lbl}
-                  </button>
-                ))}
+
+            <div className="session-settings-group">
+              <h4 className="session-settings-group-title">记录与自动联动（OpenGym 预设）</h4>
+              <div className="session-options">
+                <label className="switch-chip">
+                  <span>默认同步后续组</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={autoSyncSubsequent}
+                    onChange={(e) => updatePref("autoSyncSubsequent", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>自动沿用上次重量</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={autoPrefillLast}
+                    onChange={(e) => updatePref("autoPrefillLast", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>显示 RIR 储备</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={showRir}
+                    onChange={(e) => updatePref("showRir", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>杠铃配片提示</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={showPlateMath}
+                    onChange={(e) => updatePref("showPlateMath", e.target.checked)}
+                  />
+                </label>
               </div>
             </div>
+
+            <div className="session-settings-group">
+              <h4 className="session-settings-group-title">组间休息与提醒</h4>
+              <div className="session-options">
+                <label className="switch-chip">
+                  <span>完组自动倒计时</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={autoStartRestTimer}
+                    onChange={(e) => updatePref("autoStartRestTimer", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>提示音反馈</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={soundOn}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      updatePref("soundOn", next);
+                      if (next) audio.unlock();
+                    }}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>触感震动反馈</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={hapticsOn}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      updatePref("hapticsOn", next);
+                      if (next) triggerHaptic("light");
+                    }}
+                  />
+                </label>
+                <label className={`switch-chip${wakeActive ? " wake-active" : ""}`}>
+                  <span>训练防息屏</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={screenAwakePref}
+                    onChange={(e) => updatePref("screenAwake", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>到期通知</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={notifyRestPref}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      if (next && typeof Notification !== "undefined" && Notification.permission === "default") {
+                        void Notification.requestPermission();
+                      }
+                      updatePref("notifyRest", next);
+                    }}
+                  />
+                </label>
+              </div>
+              <div className="field">
+                <span>热身组休息时长</span>
+                <div className="segments">
+                  {WARMUP_REST_PRESETS.map((sec) => (
+                    <button
+                      key={sec}
+                      type="button"
+                      aria-pressed={warmupRestSeconds === sec}
+                      onClick={() => updatePref("warmupRestSeconds", sec)}
+                    >
+                      {sec === 0 ? "免休" : `${sec}s`}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <span>休息计时增减步长</span>
+                <div className="segments">
+                  {REST_STEP_PRESETS.map((stepSec) => (
+                    <button
+                      key={stepSec}
+                      type="button"
+                      aria-pressed={restAdjustStep === stepSec}
+                      onClick={() => updatePref("restAdjustStep", stepSec)}
+                    >
+                      ±{stepSec}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="session-settings-group">
+              <h4 className="session-settings-group-title">器械与热身方案</h4>
+              <div className="field">
+                <span>重量递增步长</span>
+                <div className="segments">
+                  {WEIGHT_STEP_PRESETS.map((step) => (
+                    <button
+                      key={step}
+                      type="button"
+                      aria-pressed={weightStepKg === step}
+                      onClick={() => updatePref("weightStepKg", step)}
+                    >
+                      ±{step}kg
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <span>杠铃空杆规格</span>
+                <div className="segments">
+                  {BAR_PRESETS.map(([bw, lbl]) => (
+                    <button
+                      key={bw}
+                      type="button"
+                      aria-pressed={barWeight === bw}
+                      onClick={() => updatePref("barWeight", bw)}
+                    >
+                      {lbl}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <span>我的可用杠铃片（每侧自动配片）</span>
+                <div className="plate-chip-grid">
+                  {ALL_PLATES.map((plate) => {
+                    const active = enabledPlates.includes(plate);
+                    return (
+                      <button
+                        key={plate}
+                        type="button"
+                        className="plate-chip"
+                        aria-pressed={active}
+                        onClick={() => {
+                          if (active) {
+                            if (enabledPlates.length <= 1) {
+                              notify("至少保留一种杠铃片规格");
+                              return;
+                            }
+                            updatePref(
+                              "enabledPlates",
+                              enabledPlates.filter((p) => p !== plate),
+                            );
+                          } else {
+                            updatePref("enabledPlates", [...enabledPlates, plate]);
+                          }
+                        }}
+                      >
+                        {plate}kg
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="field">
+                <span>热身组坡度方案</span>
+                <div className="segments">
+                  {WARMUP_SCHEMES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      aria-pressed={warmupScheme === item.id}
+                      onClick={() => updatePref("warmupScheme", item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+                <small className="muted">
+                  当前梯度：{WARMUP_SCHEMES.find((s) => s.id === warmupScheme)?.desc ?? ""}
+                </small>
+              </div>
+            </div>
+
             <div className="session-menu-quick">
               <button
                 type="button"
@@ -1103,7 +1338,7 @@ export function WorkoutEditorModal({
                         <span className={`ex-prog-pill${e1rmGain > 0 ? " is-pr" : ""}`}>
                           {e1rmGain > 0
                             ? `已突破上次 E1RM +${fmt(e1rmGain, 1)} kg`
-                            : `渐进参考：${prevTopWeight > 0 ? `${fmt(round2(prevTopWeight + 2.5))} kg 或 +1 次` : "+1 次"}（目标 E1RM ${fmt(prevBestE1rm, 1)} kg）`}
+                            : `渐进参考：${prevTopWeight > 0 ? `${fmt(round2(prevTopWeight + weightStepKg))} kg 或 +1 次` : "+1 次"}（目标 E1RM ${fmt(prevBestE1rm, 1)} kg）`}
                         </span>
                       </div>
                     ) : null}
@@ -1212,11 +1447,13 @@ export function WorkoutEditorModal({
                   {row.sets.map((s, setIdx) => {
                     const prevSet = setIdx > 0 ? row.sets[setIdx - 1] : null;
                     const deltaHint =
-                      isBarbell && prevSet && s.weight > barWeight
-                        ? plateDeltaLabel(prevSet.weight, s.weight, barWeight, ALL_PLATES)
+                      showPlateMath && isBarbell && prevSet && s.weight > barWeight
+                        ? plateDeltaLabel(prevSet.weight, s.weight, barWeight, enabledPlates)
                         : "";
                     const platesInfo =
-                      isBarbell && s.weight > barWeight ? plateBreakdown(s.weight, barWeight, ALL_PLATES) : null;
+                      showPlateMath && isBarbell && s.weight > barWeight
+                        ? plateBreakdown(s.weight, barWeight, enabledPlates)
+                        : null;
                     const typeInfo = SET_TYPES[s.type];
 
                     return (
@@ -1243,14 +1480,13 @@ export function WorkoutEditorModal({
                                 <button
                                   type="button"
                                   className="num-step-btn"
-                                  aria-label="减重量"
+                                  aria-label={`减 ${weightStepKg}kg`}
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
-                                      weight: Math.max(0, round2(cur.weight - 2.5)),
-                                    }));
+                                    updateSetAndCascade(exIdx, setIdx, {
+                                      weight: Math.max(0, round2(s.weight - weightStepKg)),
+                                    });
                                   }}
                                 >
                                   −
@@ -1263,23 +1499,21 @@ export function WorkoutEditorModal({
                                   max={5000}
                                   value={s.weight}
                                   onChange={(e) =>
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
+                                    updateSetAndCascade(exIdx, setIdx, {
                                       weight: Math.max(0, Number(e.target.value) || 0),
-                                    }))
+                                    })
                                   }
                                 />
                                 <button
                                   type="button"
                                   className="num-step-btn"
-                                  aria-label="加重量"
+                                  aria-label={`加 ${weightStepKg}kg`}
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
-                                      weight: round2(cur.weight + 2.5),
-                                    }));
+                                    updateSetAndCascade(exIdx, setIdx, {
+                                      weight: round2(s.weight + weightStepKg),
+                                    });
                                   }}
                                 >
                                   +
@@ -1294,10 +1528,7 @@ export function WorkoutEditorModal({
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
-                                      reps: Math.max(0, cur.reps - 1),
-                                    }));
+                                    updateSetAndCascade(exIdx, setIdx, { reps: Math.max(0, s.reps - 1) });
                                   }}
                                 >
                                   −
@@ -1309,10 +1540,9 @@ export function WorkoutEditorModal({
                                   max={1000}
                                   value={s.reps}
                                   onChange={(e) =>
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
+                                    updateSetAndCascade(exIdx, setIdx, {
                                       reps: Math.max(0, Math.round(Number(e.target.value) || 0)),
-                                    }))
+                                    })
                                   }
                                 />
                                 <button
@@ -1322,10 +1552,7 @@ export function WorkoutEditorModal({
                                   onClick={() => {
                                     triggerHaptic("light");
                                     audio.tap("step");
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
-                                      reps: Math.min(1000, cur.reps + 1),
-                                    }));
+                                    updateSetAndCascade(exIdx, setIdx, { reps: Math.min(1000, s.reps + 1) });
                                   }}
                                 >
                                   +
@@ -1339,10 +1566,7 @@ export function WorkoutEditorModal({
                                 className="num-step-btn"
                                 onClick={() => {
                                   triggerHaptic("light");
-                                  updateSet(exIdx, setIdx, (cur) => ({
-                                    ...cur,
-                                    seconds: Math.max(0, cur.seconds - 5),
-                                  }));
+                                  updateSetAndCascade(exIdx, setIdx, { seconds: Math.max(0, s.seconds - 5) });
                                 }}
                               >
                                 −
@@ -1354,10 +1578,9 @@ export function WorkoutEditorModal({
                                 max={86400}
                                 value={s.seconds}
                                 onChange={(e) =>
-                                  updateSet(exIdx, setIdx, (cur) => ({
-                                    ...cur,
+                                  updateSetAndCascade(exIdx, setIdx, {
                                     seconds: Math.max(0, Math.round(Number(e.target.value) || 0)),
-                                  }))
+                                  })
                                 }
                               />
                               <button
@@ -1365,10 +1588,7 @@ export function WorkoutEditorModal({
                                 className="num-step-btn"
                                 onClick={() => {
                                   triggerHaptic("light");
-                                  updateSet(exIdx, setIdx, (cur) => ({
-                                    ...cur,
-                                    seconds: cur.seconds + 5,
-                                  }));
+                                  updateSetAndCascade(exIdx, setIdx, { seconds: s.seconds + 5 });
                                 }}
                               >
                                 +
@@ -1469,6 +1689,38 @@ export function WorkoutEditorModal({
                     </button>
 
                     <div className="sets-foot-tools">
+                      {row.sets.filter((s) => !s.completed && s.type !== "warmup").length > 1 ? (
+                        <>
+                          <button
+                            type="button"
+                            className="sets-foot-pill sets-auto-sync-pill"
+                            aria-pressed={autoSyncSubsequent}
+                            title="开启后修改当前组重量或次数会自动同步到后续未完成工作组"
+                            onClick={() => {
+                              const next = !autoSyncSubsequent;
+                              updatePref("autoSyncSubsequent", next);
+                              triggerHaptic("light");
+                              notify(
+                                next
+                                  ? "已开启：修改重量或次数将默认同步后续组"
+                                  : "已关闭自动同步后续，可手动点击「同步后续」",
+                              );
+                            }}
+                          >
+                            {autoSyncSubsequent ? "自动同步后续: 开" : "自动同步: 关"}
+                          </button>
+                          {!autoSyncSubsequent ? (
+                            <button
+                              type="button"
+                              className="sets-foot-pill"
+                              title="将当前有效重量与次数同步到后续未完成工作组"
+                              onClick={() => syncRemainingSets(exIdx)}
+                            >
+                              同步后续
+                            </button>
+                          ) : null}
+                        </>
+                      ) : null}
                       {!isTimed ? (
                         <button type="button" className="sets-foot-pill" onClick={() => addWarmupSets(exIdx)}>
                           + 热身组
@@ -1517,20 +1769,20 @@ export function WorkoutEditorModal({
                   className="rest-pill-btn"
                   onClick={() => {
                     triggerHaptic("light");
-                    setRest((cur) => shiftRestTimer(cur, -15));
+                    setRest((cur) => shiftRestTimer(cur, -restAdjustStep));
                   }}
                 >
-                  −15s
+                  −{restAdjustStep}s
                 </button>
                 <button
                   type="button"
                   className="rest-pill-btn"
                   onClick={() => {
                     triggerHaptic("light");
-                    setRest((cur) => shiftRestTimer(cur, 15));
+                    setRest((cur) => shiftRestTimer(cur, restAdjustStep));
                   }}
                 >
-                  +15s
+                  +{restAdjustStep}s
                 </button>
                 <button
                   type="button"

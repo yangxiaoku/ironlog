@@ -44,15 +44,23 @@ export function resolveSetRestSeconds({
   setType = "normal",
   nextSetType = null,
   defaultRestSeconds = 90,
+  warmupRestSeconds,
 }: {
   setType?: string;
   nextSetType?: string | null;
   defaultRestSeconds?: number;
+  warmupRestSeconds?: number;
 } = {}): { seconds: number; reason: string } {
   const base = Math.max(0, Math.round(Number(defaultRestSeconds) || 0));
   if (nextSetType === "drop") return { seconds: 0, reason: "drop_chain" };
   if (setType === "rest_pause") return { seconds: base > 0 ? Math.min(base, 20) : 20, reason: "rest_pause" };
-  if (setType === "warmup") return { seconds: base > 0 ? Math.min(base, 45) : 0, reason: "warmup" };
+  if (setType === "warmup") {
+    if (warmupRestSeconds !== undefined && Number.isFinite(warmupRestSeconds)) {
+      if (warmupRestSeconds <= 0) return { seconds: 0, reason: "warmup_skip" };
+      return { seconds: Math.round(warmupRestSeconds), reason: "warmup" };
+    }
+    return { seconds: base > 0 ? Math.min(base, 45) : 0, reason: "warmup" };
+  }
   return { seconds: base, reason: "normal" };
 }
 
@@ -156,6 +164,12 @@ export function triggerHaptic(
   type: HapticKind = "light",
   { skipIosSwitch = false, fromUserGesture = true }: { skipIosSwitch?: boolean; fromUserGesture?: boolean } = {},
 ): void {
+  try {
+    if (typeof localStorage !== "undefined") {
+      const hPref = localStorage.getItem("ironlog-web-haptics");
+      if (hPref === "0" || hPref === "off") return;
+    }
+  } catch {}
   const nativeHaptics = globalThis.Capacitor?.Plugins?.Haptics ?? globalThis.Haptics;
   if (nativeHaptics) {
     try {
