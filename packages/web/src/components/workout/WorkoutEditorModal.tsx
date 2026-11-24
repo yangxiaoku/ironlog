@@ -46,6 +46,7 @@ import {
   plateBreakdown,
   plateDeltaLabel,
   readWorkoutPreferences,
+  REST_SOUND_PRESETS,
   REST_STEP_PRESETS,
   round2,
   WARMUP_REST_PRESETS,
@@ -213,6 +214,7 @@ export function WorkoutEditorModal({
   const [prefs, setPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
   const {
     soundOn,
+    soundStyle,
     hapticsOn,
     screenAwake: screenAwakePref,
     notifyRest: notifyRestPref,
@@ -255,7 +257,16 @@ export function WorkoutEditorModal({
 
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
-  const audio = useMemo(() => createRestAudio(() => soundOnRef.current), []);
+  const soundStyleRef = useRef(soundStyle);
+  soundStyleRef.current = soundStyle;
+  const audio = useMemo(
+    () =>
+      createRestAudio(
+        () => soundOnRef.current,
+        () => soundStyleRef.current,
+      ),
+    [],
+  );
   const restAlarmFiredForRef = useRef<number | null>(null);
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
@@ -329,11 +340,13 @@ export function WorkoutEditorModal({
     if (!rest || rest.pausedLeftMs != null) return;
     if (nowMs >= rest.end && restAlarmFiredForRef.current !== rest.end) {
       restAlarmFiredForRef.current = rest.end;
-      audio.play(true);
-      if (notifyRestPref && typeof Notification !== "undefined" && Notification.permission === "granted") {
-        try {
-          new Notification("铁记 · 组间休息结束", { body: "准备下一组训练", tag: "ironlog-rest" });
-        } catch {}
+      if (nowMs - rest.end <= 60_000) {
+        audio.play(true);
+        if (notifyRestPref && typeof Notification !== "undefined" && Notification.permission === "granted") {
+          try {
+            new Notification("铁记 · 组间休息结束", { body: "准备下一组训练", tag: "ironlog-rest" });
+          } catch {}
+        }
       }
       setRest(null);
     }
@@ -561,9 +574,8 @@ export function WorkoutEditorModal({
     const targetSet = row?.sets[setIdx];
     if (!row || !targetSet) return;
 
-    // Hardware tactile & ambient sound MUST run synchronously inside user click handler
+    // Hardware tactile & audio unlock MUST run synchronously inside user click handler
     triggerHaptic(nextCompleted ? "success" : "light");
-    audio.tap(nextCompleted ? "check" : "uncheck");
 
     if (autoAdvanceTimerRef.current !== null) {
       window.clearTimeout(autoAdvanceTimerRef.current);
@@ -579,6 +591,7 @@ export function WorkoutEditorModal({
         warmupRestSeconds,
       });
       if (seconds > 0) {
+        audio.unlock();
         restAlarmFiredForRef.current = null;
         setRest(createRestTimer(seconds, targetSet.id));
       }
@@ -978,7 +991,7 @@ export function WorkoutEditorModal({
                   />
                 </label>
                 <label className="switch-chip">
-                  <span>提示音反馈</span>
+                  <span>休息结束提示音</span>
                   <input
                     className="switch"
                     type="checkbox"
@@ -986,7 +999,7 @@ export function WorkoutEditorModal({
                     onChange={(e) => {
                       const next = e.target.checked;
                       updatePref("soundOn", next);
-                      if (next) audio.unlock();
+                      if (next) audio.preview(soundStyle);
                     }}
                   />
                 </label>
@@ -1028,6 +1041,31 @@ export function WorkoutEditorModal({
                   />
                 </label>
               </div>
+              {soundOn ? (
+                <div className="field">
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                    <span>提示音色</span>
+                    <button type="button" className="quiet" onClick={() => audio.preview(soundStyle)}>
+                      试听
+                    </button>
+                  </div>
+                  <div className="segments">
+                    {REST_SOUND_PRESETS.map((preset) => (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        aria-pressed={soundStyle === preset.id}
+                        onClick={() => {
+                          updatePref("soundStyle", preset.id);
+                          audio.preview(preset.id);
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               <div className="field">
                 <span>热身组休息时长</span>
                 <div className="segments">
@@ -1580,7 +1618,6 @@ export function WorkoutEditorModal({
                                   aria-label={`减 ${weightStepKg}kg`}
                                   onClick={() => {
                                     triggerHaptic("light");
-                                    audio.tap("step");
                                     updateSetAndCascade(exIdx, setIdx, (cur) => ({
                                       weight: Math.max(0, round2(cur.weight - weightStepKg)),
                                     }));
@@ -1607,7 +1644,6 @@ export function WorkoutEditorModal({
                                   aria-label={`加 ${weightStepKg}kg`}
                                   onClick={() => {
                                     triggerHaptic("light");
-                                    audio.tap("step");
                                     updateSetAndCascade(exIdx, setIdx, (cur) => ({
                                       weight: round2(cur.weight + weightStepKg),
                                     }));
@@ -1624,7 +1660,6 @@ export function WorkoutEditorModal({
                                   aria-label="减次数"
                                   onClick={() => {
                                     triggerHaptic("light");
-                                    audio.tap("step");
                                     updateSetAndCascade(exIdx, setIdx, (cur) => ({
                                       reps: Math.max(0, cur.reps - 1),
                                     }));
@@ -1650,7 +1685,6 @@ export function WorkoutEditorModal({
                                   aria-label="加次数"
                                   onClick={() => {
                                     triggerHaptic("light");
-                                    audio.tap("step");
                                     updateSetAndCascade(exIdx, setIdx, (cur) => ({
                                       reps: Math.min(1000, cur.reps + 1),
                                     }));

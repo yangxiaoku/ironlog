@@ -1,5 +1,4 @@
 import { useEffect } from "react";
-import { primeSharedAudio } from "../lib/haptics-audio";
 import { parseHashView } from "../lib/routes";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -13,14 +12,6 @@ export function useMobileGuards(): void {
       useUiStore.getState().setView(parseHashView(location.hash));
     };
     window.addEventListener("hashchange", syncHash);
-
-    const unlockAudioOnce = () => {
-      primeSharedAudio();
-      document.removeEventListener("pointerdown", unlockAudioOnce, true);
-      document.removeEventListener("touchstart", unlockAudioOnce, true);
-    };
-    document.addEventListener("pointerdown", unlockAudioOnce, { capture: true, passive: true });
-    document.addEventListener("touchstart", unlockAudioOnce, { capture: true, passive: true });
 
     const onFocusIn = (event: FocusEvent) => {
       if (!matchMedia("(max-width: 630px)").matches) return;
@@ -81,8 +72,6 @@ export function useMobileGuards(): void {
 
     return () => {
       window.removeEventListener("hashchange", syncHash);
-      document.removeEventListener("pointerdown", unlockAudioOnce, true);
-      document.removeEventListener("touchstart", unlockAudioOnce, true);
       document.removeEventListener("focusin", onFocusIn);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);

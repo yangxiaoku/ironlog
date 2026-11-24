@@ -1,17 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../components/Icon";
 import { AiSettingsCard } from "../components/ai/AiSettingsCard";
 import type { AiStatus } from "../components/ai/AiModals";
 import { apiFetch } from "../lib/api";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
-import { triggerHaptic } from "../lib/haptics-audio";
+import { createRestAudio, triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   ALL_PLATES,
   BAR_PRESETS,
   PROFILE_VERSION_EVENT,
   readWorkoutPreferences,
+  REST_SOUND_PRESETS,
   REST_STEP_PRESETS,
   WARMUP_REST_PRESETS,
   WARMUP_SCHEMES,
@@ -97,6 +98,7 @@ export function SettingsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [workoutPrefs, setWorkoutPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
+  const restAudio = useMemo(() => createRestAudio(() => true), []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -907,12 +909,16 @@ export function SettingsView() {
                       />
                     </label>
                     <label className="switch-chip">
-                      <span>提示音反馈</span>
+                      <span>休息结束提示音</span>
                       <input
                         className="switch"
                         type="checkbox"
                         checked={workoutPrefs.soundOn}
-                        onChange={(e) => updateWorkoutPref("soundOn", e.target.checked)}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          updateWorkoutPref("soundOn", next);
+                          if (next) restAudio.preview(workoutPrefs.soundStyle);
+                        }}
                       />
                     </label>
                     <label className="switch-chip">
@@ -953,6 +959,35 @@ export function SettingsView() {
                       />
                     </label>
                   </div>
+                  {workoutPrefs.soundOn ? (
+                    <div className="field">
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <span>休息结束提示音色</span>
+                        <button
+                          type="button"
+                          className="quiet"
+                          onClick={() => restAudio.preview(workoutPrefs.soundStyle)}
+                        >
+                          试听
+                        </button>
+                      </div>
+                      <div className="segments">
+                        {REST_SOUND_PRESETS.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            aria-pressed={workoutPrefs.soundStyle === preset.id}
+                            onClick={() => {
+                              updateWorkoutPref("soundStyle", preset.id);
+                              restAudio.preview(preset.id);
+                            }}
+                          >
+                            {preset.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="fields">
                     <div className="field">
                       <span>热身组休息时长</span>

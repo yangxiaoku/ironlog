@@ -1,5 +1,6 @@
 export type HapticKind = "light" | "medium" | "success" | "pr" | "timer";
 export type SoundTapKind = "tick" | "check" | "uncheck" | "pr" | "step";
+export type RestSoundStyle = "chime" | "marimba" | "bell";
 
 export interface WorkoutTiming {
   elapsedSeconds: number;
@@ -129,8 +130,14 @@ export function restProgress(rest: RestTimerState, now = Date.now()) {
 let iosHapticWrap: HTMLDivElement | null = null;
 let iosHapticLabel: HTMLLabelElement | null = null;
 
+function isIosTouchDevice(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /iP(hone|ad|od)/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+
 function triggerIosSwitchHaptic(): void {
-  if (typeof document === "undefined") return;
+  if (typeof document === "undefined" || !isIosTouchDevice()) return;
   try {
     const host = document.querySelector("dialog[open]") ?? document.body;
     if (!host) return;
@@ -191,7 +198,7 @@ export function triggerHaptic(
       else if (type === "medium") navigator.vibrate(28);
       else if (type === "success") navigator.vibrate([16, 40, 20]);
       else if (type === "pr") navigator.vibrate([30, 45, 45, 45, 60]);
-      else if (type === "timer") navigator.vibrate([120, 70, 120, 70, 200]);
+      else if (type === "timer") navigator.vibrate([60, 80, 90]);
       return;
     } catch {}
   }
@@ -240,28 +247,89 @@ export function primeSharedAudio(): AudioContext | null {
   }
 }
 
-export function createRestAudio(enabled: () => boolean) {
-  function scheduleWebAudioTones(
-    audio: AudioContext | null,
-    tones: ReadonlyArray<readonly [number, number, number]>,
-    wave: OscillatorType = "sine",
-    peak = 0.36,
-  ): boolean {
+interface AcousticPhraseConfig {
+  notes: ReadonlyArray<readonly [number, number, number, number]>;
+  cutoffHz: number;
+  overtoneRatio: number;
+  overtoneGain: number;
+  thirdRatio?: number;
+  thirdGain?: number;
+}
+
+const REST_SOUND_PHRASES: Record<RestSoundStyle, AcousticPhraseConfig> = {
+  chime: {
+    notes: [
+      [523.25, 0, 0.38, 0.16],
+      [783.99, 0.15, 0.58, 0.18],
+    ],
+    cutoffHz: 2200,
+    overtoneRatio: 2,
+    overtoneGain: 0.18,
+  },
+  marimba: {
+    notes: [
+      [392.0, 0, 0.22, 0.17],
+      [523.25, 0.11, 0.26, 0.18],
+      [659.25, 0.22, 0.42, 0.19],
+    ],
+    cutoffHz: 1600,
+    overtoneRatio: 2,
+    overtoneGain: 0.12,
+    thirdRatio: 4,
+    thirdGain: 0.05,
+  },
+  bell: {
+    notes: [
+      [587.33, 0, 0.56, 0.15],
+      [880.0, 0.09, 0.72, 0.13],
+    ],
+    cutoffHz: 2400,
+    overtoneRatio: 2,
+    overtoneGain: 0.22,
+    thirdRatio: 3,
+    thirdGain: 0.06,
+  },
+};
+
+export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSoundStyle) {
+  function playAcousticPhrase(audio: AudioContext | null, config: AcousticPhraseConfig): boolean {
     if (!audio) return false;
     try {
       const baseTime = Math.max(audio.currentTime, 0);
-      for (const [frequency, delay, length] of tones) {
-        const start = baseTime + delay;
-        const oscillator = audio.createOscillator();
+      let sink: AudioNode = audio.destination;
+      if (typeof audio.createBiquadFilter === "function") {
+        const filter = audio.createBiquadFilter();
+        filter.type = "lowpass";
+        filter.frequency.value = config.cutoffHz;
+        filter.Q.value = 0.7;
+        filter.connect(audio.destination);
+        sink = filter;
+      }
+      const master = audio.createGain();
+      master.gain.value = 1;
+      master.connect(sink);
+
+      const triggerPartial = (freq: number, start: number, dur: number, peak: number) => {
+        const osc = audio.createOscillator();
         const gain = audio.createGain();
-        oscillator.type = wave;
-        oscillator.frequency.value = frequency;
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const attack = Math.min(0.014, dur * 0.35);
         gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.linearRampToValueAtTime(peak, start + 0.008);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + length);
-        oscillator.connect(gain).connect(audio.destination);
-        oscillator.start(start);
-        oscillator.stop(start + length + 0.015);
+        gain.gain.linearRampToValueAtTime(peak, start + attack);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+        osc.connect(gain).connect(master);
+        osc.start(start);
+        osc.stop(start + dur + 0.03);
+      };
+
+      for (const [freq, delay, length, peak] of config.notes) {
+        const start = baseTime + delay;
+        triggerPartial(freq, start, length, peak);
+        triggerPartial(freq * config.overtoneRatio, start, length * 0.45, peak * config.overtoneGain);
+        if (config.thirdRatio && config.thirdGain) {
+          triggerPartial(freq * config.thirdRatio, start, length * 0.28, peak * config.thirdGain);
+        }
       }
       return true;
     } catch {
@@ -270,30 +338,57 @@ export function createRestAudio(enabled: () => boolean) {
   }
 
   function emitTap(audio: AudioContext | null, kind: SoundTapKind): boolean {
-    if (!audio) return false;
-    try {
-      if (kind === "tick") {
-        const start = Math.max(audio.currentTime, 0);
-        const osc = audio.createOscillator();
-        const gain = audio.createGain();
-        osc.type = "triangle";
-        osc.frequency.setValueAtTime(1150, start);
-        osc.frequency.exponentialRampToValueAtTime(580, start + 0.022);
-        gain.gain.setValueAtTime(0.0001, start);
-        gain.gain.linearRampToValueAtTime(0.24, start + 0.004);
-        gain.gain.exponentialRampToValueAtTime(0.001, start + 0.022);
-        osc.connect(gain).connect(audio.destination);
-        osc.start(start);
-        osc.stop(start + 0.028);
-        return true;
-      }
-      if (kind === "check") return scheduleWebAudioTones(audio, [[660, 0, 0.05], [1046, 0.055, 0.1]], "sine", 0.3);
-      if (kind === "uncheck") return scheduleWebAudioTones(audio, [[520, 0, 0.04], [380, 0.04, 0.05]], "sine", 0.16);
-      if (kind === "pr") return scheduleWebAudioTones(audio, [[880, 0, 0.08], [1175, 0.08, 0.09], [1568, 0.17, 0.18]], "sine", 0.36);
-      return scheduleWebAudioTones(audio, [[740, 0, 0.04]], "triangle", 0.2);
-    } catch {
-      return false;
+    if (kind === "check") {
+      return playAcousticPhrase(audio, {
+        notes: [[523.25, 0, 0.075, 0.08]],
+        cutoffHz: 1500,
+        overtoneRatio: 2,
+        overtoneGain: 0.12,
+      });
     }
+    if (kind === "pr") {
+      return playAcousticPhrase(audio, {
+        notes: [
+          [523.25, 0, 0.14, 0.14],
+          [659.25, 0.08, 0.16, 0.15],
+          [783.99, 0.16, 0.32, 0.16],
+        ],
+        cutoffHz: 2000,
+        overtoneRatio: 2,
+        overtoneGain: 0.15,
+      });
+    }
+    return playAcousticPhrase(audio, {
+      notes: [[kind === "uncheck" ? 440 : 523.25, 0, 0.04, 0.05]],
+      cutoffHz: 1200,
+      overtoneRatio: 2,
+      overtoneGain: 0.08,
+    });
+  }
+
+  function withRunningAudio(action: (audio: AudioContext) => void): void {
+    const audio = primeSharedAudio();
+    if (!audio) return;
+    try {
+      if (audio.state === "running") {
+        action(audio);
+      } else {
+        void audio
+          .resume()
+          .then(() => {
+            sharedAudioPrimed = true;
+            action(audio);
+          })
+          .catch(() => {});
+      }
+    } catch {}
+  }
+
+  function playPreset(style: RestSoundStyle): void {
+    const phrase = REST_SOUND_PHRASES[style] ?? REST_SOUND_PHRASES.chime;
+    withRunningAudio((audio) => {
+      playAcousticPhrase(audio, phrase);
+    });
   }
 
   return {
@@ -302,36 +397,28 @@ export function createRestAudio(enabled: () => boolean) {
     },
     tap(kind: SoundTapKind = "tick"): void {
       if (!enabled()) return;
-      const audio = primeSharedAudio();
-      if (!audio) return;
-      try {
-        if (audio.state === "running") emitTap(audio, kind);
-        else {
-          void audio.resume().then(() => {
-            sharedAudioPrimed = true;
-            emitTap(audio, kind);
-          }).catch(() => {});
-        }
-      } catch {}
+      withRunningAudio((audio) => {
+        emitTap(audio, kind);
+      });
+    },
+    preview(style?: RestSoundStyle): void {
+      playPreset(style ?? getStyle?.() ?? "chime");
     },
     play(complete: boolean): void {
       if (complete) triggerHaptic("timer", { fromUserGesture: false });
       if (!enabled()) return;
-      const audio = primeSharedAudio();
-      if (!audio) return;
-      const tones: ReadonlyArray<readonly [number, number, number]> = complete
-        ? [[880, 0, 0.13], [1175, 0.13, 0.15], [1568, 0.28, 0.24], [1175, 0.56, 0.13], [1568, 0.7, 0.28]]
-        : [[784, 0, 0.07]];
-      try {
-        if (audio.state === "running") {
-          scheduleWebAudioTones(audio, tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
-        } else {
-          void audio.resume().then(() => {
-            sharedAudioPrimed = true;
-            scheduleWebAudioTones(audio, tones, complete ? "sine" : "triangle", complete ? 0.52 : 0.22);
-          }).catch(() => {});
-        }
-      } catch {}
+      if (complete) {
+        playPreset(getStyle?.() ?? "chime");
+        return;
+      }
+      withRunningAudio((audio) => {
+        playAcousticPhrase(audio, {
+          notes: [[587.33, 0, 0.06, 0.07]],
+          cutoffHz: 1400,
+          overtoneRatio: 2,
+          overtoneGain: 0.1,
+        });
+      });
     },
   };
 }

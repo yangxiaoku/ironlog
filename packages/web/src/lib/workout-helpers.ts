@@ -1,4 +1,5 @@
 export const soundPreference = "ironlog-web-rest-sound";
+export const soundStylePreference = "ironlog-web-rest-sound-style";
 export const screenPreference = "ironlog-web-workout-screen";
 export const rirPreference = "ironlog-web-show-rir";
 export const dialPreference = "ironlog-web-auto-rest-dial";
@@ -26,6 +27,13 @@ export const WARMUP_REST_PRESETS = [0, 30, 45, 60] as const;
 export const REST_STEP_PRESETS = [10, 15, 30] as const;
 
 export type WarmupScheme = "light" | "standard" | "heavy";
+export type RestSoundStyle = "chime" | "marimba" | "bell";
+
+export const REST_SOUND_PRESETS: ReadonlyArray<{ id: RestSoundStyle; label: string }> = [
+  { id: "chime", label: "柔和风铃" },
+  { id: "marimba", label: "暖木马林巴" },
+  { id: "bell", label: "清透轻铃" },
+];
 
 export const WARMUP_SCHEMES: ReadonlyArray<{
   id: WarmupScheme;
@@ -90,6 +98,7 @@ export interface WorkoutPreferences {
   enabledPlates: number[];
   showPlateMath: boolean;
   warmupScheme: WarmupScheme;
+  soundStyle: RestSoundStyle;
 }
 
 export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
@@ -109,6 +118,7 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   enabledPlates: [...DEFAULT_ENABLED_PLATES],
   showPlateMath: true,
   warmupScheme: "standard",
+  soundStyle: "chime",
 };
 
 function readBoolPrefValue(key: string, defaultOn: boolean): boolean {
@@ -171,6 +181,15 @@ function readWarmupSchemePref(): WarmupScheme {
   return DEFAULT_WORKOUT_PREFERENCES.warmupScheme;
 }
 
+function readSoundStylePref(): RestSoundStyle {
+  if (typeof localStorage === "undefined") return DEFAULT_WORKOUT_PREFERENCES.soundStyle;
+  try {
+    const raw = localStorage.getItem(soundStylePreference);
+    if (raw === "chime" || raw === "marimba" || raw === "bell") return raw;
+  } catch {}
+  return DEFAULT_WORKOUT_PREFERENCES.soundStyle;
+}
+
 /**
  * Safely reads unified in-session workout preferences with validated defaults.
  */
@@ -204,6 +223,7 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     enabledPlates: readEnabledPlatesPref(),
     showPlateMath: readBoolPrefValue(plateMathPreference, DEFAULT_WORKOUT_PREFERENCES.showPlateMath),
     warmupScheme: readWarmupSchemePref(),
+    soundStyle: readSoundStylePref(),
   };
 }
 
@@ -299,6 +319,9 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
       case "warmupScheme":
         localStorage.setItem(warmupSchemePreference, String(value));
         break;
+      case "soundStyle":
+        localStorage.setItem(soundStylePreference, String(value));
+        break;
     }
   } catch {}
 }
@@ -369,6 +392,9 @@ export function applyRemoteWorkoutPreferences(
   if (remote.warmupScheme === "light" || remote.warmupScheme === "standard" || remote.warmupScheme === "heavy") {
     persistSinglePreference("warmupScheme", remote.warmupScheme);
   }
+  if (remote.soundStyle === "chime" || remote.soundStyle === "marimba" || remote.soundStyle === "bell") {
+    persistSinglePreference("soundStyle", remote.soundStyle);
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
@@ -377,6 +403,7 @@ export function applyRemoteWorkoutPreferences(
 
 const ALL_WORKOUT_PREF_KEYS = [
   soundPreference,
+  soundStylePreference,
   screenPreference,
   rirPreference,
   dialPreference,

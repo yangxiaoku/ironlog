@@ -18,7 +18,7 @@ import {
   peekQuery,
   writeQueryCache,
 } from "../packages/web/src/lib/query-cache.ts";
-import { resolveSetRestSeconds } from "../packages/web/src/lib/haptics-audio.ts";
+import { createRestAudio, resolveSetRestSeconds, type RestSoundStyle } from "../packages/web/src/lib/haptics-audio.ts";
 
 test("applySetFieldUpdate cascades working set changes to subsequent incomplete working sets by default", () => {
   const sets = [
@@ -111,6 +111,7 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
   assert.equal(defaults.restAdjustStep, 15);
   assert.equal(defaults.weightStepKg, 2.5);
   assert.equal(defaults.warmupScheme, "standard");
+  assert.equal(defaults.soundStyle, "chime");
   assert.equal(defaults.showPlateMath, true);
   assert.deepEqual(defaults.enabledPlates, DEFAULT_WORKOUT_PREFERENCES.enabledPlates);
 
@@ -136,11 +137,13 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
       weightStepKg: 1.25,
       enabledPlates: [20, 10],
       warmupScheme: "light",
+      soundStyle: "bell",
     });
     assert.equal(applied.autoAdvanceExercise, false);
     assert.equal(applied.weightStepKg, 1.25);
     assert.deepEqual(applied.enabledPlates, [20, 10]);
     assert.equal(applied.warmupScheme, "light");
+    assert.equal(applied.soundStyle, "bell");
     assert.equal(pushedCount, 0, "applying remote preferences must not echo back to cloud sync");
 
     writeWorkoutPreference("autoSyncSubsequent", false);
@@ -151,6 +154,7 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     writeWorkoutPreference("hapticsOn", false);
     writeWorkoutPreference("enabledPlates", [20, 10, 5]);
     writeWorkoutPreference("warmupScheme", "heavy");
+    writeWorkoutPreference("soundStyle", "marimba");
 
     const updated = readWorkoutPreferences();
     assert.equal(updated.autoSyncSubsequent, false);
@@ -161,6 +165,7 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     assert.equal(updated.hapticsOn, false);
     assert.deepEqual(updated.enabledPlates, [20, 10, 5]);
     assert.equal(updated.warmupScheme, "heavy");
+    assert.equal(updated.soundStyle, "marimba");
 
     await new Promise((resolve) => setTimeout(resolve, 450));
     assert.equal(pushedCount, 1, "debounced local preference writes trigger single cloud sync push");
@@ -230,7 +235,7 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
     // Second partial update preserves earlier fields + nutrition/equipment goals
     const prefRes2 = await call("/api/web/profile/workout-prefs", {
       method: "PUT",
-      body: { warmupScheme: "heavy" },
+      body: { warmupScheme: "heavy", soundStyle: "marimba" },
     });
     assert.equal(prefRes2.status, 200);
 
@@ -251,6 +256,7 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
     assert.equal(profBody.profile.workoutPrefs?.warmupRestSeconds, 0);
     assert.equal(profBody.profile.workoutPrefs?.autoAdvanceExercise, false);
     assert.equal(profBody.profile.workoutPrefs?.warmupScheme, "heavy");
+    assert.equal(profBody.profile.workoutPrefs?.soundStyle, "marimba");
 
     // Cross-account isolation
     const otherProfileRes = await call("/api/web/profile", { token: other.token });
@@ -314,6 +320,7 @@ test("resetLocalWorkoutPreferences clears saved keys, resets defaults, and cance
     writeWorkoutPreference("weightStepKg", 1.25);
     writeWorkoutPreference("enabledPlates", [20, 10]);
     writeWorkoutPreference("warmupScheme", "heavy");
+    writeWorkoutPreference("soundStyle", "bell");
     assert.ok(backing.size > 0);
 
     resetLocalWorkoutPreferences();
@@ -387,5 +394,176 @@ test("PUT/DELETE /api/web/schedule/:date allows recreating deleted tombstones wh
     assert.equal(recreated2.record.data.title, "练腿日");
   } finally {
     db.close();
+  }
+});
+
+test("createRestAudio uses warm lowpass-filtered mid-register presets, respects enabled(), and allows preview()", () => {
+  const prevCtxDesc = Object.getOwnPropertyDescriptor(globalThis, "AudioContext");
+  const prevWebkitDesc = Object.getOwnPropertyDescriptor(globalThis, "webkitAudioContext");
+
+  interface MockOsc {
+    type: OscillatorType;
+    frequency: { value: number };
+    connectedGain: MockGain | null;
+    connect(target: unknown): unknown;
+    start(): void;
+    stop(): void;
+  }
+  interface MockGain {
+    gain: {
+      value: number;
+      ramps: number[];
+      setValueAtTime(): void;
+      linearRampToValueAtTime(val: number): void;
+      exponentialRampToValueAtTime(): void;
+    };
+    connect(target: unknown): unknown;
+  }
+  interface MockFilter {
+    type: string;
+    frequency: { value: number };
+    Q: { value: number };
+    connect(target: unknown): unknown;
+  }
+
+  let activeCtx: MockAudioContext | null = null;
+  const createdOscs: MockOsc[] = [];
+  const createdFilters: MockFilter[] = [];
+  const createdGains: MockGain[] = [];
+
+  class MockAudioContext {
+    state: AudioContextState = "running";
+    currentTime = 1;
+    destination = {};
+    constructor() {
+      activeCtx = this;
+    }
+    resume() {
+      this.state = "running";
+      return Promise.resolve();
+    }
+    close() {
+      this.state = "closed";
+      return Promise.resolve();
+    }
+    createBuffer() {
+      return {};
+    }
+    createBufferSource() {
+      return {
+        buffer: null,
+        connect(target: unknown) {
+          return target;
+        },
+        start() {},
+      };
+    }
+    createBiquadFilter() {
+      const f: MockFilter = {
+        type: "",
+        frequency: { value: 0 },
+        Q: { value: 0 },
+        connect(target: unknown) {
+          return target;
+        },
+      };
+      createdFilters.push(f);
+      return f;
+    }
+    createGain() {
+      const g: MockGain = {
+        gain: {
+          value: 0,
+          ramps: [],
+          setValueAtTime() {},
+          linearRampToValueAtTime(val: number) {
+            g.gain.ramps.push(val);
+          },
+          exponentialRampToValueAtTime() {},
+        },
+        connect(target: unknown) {
+          return target;
+        },
+      };
+      createdGains.push(g);
+      return g;
+    }
+    createOscillator() {
+      const osc: MockOsc = {
+        type: "sine",
+        frequency: { value: 0 },
+        connectedGain: null,
+        connect(target: unknown) {
+          osc.connectedGain = target as MockGain;
+          return target;
+        },
+        start() {},
+        stop() {},
+      };
+      createdOscs.push(osc);
+      return osc;
+    }
+  }
+
+  Object.defineProperty(globalThis, "AudioContext", { configurable: true, writable: true, value: MockAudioContext });
+  Object.defineProperty(globalThis, "webkitAudioContext", { configurable: true, writable: true, value: undefined });
+
+  const resetCaptured = () => {
+    createdOscs.length = 0;
+    createdFilters.length = 0;
+    createdGains.length = 0;
+  };
+
+  try {
+    let isEnabled = false;
+    let currentStyle: RestSoundStyle = "chime";
+    const audio = createRestAudio(
+      () => isEnabled,
+      () => currentStyle,
+    );
+
+    // Disabled -> zero oscillators scheduled
+    audio.play(true);
+    assert.equal(createdOscs.length, 0);
+
+    // preview() plays marimba even while enabled() is false
+    resetCaptured();
+    audio.preview("marimba");
+    assert.ok(createdOscs.length >= 3, "preview plays marimba voices when enabled() is false");
+    assert.equal(createdFilters[0]?.type, "lowpass");
+    assert.equal(createdFilters[0]?.frequency.value, 1600);
+
+    // Verify all 3 presets when enabled() is true
+    isEnabled = true;
+    for (const style of ["chime", "marimba", "bell"] as const) {
+      currentStyle = style;
+      resetCaptured();
+      audio.play(true);
+      assert.ok(createdOscs.length >= 2, `${style} schedules oscillators`);
+      assert.equal(createdFilters.length, 1, `${style} routes through lowpass filter`);
+      assert.equal(createdFilters[0]!.type, "lowpass");
+      assert.ok(createdFilters[0]!.frequency.value <= 2600, `${style} cutoff (${createdFilters[0]!.frequency.value}) <= 2600 Hz`);
+
+      for (const g of createdGains) {
+        const peak = Math.max(0, ...g.gain.ramps);
+        assert.ok(peak <= 0.25, `${style} peak gain (${peak}) stays headphone-safe <= 0.25`);
+      }
+
+      const fundamentals = createdOscs.filter((o) => Math.max(0, ...(o.connectedGain?.gain.ramps ?? [])) >= 0.1);
+      assert.ok(fundamentals.length >= 2, `${style} has primary warm notes`);
+      for (const fOsc of fundamentals) {
+        assert.equal(fOsc.type, "sine");
+        assert.ok(
+          fOsc.frequency.value >= 350 && fOsc.frequency.value <= 900,
+          `${style} fundamental (${fOsc.frequency.value} Hz) in warm mid-register 350–900 Hz`,
+        );
+      }
+    }
+  } finally {
+    if (activeCtx) (activeCtx as { state: string }).state = "closed";
+    if (prevCtxDesc) Object.defineProperty(globalThis, "AudioContext", prevCtxDesc);
+    else delete globalThis.AudioContext;
+    if (prevWebkitDesc) Object.defineProperty(globalThis, "webkitAudioContext", prevWebkitDesc);
+    else delete globalThis.webkitAudioContext;
   }
 });

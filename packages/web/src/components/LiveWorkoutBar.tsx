@@ -77,7 +77,14 @@ export function LiveWorkoutBar() {
 
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
-  const audio = useMemo(() => createRestAudio(() => prefsRef.current.soundOn), []);
+  const audio = useMemo(
+    () =>
+      createRestAudio(
+        () => prefsRef.current.soundOn,
+        () => prefsRef.current.soundStyle,
+      ),
+    [],
+  );
   const firedRestEndRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -112,8 +119,10 @@ export function LiveWorkoutBar() {
     if (!draft?.rest || draft.rest.pausedLeftMs != null) return;
     if (nowMs >= draft.rest.end && firedRestEndRef.current !== draft.rest.end) {
       firedRestEndRef.current = draft.rest.end;
-      audio.play(true);
-      notify("组间休息结束 · 准备下一组");
+      if (nowMs - draft.rest.end <= 60_000) {
+        audio.play(true);
+        notify("组间休息结束 · 准备下一组");
+      }
       try {
         const raw = localStorage.getItem(draft.key);
         if (raw) {

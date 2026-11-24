@@ -237,6 +237,7 @@ const workoutPrefsBase = {
   enabledPlates: z.array(z.number().positive().max(100)).min(1).max(20),
   showPlateMath: z.boolean(),
   warmupScheme: z.enum(["light", "standard", "heavy"]),
+  soundStyle: z.enum(["chime", "marimba", "bell"]),
 };
 
 export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
@@ -258,6 +259,7 @@ export const workoutPrefsSchema = z.object({
   enabledPlates: workoutPrefsBase.enabledPlates.default([25, 20, 15, 10, 5, 2.5, 1.25]),
   showPlateMath: workoutPrefsBase.showPlateMath.default(true),
   warmupScheme: workoutPrefsBase.warmupScheme.default("standard"),
+  soundStyle: workoutPrefsBase.soundStyle.default("chime"),
 });
 export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
 

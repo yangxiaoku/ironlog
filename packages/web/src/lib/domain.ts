@@ -218,6 +218,7 @@ export interface ProfileGoals {
     enabledPlates?: number[];
     showPlateMath?: boolean;
     warmupScheme?: "light" | "standard" | "heavy";
+    soundStyle?: "chime" | "marimba" | "bell";
   };
 }
 
