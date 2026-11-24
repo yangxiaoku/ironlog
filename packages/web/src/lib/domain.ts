@@ -220,8 +220,9 @@ export interface ProfileGoals {
     warmupScheme?: "light" | "standard" | "heavy";
     soundStyle?: "chime" | "marimba" | "bell";
     appleFitnessAutoLaunch?: boolean;
-    appleStrengthLaunch?: "shortcut" | "fitness_app" | "off";
-    appleCardioLaunch?: "shortcut" | "fitness_app" | "off";
+    appleStrengthLaunch?: "hub" | "shortcut" | "fitness_app" | "off";
+    appleCardioLaunch?: "hub" | "shortcut" | "fitness_app" | "off";
+    appleHubShortcutName?: string;
     appleStrengthShortcutName?: string;
     appleCardioShortcutName?: string;
   };

@@ -10,13 +10,16 @@ import {
   APPLE_SHORTCUT_ENVIRONMENTS,
   APPLE_SHORTCUT_RECENT_WINDOWS,
   APPLE_SHORTCUT_SPORTS,
+  DEFAULT_APPLE_HUB_SHORTCUT_NAME,
   assessServerOrigin,
   buildIronlogDailyHealthShortcut,
   buildIronlogEventShortcut,
   buildIronlogRecentWorkoutShortcut,
+  buildIronlogUnifiedAppleHubShortcut,
   buildMacSignCommand,
   type ShortcutEnvironment,
 } from "../../lib/shortcut-gen";
+import { writeWorkoutPreference } from "../../lib/workout-helpers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -766,10 +769,12 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
   const handleDownloadShortcut = <T extends { filename: string; xml: string }>(
     buildFn: () => T,
     extraNotice?: (built: T) => string,
+    onBuilt?: (built: T) => void,
   ) => {
     setError("");
     try {
       const built = buildFn();
+      onBuilt?.(built);
       triggerShortcutDownload(built.filename, built.xml);
       notify(extraNotice ? extraNotice(built) : `已导出 ${built.filename}`);
     } catch (err) {
@@ -777,10 +782,14 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
     }
   };
 
-  const handleCopyBase64 = (buildFn: () => { filename: string; base64: string }) => {
+  const handleCopyBase64 = <T extends { filename: string; base64: string }>(
+    buildFn: () => T,
+    onBuilt?: (built: T) => void,
+  ) => {
     setError("");
     try {
       const built = buildFn();
+      onBuilt?.(built);
       void copyText(built.base64).then((ok) =>
         notify(
           ok
@@ -878,9 +887,57 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
 
       <section className="shortcut-daily-box">
         <div className="shortcut-card-head">
-          <span className="shortcut-tag">DAILY SYNC</span>
-          <strong>{universalMode ? "铁记-通用-每日全量健康同步.shortcut" : "铁记-每日全量健康同步.shortcut"}</strong>
+          <span className="shortcut-tag">ALL-IN-ONE HUB</span>
+          <strong>{universalMode ? `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut` : "铁记-Apple健康全能联动.shortcut"}</strong>
         </div>
+        <p className="muted">
+          <b>1 个文件搞定全部联动：</b>只需导入并签名这 1 个全能快捷指令，即可承接铁记网页全部智能跳转，或在手机上直接点开弹出 4 合 1 菜单：
+          <br />• <b>开练（<code>strength</code> / <code>cardio</code>）</b>：力量自动打卡开始事件并打开「健身」App，有氧直达「健身」App
+          <br />• <b>完练（<code>end</code>）</b>：自动抓心率、活动能量与距离回传铁记（优先匹配开始事件，未打卡开始则按兜底窗口直传）
+          <br />• <b>每日健康（<code>daily</code>）</b>：上传下方勾选的步数、睡眠、体重、静息心率、HRV 等健康样本
+        </p>
+
+        <div className="shortcut-config-grid">
+          <label className="field">
+            <span>默认力量 / 运动类型</span>
+            <select
+              value={activityType}
+              onChange={(e) => {
+                const val = e.target.value;
+                setActivityType(val);
+                const matched = APPLE_SHORTCUT_SPORTS.find((s) => s.activityType === val);
+                if (matched) setEnvironment(matched.defaultEnvironment);
+              }}
+            >
+              {APPLE_SHORTCUT_SPORTS.map((s) => (
+                <option key={s.activityType} value={s.activityType}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="field">
+            <span>运动环境</span>
+            <select value={environment} onChange={(e) => setEnvironment(e.target.value as ShortcutEnvironment)}>
+              {(Object.entries(APPLE_SHORTCUT_ENVIRONMENTS) as Array<[ShortcutEnvironment, string]>).map(([k, lbl]) => (
+                <option key={k} value={k}>
+                  {lbl}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+        <label className="field">
+          <span>未打卡「开始」时的兜底回溯窗口</span>
+          <select value={String(recentWindowMinutes)} onChange={(e) => setRecentWindowMinutes(Number(e.target.value))}>
+            {Object.entries(APPLE_SHORTCUT_RECENT_WINDOWS).map(([k, lbl]) => (
+              <option key={k} value={k}>
+                {lbl}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <p className="muted">
           ⚠️ iOS 只要遇到某项在「健康」里查到 <b>0 条记录</b>或未授权，就会弹出<b>「未找到样本」</b>（如未手动录过的腰围/饮水/膳食营养、未支持血氧、或
           <b>凌晨 0 点刚过</b>尚未写入今日的静息能量）。推荐点下方<b>「自动体征全项 (14项)」</b>，并在 iPhone{" "}
@@ -936,17 +993,22 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
             type="button"
             className={universalMode ? "primary-button" : "secondary-button"}
             onClick={() =>
-              handleCopyBase64(() =>
-                buildIronlogDailyHealthShortcut({
-                  serverOrigin: originInput,
-                  token,
-                  metrics: [...dailyMetrics],
-                  useImportQuestions: universalMode,
-                }),
+              handleCopyBase64(
+                () =>
+                  buildIronlogUnifiedAppleHubShortcut({
+                    serverOrigin: originInput,
+                    token,
+                    activityType,
+                    environment,
+                    windowMinutes: recentWindowMinutes,
+                    metrics: [...dailyMetrics],
+                    useImportQuestions: universalMode,
+                  }),
+                (built) => writeWorkoutPreference("appleHubShortcutName", built.shortcutName),
               )
             }
           >
-            <Icon name="copy" size={16} /> 复制 Base64（{dailyMetrics.size} 项）
+            <Icon name="copy" size={16} /> 复制全能 Base64（{dailyMetrics.size} 项 + 开练/完练）
           </button>
           <button
             type="button"
@@ -954,123 +1016,129 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
             onClick={() =>
               handleDownloadShortcut(
                 () =>
-                  buildIronlogDailyHealthShortcut({
+                  buildIronlogUnifiedAppleHubShortcut({
                     serverOrigin: originInput,
                     token,
+                    activityType,
+                    environment,
+                    windowMinutes: recentWindowMinutes,
                     metrics: [...dailyMetrics],
                     useImportQuestions: universalMode,
                   }),
-                (built) => `已导出 ${built.filename}（含 ${built.metricCount} 项健康指标）`,
+                (built) => `已导出全能联动 ${built.filename}，并自动设为铁记默认跳转快捷指令`,
+                (built) => writeWorkoutPreference("appleHubShortcutName", built.shortcutName),
               )
             }
           >
-            <Icon name="download" size={16} /> 下载 .shortcut
+            <Icon name="download" size={16} /> 下载全能 .shortcut
           </button>
         </div>
       </section>
 
-      <details className="training-details" open>
+      <details className="training-details">
         <summary>
-          <span>单场训练自动同步（全运动类型 · 热量 / 心率 / 距离）</span>
+          <span>高级：单独导出单项快捷指令（用于独立 Apple Watch 自动化）</span>
           <Icon name="chevron" size={14} />
         </summary>
         <div className="details-body">
+          <div className="shortcut-card">
+            <div className="shortcut-card-head">
+              <span className="shortcut-tag">DAILY SYNC</span>
+              <strong>{universalMode ? "铁记-通用-每日全量健康同步.shortcut" : "铁记-每日全量健康同步.shortcut"}</strong>
+            </div>
+            <small>使用上方当前勾选的 {dailyMetrics.size} 项健康指标单独导出。</small>
+            <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() =>
+                  handleCopyBase64(() =>
+                    buildIronlogDailyHealthShortcut({
+                      serverOrigin: originInput,
+                      token,
+                      metrics: [...dailyMetrics],
+                      useImportQuestions: universalMode,
+                    }),
+                  )
+                }
+              >
+                <Icon name="copy" size={15} /> 复制每日 Base64
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() =>
+                  handleDownloadShortcut(
+                    () =>
+                      buildIronlogDailyHealthShortcut({
+                        serverOrigin: originInput,
+                        token,
+                        metrics: [...dailyMetrics],
+                        useImportQuestions: universalMode,
+                      }),
+                    (built) => `已导出 ${built.filename}（含 ${built.metricCount} 项健康指标）`,
+                  )
+                }
+              >
+                <Icon name="download" size={15} /> 下载每日 .shortcut
+              </button>
+            </div>
+          </div>
+
           <label className="field">
-            <span>触发方式</span>
+            <span>单场训练触发方式</span>
             <select value={workoutMode} onChange={(e) => setWorkoutMode(e.target.value as "recent" | "pair")}>
               <option value="recent">单条全自动直传（只需绑定结束时 · 免配开始）</option>
               <option value="pair">开始 + 结束双条配对（精确计算训练时长）</option>
             </select>
           </label>
-          <div className="shortcut-config-grid">
-            <label className="field">
-              <span>运动类型</span>
-              <select
-                value={activityType}
-                onChange={(e) => {
-                  const val = e.target.value;
-                  setActivityType(val);
-                  const matched = APPLE_SHORTCUT_SPORTS.find((s) => s.activityType === val);
-                  if (matched) setEnvironment(matched.defaultEnvironment);
-                }}
-              >
-                {APPLE_SHORTCUT_SPORTS.map((s) => (
-                  <option key={s.activityType} value={s.activityType}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>运动环境</span>
-              <select value={environment} onChange={(e) => setEnvironment(e.target.value as ShortcutEnvironment)}>
-                {(Object.entries(APPLE_SHORTCUT_ENVIRONMENTS) as Array<[ShortcutEnvironment, string]>).map(([k, lbl]) => (
-                  <option key={k} value={k}>
-                    {lbl}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
 
           {workoutMode === "recent" ? (
-            <div>
-              <label className="field">
-                <span>自动回溯窗口时长</span>
-                <select value={String(recentWindowMinutes)} onChange={(e) => setRecentWindowMinutes(Number(e.target.value))}>
-                  {Object.entries(APPLE_SHORTCUT_RECENT_WINDOWS).map(([k, lbl]) => (
-                    <option key={k} value={k}>
-                      {lbl}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="shortcut-card">
-                <div className="shortcut-card-head">
-                  <span className="shortcut-tag">AUTO POST</span>
-                  <strong>
-                    {universalMode ? `铁记-通用-结束直传-${sportLabel}.shortcut` : `铁记-结束直传-${sportLabel}.shortcut`}
-                  </strong>
-                </div>
-                <small>手表结束训练 5 秒后，自动拉取最近窗口内的活动能量、心率均值/峰值及对应距离并直接写入铁记。</small>
-                <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    className={universalMode ? "primary-button" : "secondary-button"}
-                    onClick={() =>
-                      handleCopyBase64(() =>
-                        buildIronlogRecentWorkoutShortcut({
-                          serverOrigin: originInput,
-                          token,
-                          activityType,
-                          environment,
-                          windowMinutes: recentWindowMinutes,
-                          useImportQuestions: universalMode,
-                        }),
-                      )
-                    }
-                  >
-                    <Icon name="copy" size={16} /> 复制 Base64
-                  </button>
-                  <button
-                    type="button"
-                    className={universalMode ? "secondary-button" : "primary-button"}
-                    onClick={() =>
-                      handleDownloadShortcut(() =>
-                        buildIronlogRecentWorkoutShortcut({
-                          serverOrigin: originInput,
-                          token,
-                          activityType,
-                          environment,
-                          windowMinutes: recentWindowMinutes,
-                          useImportQuestions: universalMode,
-                        }),
-                      )
-                    }
-                  >
-                    <Icon name="download" size={16} /> 下载 .shortcut
-                  </button>
-                </div>
+            <div className="shortcut-card">
+              <div className="shortcut-card-head">
+                <span className="shortcut-tag">AUTO POST</span>
+                <strong>
+                  {universalMode ? `铁记-通用-结束直传-${sportLabel}.shortcut` : `铁记-结束直传-${sportLabel}.shortcut`}
+                </strong>
+              </div>
+              <small>使用上方选定的 {sportLabel}（{recentWindowMinutes} 分钟窗口），手表结束训练 5 秒后直传。</small>
+              <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() =>
+                    handleCopyBase64(() =>
+                      buildIronlogRecentWorkoutShortcut({
+                        serverOrigin: originInput,
+                        token,
+                        activityType,
+                        environment,
+                        windowMinutes: recentWindowMinutes,
+                        useImportQuestions: universalMode,
+                      }),
+                    )
+                  }
+                >
+                  <Icon name="copy" size={15} /> 复制 Base64
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() =>
+                    handleDownloadShortcut(() =>
+                      buildIronlogRecentWorkoutShortcut({
+                        serverOrigin: originInput,
+                        token,
+                        activityType,
+                        environment,
+                        windowMinutes: recentWindowMinutes,
+                        useImportQuestions: universalMode,
+                      }),
+                    )
+                  }
+                >
+                  <Icon name="download" size={15} /> 下载 .shortcut
+                </button>
               </div>
             </div>
           ) : (

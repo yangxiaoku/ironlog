@@ -160,6 +160,8 @@ export const APPLE_HEALTH_AUTO_METRICS = [
   "respiratoryRate",
 ];
 
+export const DEFAULT_APPLE_HUB_SHORTCUT_NAME = "铁记-通用-Apple健康全能联动";
+
 const ACTIVITY_TYPE_RE = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
 const VALID_EVENTS = new Set(["start", "end"]);
 const VALID_ENVIRONMENTS = new Set(Object.keys(APPLE_SHORTCUT_ENVIRONMENTS));
@@ -261,6 +263,7 @@ interface AttachmentEntry {
   varName?: string;
   outputName?: string;
   outputUuid?: string;
+  extensionInput?: boolean;
   aggrandizements?: ReadonlyArray<Aggrandizement>;
 }
 
@@ -281,6 +284,13 @@ function attachmentEntryXml(entry: AttachmentEntry, indent: number): string {
       )).join("\n")
       + `\n${pad}\t</array>\n`
     : "";
+  if (entry.extensionInput) {
+    return `${pad}<dict>\n`
+      + aggrXml
+      + `${pad}\t<key>Type</key>\n`
+      + `${pad}\t<string>ExtensionInput</string>\n`
+      + `${pad}</dict>`;
+  }
   if (entry.varName) {
     return `${pad}<dict>\n`
       + aggrXml
@@ -330,12 +340,14 @@ function tokenStringXml({
   text = "",
   outputAttachment = null,
   varAttachment = null,
+  extensionInput = false,
   multiRawText = null,
   rawAttachments = null,
 }: {
   text?: string;
   outputAttachment?: OutputAttachmentRef | null;
   varAttachment?: VarAttachmentRef | null;
+  extensionInput?: boolean;
   multiRawText?: string | null;
   rawAttachments?: Array<{ range: string; entry: AttachmentEntry }> | null;
 }): string {
@@ -349,16 +361,18 @@ function tokenStringXml({
       + `\t\t\t</dict>\n`
       + `\t\t\t<key>string</key>\n`
       + `\t\t\t<string>${multiRawText}</string>\n`;
-  } else if (outputAttachment || varAttachment) {
-    const entry: AttachmentEntry = varAttachment
-      ? (typeof varAttachment === "string"
-        ? { varName: varAttachment }
-        : { varName: varAttachment.name, aggrandizements: varAttachment.aggrandizements })
-      : {
-          outputName: outputAttachment!.name,
-          outputUuid: outputAttachment!.uuid,
-          aggrandizements: outputAttachment!.aggrandizements,
-        };
+  } else if (outputAttachment || varAttachment || extensionInput) {
+    const entry: AttachmentEntry = extensionInput
+      ? { extensionInput: true }
+      : varAttachment
+        ? (typeof varAttachment === "string"
+          ? { varName: varAttachment }
+          : { varName: varAttachment.name, aggrandizements: varAttachment.aggrandizements })
+        : {
+            outputName: outputAttachment!.name,
+            outputUuid: outputAttachment!.uuid,
+            aggrandizements: outputAttachment!.aggrandizements,
+          };
     inner = `\t\t\t<key>attachmentsByRange</key>\n`
       + `\t\t\t<dict>\n`
       + `\t\t\t\t<key>{0, 1}</key>\n`
@@ -437,12 +451,30 @@ function currentDateActionXml({ uuid }: { uuid: string }): string {
   ].join("\n"));
 }
 
-function textActionXml({ uuid, text = "" }: { uuid: string; text?: string }): string {
+function textActionXml({
+  uuid,
+  text = "",
+  extensionInput = false,
+}: {
+  uuid: string;
+  text?: string;
+  extensionInput?: boolean;
+}): string {
+  const textValueXml = extensionInput
+    ? indentBlock(tokenStringXml({ extensionInput: true }), 4)
+    : `\t\t\t\t<string>${escapeXml(text)}</string>`;
   return actionBlockXml("is.workflow.actions.gettext", [
     "\t\t\t\t<key>UUID</key>",
     `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
     "\t\t\t\t<key>WFTextActionText</key>",
-    `\t\t\t\t<string>${escapeXml(text)}</string>`,
+    textValueXml,
+  ].join("\n"));
+}
+
+function openUrlActionXml(url: string): string {
+  return actionBlockXml("is.workflow.actions.openurl", [
+    "\t\t\t\t<key>WFInput</key>",
+    indentBlock(tokenStringXml({ text: url }), 4),
   ].join("\n"));
 }
 
@@ -986,6 +1018,82 @@ function healthSampleRowsActions({
   ];
 }
 
+type ConditionalInputSpec =
+  | { kind: "output"; outputUuid: string; outputName: string }
+  | { kind: "variable"; variableName: string }
+  | { kind: "extensionInput" };
+
+function conditionalBlock({
+  groupUuid,
+  input,
+  condition,
+  equalsText = "",
+  bodyActions,
+  otherwiseActions = [],
+}: {
+  groupUuid: string;
+  input: ConditionalInputSpec;
+  condition: 100 | 4;
+  equalsText?: string;
+  bodyActions: string[];
+  otherwiseActions?: string[];
+}): string[] {
+  const entry: AttachmentEntry = input.kind === "extensionInput"
+    ? { extensionInput: true }
+    : input.kind === "variable"
+      ? { varName: input.variableName }
+      : { outputName: input.outputName, outputUuid: input.outputUuid };
+
+  const openParams = [
+    "\t\t\t\t<key>GroupingIdentifier</key>",
+    `\t\t\t\t<string>${escapeXml(groupUuid)}</string>`,
+    "\t\t\t\t<key>WFCondition</key>",
+    `\t\t\t\t<integer>${condition}</integer>`,
+    ...(condition === 4
+      ? [
+          "\t\t\t\t<key>WFConditionalActionString</key>",
+          `\t\t\t\t<string>${escapeXml(equalsText)}</string>`,
+        ]
+      : []),
+    "\t\t\t\t<key>WFControlFlowMode</key>",
+    "\t\t\t\t<integer>0</integer>",
+    "\t\t\t\t<key>WFInput</key>",
+    "\t\t\t\t<dict>",
+    "\t\t\t\t\t<key>Type</key>",
+    "\t\t\t\t\t<string>Variable</string>",
+    "\t\t\t\t\t<key>Variable</key>",
+    "\t\t\t\t\t<dict>",
+    "\t\t\t\t\t\t<key>Value</key>",
+    attachmentEntryXml(entry, 6),
+    "\t\t\t\t\t\t<key>WFSerializationType</key>",
+    "\t\t\t\t\t\t<string>WFTextTokenAttachment</string>",
+    "\t\t\t\t\t</dict>",
+    "\t\t\t\t</dict>",
+  ];
+
+  const openIf = actionBlockXml("is.workflow.actions.conditional", openParams.join("\n"));
+  const middleIf = otherwiseActions.length
+    ? [
+        actionBlockXml("is.workflow.actions.conditional", [
+          "\t\t\t\t<key>GroupingIdentifier</key>",
+          `\t\t\t\t<string>${escapeXml(groupUuid)}</string>`,
+          "\t\t\t\t<key>WFControlFlowMode</key>",
+          "\t\t\t\t<integer>1</integer>",
+        ].join("\n")),
+        ...otherwiseActions,
+      ]
+    : [];
+
+  const closeIf = actionBlockXml("is.workflow.actions.conditional", [
+    "\t\t\t\t<key>GroupingIdentifier</key>",
+    `\t\t\t\t<string>${escapeXml(groupUuid)}</string>`,
+    "\t\t\t\t<key>WFControlFlowMode</key>",
+    "\t\t\t\t<integer>2</integer>",
+  ].join("\n"));
+
+  return [openIf, ...bodyActions, ...middleIf, closeIf];
+}
+
 function conditionalHasValueBlock({
   groupUuid,
   inputUuid,
@@ -997,45 +1105,64 @@ function conditionalHasValueBlock({
   inputName?: string;
   bodyActions: string[];
 }): string[] {
-  const openIf = actionBlockXml("is.workflow.actions.conditional", [
+  return conditionalBlock({
+    groupUuid,
+    input: { kind: "output", outputUuid: inputUuid, outputName: inputName },
+    condition: 100,
+    bodyActions,
+  });
+}
+
+function chooseFromMenuBlock({
+  groupUuid,
+  prompt,
+  items,
+}: {
+  groupUuid: string;
+  prompt: string;
+  items: Array<{ title: string; actions: string[] }>;
+}): string[] {
+  const openMenu = actionBlockXml("is.workflow.actions.choosefrommenu", [
     "\t\t\t\t<key>GroupingIdentifier</key>",
     `\t\t\t\t<string>${escapeXml(groupUuid)}</string>`,
-    "\t\t\t\t<key>WFCondition</key>",
-    "\t\t\t\t<integer>100</integer>",
     "\t\t\t\t<key>WFControlFlowMode</key>",
     "\t\t\t\t<integer>0</integer>",
-    "\t\t\t\t<key>WFInput</key>",
-    "\t\t\t\t<dict>",
-    "\t\t\t\t\t<key>Type</key>",
-    "\t\t\t\t\t<string>Variable</string>",
-    "\t\t\t\t\t<key>Variable</key>",
-    "\t\t\t\t\t<dict>",
-    "\t\t\t\t\t\t<key>Value</key>",
-    "\t\t\t\t\t\t<dict>",
-    "\t\t\t\t\t\t\t<key>OutputName</key>",
-    `\t\t\t\t\t\t\t<string>${escapeXml(inputName)}</string>`,
-    "\t\t\t\t\t\t\t<key>OutputUUID</key>",
-    `\t\t\t\t\t\t\t<string>${escapeXml(inputUuid)}</string>`,
-    "\t\t\t\t\t\t\t<key>Type</key>",
-    "\t\t\t\t\t\t\t<string>ActionOutput</string>",
-    "\t\t\t\t\t\t</dict>",
-    "\t\t\t\t\t\t<key>WFSerializationType</key>",
-    "\t\t\t\t\t\t<string>WFTextTokenAttachment</string>",
-    "\t\t\t\t\t</dict>",
-    "\t\t\t\t</dict>",
+    "\t\t\t\t<key>WFMenuItems</key>",
+    "\t\t\t\t<array>",
+    ...items.map((item) => `\t\t\t\t\t<string>${escapeXml(item.title)}</string>`),
+    "\t\t\t\t</array>",
+    "\t\t\t\t<key>WFMenuPrompt</key>",
+    `\t\t\t\t<string>${escapeXml(prompt)}</string>`,
   ].join("\n"));
 
-  const closeIf = actionBlockXml("is.workflow.actions.conditional", [
+  const branches = items.flatMap((item) => [
+    actionBlockXml("is.workflow.actions.choosefrommenu", [
+      "\t\t\t\t<key>GroupingIdentifier</key>",
+      `\t\t\t\t<string>${escapeXml(groupUuid)}</string>`,
+      "\t\t\t\t<key>WFControlFlowMode</key>",
+      "\t\t\t\t<integer>1</integer>",
+      "\t\t\t\t<key>WFMenuItemTitle</key>",
+      `\t\t\t\t<string>${escapeXml(item.title)}</string>`,
+    ].join("\n")),
+    ...item.actions,
+  ]);
+
+  const closeMenu = actionBlockXml("is.workflow.actions.choosefrommenu", [
     "\t\t\t\t<key>GroupingIdentifier</key>",
     `\t\t\t\t<string>${escapeXml(groupUuid)}</string>`,
     "\t\t\t\t<key>WFControlFlowMode</key>",
     "\t\t\t\t<integer>2</integer>",
   ].join("\n"));
 
-  return [openIf, ...bodyActions, closeIf];
+  return [openMenu, ...branches, closeMenu];
 }
 
-function wrapShortcutPlist(actionBlocks: string[], importQuestions: ShortcutImportQuestion[] = []): string {
+function wrapShortcutPlist(
+  actionBlocks: string[],
+  importQuestions: ShortcutImportQuestion[] = [],
+  options: { hasShortcutInputVariables?: boolean } = {},
+): string {
+  const hasInputVarsTag = options.hasShortcutInputVariables ? "\t<true/>" : "\t<false/>";
   const importQuestionsLines = importQuestions.length
     ? [
         "\t<key>WFWorkflowImportQuestions</key>",
@@ -1073,7 +1200,7 @@ function wrapShortcutPlist(actionBlocks: string[], importQuestions: ShortcutImpo
     "\t<key>WFWorkflowClientVersion</key>",
     "\t<string>2700.0.4</string>",
     "\t<key>WFWorkflowHasShortcutInputVariables</key>",
-    "\t<false/>",
+    hasInputVarsTag,
     "\t<key>WFWorkflowIcon</key>",
     "\t<dict>",
     "\t\t<key>WFWorkflowIconGlyphNumber</key>",
@@ -1534,60 +1661,48 @@ export function buildIronlogRecentWorkoutShortcut({
   };
 }
 
-export function buildIronlogDailyHealthShortcut({
-  serverOrigin,
-  token,
+function resolveDailyMetricsSelection({
   groups = APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id),
   metrics = null,
-  locale = "zh-Hans",
-  useImportQuestions = false,
-  uuidFactory = makeUuid,
 }: {
-  serverOrigin?: string;
-  token?: string;
   groups?: string[];
   metrics?: string[] | null;
-  locale?: string;
-  useImportQuestions?: boolean;
-  uuidFactory?: () => string;
-} = {}) {
-  const resolvedLocale = resolveShortcutLocale(locale);
-  const cleanToken = useImportQuestions ? "" : validateToken(token);
-  const base = useImportQuestions ? "" : normalizeServerOrigin(serverOrigin);
-  const endpointPath = "/api/integrations/apple-health/daily";
-  const endpoint = useImportQuestions ? `<导入时填写>${endpointPath}` : `${base}${endpointPath}`;
-  const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
-
-  let activeGroups: HealthDailyGroupDef[];
-  let selectedGroups: string[];
-  let selectedMetrics: HealthDailyMetricDef[];
+}): {
+  activeGroups: HealthDailyGroupDef[];
+  selectedGroups: string[];
+  selectedMetrics: HealthDailyMetricDef[];
+} {
   if (Array.isArray(metrics)) {
     const metricSet = new Set(metrics);
-    selectedMetrics = APPLE_HEALTH_DAILY_GROUPS.flatMap((g) => g.metrics).filter((m) => metricSet.has(m.key));
+    const selectedMetrics = APPLE_HEALTH_DAILY_GROUPS.flatMap((g) => g.metrics).filter((m) => metricSet.has(m.key));
     if (!selectedMetrics.length) throw new Error("请至少选择一项健康指标");
-    activeGroups = APPLE_HEALTH_DAILY_GROUPS.filter((g) => g.metrics.some((m) => metricSet.has(m.key)));
-    selectedGroups = activeGroups.map((g) => g.id);
-  } else {
-    selectedGroups = [...new Set(groups)].filter((id) => VALID_DAILY_GROUPS.has(id));
-    if (!selectedGroups.length) throw new Error("请至少选择一类健康数据");
-    activeGroups = APPLE_HEALTH_DAILY_GROUPS.filter((g) => selectedGroups.includes(g.id));
-    selectedMetrics = activeGroups.flatMap((g) => g.metrics);
+    const activeGroups = APPLE_HEALTH_DAILY_GROUPS.filter((g) => g.metrics.some((m) => metricSet.has(m.key)));
+    return { activeGroups, selectedGroups: activeGroups.map((g) => g.id), selectedMetrics };
   }
-  const groupNames = activeGroups.map((g) => g.label).join("、");
-  const filename = useImportQuestions
-    ? "铁记-通用-每日全量健康同步.shortcut"
-    : "铁记-每日全量健康同步.shortcut";
+  const selectedGroups = [...new Set(groups)].filter((id) => VALID_DAILY_GROUPS.has(id));
+  if (!selectedGroups.length) throw new Error("请至少选择一类健康数据");
+  const activeGroups = APPLE_HEALTH_DAILY_GROUPS.filter((g) => selectedGroups.includes(g.id));
+  return { activeGroups, selectedGroups, selectedMetrics: activeGroups.flatMap((g) => g.metrics) };
+}
 
-  const commentText = [
-    `铁记（Ironlog）每日 Apple 健康同步：${groupNames}（共 ${selectedMetrics.length} 项）`,
-    `目标接口：${endpoint}`,
-    `提示：① 首次运行请在 iPhone「健康 App → 头像 → 隐私 → App → 快捷指令」打开已选指标权限；② 若某项健康数据最近无记录，iOS 快捷指令会弹窗「未找到样本」，建议只在网页端勾选你平时确实有数据的指标。`,
-  ].join("\n");
-
-  const actions: string[] = [
-    commentActionXml(commentText),
-    ...(prelude ? prelude.actions : []),
-  ];
+function buildDailyHealthCollectionActions({
+  uuidFactory,
+  selectedMetrics,
+  endpoint,
+  endpointPath,
+  cleanToken,
+  originUuid,
+  tokenUuid,
+}: {
+  uuidFactory: () => string;
+  selectedMetrics: HealthDailyMetricDef[];
+  endpoint: string;
+  endpointPath?: string;
+  cleanToken: string;
+  originUuid?: string;
+  tokenUuid?: string;
+}): string[] {
+  const actions: string[] = [];
   const jsonBodyItems: DictionaryFieldItem[] = [
     { key: "schemaVersion", value: "1", itemType: 3 },
     { key: "shortcutGenVersion", value: "3" },
@@ -1650,12 +1765,65 @@ export function buildIronlogDailyHealthShortcut({
   actions.push(downloadJsonActionXml({
     uuid: uuidFactory(),
     endpoint,
-    endpointPath: prelude ? endpointPath : undefined,
+    endpointPath,
     token: cleanToken,
-    originUuid: prelude?.originUuid,
-    tokenUuid: prelude?.tokenUuid,
+    originUuid,
+    tokenUuid,
     bodyItems: jsonBodyItems,
   }));
+
+  return actions;
+}
+
+export function buildIronlogDailyHealthShortcut({
+  serverOrigin,
+  token,
+  groups = APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id),
+  metrics = null,
+  locale = "zh-Hans",
+  useImportQuestions = false,
+  uuidFactory = makeUuid,
+}: {
+  serverOrigin?: string;
+  token?: string;
+  groups?: string[];
+  metrics?: string[] | null;
+  locale?: string;
+  useImportQuestions?: boolean;
+  uuidFactory?: () => string;
+} = {}) {
+  const resolvedLocale = resolveShortcutLocale(locale);
+  const cleanToken = useImportQuestions ? "" : validateToken(token);
+  const base = useImportQuestions ? "" : normalizeServerOrigin(serverOrigin);
+  const endpointPath = "/api/integrations/apple-health/daily";
+  const endpoint = useImportQuestions ? `<导入时填写>${endpointPath}` : `${base}${endpointPath}`;
+  const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
+
+  const { activeGroups, selectedGroups, selectedMetrics } = resolveDailyMetricsSelection({ groups, metrics });
+  const groupNames = activeGroups.map((g) => g.label).join("、");
+  const filename = useImportQuestions
+    ? "铁记-通用-每日全量健康同步.shortcut"
+    : "铁记-每日全量健康同步.shortcut";
+
+  const commentText = [
+    `铁记（Ironlog）每日 Apple 健康同步：${groupNames}（共 ${selectedMetrics.length} 项）`,
+    `目标接口：${endpoint}`,
+    `提示：① 首次运行请在 iPhone「健康 App → 头像 → 隐私 → App → 快捷指令」打开已选指标权限；② 若某项健康数据最近无记录，iOS 快捷指令会弹窗「未找到样本」，建议只在网页端勾选你平时确实有数据的指标。`,
+  ].join("\n");
+
+  const actions: string[] = [
+    commentActionXml(commentText),
+    ...(prelude ? prelude.actions : []),
+    ...buildDailyHealthCollectionActions({
+      uuidFactory,
+      selectedMetrics,
+      endpoint,
+      endpointPath: prelude ? endpointPath : undefined,
+      cleanToken,
+      originUuid: prelude?.originUuid,
+      tokenUuid: prelude?.tokenUuid,
+    }),
+  ];
 
   const xml = wrapShortcutPlist(actions, prelude?.importQuestions ?? []);
   return {
@@ -1665,6 +1833,294 @@ export function buildIronlogDailyHealthShortcut({
     locale: resolvedLocale,
     metricCount: selectedMetrics.length,
     groups: selectedGroups,
+    xml,
+    base64: encodeShortcutXmlToBase64(xml),
+  };
+}
+
+/**
+ * Generates an all-in-one Apple Health & Fitness smart hub shortcut supporting
+ * URL-routed input (`strength` | `cardio` | `end` | `daily`) and interactive menu fallback.
+ */
+export function buildIronlogUnifiedAppleHubShortcut({
+  serverOrigin,
+  token,
+  activityType = "traditionalStrengthTraining",
+  environment,
+  windowMinutes = 45,
+  groups = APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id),
+  metrics = null,
+  locale = "zh-Hans",
+  useImportQuestions = true,
+  uuidFactory = makeUuid,
+}: {
+  serverOrigin?: string;
+  token?: string;
+  activityType?: string;
+  environment?: string;
+  windowMinutes?: number;
+  groups?: string[];
+  metrics?: string[] | null;
+  locale?: string;
+  useImportQuestions?: boolean;
+  uuidFactory?: () => string;
+} = {}) {
+  const resolvedMinutes = Number(windowMinutes);
+  if (!Number.isInteger(resolvedMinutes) || resolvedMinutes < 5 || resolvedMinutes > 360) {
+    throw new Error("回溯窗口时长需在 5 到 360 分钟之间");
+  }
+  const {
+    sportLabel,
+    resolvedEnv,
+    resolvedLocale,
+    cleanToken,
+    base,
+    distanceSpec,
+  } = resolveWorkoutConfig({ serverOrigin, token, activityType, environment, locale, useImportQuestions });
+  const { activeGroups, selectedGroups, selectedMetrics } = resolveDailyMetricsSelection({ groups, metrics });
+
+  const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
+  const eventsPath = "/api/integrations/apple-health/events";
+  const activePath = `/api/integrations/apple-health/events/active?activityType=${encodeURIComponent(activityType)}`;
+  const workoutsPath = "/api/integrations/apple-health/workouts";
+  const dailyPath = "/api/integrations/apple-health/daily";
+  const prefix = prelude ? "<导入时填写>" : base;
+  const eventsEndpoint = `${prefix}${eventsPath}`;
+  const activeEndpoint = `${prefix}${activePath}`;
+  const workoutsEndpoint = `${prefix}${workoutsPath}`;
+  const dailyEndpoint = `${prefix}${dailyPath}`;
+  const filename = useImportQuestions
+    ? `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut`
+    : "铁记-Apple健康全能联动.shortcut";
+
+  const commentText = [
+    `铁记（Ironlog）Apple 健康全能智能联动（1 个快捷指令覆盖全流程）`,
+    `默认运动：${sportLabel}（${resolvedEnv}），兜底窗口 ${resolvedMinutes} 分钟；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
+    `网页智能路由参数（input=text）：`,
+    `  • strength：上报开始事件并跳转「健身」App（若需直开 Watch 传统力量，可在 strength 分支末尾将「打开 URL」替换为「开始体能训练 → 传统力量训练」）`,
+    `  • cardio：直开 Apple「健身」App 开启有氧`,
+    `  • end：等待 5 秒并回传活动能量、心率${distanceSpec ? "、距离" : ""}（优先匹配 active 开始事件，未打卡开始则自动按最近 ${resolvedMinutes} 分钟直传）`,
+    `  • daily：同步今日选定 Apple 健康指标`,
+    `在手机上直接点击运行（无入参）时，会自动弹出 4 合 1 菜单。`,
+  ].join("\n");
+
+  const makeMenuSetMode = (modeValue: "strength" | "cardio" | "end" | "daily") => {
+    const valUuid = uuidFactory();
+    return [
+      textActionXml({ uuid: valUuid, text: modeValue }),
+      setVariableActionXml({ variableName: "v_mode", inputUuid: valUuid, inputName: "Text" }),
+    ];
+  };
+
+  const extInputTextUuid = uuidFactory();
+  const resolveModeActions = conditionalBlock({
+    groupUuid: uuidFactory(),
+    input: { kind: "extensionInput" },
+    condition: 100,
+    bodyActions: [
+      textActionXml({ uuid: extInputTextUuid, extensionInput: true }),
+      setVariableActionXml({ variableName: "v_mode", inputUuid: extInputTextUuid, inputName: "Text" }),
+    ],
+    otherwiseActions: chooseFromMenuBlock({
+      groupUuid: uuidFactory(),
+      prompt: "选择铁记 Apple 健康操作",
+      items: [
+        { title: "开始传统力量", actions: makeMenuSetMode("strength") },
+        { title: "打开有氧健身", actions: makeMenuSetMode("cardio") },
+        { title: "结束训练并同步心率热量", actions: makeMenuSetMode("end") },
+        { title: "同步今日健康数据", actions: makeMenuSetMode("daily") },
+      ],
+    }),
+  });
+
+  // Branch 1: strength -> report start event + open Apple Fitness
+  const strengthDateUuid = uuidFactory();
+  const strengthBranch = conditionalBlock({
+    groupUuid: uuidFactory(),
+    input: { kind: "variable", variableName: "v_mode" },
+    condition: 4,
+    equalsText: "strength",
+    bodyActions: [
+      currentDateActionXml({ uuid: strengthDateUuid }),
+      downloadJsonActionXml({
+        uuid: uuidFactory(),
+        endpoint: eventsEndpoint,
+        endpointPath: prelude ? eventsPath : undefined,
+        token: cleanToken,
+        originUuid: prelude?.originUuid,
+        tokenUuid: prelude?.tokenUuid,
+        bodyItems: [
+          { key: "schemaVersion", value: "1", itemType: 3 },
+          { key: "event", value: "start" },
+          { key: "activityType", value: activityType },
+          { key: "environment", value: resolvedEnv },
+          { key: "occurredAt", outputAttachment: { name: "Date", uuid: strengthDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+        ],
+      }),
+      openUrlActionXml("fitnessapp://"),
+    ],
+  });
+
+  // Branch 2: cardio -> open Apple Fitness
+  const cardioBranch = conditionalBlock({
+    groupUuid: uuidFactory(),
+    input: { kind: "variable", variableName: "v_mode" },
+    condition: 4,
+    equalsText: "cardio",
+    bodyActions: [openUrlActionXml("fitnessapp://")],
+  });
+
+  // Branch 3: end -> check active start event or fallback recent workout window upload
+  const endDateUuid = uuidFactory();
+  const activeReqUuid = uuidFactory();
+  const elapsedValUuid = uuidFactory();
+  const pairedStartUuid = uuidFactory();
+  const pairedMetrics = buildWorkoutWindowMetricsActions({
+    uuidFactory,
+    dateFilter: {
+      kind: "betweenDates",
+      startDateUuid: pairedStartUuid,
+      startDateOutputName: "Adjusted Date",
+      endDateUuid: endDateUuid,
+      endDateOutputName: "Date",
+    },
+    distanceSpec,
+  });
+  const fallbackStartUuid = uuidFactory();
+  const fallbackMetrics = buildWorkoutWindowMetricsActions({
+    uuidFactory,
+    dateFilter: {
+      kind: "betweenDates",
+      startDateUuid: fallbackStartUuid,
+      startDateOutputName: "Adjusted Date",
+      endDateUuid: endDateUuid,
+      endDateOutputName: "Date",
+    },
+    distanceSpec,
+  });
+
+  const endBranch = conditionalBlock({
+    groupUuid: uuidFactory(),
+    input: { kind: "variable", variableName: "v_mode" },
+    condition: 4,
+    equalsText: "end",
+    bodyActions: [
+      delayActionXml(5),
+      currentDateActionXml({ uuid: endDateUuid }),
+      downloadJsonActionXml({
+        uuid: activeReqUuid,
+        endpoint: activeEndpoint,
+        endpointPath: prelude ? activePath : undefined,
+        token: cleanToken,
+        originUuid: prelude?.originUuid,
+        tokenUuid: prelude?.tokenUuid,
+        method: "GET",
+      }),
+      getDictionaryValueActionXml({
+        uuid: elapsedValUuid,
+        key: "elapsedMinutes",
+        inputUuid: activeReqUuid,
+        inputName: "Contents of URL",
+      }),
+      ...conditionalBlock({
+        groupUuid: uuidFactory(),
+        input: { kind: "output", outputUuid: elapsedValUuid, outputName: "Dictionary Value" },
+        condition: 100,
+        bodyActions: [
+          adjustDateSubtractMinutesActionXml({
+            uuid: pairedStartUuid,
+            minutesUuid: elapsedValUuid,
+            minutesOutputName: "Dictionary Value",
+            inputUuid: endDateUuid,
+            inputName: "Date",
+          }),
+          ...pairedMetrics.actions,
+          downloadJsonActionXml({
+            uuid: uuidFactory(),
+            endpoint: eventsEndpoint,
+            endpointPath: prelude ? eventsPath : undefined,
+            token: cleanToken,
+            originUuid: prelude?.originUuid,
+            tokenUuid: prelude?.tokenUuid,
+            bodyItems: [
+              { key: "schemaVersion", value: "1", itemType: 3 },
+              { key: "event", value: "end" },
+              { key: "activityType", value: activityType },
+              { key: "environment", value: resolvedEnv },
+              { key: "occurredAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+              ...pairedMetrics.bodyItems,
+            ],
+          }),
+        ],
+        otherwiseActions: [
+          adjustDateSubtractMinutesActionXml({
+            uuid: fallbackStartUuid,
+            minutes: resolvedMinutes,
+            inputUuid: endDateUuid,
+            inputName: "Date",
+          }),
+          ...fallbackMetrics.actions,
+          downloadJsonActionXml({
+            uuid: uuidFactory(),
+            endpoint: workoutsEndpoint,
+            endpointPath: prelude ? workoutsPath : undefined,
+            token: cleanToken,
+            originUuid: prelude?.originUuid,
+            tokenUuid: prelude?.tokenUuid,
+            bodyItems: [
+              { key: "schemaVersion", value: "1", itemType: 3 },
+              { key: "source", value: "shortcut" },
+              { key: "captureMethod", value: "trigger" },
+              { key: "durationKind", value: "event_elapsed" },
+              { key: "activityType", value: activityType },
+              { key: "environment", value: resolvedEnv },
+              { key: "startedAt", outputAttachment: { name: "Adjusted Date", uuid: fallbackStartUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+              { key: "endedAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+              { key: "durationMinutes", value: String(resolvedMinutes), itemType: 3 },
+              ...fallbackMetrics.bodyItems,
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
+
+  // Branch 4: daily -> collect daily health metrics & upload
+  const dailyBranch = conditionalBlock({
+    groupUuid: uuidFactory(),
+    input: { kind: "variable", variableName: "v_mode" },
+    condition: 4,
+    equalsText: "daily",
+    bodyActions: buildDailyHealthCollectionActions({
+      uuidFactory,
+      selectedMetrics,
+      endpoint: dailyEndpoint,
+      endpointPath: prelude ? dailyPath : undefined,
+      cleanToken,
+      originUuid: prelude?.originUuid,
+      tokenUuid: prelude?.tokenUuid,
+    }),
+  });
+
+  const actions: string[] = [
+    commentActionXml(commentText),
+    ...(prelude ? prelude.actions : []),
+    ...resolveModeActions,
+    ...strengthBranch,
+    ...cardioBranch,
+    ...endBranch,
+    ...dailyBranch,
+  ];
+
+  const xml = wrapShortcutPlist(actions, prelude?.importQuestions ?? [], { hasShortcutInputVariables: true });
+  return {
+    filename,
+    shortcutName: filename.replace(/\.shortcut$/, ""),
+    endpoint: prelude ? `<导入时填写>/api/integrations/apple-health/{daily,events,workouts}` : `${base}/api/integrations/apple-health/daily`,
+    locale: resolvedLocale,
+    metricCount: selectedMetrics.length,
+    groups: selectedGroups,
+    windowMinutes: resolvedMinutes,
     xml,
     base64: encodeShortcutXmlToBase64(xml),
   };

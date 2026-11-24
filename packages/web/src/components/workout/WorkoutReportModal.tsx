@@ -12,6 +12,7 @@ import {
   type WorkoutData,
   type WorkoutReportResponse,
 } from "../../lib/domain";
+import { triggerAppleHubAction } from "../../lib/apple-fitness";
 import { triggerHaptic } from "../../lib/haptics-audio";
 import { openAppleWorkoutDetailsModal, openWorkoutReport, openWorkoutShareModal } from "../../lib/record-openers";
 import { useUiStore } from "../../store/useUiStore";
@@ -332,6 +333,20 @@ export function WorkoutReportModal({
               })
             }
           />
+        </div>
+      ) : report.date === today() ? (
+        <div className="report-comparison-bar" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+          <span>刚练完？一键回传 Apple Watch 心率与消耗</span>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              triggerHaptic("light");
+              triggerAppleHubAction("end", { notify });
+            }}
+          >
+            <Icon name="heart" size={14} /> 回传 Apple 心率/热量
+          </button>
         </div>
       ) : null}
 

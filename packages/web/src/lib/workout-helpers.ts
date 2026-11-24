@@ -3,6 +3,7 @@ export const soundStylePreference = "ironlog-web-rest-sound-style";
 export const appleFitnessAutoLaunchPreference = "ironlog-web-apple-fitness-auto";
 export const appleStrengthLaunchPreference = "ironlog-web-apple-strength-mode";
 export const appleCardioLaunchPreference = "ironlog-web-apple-cardio-mode";
+export const appleHubShortcutPreference = "ironlog-web-apple-hub-shortcut";
 export const appleStrengthShortcutPreference = "ironlog-web-apple-strength-shortcut";
 export const appleCardioShortcutPreference = "ironlog-web-apple-cardio-shortcut";
 export const screenPreference = "ironlog-web-workout-screen";
@@ -33,8 +34,9 @@ export const REST_STEP_PRESETS = [10, 15, 30] as const;
 
 export type WarmupScheme = "light" | "standard" | "heavy";
 export type RestSoundStyle = "chime" | "marimba" | "bell";
-export type AppleFitnessLaunchMode = "shortcut" | "fitness_app" | "off";
+export type AppleFitnessLaunchMode = "hub" | "shortcut" | "fitness_app" | "off";
 
+export const DEFAULT_APPLE_HUB_SHORTCUT = "铁记-通用-Apple健康全能联动";
 export const DEFAULT_APPLE_STRENGTH_SHORTCUT = "铁记开始力量";
 export const DEFAULT_APPLE_CARDIO_SHORTCUT = "铁记开始有氧";
 
@@ -111,6 +113,7 @@ export interface WorkoutPreferences {
   appleFitnessAutoLaunch: boolean;
   appleStrengthLaunch: AppleFitnessLaunchMode;
   appleCardioLaunch: AppleFitnessLaunchMode;
+  appleHubShortcutName: string;
   appleStrengthShortcutName: string;
   appleCardioShortcutName: string;
 }
@@ -134,8 +137,9 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   warmupScheme: "standard",
   soundStyle: "chime",
   appleFitnessAutoLaunch: false,
-  appleStrengthLaunch: "shortcut",
+  appleStrengthLaunch: "hub",
   appleCardioLaunch: "fitness_app",
+  appleHubShortcutName: DEFAULT_APPLE_HUB_SHORTCUT,
   appleStrengthShortcutName: DEFAULT_APPLE_STRENGTH_SHORTCUT,
   appleCardioShortcutName: DEFAULT_APPLE_CARDIO_SHORTCUT,
 };
@@ -210,7 +214,7 @@ function readSoundStylePref(): RestSoundStyle {
 }
 
 function isAppleLaunchMode(raw: unknown): raw is AppleFitnessLaunchMode {
-  return raw === "shortcut" || raw === "fitness_app" || raw === "off";
+  return raw === "hub" || raw === "shortcut" || raw === "fitness_app" || raw === "off";
 }
 
 function readAppleLaunchModePref(key: string, fallback: AppleFitnessLaunchMode): AppleFitnessLaunchMode {
@@ -281,6 +285,10 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     appleCardioLaunch: readAppleLaunchModePref(
       appleCardioLaunchPreference,
       DEFAULT_WORKOUT_PREFERENCES.appleCardioLaunch,
+    ),
+    appleHubShortcutName: readShortcutNamePref(
+      appleHubShortcutPreference,
+      DEFAULT_APPLE_HUB_SHORTCUT,
     ),
     appleStrengthShortcutName: readShortcutNamePref(
       appleStrengthShortcutPreference,
@@ -397,6 +405,12 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
       case "appleCardioLaunch":
         localStorage.setItem(appleCardioLaunchPreference, String(value));
         break;
+      case "appleHubShortcutName":
+        localStorage.setItem(
+          appleHubShortcutPreference,
+          sanitizeShortcutName(value, DEFAULT_APPLE_HUB_SHORTCUT),
+        );
+        break;
       case "appleStrengthShortcutName":
         localStorage.setItem(
           appleStrengthShortcutPreference,
@@ -489,6 +503,10 @@ export function applyRemoteWorkoutPreferences(
   if (isAppleLaunchMode(remote.appleCardioLaunch)) {
     persistSinglePreference("appleCardioLaunch", remote.appleCardioLaunch);
   }
+  if (typeof remote.appleHubShortcutName === "string") {
+    const cleaned = remote.appleHubShortcutName.trim().slice(0, 80);
+    if (cleaned) persistSinglePreference("appleHubShortcutName", cleaned);
+  }
   if (typeof remote.appleStrengthShortcutName === "string") {
     const cleaned = remote.appleStrengthShortcutName.trim().slice(0, 80);
     if (cleaned) persistSinglePreference("appleStrengthShortcutName", cleaned);
@@ -525,6 +543,7 @@ const ALL_WORKOUT_PREF_KEYS = [
   appleFitnessAutoLaunchPreference,
   appleStrengthLaunchPreference,
   appleCardioLaunchPreference,
+  appleHubShortcutPreference,
   appleStrengthShortcutPreference,
   appleCardioShortcutPreference,
 ] as const;

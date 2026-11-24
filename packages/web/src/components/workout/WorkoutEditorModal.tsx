@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
-import { inferAppleFitnessKind, triggerAppleFitnessLaunch } from "../../lib/apple-fitness";
+import { inferAppleFitnessKind, triggerAppleFitnessLaunch, triggerAppleHubAction } from "../../lib/apple-fitness";
 import { fmt, today } from "../../lib/date";
 import {
   EQUIPMENT,
@@ -1233,6 +1233,16 @@ export function WorkoutEditorModal({
                   }}
                 >
                   <Icon name="heart" size={14} /> 打开健身(有氧)
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    triggerHaptic("light");
+                    triggerAppleHubAction("end", { prefs, notify });
+                  }}
+                >
+                  <Icon name="upload" size={14} /> 回传刚结束训练（心率/热量）
                 </button>
                 <button
                   type="button"

@@ -4,6 +4,7 @@ import { createApp } from "../packages/server/src/app.js";
 import { openDatabase } from "../packages/server/src/db.js";
 import {
   DEFAULT_APPLE_CARDIO_SHORTCUT,
+  DEFAULT_APPLE_HUB_SHORTCUT,
   DEFAULT_APPLE_STRENGTH_SHORTCUT,
   DEFAULT_WORKOUT_PREFERENCES,
   applyRemoteWorkoutPreferences,
@@ -17,9 +18,11 @@ import {
 import {
   APPLE_FITNESS_APP_URL,
   buildAppleFitnessLaunchUrl,
+  buildAppleHubActionUrl,
   inferAppleFitnessKind,
   isAppleMobileDevice,
   triggerAppleFitnessLaunch,
+  triggerAppleHubAction,
 } from "../packages/web/src/lib/apple-fitness.ts";
 import {
   cachedQuery,
@@ -122,8 +125,9 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
   assert.equal(defaults.warmupScheme, "standard");
   assert.equal(defaults.soundStyle, "chime");
   assert.equal(defaults.appleFitnessAutoLaunch, false);
-  assert.equal(defaults.appleStrengthLaunch, "shortcut");
+  assert.equal(defaults.appleStrengthLaunch, "hub");
   assert.equal(defaults.appleCardioLaunch, "fitness_app");
+  assert.equal(defaults.appleHubShortcutName, DEFAULT_APPLE_HUB_SHORTCUT);
   assert.equal(defaults.appleStrengthShortcutName, DEFAULT_APPLE_STRENGTH_SHORTCUT);
   assert.equal(defaults.appleCardioShortcutName, DEFAULT_APPLE_CARDIO_SHORTCUT);
   assert.equal(defaults.showPlateMath, true);
@@ -154,7 +158,8 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
       soundStyle: "bell",
       appleFitnessAutoLaunch: true,
       appleStrengthLaunch: "fitness_app",
-      appleCardioLaunch: "shortcut",
+      appleCardioLaunch: "hub",
+      appleHubShortcutName: "铁记全能自定义",
       appleStrengthShortcutName: "推拉力量",
       appleCardioShortcutName: "户外慢跑",
     });
@@ -165,7 +170,8 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     assert.equal(applied.soundStyle, "bell");
     assert.equal(applied.appleFitnessAutoLaunch, true);
     assert.equal(applied.appleStrengthLaunch, "fitness_app");
-    assert.equal(applied.appleCardioLaunch, "shortcut");
+    assert.equal(applied.appleCardioLaunch, "hub");
+    assert.equal(applied.appleHubShortcutName, "铁记全能自定义");
     assert.equal(applied.appleStrengthShortcutName, "推拉力量");
     assert.equal(applied.appleCardioShortcutName, "户外慢跑");
     assert.equal(pushedCount, 0, "applying remote preferences must not echo back to cloud sync");
@@ -180,8 +186,9 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     writeWorkoutPreference("warmupScheme", "heavy");
     writeWorkoutPreference("soundStyle", "marimba");
     writeWorkoutPreference("appleFitnessAutoLaunch", false);
-    writeWorkoutPreference("appleStrengthLaunch", "shortcut");
+    writeWorkoutPreference("appleStrengthLaunch", "hub");
     writeWorkoutPreference("appleCardioLaunch", "off");
+    writeWorkoutPreference("appleHubShortcutName", "全能联动Pro");
     writeWorkoutPreference("appleStrengthShortcutName", "力量开练");
     writeWorkoutPreference("appleCardioShortcutName", "单车有氧");
 
@@ -196,8 +203,9 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     assert.equal(updated.warmupScheme, "heavy");
     assert.equal(updated.soundStyle, "marimba");
     assert.equal(updated.appleFitnessAutoLaunch, false);
-    assert.equal(updated.appleStrengthLaunch, "shortcut");
+    assert.equal(updated.appleStrengthLaunch, "hub");
     assert.equal(updated.appleCardioLaunch, "off");
+    assert.equal(updated.appleHubShortcutName, "全能联动Pro");
     assert.equal(updated.appleStrengthShortcutName, "力量开练");
     assert.equal(updated.appleCardioShortcutName, "单车有氧");
 
@@ -273,8 +281,9 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
         warmupScheme: "heavy",
         soundStyle: "marimba",
         appleFitnessAutoLaunch: true,
-        appleStrengthLaunch: "shortcut",
+        appleStrengthLaunch: "hub",
         appleCardioLaunch: "fitness_app",
+        appleHubShortcutName: "铁记全能Hub",
         appleStrengthShortcutName: "传统力量开练",
       },
     });
@@ -299,8 +308,9 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
     assert.equal(profBody.profile.workoutPrefs?.warmupScheme, "heavy");
     assert.equal(profBody.profile.workoutPrefs?.soundStyle, "marimba");
     assert.equal(profBody.profile.workoutPrefs?.appleFitnessAutoLaunch, true);
-    assert.equal(profBody.profile.workoutPrefs?.appleStrengthLaunch, "shortcut");
+    assert.equal(profBody.profile.workoutPrefs?.appleStrengthLaunch, "hub");
     assert.equal(profBody.profile.workoutPrefs?.appleCardioLaunch, "fitness_app");
+    assert.equal(profBody.profile.workoutPrefs?.appleHubShortcutName, "铁记全能Hub");
     assert.equal(profBody.profile.workoutPrefs?.appleStrengthShortcutName, "传统力量开练");
 
     // Cross-account isolation
@@ -369,6 +379,7 @@ test("resetLocalWorkoutPreferences clears saved keys, resets defaults, and cance
     writeWorkoutPreference("appleFitnessAutoLaunch", true);
     writeWorkoutPreference("appleStrengthLaunch", "fitness_app");
     writeWorkoutPreference("appleCardioLaunch", "shortcut");
+    writeWorkoutPreference("appleHubShortcutName", "自定义全能");
     writeWorkoutPreference("appleStrengthShortcutName", "自定义力量");
     writeWorkoutPreference("appleCardioShortcutName", "自定义有氧");
     assert.ok(backing.size > 0);
@@ -631,6 +642,22 @@ test("apple-fitness builds Shortcut/Fitness deep-links, classifies workouts accu
     buildAppleFitnessLaunchUrl("strength", prefs),
     "shortcuts://run-shortcut?name=%E9%93%81%E8%AE%B0%20%E4%BC%A0%E7%BB%9F%E5%8A%9B%E9%87%8F",
   );
+  assert.equal(
+    buildAppleFitnessLaunchUrl("strength", { ...prefs, appleStrengthLaunch: "hub" }),
+    `shortcuts://run-shortcut?name=${encodeURIComponent(DEFAULT_APPLE_HUB_SHORTCUT)}&input=text&text=strength`,
+  );
+  assert.equal(
+    buildAppleFitnessLaunchUrl("cardio", prefs, "hub"),
+    `shortcuts://run-shortcut?name=${encodeURIComponent(DEFAULT_APPLE_HUB_SHORTCUT)}&input=text&text=cardio`,
+  );
+  assert.equal(
+    buildAppleHubActionUrl("end", { appleHubShortcutName: "铁记全能" }),
+    `shortcuts://run-shortcut?name=${encodeURIComponent("铁记全能")}&input=text&text=end`,
+  );
+  assert.equal(
+    buildAppleHubActionUrl("daily", { appleHubShortcutName: "  " }),
+    `shortcuts://run-shortcut?name=${encodeURIComponent(DEFAULT_APPLE_HUB_SHORTCUT)}&input=text&text=daily`,
+  );
   assert.equal(buildAppleFitnessLaunchUrl("cardio", prefs), APPLE_FITNESS_APP_URL);
   assert.equal(buildAppleFitnessLaunchUrl("cardio", prefs, "shortcut"), "shortcuts://run-shortcut?name=%E9%93%81%E8%AE%B0%E5%BC%80%E5%A7%8B%E6%9C%89%E6%B0%A7");
   assert.equal(buildAppleFitnessLaunchUrl("strength", prefs, "off"), null);
@@ -676,4 +703,25 @@ test("apple-fitness builds Shortcut/Fitness deep-links, classifies workouts accu
   assert.equal(loudRes.launched, false);
   assert.equal(loudRes.url, APPLE_FITNESS_APP_URL);
   assert.equal(notices.length, 1);
+
+  const hubQuietRes = triggerAppleHubAction("end", {
+    prefs: { ...prefs, appleHubShortcutName: "铁记全能" },
+    silentNonIos: true,
+    notify: (msg) => notices.push(msg),
+  });
+  assert.equal(hubQuietRes.launched, false);
+  assert.equal(hubQuietRes.url, `shortcuts://run-shortcut?name=${encodeURIComponent("铁记全能")}&input=text&text=end`);
+  assert.equal(notices.length, 1);
+
+  const hubLoudRes = triggerAppleHubAction("daily", {
+    prefs,
+    silentNonIos: false,
+    notify: (msg) => notices.push(msg),
+  });
+  assert.equal(hubLoudRes.launched, false);
+  assert.equal(
+    hubLoudRes.url,
+    `shortcuts://run-shortcut?name=${encodeURIComponent(DEFAULT_APPLE_HUB_SHORTCUT)}&input=text&text=daily`,
+  );
+  assert.equal(notices.length, 2);
 });

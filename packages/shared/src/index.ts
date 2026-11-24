@@ -239,8 +239,9 @@ const workoutPrefsBase = {
   warmupScheme: z.enum(["light", "standard", "heavy"]),
   soundStyle: z.enum(["chime", "marimba", "bell"]),
   appleFitnessAutoLaunch: z.boolean(),
-  appleStrengthLaunch: z.enum(["shortcut", "fitness_app", "off"]),
-  appleCardioLaunch: z.enum(["shortcut", "fitness_app", "off"]),
+  appleStrengthLaunch: z.enum(["hub", "shortcut", "fitness_app", "off"]),
+  appleCardioLaunch: z.enum(["hub", "shortcut", "fitness_app", "off"]),
+  appleHubShortcutName: z.string().trim().min(1).max(80),
   appleStrengthShortcutName: z.string().trim().min(1).max(80),
   appleCardioShortcutName: z.string().trim().min(1).max(80),
 };
@@ -266,8 +267,9 @@ export const workoutPrefsSchema = z.object({
   warmupScheme: workoutPrefsBase.warmupScheme.default("standard"),
   soundStyle: workoutPrefsBase.soundStyle.default("chime"),
   appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(false),
-  appleStrengthLaunch: workoutPrefsBase.appleStrengthLaunch.default("shortcut"),
+  appleStrengthLaunch: workoutPrefsBase.appleStrengthLaunch.default("hub"),
   appleCardioLaunch: workoutPrefsBase.appleCardioLaunch.default("fitness_app"),
+  appleHubShortcutName: workoutPrefsBase.appleHubShortcutName.default("铁记-通用-Apple健康全能联动"),
   appleStrengthShortcutName: workoutPrefsBase.appleStrengthShortcutName.default("铁记开始力量"),
   appleCardioShortcutName: workoutPrefsBase.appleCardioShortcutName.default("铁记开始有氧"),
 });

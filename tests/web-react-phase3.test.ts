@@ -13,10 +13,12 @@ import {
 import {
   APPLE_HEALTH_DAILY_GROUPS,
   APPLE_SHORTCUT_SPORTS,
+  DEFAULT_APPLE_HUB_SHORTCUT_NAME,
   assessServerOrigin,
   buildIronlogDailyHealthShortcut,
   buildIronlogEventShortcut,
   buildIronlogRecentWorkoutShortcut,
+  buildIronlogUnifiedAppleHubShortcut,
   buildMacSignCommand,
   encodeShortcutXmlToBase64,
   normalizeServerOrigin,
@@ -163,6 +165,87 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
     "/api/integrations/apple-health/events/active?activityType=traditionalStrengthTraining",
     "/api/integrations/apple-health/events",
   ]);
+});
+
+test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Health smart hub shortcut", () => {
+  const secretToken = "tok_hub_secret_888";
+  const secretOrigin = "https://hub-secret.example.com";
+
+  const hubUniversal = buildIronlogUnifiedAppleHubShortcut({
+    serverOrigin: secretOrigin,
+    token: secretToken,
+    activityType: "traditionalStrengthTraining",
+    windowMinutes: 45,
+    metrics: ["steps", "sleepSamples", "hrvMs"],
+    useImportQuestions: true,
+  });
+
+  assert.equal(hubUniversal.filename, `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut`);
+  assert.equal(hubUniversal.shortcutName, DEFAULT_APPLE_HUB_SHORTCUT_NAME);
+  assert.equal(hubUniversal.windowMinutes, 45);
+  assert.equal(hubUniversal.metricCount, 3);
+  assert.ok(!hubUniversal.xml.includes(secretToken), "universal hub shortcut must not embed literal token");
+  assert.ok(!hubUniversal.xml.includes(secretOrigin), "universal hub shortcut must not embed literal origin");
+  assertBalancedPlistContainers(hubUniversal.xml);
+
+  // Supports Shortcut Input + ImportQuestions at exact indices 1 and 2
+  assert.ok(hubUniversal.xml.includes("<key>WFWorkflowHasShortcutInputVariables</key>\n\t<true/>"));
+  assert.ok(hubUniversal.xml.includes("<key>ActionIndex</key>\n\t\t\t<integer>1</integer>"));
+  assert.ok(hubUniversal.xml.includes("<key>ActionIndex</key>\n\t\t\t<integer>2</integer>"));
+  const actionIds = [...hubUniversal.xml.matchAll(/<key>WFWorkflowActionIdentifier<\/key>\s*<string>([^<]+)<\/string>/g)].map(
+    (m) => m[1],
+  );
+  assert.deepEqual(actionIds.slice(0, 3), [
+    "is.workflow.actions.comment",
+    "is.workflow.actions.gettext",
+    "is.workflow.actions.gettext",
+  ]);
+
+  // Menu fallback + ExtensionInput conditional routing
+  assert.ok(hubUniversal.xml.includes("<string>ExtensionInput</string>"));
+  assert.ok(hubUniversal.xml.includes("is.workflow.actions.choosefrommenu"));
+  for (const label of ["开始传统力量", "打开有氧健身", "结束训练并同步心率热量", "同步今日健康数据"]) {
+    assert.ok(hubUniversal.xml.includes(`<string>${label}</string>`), `contains menu item ${label}`);
+  }
+  for (const mode of ["strength", "cardio", "end", "daily"]) {
+    assert.ok(
+      hubUniversal.xml.includes(`<key>WFConditionalActionString</key>\n\t\t\t\t<string>${mode}</string>`),
+      `contains conditional route for ${mode}`,
+    );
+  }
+  assert.ok(hubUniversal.xml.includes("is.workflow.actions.openurl"));
+  assert.ok(hubUniversal.xml.includes("<string>fitnessapp://</string>"));
+
+  // Magic variable endpoints & headers
+  assert.ok(hubUniversal.xml.includes("<string>Bearer &#xFFFC;</string>"));
+  for (const p of [
+    "/api/integrations/apple-health/events",
+    "/api/integrations/apple-health/events/active?activityType=traditionalStrengthTraining",
+    "/api/integrations/apple-health/workouts",
+    "/api/integrations/apple-health/daily",
+  ]) {
+    assert.ok(hubUniversal.xml.includes(`<string>&#xFFFC;${p}</string>`), `contains magic path ${p}`);
+  }
+
+  assert.equal(hubUniversal.base64, encodeShortcutXmlToBase64(hubUniversal.xml));
+  assert.equal(Buffer.from(hubUniversal.base64, "base64").toString("utf8"), hubUniversal.xml);
+
+  // Pre-filled mode embeds exact URLs & Bearer token cleanly
+  const hubPrefilled = buildIronlogUnifiedAppleHubShortcut({
+    serverOrigin: secretOrigin,
+    token: secretToken,
+    metrics: ["steps"],
+    useImportQuestions: false,
+  });
+  assert.equal(hubPrefilled.filename, "铁记-Apple健康全能联动.shortcut");
+  assertBalancedPlistContainers(hubPrefilled.xml);
+  assert.ok(hubPrefilled.xml.includes("<key>WFWorkflowHasShortcutInputVariables</key>\n\t<true/>"));
+  assert.ok(hubPrefilled.xml.includes("<key>WFWorkflowImportQuestions</key>\n\t<array/>"));
+  assert.ok(hubPrefilled.xml.includes(`Bearer ${secretToken}`));
+  assert.ok(hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/events`));
+  assert.ok(hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/workouts`));
+  assert.ok(hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/daily`));
+  assert.equal(Buffer.from(hubPrefilled.base64, "base64").toString("utf8"), hubPrefilled.xml);
 });
 
 test("packages/web/src/lib/badges filters Apple badges when disconnected and orders overview picks", () => {

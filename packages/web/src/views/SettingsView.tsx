@@ -3,7 +3,7 @@ import { Icon } from "../components/Icon";
 import { AiSettingsCard } from "../components/ai/AiSettingsCard";
 import type { AiStatus } from "../components/ai/AiModals";
 import { apiFetch } from "../lib/api";
-import { openAppleShortcutCreator, triggerAppleFitnessLaunch } from "../lib/apple-fitness";
+import { openAppleShortcutCreator, triggerAppleFitnessLaunch, triggerAppleHubAction } from "../lib/apple-fitness";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
 import { createRestAudio, triggerHaptic } from "../lib/haptics-audio";
@@ -12,6 +12,7 @@ import {
   ALL_PLATES,
   BAR_PRESETS,
   DEFAULT_APPLE_CARDIO_SHORTCUT,
+  DEFAULT_APPLE_HUB_SHORTCUT,
   DEFAULT_APPLE_STRENGTH_SHORTCUT,
   PROFILE_VERSION_EVENT,
   readWorkoutPreferences,
@@ -102,6 +103,9 @@ export function SettingsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [workoutPrefs, setWorkoutPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
+  const [hubShortcutInput, setHubShortcutInput] = useState(
+    () => readWorkoutPreferences().appleHubShortcutName,
+  );
   const [strengthShortcutInput, setStrengthShortcutInput] = useState(
     () => readWorkoutPreferences().appleStrengthShortcutName,
   );
@@ -109,6 +113,10 @@ export function SettingsView() {
     () => readWorkoutPreferences().appleCardioShortcutName,
   );
   const restAudio = useMemo(() => createRestAudio(() => true), []);
+
+  useEffect(() => {
+    setHubShortcutInput(workoutPrefs.appleHubShortcutName);
+  }, [workoutPrefs.appleHubShortcutName]);
 
   useEffect(() => {
     setStrengthShortcutInput(workoutPrefs.appleStrengthShortcutName);
@@ -1125,10 +1133,98 @@ export function SettingsView() {
                 </section>
 
                 <section className="form-section">
-                  <h3 className="form-section-title">Apple 健身联动跳转</h3>
-                  <div className="session-options">
+                  <h3 className="form-section-title">Apple 健康与智能跳转</h3>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 12,
+                      flexWrap: "wrap",
+                    }}
+                  >
+                    <small className="muted">
+                      已整合至「Apple 健康」标签页，一站配置全能快捷指令、力量/有氧智能跳转与每日健康上传。
+                    </small>
+                    <button type="button" className="secondary-button" onClick={() => setSettingsTab("devices")}>
+                      前往配置
+                    </button>
+                  </div>
+                </section>
+              </div>
+            </section>
+            </>
+          ) : null}
+
+          {settingsTab === "devices" ? (
+            <section className="panel">
+              <header className="panel-head">
+                <h2>Apple 健康</h2>
+              </header>
+              <div className="settings-form">
+                {!appleHealthConnected ? (
+                  <div className="apple-optin-banner">
+                    <strong>暂未对接 Apple 健康</strong>
+                    <small>
+                      没有 Apple Watch 也能完整使用铁记，首页、数据分析、日历与徽章中的苹果健康模块已自动为你隐藏。日后如需同步，在下方导入数据或生成快捷指令即可自动开启。
+                    </small>
+                  </div>
+                ) : null}
+
+                <section className="form-section">
+                  <h3>Apple 健康智能联动与快捷指令（全能合一）</h3>
+                  <p className="muted">
+                    1 个全能快捷指令整合「开始打卡与跳转健身 → 完练自动回传心率热量 → 每日全量健康同步」；导入时弹窗填入地址和令牌，可用 <code>sign.shortcuty.app</code> 网页签名或 Mac 本地签名。
+                  </p>
+                  <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                    <button type="button" className="primary-button" onClick={() => openDeviceSetupModal()}>
+                      <Icon name="plus" /> 导出全能快捷指令（1 个文件）
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        triggerHaptic("light");
+                        triggerAppleFitnessLaunch("strength", { prefs: workoutPrefs, notify });
+                      }}
+                    >
+                      <Icon name="heart" size={14} /> 开始传统力量
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        triggerHaptic("light");
+                        triggerAppleFitnessLaunch("cardio", { prefs: workoutPrefs, notify });
+                      }}
+                    >
+                      <Icon name="heart" size={14} /> 打开有氧健身
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        triggerHaptic("light");
+                        triggerAppleHubAction("end", { prefs: workoutPrefs, notify });
+                      }}
+                    >
+                      <Icon name="upload" size={14} /> 回传刚结束训练
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => {
+                        triggerHaptic("light");
+                        triggerAppleHubAction("daily", { prefs: workoutPrefs, notify });
+                      }}
+                    >
+                      <Icon name="refresh" size={14} /> 同步今日健康
+                    </button>
+                  </div>
+
+                  <div className="session-options" style={{ marginTop: 12 }}>
                     <label className="switch-chip">
-                      <span>新建今日训练时自动跳转</span>
+                      <span>新建今日训练时自动跳转 Apple 健身</span>
                       <input
                         className="switch"
                         type="checkbox"
@@ -1141,13 +1237,50 @@ export function SettingsView() {
                     仅在 iPhone / iPad 上新建当日训练时生效，补录历史或恢复草稿不会触发。
                   </small>
 
+                  <div className="field" style={{ marginTop: 10 }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span>全能快捷指令名称</span>
+                      <button
+                        type="button"
+                        className="quiet"
+                        onClick={() =>
+                          triggerAppleHubAction("daily", {
+                            prefs: {
+                              ...workoutPrefs,
+                              appleHubShortcutName: hubShortcutInput.trim() || DEFAULT_APPLE_HUB_SHORTCUT,
+                            },
+                            notify,
+                          })
+                        }
+                      >
+                        测试唤起同步
+                      </button>
+                    </div>
+                    <input
+                      value={hubShortcutInput}
+                      maxLength={80}
+                      placeholder={DEFAULT_APPLE_HUB_SHORTCUT}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setHubShortcutInput(val);
+                        if (val.trim()) updateWorkoutPref("appleHubShortcutName", val.trim().slice(0, 80));
+                      }}
+                      onBlur={() => {
+                        const normalized = hubShortcutInput.trim().slice(0, 80) || DEFAULT_APPLE_HUB_SHORTCUT;
+                        setHubShortcutInput(normalized);
+                        updateWorkoutPref("appleHubShortcutName", normalized);
+                      }}
+                    />
+                  </div>
+
                   <div className="field">
                     <span>力量训练跳转方式</span>
                     <div className="segments">
                       {(
                         [
-                          ["shortcut", "快捷指令直达传统力量"],
-                          ["fitness_app", "打开「健身」App"],
+                          ["hub", "全能联动(推荐)"],
+                          ["shortcut", "独立快捷指令"],
+                          ["fitness_app", "健身 App"],
                           ["off", "关闭"],
                         ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
                       ).map(([mode, label]) => (
@@ -1165,7 +1298,7 @@ export function SettingsView() {
                   {workoutPrefs.appleStrengthLaunch === "shortcut" ? (
                     <div className="field">
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <span>力量快捷指令名称</span>
+                        <span>独立力量快捷指令名称</span>
                         <button
                           type="button"
                           className="quiet"
@@ -1198,16 +1331,6 @@ export function SettingsView() {
                         }}
                       />
                     </div>
-                  ) : workoutPrefs.appleStrengthLaunch === "fitness_app" ? (
-                    <div>
-                      <button
-                        type="button"
-                        className="quiet"
-                        onClick={() => triggerAppleFitnessLaunch("strength", { prefs: workoutPrefs, notify })}
-                      >
-                        测试打开健身
-                      </button>
-                    </div>
                   ) : null}
 
                   <div className="field">
@@ -1215,8 +1338,9 @@ export function SettingsView() {
                     <div className="segments">
                       {(
                         [
-                          ["fitness_app", "打开「健身」App"],
-                          ["shortcut", "运行有氧快捷指令"],
+                          ["fitness_app", "健身 App"],
+                          ["hub", "全能联动"],
+                          ["shortcut", "独立快捷指令"],
                           ["off", "关闭"],
                         ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
                       ).map(([mode, label]) => (
@@ -1234,7 +1358,7 @@ export function SettingsView() {
                   {workoutPrefs.appleCardioLaunch === "shortcut" ? (
                     <div className="field">
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <span>有氧快捷指令名称</span>
+                        <span>独立有氧快捷指令名称</span>
                         <button
                           type="button"
                           className="quiet"
@@ -1267,39 +1391,32 @@ export function SettingsView() {
                         }}
                       />
                     </div>
-                  ) : workoutPrefs.appleCardioLaunch === "fitness_app" ? (
-                    <div>
-                      <button
-                        type="button"
-                        className="quiet"
-                        onClick={() => triggerAppleFitnessLaunch("cardio", { prefs: workoutPrefs, notify })}
-                      >
-                        测试打开健身
-                      </button>
-                    </div>
                   ) : null}
 
-                  <details className="overview-more" style={{ marginTop: 6 }}>
+                  <details className="overview-more" style={{ marginTop: 8 }}>
                     <summary>
                       <span>
-                        <strong>10 秒配置 iPhone「开始传统力量」快捷指令</strong>
-                        <small>苹果不开放健身内部子页 URL，通过快捷指令即可直达传统力量训练</small>
+                        <strong>全能快捷指令导入与 Watch 传统力量配置说明</strong>
+                        <small>支持 sign.shortcuty.app 网页在线签名（免 Mac），或改用独立 Watch 启动快捷指令</small>
                       </span>
                       <Icon name="chevron" size={16} />
                     </summary>
                     <div className="overview-more-body" style={{ display: "grid", gap: 8 }}>
                       <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4, fontSize: 13 }}>
-                        <li>点击下方「去快捷指令新建」（或打开 iPhone「快捷指令」App 点右上角 `+`）。</li>
                         <li>
-                          搜索添加动作 <strong>「开始体能训练」</strong> → 运动选 <strong>「传统力量训练」</strong>（目标选「开放式」）。
+                          点击上方 <b>「导出全能快捷指令（1 个文件）」</b> → 选「通用安全模板」下载 `.shortcut` → 用{" "}
+                          <a href="https://sign.shortcuty.app" target="_blank" rel="noopener noreferrer">
+                            sign.shortcuty.app
+                          </a>{" "}
+                          或 Mac 签名导入 iPhone，按弹窗粘贴地址与令牌即可完成绑定。
                         </li>
                         <li>
-                          将快捷指令命名为 <strong>{strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT}</strong>{" "}
-                          即完成；有氧如需弹出运动选择，可同样建一条{" "}
-                          <strong>{cardioShortcutInput.trim() || DEFAULT_APPLE_CARDIO_SHORTCUT}</strong> 并将运动设为「每次询问」。
+                          如希望在点击力量训练时直接跳过菜单启动 Apple Watch「传统力量训练」：可在全能快捷指令 <code>strength</code> 分支末尾将「打开 URL」替换为{" "}
+                          <strong>「开始体能训练 → 传统力量训练」</strong>，或切到「独立快捷指令」并点下方自行新建一条名为{" "}
+                          <strong>{strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT}</strong> 的快捷指令。
                         </li>
                       </ol>
-                      <div className="heading-actions" style={{ justifyContent: "flex-start" }}>
+                      <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
                         <button type="button" className="secondary-button" onClick={() => openAppleShortcutCreator(notify)}>
                           去快捷指令新建
                         </button>
@@ -1320,25 +1437,6 @@ export function SettingsView() {
                     </div>
                   </details>
                 </section>
-              </div>
-            </section>
-            </>
-          ) : null}
-
-          {settingsTab === "devices" ? (
-            <section className="panel">
-              <header className="panel-head">
-                <h2>Apple 健康</h2>
-              </header>
-              <div className="settings-form">
-                {!appleHealthConnected ? (
-                  <div className="apple-optin-banner">
-                    <strong>暂未对接 Apple 健康</strong>
-                    <small>
-                      没有 Apple Watch 也能完整使用铁记，首页、数据分析、日历与徽章中的苹果健康模块已自动为你隐藏。日后如需同步，在下方导入数据或生成快捷指令即可自动开启。
-                    </small>
-                  </div>
-                ) : null}
 
                 <section className="form-section">
                   <h3>Health Data Export</h3>
@@ -1354,23 +1452,7 @@ export function SettingsView() {
                 </section>
 
                 <section className="form-section">
-                  <h3>Apple 快捷指令（全量健康 + 训练打卡）</h3>
-                  <p className="muted">
-                    支持一键导出「每日全量健康同步（睡眠分期、体脂、体重、步数、静息心率、HRV、血氧等）」与「单场训练打卡」快捷指令（配合 Mac 一行签名即可用）。
-                  </p>
-                  <p className="device-endpoint">
-                    <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/daily</code>
-                  </p>
-                  <p className="device-endpoint">
-                    <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/events</code>
-                  </p>
-                  <button type="button" className="secondary-button" onClick={() => openDeviceSetupModal()}>
-                    <Icon name="plus" /> 生成上传快捷指令
-                  </button>
-                </section>
-
-                <section className="form-section">
-                  <h3>上传设备</h3>
+                  <h3>已绑定上传设备与接口地址</h3>
                   {devices.length ? (
                     <ul className="device-list">
                       {devices.map((device) => (
@@ -1388,6 +1470,23 @@ export function SettingsView() {
                   ) : (
                     <p className="muted">暂未添加设备。</p>
                   )}
+                  <details className="training-details" style={{ marginTop: 8 }}>
+                    <summary>
+                      <span>查看接口地址（手动配置或调试用）</span>
+                      <Icon name="chevron" size={14} />
+                    </summary>
+                    <div className="details-body">
+                      <p className="device-endpoint">
+                        <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/daily</code>
+                      </p>
+                      <p className="device-endpoint">
+                        <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/events</code>
+                      </p>
+                      <p className="device-endpoint">
+                        <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/workouts</code>
+                      </p>
+                    </div>
+                  </details>
                 </section>
               </div>
             </section>
