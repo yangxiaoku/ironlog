@@ -923,3 +923,49 @@ dialog.workout-dialog .workout-inline-add-btn {
     min-height: 28px;
   }
 }
+
+/* Algorithm & analytics responsive polish */
+@media (max-width: 630px) {
+  .analytics-subnav .segments {
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+  }
+
+  .analytics-subnav .segments button {
+    padding-inline: 8px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .analytics-subnav-meta {
+    display: none;
+  }
+
+  .masthead-analytics .period-controls {
+    width: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .masthead-analytics .period-controls label,
+  .masthead-analytics .period-controls input[type="date"] {
+    width: 100%;
+  }
+
+  .masthead-analytics .period-controls .segments {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .catalogue-pills-bar .muscle-pills {
+    scroll-snap-type: x proximity;
+  }
+
+  .catalogue-pills-bar .muscle-pills button {
+    scroll-snap-align: start;
+  }
+}

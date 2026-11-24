@@ -924,6 +924,35 @@ test("JSON API Gzip 压缩、Cache-Control 保留及内存动作目录复合筛�
     assert.equal(lookupRes.status, 200);
     const lookupJson = (await lookupRes.json()) as { items: { id: string }[] };
     assert.deepEqual(lookupJson.items.map((x) => x.id), ["bench-press", "exdb_2612"]);
+
+    // 4. Bilingual search relevance ranking & ranked cursor pagination without duplicates
+    const rankedEnRes = await call(`${catalogue}?q=Barbell+Bench+Press&limit=5`);
+    assert.equal(rankedEnRes.status, 200);
+    const rankedEn = (await rankedEnRes.json()) as {
+      total: number;
+      items: { id: string; name: string }[];
+      nextCursor: string | null;
+    };
+    assert.ok(rankedEn.total >= 1);
+    assert.equal(rankedEn.items[0]?.id, "bench-press");
+
+    const seenIds: string[] = [];
+    let cursor: string | null = null;
+    let totalZh = 0;
+    do {
+      const qs = cursor ? `?q=卧推&limit=25&cursor=${encodeURIComponent(cursor)}` : "?q=卧推&limit=25";
+      const pageRes = await call(`${catalogue}${qs}`);
+      assert.equal(pageRes.status, 200);
+      const pageJson = (await pageRes.json()) as typeof rankedEn;
+      totalZh = pageJson.total;
+      if (cursor === null) {
+        assert.ok(pageJson.items.slice(0, 5).some((x) => x.id === "bench-press" || x.name.includes("卧推")));
+      }
+      seenIds.push(...pageJson.items.map((x) => x.id));
+      cursor = pageJson.nextCursor;
+    } while (cursor);
+    assert.equal(seenIds.length, totalZh);
+    assert.equal(new Set(seenIds).size, totalZh);
   } finally {
     db.close();
   }

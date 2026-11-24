@@ -6,7 +6,13 @@ import { resolve } from "node:path";
 import { duration, fmt, formatWeekdayZh, shortDate, today } from "../packages/web/src/lib/date.ts";
 import { clearQueue, enqueueMutation, flushQueue, readQueue } from "../packages/web/src/lib/offline-queue.ts";
 import { parseHashView, VIEW_WORKSPACE } from "../packages/web/src/lib/routes.ts";
-import { ALL_PLATES, plateDeltaLabel, round2, snapWarmupWeight } from "../packages/web/src/lib/workout-helpers.ts";
+import {
+  ALL_PLATES,
+  plateBreakdown,
+  plateDeltaLabel,
+  round2,
+  snapWarmupWeight,
+} from "../packages/web/src/lib/workout-helpers.ts";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 
@@ -82,6 +88,25 @@ test("packages/web/src/lib workout helpers match domain math", () => {
   assert.equal(plateDeltaLabel(70, 75, 20, ALL_PLATES), "+2.5");
   assert.equal(snapWarmupWeight(15, true, 20, ALL_PLATES), 20);
   assert.equal(snapWarmupWeight(17, false, 20, ALL_PLATES), 17.5);
+
+  // Exact DP solves non-canonical plate subsets where greedy gets stuck
+  const nonCanon80 = plateBreakdown(80, 20, [25, 15, 10]);
+  assert.equal(nonCanon80.achievable, true);
+  assert.equal(nonCanon80.remainder, 0);
+  assert.deepEqual(nonCanon80.plates, [15, 15]);
+
+  const nonCanon90 = plateBreakdown(90, 20, [25, 20, 15]);
+  assert.equal(nonCanon90.achievable, true);
+  assert.equal(nonCanon90.remainder, 0);
+  assert.deepEqual(nonCanon90.plates, [20, 15]);
+
+  // Preserves heavier-plates-first tie-breaking when plate counts match
+  const tie80 = plateBreakdown(80, 20, [25, 20, 15, 10]);
+  assert.deepEqual(tie80.plates, [20, 10]);
+
+  // Warmup snapping picks nearest achievable weight (59.5 -> 60 instead of rounding down to 55)
+  assert.equal(snapWarmupWeight(59.5, true, 20, [25, 20, 15, 10, 5, 2.5]), 60);
+  assert.equal(snapWarmupWeight(31.2, true, 20, [20, 15, 10, 5, 2.5, 1.25]), 30);
 });
 
 test("packages/web/dist Vite + PWA build outputs index, manifest, sw, and rewritten /app/ CSS URLs", async () => {

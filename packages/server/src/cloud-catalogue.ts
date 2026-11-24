@@ -117,6 +117,10 @@ interface IndexedCatalogueEntry {
   category: string;
   muscle: string;
   equipment: string;
+  compactName: string;
+  compactEnglish: string;
+  compactAliases: string[];
+  hasThumb: boolean;
   searchNames: string;
   item: CatalogueItem;
 }
@@ -126,6 +130,27 @@ const indexedById = new Map<string, IndexedCatalogueEntry>();
 const byMuscle = new Map<string, IndexedCatalogueEntry[]>();
 const byEquipment = new Map<string, IndexedCatalogueEntry[]>();
 const byCategory = new Map<string, IndexedCatalogueEntry[]>();
+
+function scoreSearchMatch(entry: IndexedCatalogueEntry, words: readonly string[], fullQuery: string): number {
+  let score = entry.hasThumb ? 20 : 0;
+  const { compactName, compactEnglish, compactAliases } = entry;
+  if (fullQuery) {
+    if (compactName === fullQuery || compactEnglish === fullQuery) score += 1000;
+    else if (compactName.startsWith(fullQuery) || compactEnglish.startsWith(fullQuery)) score += 650;
+    else if (compactAliases.includes(fullQuery)) score += 550;
+    else if (compactName.includes(fullQuery) || compactEnglish.includes(fullQuery)) score += 380;
+    else if (compactAliases.some((a) => a.startsWith(fullQuery))) score += 260;
+  }
+  for (const word of words) {
+    if (compactName === word || compactEnglish === word) score += 180;
+    else if (compactName.startsWith(word) || compactEnglish.startsWith(word)) score += 120;
+    else if (compactName.includes(word) || compactEnglish.includes(word)) score += 80;
+    else if (compactAliases.some((a) => a.startsWith(word))) score += 55;
+    else if (compactAliases.some((a) => a.includes(word))) score += 25;
+  }
+  score -= Math.min(40, compactName.length);
+  return score;
+}
 
 function pushBucket(map: Map<string, IndexedCatalogueEntry[]>, key: string, entry: IndexedCatalogueEntry) {
   let bucket = map.get(key);
@@ -138,14 +163,22 @@ function pushBucket(map: Map<string, IndexedCatalogueEntry[]>, key: string, entr
 
 serverCatalogue.forEach((exercise, ordinal) => {
   const category = getExerciseCategory(exercise);
+  const compactName = compact(exercise.name);
+  const compactEnglish = compact(exercise.englishName);
+  const compactAliases = exercise.aliases.map(compact).filter(Boolean);
+  const item = summary(exercise);
   const entry: IndexedCatalogueEntry = {
     ordinal,
     id: exercise.id,
     category,
     muscle: exercise.muscle,
     equipment: exercise.equipment,
-    searchNames: [exercise.name, exercise.englishName, ...exercise.aliases].map(compact).join("\n"),
-    item: summary(exercise),
+    compactName,
+    compactEnglish,
+    compactAliases,
+    hasThumb: Boolean(item.thumbnail),
+    searchNames: [compactName, compactEnglish, ...compactAliases].join("\n"),
+    item,
   };
   indexedCatalogue.push(entry);
   indexedById.set(entry.id, entry);
@@ -229,29 +262,48 @@ export class CloudCatalogue {
     this.seed();
     const { where, values, words, muscle, equipment, category } = this.filterSpec(query);
     const signature = createHash("sha256").update(JSON.stringify([where, values])).digest("base64url");
-    let ordinal = -1;
+    let cursorPos: number | null = null;
     if (query.cursor) {
       let decoded: z.infer<typeof cursorSchema>;
       try { decoded = cursorSchema.parse(JSON.parse(Buffer.from(query.cursor, "base64url").toString("utf8"))); }
       catch { throw new DomainError("动作翻页参数无效", 400); }
       if (decoded[0] !== dataVersion) throw new DomainError("动作目录已更新，请重试搜索", 409);
       if (decoded[1] !== signature) throw new DomainError("动作翻页参数与筛选条件不一致", 400);
-      ordinal = decoded[2];
+      cursorPos = decoded[2];
     }
     const candidates = selectCandidates(muscle, equipment, category);
-    let total = 0;
-    const matched: IndexedCatalogueEntry[] = [];
+    if (!words.length) {
+      const ordinal = cursorPos ?? -1;
+      let total = 0;
+      const matched: IndexedCatalogueEntry[] = [];
+      for (const entry of candidates) {
+        if (muscle && entry.muscle !== muscle) continue;
+        if (equipment && entry.equipment !== equipment) continue;
+        if (category && entry.category !== category) continue;
+        total++;
+        if (entry.ordinal > ordinal && matched.length <= query.limit) matched.push(entry);
+      }
+      const page = matched.slice(0, query.limit);
+      const nextCursor = matched.length > query.limit
+        ? Buffer.from(JSON.stringify([dataVersion, signature, page.at(-1)!.ordinal])).toString("base64url") : null;
+      return { version: dataVersion, total, items: page.map((entry) => entry.item), nextCursor };
+    }
+
+    const startOffset = cursorPos ?? 0;
+    const fullQuery = words.join("");
+    const ranked: Array<{ entry: IndexedCatalogueEntry; score: number }> = [];
     for (const entry of candidates) {
       if (muscle && entry.muscle !== muscle) continue;
       if (equipment && entry.equipment !== equipment) continue;
       if (category && entry.category !== category) continue;
-      if (words.length && !words.every((word) => entry.searchNames.includes(word))) continue;
-      total++;
-      if (entry.ordinal > ordinal && matched.length <= query.limit) matched.push(entry);
+      if (!words.every((word) => entry.searchNames.includes(word))) continue;
+      ranked.push({ entry, score: scoreSearchMatch(entry, words, fullQuery) });
     }
-    const page = matched.slice(0, query.limit);
-    const nextCursor = matched.length > query.limit
-      ? Buffer.from(JSON.stringify([dataVersion, signature, page.at(-1)!.ordinal])).toString("base64url") : null;
+    ranked.sort((a, b) => b.score - a.score || a.entry.ordinal - b.entry.ordinal);
+    const total = ranked.length;
+    const page = ranked.slice(startOffset, startOffset + query.limit).map((r) => r.entry);
+    const nextCursor = startOffset + query.limit < total
+      ? Buffer.from(JSON.stringify([dataVersion, signature, startOffset + query.limit])).toString("base64url") : null;
     return { version: dataVersion, total, items: page.map((entry) => entry.item), nextCursor };
   }
 
@@ -269,7 +321,12 @@ export class CloudCatalogue {
       if (words.length && !words.every((word) => entry.searchNames.includes(word))) continue;
       found.push(entry);
     }
-    found.sort((a, b) => a.ordinal - b.ordinal);
+    if (words.length) {
+      const fullQuery = words.join("");
+      found.sort((a, b) => scoreSearchMatch(b, words, fullQuery) - scoreSearchMatch(a, words, fullQuery) || a.ordinal - b.ordinal);
+    } else {
+      found.sort((a, b) => a.ordinal - b.ordinal);
+    }
     return { version: dataVersion, items: found.map((entry) => entry.item) };
   }
 

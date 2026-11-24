@@ -588,61 +588,153 @@ export interface WeightRateReport {
   advice: string;
 }
 
-function computeWeeklyOlsSlope(
-  sorted: { date: string; weight: number }[],
-): { slopeKgPerWeek: number; meanWeight: number; rSquared: number } | null {
-  if (sorted.length < 3) return null;
-  const first = sorted[0];
-  if (!first) return null;
-  const t0 = Date.parse(first.date + "T00:00:00Z");
-  const pts = sorted.map((p) => ({
-    x: (Date.parse(p.date + "T00:00:00Z") - t0) / (7 * 86400000),
-    y: p.weight,
-  }));
-  const n = pts.length;
-  const xBar = pts.reduce((s, p) => s + p.x, 0) / n;
-  const yBar = pts.reduce((s, p) => s + p.y, 0) / n;
+const ROBUST_SCALE_KG = 1.1;
+
+function collapseDailyWeights(sorted: { date: string; weight: number }[]): { date: string; weight: number }[] {
+  const out: { date: string; weight: number }[] = [];
+  let curDate = "";
+  let sum = 0;
+  let count = 0;
+  for (const point of sorted) {
+    if (!Number.isFinite(point.weight)) continue;
+    if (point.date === curDate) {
+      sum += point.weight;
+      count++;
+    } else {
+      if (curDate) out.push({ date: curDate, weight: sum / count });
+      curDate = point.date;
+      sum = point.weight;
+      count = 1;
+    }
+  }
+  if (curDate) out.push({ date: curDate, weight: sum / count });
+  return out;
+}
+
+function medianOf(values: number[]): number {
+  if (!values.length) return 0;
+  const copy = [...values].sort((a, b) => a - b);
+  const mid = copy.length >> 1;
+  return copy.length % 2 === 1 ? copy[mid]! : (copy[mid - 1]! + copy[mid]!) / 2;
+}
+
+function weightedLinearFit(
+  pts: readonly { x: number; y: number }[],
+  weights: readonly number[],
+): { slope: number; intercept: number; yBar: number; rSquared: number } | null {
+  let wSum = 0;
+  let wxSum = 0;
+  let wySum = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const w = weights[i]!;
+    wSum += w;
+    wxSum += w * pts[i]!.x;
+    wySum += w * pts[i]!.y;
+  }
+  if (wSum <= 1e-9) return null;
+  const xBar = wxSum / wSum;
+  const yBar = wySum / wSum;
   let sxx = 0;
   let sxy = 0;
   let syy = 0;
-  for (const p of pts) {
-    const dx = p.x - xBar;
-    const dy = p.y - yBar;
-    sxx += dx * dx;
-    sxy += dx * dy;
-    syy += dy * dy;
+  for (let i = 0; i < pts.length; i++) {
+    const w = weights[i]!;
+    const dx = pts[i]!.x - xBar;
+    const dy = pts[i]!.y - yBar;
+    sxx += w * dx * dx;
+    sxy += w * dx * dy;
+    syy += w * dy * dy;
   }
   if (sxx <= 1e-9) return null;
   const slope = sxy / sxx;
   const intercept = yBar - slope * xBar;
   let ssRes = 0;
-  for (const p of pts) {
-    const err = p.y - (intercept + slope * p.x);
-    ssRes += err * err;
+  for (let i = 0; i < pts.length; i++) {
+    const err = pts[i]!.y - (intercept + slope * pts[i]!.x);
+    ssRes += weights[i]! * err * err;
   }
   const r2 = syy <= 1e-9 ? 1 : Math.max(0, Math.min(1, 1 - ssRes / syy));
   return {
-    slopeKgPerWeek: slope,
-    meanWeight: yBar,
+    slope,
+    intercept,
+    yBar,
     rSquared: Math.round(r2 * 100) / 100,
   };
 }
 
-/** Evaluates weekly weight change rate using OLS linear regression when >= 3 weigh-ins exist. */
+function computeWeeklyOlsSlope(
+  sorted: { date: string; weight: number }[],
+): { slopeKgPerWeek: number; meanWeight: number; rSquared: number } | null {
+  const daily = collapseDailyWeights(sorted);
+  if (daily.length < 3) return null;
+  const first = daily[0];
+  if (!first) return null;
+  const t0 = Date.parse(first.date + "T00:00:00Z");
+  const pts = daily.map((p) => ({
+    x: (Date.parse(p.date + "T00:00:00Z") - t0) / (7 * 86400000),
+    y: p.weight,
+  }));
+
+  let fit = weightedLinearFit(
+    pts,
+    pts.map(() => 1),
+  );
+  if (!fit) return null;
+
+  // Use Theil-Sen median-slope initialization + redescending Student-t IRLS (nu = 1/(1+(e/s)^4))
+  // when >= 5 distinct weigh-in days exist so high-leverage single-day water spikes do not flip the trend.
+  if (pts.length >= 5) {
+    const sample = pts.length > 180 ? pts.slice(-180) : pts;
+    const pairSlopes: number[] = [];
+    for (let i = 0; i < sample.length; i++) {
+      for (let j = i + 1; j < sample.length; j++) {
+        const dx = sample[j]!.x - sample[i]!.x;
+        if (dx > 1e-6) pairSlopes.push((sample[j]!.y - sample[i]!.y) / dx);
+      }
+    }
+    if (pairSlopes.length > 0) {
+      const initSlope = medianOf(pairSlopes);
+      const initIntercept = medianOf(pts.map((p) => p.y - initSlope * p.x));
+      let curSlope = initSlope;
+      let curIntercept = initIntercept;
+      for (let iter = 0; iter < 6; iter++) {
+        const weights = pts.map((p) => {
+          const ratio = Math.abs(p.y - (curIntercept + curSlope * p.x)) / ROBUST_SCALE_KG;
+          return 1 / (1 + ratio * ratio * ratio * ratio);
+        });
+        const nextFit = weightedLinearFit(pts, weights);
+        if (!nextFit) break;
+        fit = nextFit;
+        curSlope = nextFit.slope;
+        curIntercept = nextFit.intercept;
+      }
+    }
+  }
+
+  return {
+    slopeKgPerWeek: fit.slope,
+    meanWeight: fit.yBar,
+    rSquared: fit.rSquared,
+  };
+}
+
+/** Evaluates weekly weight change rate using robust Huber-IRLS linear regression when >= 3 daily weigh-ins exist. */
 export function evaluateWeightChangeRate(
   weightPoints: { date: string; weight: number }[],
 ): WeightRateReport | null {
   if (weightPoints.length < 2) return null;
   const sorted = [...weightPoints].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const start = sorted[0];
-  const end = sorted[sorted.length - 1];
+  const daily = collapseDailyWeights(sorted);
+  const series = daily.length >= 2 ? daily : sorted;
+  const start = series[0];
+  const end = series[series.length - 1];
   if (!start || !end) return null;
 
   const daysDiff = Math.max(1, (Date.parse(end.date + "T00:00:00Z") - Date.parse(start.date + "T00:00:00Z")) / 86400000);
   const weeks = Math.max(0.5, daysDiff / 7);
   const delta = end.weight - start.weight;
 
-  const ols = computeWeeklyOlsSlope(sorted);
+  const ols = computeWeeklyOlsSlope(series);
   const trendMethod: WeightRateReport["trendMethod"] = ols ? "ols_regression" : "two_point";
   const weeklySlope = ols ? ols.slopeKgPerWeek : delta / weeks;
   const baseWeight = ols ? Math.max(30, ols.meanWeight) : start.weight;
@@ -674,7 +766,7 @@ export function evaluateWeightChangeRate(
   }
 
   if (ols && rSquared != null) {
-    advice += `（已结合近 ${sorted.length} 次记录自动过滤早晚水分起伏。）`;
+    advice += `（已结合近 ${series.length} 天称重自动过滤单日水分起伏。）`;
   }
 
   return {

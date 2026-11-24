@@ -666,3 +666,32 @@ test("科学拓展算法验证：推拉对称性、RIR 强度分布与自适应 
   assert.equal(energy.trainingDayAvgKcal, 2167);
   assert.equal(energy.restDayAvgKcal, 2000);
 });
+
+test("体重变化斜率同日去重与 Huber IRLS 抗极端水肿噪点", () => {
+  // 1. Clean linear -0.5 kg/week cut with multiple same-day weigh-ins still recovers exact -0.5 slope & r2=1
+  const cleanSameDay = evaluateWeightChangeRate([
+    { date: "2026-11-01", weight: 79.8 },
+    { date: "2026-11-01", weight: 80.2 }, // daily mean = 80.0
+    { date: "2026-11-08", weight: 79.5 },
+    { date: "2026-11-15", weight: 79.0 },
+    { date: "2026-11-22", weight: 78.5 },
+    { date: "2026-11-29", weight: 78.0 },
+  ]);
+  assert.ok(cleanSameDay);
+  assert.equal(cleanSameDay.weeklySlopeKg, -0.5);
+  assert.equal(cleanSameDay.rSquared, 1);
+  assert.equal(cleanSameDay.category, "optimal_cut");
+
+  // 2. Extreme +3.0 kg endpoint water-retention jump on day 28 would flip naive OLS positive (+0.10),
+  //    but Theil-Sen + Huber IRLS downweights the outlier and preserves the underlying cut trend.
+  const spikedCut = evaluateWeightChangeRate([
+    { date: "2026-11-01", weight: 80.0 },
+    { date: "2026-11-08", weight: 79.5 },
+    { date: "2026-11-15", weight: 79.0 },
+    { date: "2026-11-22", weight: 78.5 },
+    { date: "2026-11-29", weight: 81.0 },
+  ]);
+  assert.ok(spikedCut);
+  assert.ok(spikedCut.weeklySlopeKg < -0.35, `expected slope < -0.35, got ${spikedCut.weeklySlopeKg}`);
+  assert.equal(spikedCut.category, "optimal_cut");
+});

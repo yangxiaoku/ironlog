@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { duration, fmt, shortDate } from "../lib/date";
 import { MUSCLES, type LoadMetricKey, type MuscleKey, type OverviewStatsResponse } from "../lib/domain";
 import { Icon } from "./Icon";
@@ -22,9 +22,31 @@ const METRIC_TABS: Array<{ key: LoadMetricKey; label: string }> = [
   { key: "seconds", label: "时长" },
 ];
 
+function useCompactViewport(): boolean {
+  const query = "(max-width: 630px)";
+  const [compact, setCompact] = useState(() =>
+    typeof window !== "undefined" && typeof window.matchMedia === "function"
+      ? window.matchMedia(query).matches
+      : false,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mql = window.matchMedia(query);
+    setCompact(mql.matches);
+    const onChange = (e: MediaQueryListEvent) => setCompact(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return compact;
+}
+
 function computeYScale(values: number[], zeroMin: boolean) {
-  const max = Math.max(...values);
-  const min = zeroMin ? 0 : Math.min(...values);
+  const finite = values.filter(Number.isFinite);
+  if (!finite.length) {
+    return { low: 0, high: 2, ticks: [0, 1, 2] };
+  }
+  const max = Math.max(...finite);
+  const min = zeroMin ? 0 : Math.min(...finite);
   const spread = Math.max(zeroMin ? 1 : Math.max(Math.abs(max) * 0.015, 0.2), max - min);
   const stepTarget = spread / 3;
   const stepUnit = 10 ** Math.floor(Math.log10(stepTarget));
@@ -150,7 +172,7 @@ export function LoadChart({
 }) {
   const patternId = useId().replace(/:/g, "");
   const [readout, setReadout] = useState("");
-  const compact = typeof matchMedia !== "undefined" && matchMedia("(max-width: 630px)").matches;
+  const compact = useCompactViewport();
   const width = compact ? 344 : 660;
   const height = 252;
   const left = 48;
@@ -160,11 +182,10 @@ export function LoadChart({
   const innerW = width - left - right;
   const innerH = height - top - bottom;
 
-  const valueOf = (row: OverviewStatsResponse["daily"][number]) =>
-    metric === "seconds" ? row.seconds / 60 : metric === "workouts" ? row.workouts + (row.addedApple ?? 0) : row[metric];
-
   const rows = data.daily;
-  const series = (() => {
+  const series = useMemo(() => {
+    const valueOf = (row: OverviewStatsResponse["daily"][number]) =>
+      metric === "seconds" ? row.seconds / 60 : metric === "workouts" ? row.workouts + (row.addedApple ?? 0) : row[metric];
     if (data.period <= 30) return rows.map((r) => ({ date: r.date, value: valueOf(r), complete: r.complete }));
     const size = data.period > 90 ? 14 : 7;
     const groups: Array<{ date: string; value: number; complete?: boolean }> = [];
@@ -176,13 +197,16 @@ export function LoadChart({
       });
     }
     return groups;
-  })();
+  }, [rows, data.period, metric]);
 
   const workoutCount = data.totals.activities ?? data.totals.workouts;
   const hasAny = (metric === "workouts" ? workoutCount : data.totals.workouts) > 0;
   const totalValue = metric === "workouts" ? workoutCount : data.totals[metric];
   const loadUnit = metric === "volume" ? "kg" : metric === "sets" ? "组" : metric === "workouts" ? "次" : "分钟";
-  const loadPeak = series.reduce((best, item) => (item.value > best.value ? item : best), { date: "", value: 0 });
+  const loadPeak = useMemo(
+    () => series.reduce((best, item) => (item.value > best.value ? item : best), { date: "", value: 0 }),
+    [series],
+  );
   const loadAverage =
     metric === "volume"
       ? data.totals.workouts
@@ -211,8 +235,10 @@ export function LoadChart({
     data.totals.activeDays ??
     (data.activity ?? []).slice(-84).filter((c) => c.date >= data.from && c.date <= data.through && c.active).length;
 
-  const known = series.map((r) => r.value).filter(Number.isFinite);
-  const scale = known.length ? computeYScale(known, true) : null;
+  const scale = useMemo(() => {
+    const known = series.map((r) => r.value).filter(Number.isFinite);
+    return known.length ? computeYScale(known, true) : null;
+  }, [series]);
   const y = (v: number) => (scale ? top + ((scale.high - v) / (scale.high - scale.low)) * innerH : top);
   const count = Math.max(1, series.length);
   const labelIndices = [...new Set([0, Math.floor((count - 1) / 3), Math.floor((2 * (count - 1)) / 3), count - 1])].filter(
@@ -221,7 +247,7 @@ export function LoadChart({
   const colW = innerW / count;
   const barW = Math.min(24, Math.max(3, colW * 0.6));
   const rx = Math.min(7, barW / 2);
-  const latestIdx = series.findLastIndex((row) => row.value > 0);
+  const latestIdx = useMemo(() => series.findLastIndex((row) => row.value > 0), [series]);
   const baseY = y(0);
 
   return (
@@ -420,18 +446,22 @@ export function MuscleDistributionCard({
   onSelectMuscle: (key: MuscleKey | "") => void;
 }) {
   const [hoverMuscle, setHoverMuscle] = useState<MuscleKey | "">("");
-  const setsByPart = new Map(data.muscles.map((item) => [item.key, item.sets]));
+  const setsByPart = useMemo(() => new Map(data.muscles.map((item) => [item.key, item.sets])), [data.muscles]);
   const statusList = data.muscleStatus ?? [];
-  const statusByPart = new Map(statusList.map((item) => [item.key, item]));
+  const statusByPart = useMemo(() => new Map(statusList.map((item) => [item.key, item])), [statusList]);
 
-  const anatomical = MUSCLE_PARTS.map((part) => ({
-    key: part,
-    name: MUSCLES[part],
-    sets: setsByPart.get(part) ?? 0,
-  })).sort((a, b) => b.sets - a.sets);
+  const anatomical = useMemo(
+    () =>
+      MUSCLE_PARTS.map((part) => ({
+        key: part,
+        name: MUSCLES[part],
+        sets: setsByPart.get(part) ?? 0,
+      })).sort((a, b) => b.sets - a.sets),
+    [setsByPart],
+  );
 
-  const maxMuscle = Math.max(1, ...anatomical.map((item) => item.sets));
-  const totalMuscleSets = anatomical.reduce((sum, item) => sum + item.sets, 0);
+  const maxMuscle = useMemo(() => Math.max(1, ...anatomical.map((item) => item.sets)), [anatomical]);
+  const totalMuscleSets = useMemo(() => anatomical.reduce((sum, item) => sum + item.sets, 0), [anatomical]);
   const focusTarget = hoverMuscle || selectedMuscle;
 
   const pillText = (() => {
@@ -666,7 +696,7 @@ export function WeightChart({
   showAverage?: boolean;
 }) {
   const [readout, setReadout] = useState("");
-  const compact = typeof matchMedia !== "undefined" && matchMedia("(max-width: 630px)").matches;
+  const compact = useCompactViewport();
   const width = compact ? 344 : showAverage ? 420 : 660;
   const height = 200;
   const left = 48;
@@ -676,11 +706,54 @@ export function WeightChart({
   const innerW = width - left - right;
   const innerH = height - top - bottom;
 
-  const weightNums = rows.map((r) => r.weight).filter(Number.isFinite);
-  const avgNums = showAverage ? rows.map((r) => r.average).filter((v): v is number => Number.isFinite(v)) : [];
-  const known = [...weightNums, ...avgNums];
+  const { hasData, scale, dateMarks, primaryPoints, averagePoints } = useMemo(() => {
+    const weightNums = rows.map((r) => r.weight).filter(Number.isFinite);
+    const avgNums = showAverage ? rows.map((r) => r.average).filter((v): v is number => Number.isFinite(v)) : [];
+    const known = [...weightNums, ...avgNums];
 
-  if (!known.length || !rows.length) {
+    if (!known.length || !rows.length) {
+      return {
+        hasData: false,
+        scale: computeYScale([], false),
+        dateMarks: [] as Array<{ date: string; x: number }>,
+        primaryPoints: [] as Array<{ px: number; py: number; row: { date: string; weight: number; average?: number | null } }>,
+        averagePoints: [] as Array<{ px: number; py: number; row: { date: string; weight: number; average: number } }>,
+      };
+    }
+
+    const yData = goal == null ? known : [...known, goal];
+    const computedScale = computeYScale(yData, false);
+    const getY = (value: number) =>
+      top + ((computedScale.high - value) / (computedScale.high - computedScale.low)) * innerH;
+    const start = Date.parse(from ?? rows[0]!.date);
+    const end = Date.parse(to ?? rows.at(-1)!.date);
+    const getX = (dateStr: string) =>
+      start === end ? left + innerW / 2 : left + (innerW * (Date.parse(dateStr) - start)) / (end - start);
+
+    const marks = [
+      ...new Set([start, start + Math.floor((end - start) / 86_400_000 / 2) * 86_400_000, end]),
+    ].map((ms) => {
+      const iso = new Date(ms).toISOString().slice(0, 10);
+      return { date: iso, x: getX(iso) };
+    });
+
+    const primary = rows.map((row) => ({ px: getX(row.date), py: getY(row.weight), row }));
+    const average = showAverage
+      ? rows
+          .filter((row): row is { date: string; weight: number; average: number } => Number.isFinite(row.average))
+          .map((row) => ({ px: getX(row.date), py: getY(row.average), row }))
+      : [];
+
+    return {
+      hasData: true,
+      scale: computedScale,
+      dateMarks: marks,
+      primaryPoints: primary,
+      averagePoints: average,
+    };
+  }, [rows, from, to, goal, showAverage, innerW, innerH]);
+
+  if (!hasData) {
     return (
       <div className="empty">
         <strong>这个区间暂无数据</strong>
@@ -689,31 +762,13 @@ export function WeightChart({
     );
   }
 
-  const yData = goal == null ? known : [...known, goal];
-  const scale = computeYScale(yData, false);
   const y = (value: number) => top + ((scale.high - value) / (scale.high - scale.low)) * innerH;
-  const start = Date.parse(from ?? rows[0]!.date);
-  const end = Date.parse(to ?? rows.at(-1)!.date);
-  const x = (dateStr: string) =>
-    start === end ? left + innerW / 2 : left + (innerW * (Date.parse(dateStr) - start)) / (end - start);
-
-  const dateMarks = [
-    ...new Set([start, start + Math.floor((end - start) / 86_400_000 / 2) * 86_400_000, end]),
-  ].map((ms) => {
-    const iso = new Date(ms).toISOString().slice(0, 10);
-    return { date: iso, x: x(iso) };
-  });
-
-  const primaryPoints = rows.map((row) => ({ px: x(row.date), py: y(row.weight), row }));
-  const averagePoints = showAverage
-    ? rows
-        .filter((row): row is { date: string; weight: number; average: number } => Number.isFinite(row.average))
-        .map((row) => ({ px: x(row.date), py: y(row.average), row }))
-    : [];
 
   return (
     <div className="chart-wrap">
-      {readout ? <span className="chart-readout">{readout}</span> : null}
+      <div className="chart-readout-line">
+        <span className="chart-readout">{readout}</span>
+      </div>
       <svg
         className="chart"
         viewBox={`0 0 ${width} ${height}`}

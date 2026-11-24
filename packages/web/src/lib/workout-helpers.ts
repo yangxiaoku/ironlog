@@ -638,10 +638,49 @@ export interface PlateBreakdownResult {
   achievable: boolean;
 }
 
+const PLATE_DP_SCALE = 4; // 0.25 kg resolution
+const PLATE_MAX_COUNT = 64;
+const DEFAULT_PLATES = [25, 20, 15, 10, 5, 2.5, 1.25] as const;
+
+function sanitizeAvailablePlates(availablePlates: readonly number[]): number[] {
+  const source = availablePlates.length ? availablePlates : DEFAULT_PLATES;
+  return [...new Set(source.map(Number).filter((p) => Number.isFinite(p) && p > 0))].sort((a, b) => b - a);
+}
+
+function areQuarterMultiples(plates: readonly number[]): boolean {
+  return plates.every((p) => Math.abs(p * PLATE_DP_SCALE - Math.round(p * PLATE_DP_SCALE)) < 1e-4);
+}
+
+function runPlateDp(
+  maxUnits: number,
+  plateUnits: readonly number[],
+  maxPlates = PLATE_MAX_COUNT,
+): { dpCount: Uint8Array; dpChoice: Int16Array } {
+  const dpCount = new Uint8Array(maxUnits + 1).fill(255);
+  const dpChoice = new Int16Array(maxUnits + 1).fill(-1);
+  dpCount[0] = 0;
+
+  for (let u = 1; u <= maxUnits; u++) {
+    for (let i = 0; i < plateUnits.length; i++) {
+      const pu = plateUnits[i]!;
+      if (pu <= 0 || pu > u) continue;
+      const prev = dpCount[u - pu]!;
+      if (prev === 255) continue;
+      const cand = prev + 1;
+      // Strict `<` with descending plateUnits preserves heavier-plates-first tie-breaking.
+      if (cand <= maxPlates && cand < dpCount[u]!) {
+        dpCount[u] = cand;
+        dpChoice[u] = i;
+      }
+    }
+  }
+  return { dpCount, dpChoice };
+}
+
 export function plateBreakdown(
   totalWeight: number,
   barWeight = 20,
-  availablePlates: readonly number[] = [25, 20, 15, 10, 5, 2.5, 1.25],
+  availablePlates: readonly number[] = DEFAULT_PLATES,
 ): PlateBreakdownResult {
   const weight = Number(totalWeight);
   const rawBar = Number(barWeight);
@@ -650,22 +689,42 @@ export function plateBreakdown(
     return { valid: false, bar, perSide: 0, plates: [], remainder: 0, achievable: true };
   }
   const perSide = round2((weight - bar) / 2);
+  const sortedPlates = sanitizeAvailablePlates(availablePlates);
+
+  if (sortedPlates.length && perSide <= 500 && areQuarterMultiples(sortedPlates)) {
+    const targetUnits = Math.max(0, Math.floor(perSide * PLATE_DP_SCALE + 1e-6));
+    const plateUnits = sortedPlates.map((p) => Math.round(p * PLATE_DP_SCALE));
+    const { dpCount, dpChoice } = runPlateDp(targetUnits, plateUnits, PLATE_MAX_COUNT);
+
+    let bestU = 0;
+    for (let u = targetUnits; u >= 0; u--) {
+      if (dpCount[u]! <= PLATE_MAX_COUNT) {
+        bestU = u;
+        break;
+      }
+    }
+
+    const plates: number[] = [];
+    for (let u = bestU; u > 0; ) {
+      const idx = dpChoice[u]!;
+      if (idx < 0) break;
+      const plate = sortedPlates[idx]!;
+      plates.push(plate);
+      u -= plateUnits[idx]!;
+    }
+    plates.sort((a, b) => b - a);
+    const remainder = Math.max(0, round2(perSide - bestU / PLATE_DP_SCALE));
+    return { valid: true, bar, perSide, plates, remainder, achievable: remainder <= 0.01 };
+  }
+
   let remaining = perSide;
-  const fallback = [25, 20, 15, 10, 5, 2.5, 1.25];
-  const sortedPlates = [
-    ...new Set(
-      (availablePlates.length ? availablePlates : fallback)
-        .map(Number)
-        .filter((p) => Number.isFinite(p) && p > 0),
-    ),
-  ].sort((a, b) => b - a);
   const plates: number[] = [];
   for (const plate of sortedPlates) {
-    while (plates.length < 64 && remaining + 1e-6 >= plate) {
+    while (plates.length < PLATE_MAX_COUNT && remaining + 1e-6 >= plate) {
       plates.push(plate);
       remaining = round2(remaining - plate);
     }
-    if (plates.length >= 64) break;
+    if (plates.length >= PLATE_MAX_COUNT) break;
   }
   return { valid: true, bar, perSide, plates, remainder: remaining, achievable: remaining <= 0.01 };
 }
@@ -698,10 +757,32 @@ export function snapWarmupWeight(
   enabledPlates: readonly number[] = ALL_PLATES,
 ): number {
   if (isBarbell) {
-    if (target <= barWeight) return barWeight;
+    if (!Number.isFinite(target) || target <= barWeight) return barWeight;
     const calc = plateBreakdown(target, barWeight, enabledPlates);
     if (!calc.valid) return barWeight;
-    return Math.max(barWeight, round2(calc.bar + 2 * (calc.perSide - calc.remainder)));
+    const below = Math.max(barWeight, round2(calc.bar + 2 * (calc.perSide - calc.remainder)));
+    if (calc.achievable) return below;
+
+    const sortedPlates = sanitizeAvailablePlates(enabledPlates);
+    const smallestPlate = sortedPlates.at(-1) ?? 0;
+    if (smallestPlate > 0 && calc.perSide <= 500 && areQuarterMultiples(sortedPlates)) {
+      const minUnits = Math.max(0, Math.ceil(calc.perSide * PLATE_DP_SCALE - 1e-6));
+      const maxUnits = Math.min(2000, Math.ceil((calc.perSide + smallestPlate) * PLATE_DP_SCALE) + 1);
+      if (maxUnits >= minUnits) {
+        const plateUnits = sortedPlates.map((p) => Math.round(p * PLATE_DP_SCALE));
+        const { dpCount } = runPlateDp(maxUnits, plateUnits, PLATE_MAX_COUNT);
+        for (let u = minUnits; u <= maxUnits; u++) {
+          if (dpCount[u]! <= PLATE_MAX_COUNT) {
+            const above = round2(calc.bar + (u / PLATE_DP_SCALE) * 2);
+            if (Math.abs(above - target) + 1e-6 < Math.abs(target - below)) {
+              return above;
+            }
+            break;
+          }
+        }
+      }
+    }
+    return below;
   }
   const step = target < 15 ? 1 : 2.5;
   return Math.max(step, Math.round(target / step) * step);
