@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { createApp } from "../packages/server/src/app.js";
 import { openDatabase } from "../packages/server/src/db.js";
 import {
+  DEFAULT_APPLE_CARDIO_SHORTCUT,
+  DEFAULT_APPLE_STRENGTH_SHORTCUT,
   DEFAULT_WORKOUT_PREFERENCES,
   applyRemoteWorkoutPreferences,
   applySetFieldUpdate,
@@ -12,6 +14,13 @@ import {
   resetLocalWorkoutPreferences,
   writeWorkoutPreference,
 } from "../packages/web/src/lib/workout-helpers.ts";
+import {
+  APPLE_FITNESS_APP_URL,
+  buildAppleFitnessLaunchUrl,
+  inferAppleFitnessKind,
+  isAppleMobileDevice,
+  triggerAppleFitnessLaunch,
+} from "../packages/web/src/lib/apple-fitness.ts";
 import {
   cachedQuery,
   invalidateQueryCache,
@@ -112,6 +121,11 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
   assert.equal(defaults.weightStepKg, 2.5);
   assert.equal(defaults.warmupScheme, "standard");
   assert.equal(defaults.soundStyle, "chime");
+  assert.equal(defaults.appleFitnessAutoLaunch, false);
+  assert.equal(defaults.appleStrengthLaunch, "shortcut");
+  assert.equal(defaults.appleCardioLaunch, "fitness_app");
+  assert.equal(defaults.appleStrengthShortcutName, DEFAULT_APPLE_STRENGTH_SHORTCUT);
+  assert.equal(defaults.appleCardioShortcutName, DEFAULT_APPLE_CARDIO_SHORTCUT);
   assert.equal(defaults.showPlateMath, true);
   assert.deepEqual(defaults.enabledPlates, DEFAULT_WORKOUT_PREFERENCES.enabledPlates);
 
@@ -138,12 +152,22 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
       enabledPlates: [20, 10],
       warmupScheme: "light",
       soundStyle: "bell",
+      appleFitnessAutoLaunch: true,
+      appleStrengthLaunch: "fitness_app",
+      appleCardioLaunch: "shortcut",
+      appleStrengthShortcutName: "推拉力量",
+      appleCardioShortcutName: "户外慢跑",
     });
     assert.equal(applied.autoAdvanceExercise, false);
     assert.equal(applied.weightStepKg, 1.25);
     assert.deepEqual(applied.enabledPlates, [20, 10]);
     assert.equal(applied.warmupScheme, "light");
     assert.equal(applied.soundStyle, "bell");
+    assert.equal(applied.appleFitnessAutoLaunch, true);
+    assert.equal(applied.appleStrengthLaunch, "fitness_app");
+    assert.equal(applied.appleCardioLaunch, "shortcut");
+    assert.equal(applied.appleStrengthShortcutName, "推拉力量");
+    assert.equal(applied.appleCardioShortcutName, "户外慢跑");
     assert.equal(pushedCount, 0, "applying remote preferences must not echo back to cloud sync");
 
     writeWorkoutPreference("autoSyncSubsequent", false);
@@ -155,6 +179,11 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     writeWorkoutPreference("enabledPlates", [20, 10, 5]);
     writeWorkoutPreference("warmupScheme", "heavy");
     writeWorkoutPreference("soundStyle", "marimba");
+    writeWorkoutPreference("appleFitnessAutoLaunch", false);
+    writeWorkoutPreference("appleStrengthLaunch", "shortcut");
+    writeWorkoutPreference("appleCardioLaunch", "off");
+    writeWorkoutPreference("appleStrengthShortcutName", "力量开练");
+    writeWorkoutPreference("appleCardioShortcutName", "单车有氧");
 
     const updated = readWorkoutPreferences();
     assert.equal(updated.autoSyncSubsequent, false);
@@ -166,6 +195,11 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
     assert.deepEqual(updated.enabledPlates, [20, 10, 5]);
     assert.equal(updated.warmupScheme, "heavy");
     assert.equal(updated.soundStyle, "marimba");
+    assert.equal(updated.appleFitnessAutoLaunch, false);
+    assert.equal(updated.appleStrengthLaunch, "shortcut");
+    assert.equal(updated.appleCardioLaunch, "off");
+    assert.equal(updated.appleStrengthShortcutName, "力量开练");
+    assert.equal(updated.appleCardioShortcutName, "单车有氧");
 
     await new Promise((resolve) => setTimeout(resolve, 450));
     assert.equal(pushedCount, 1, "debounced local preference writes trigger single cloud sync push");
@@ -235,7 +269,14 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
     // Second partial update preserves earlier fields + nutrition/equipment goals
     const prefRes2 = await call("/api/web/profile/workout-prefs", {
       method: "PUT",
-      body: { warmupScheme: "heavy", soundStyle: "marimba" },
+      body: {
+        warmupScheme: "heavy",
+        soundStyle: "marimba",
+        appleFitnessAutoLaunch: true,
+        appleStrengthLaunch: "shortcut",
+        appleCardioLaunch: "fitness_app",
+        appleStrengthShortcutName: "传统力量开练",
+      },
     });
     assert.equal(prefRes2.status, 200);
 
@@ -257,6 +298,10 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
     assert.equal(profBody.profile.workoutPrefs?.autoAdvanceExercise, false);
     assert.equal(profBody.profile.workoutPrefs?.warmupScheme, "heavy");
     assert.equal(profBody.profile.workoutPrefs?.soundStyle, "marimba");
+    assert.equal(profBody.profile.workoutPrefs?.appleFitnessAutoLaunch, true);
+    assert.equal(profBody.profile.workoutPrefs?.appleStrengthLaunch, "shortcut");
+    assert.equal(profBody.profile.workoutPrefs?.appleCardioLaunch, "fitness_app");
+    assert.equal(profBody.profile.workoutPrefs?.appleStrengthShortcutName, "传统力量开练");
 
     // Cross-account isolation
     const otherProfileRes = await call("/api/web/profile", { token: other.token });
@@ -321,6 +366,11 @@ test("resetLocalWorkoutPreferences clears saved keys, resets defaults, and cance
     writeWorkoutPreference("enabledPlates", [20, 10]);
     writeWorkoutPreference("warmupScheme", "heavy");
     writeWorkoutPreference("soundStyle", "bell");
+    writeWorkoutPreference("appleFitnessAutoLaunch", true);
+    writeWorkoutPreference("appleStrengthLaunch", "fitness_app");
+    writeWorkoutPreference("appleCardioLaunch", "shortcut");
+    writeWorkoutPreference("appleStrengthShortcutName", "自定义力量");
+    writeWorkoutPreference("appleCardioShortcutName", "自定义有氧");
     assert.ok(backing.size > 0);
 
     resetLocalWorkoutPreferences();
@@ -566,4 +616,64 @@ test("createRestAudio uses warm lowpass-filtered mid-register presets, respects 
     if (prevWebkitDesc) Object.defineProperty(globalThis, "webkitAudioContext", prevWebkitDesc);
     else delete globalThis.webkitAudioContext;
   }
+});
+
+test("apple-fitness builds Shortcut/Fitness deep-links, classifies workouts accurately, and guards non-iOS browsers", () => {
+  const prefs = {
+    ...DEFAULT_WORKOUT_PREFERENCES,
+    appleStrengthLaunch: "shortcut" as const,
+    appleCardioLaunch: "fitness_app" as const,
+    appleStrengthShortcutName: "铁记 传统力量",
+    appleCardioShortcutName: "  ",
+  };
+
+  assert.equal(
+    buildAppleFitnessLaunchUrl("strength", prefs),
+    "shortcuts://run-shortcut?name=%E9%93%81%E8%AE%B0%20%E4%BC%A0%E7%BB%9F%E5%8A%9B%E9%87%8F",
+  );
+  assert.equal(buildAppleFitnessLaunchUrl("cardio", prefs), APPLE_FITNESS_APP_URL);
+  assert.equal(buildAppleFitnessLaunchUrl("cardio", prefs, "shortcut"), "shortcuts://run-shortcut?name=%E9%93%81%E8%AE%B0%E5%BC%80%E5%A7%8B%E6%9C%89%E6%B0%A7");
+  assert.equal(buildAppleFitnessLaunchUrl("strength", prefs, "off"), null);
+  assert.equal(buildAppleFitnessLaunchUrl("strength", { ...prefs, appleStrengthLaunch: "off" }, "fitness_app"), APPLE_FITNESS_APP_URL);
+
+  // Inference rules
+  assert.equal(inferAppleFitnessKind([], "自由训练"), "strength");
+  assert.equal(inferAppleFitnessKind([], "户外跑步 5km"), "cardio");
+  assert.equal(inferAppleFitnessKind([{ snapshot: { mode: "reps", name: "杠铃深蹲" } }], "下肢力量"), "strength");
+  assert.equal(inferAppleFitnessKind([{ snapshot: { mode: "timed", name: "平板支撑" } }], "核心稳定"), "strength");
+  assert.equal(inferAppleFitnessKind([{ snapshot: { mode: "timed", name: "划船机" } }], "周末训练"), "cardio");
+  assert.equal(
+    inferAppleFitnessKind(
+      [{ snapshot: { mode: "reps", name: "卧推" } }, { snapshot: { mode: "timed", name: "跑步机爬坡" } }],
+      "力量+有氧",
+    ),
+    "strength",
+  );
+
+  // Device detection
+  assert.equal(isAppleMobileDevice("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)", "iPhone", 5), true);
+  assert.equal(isAppleMobileDevice("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "MacIntel", 5), true);
+  assert.equal(isAppleMobileDevice("Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "Win32", 0), false);
+  assert.equal(isAppleMobileDevice("Mozilla/5.0 (Linux; Android 14)", "Linux armv8l", 5), false);
+  assert.equal(isAppleMobileDevice("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", "MacIntel", 0), false);
+
+  // Non-iOS launch behavior (silent vs toast notify)
+  const notices: string[] = [];
+  const silentRes = triggerAppleFitnessLaunch("strength", {
+    prefs,
+    silentNonIos: true,
+    notify: (msg) => notices.push(msg),
+  });
+  assert.equal(silentRes.launched, false);
+  assert.ok(silentRes.url?.startsWith("shortcuts://run-shortcut?name="));
+  assert.equal(notices.length, 0);
+
+  const loudRes = triggerAppleFitnessLaunch("cardio", {
+    prefs,
+    silentNonIos: false,
+    notify: (msg) => notices.push(msg),
+  });
+  assert.equal(loudRes.launched, false);
+  assert.equal(loudRes.url, APPLE_FITNESS_APP_URL);
+  assert.equal(notices.length, 1);
 });

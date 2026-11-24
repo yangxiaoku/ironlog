@@ -219,6 +219,11 @@ export interface ProfileGoals {
     showPlateMath?: boolean;
     warmupScheme?: "light" | "standard" | "heavy";
     soundStyle?: "chime" | "marimba" | "bell";
+    appleFitnessAutoLaunch?: boolean;
+    appleStrengthLaunch?: "shortcut" | "fitness_app" | "off";
+    appleCardioLaunch?: "shortcut" | "fitness_app" | "off";
+    appleStrengthShortcutName?: string;
+    appleCardioShortcutName?: string;
   };
 }
 

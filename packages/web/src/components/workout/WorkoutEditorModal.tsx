@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
+import { inferAppleFitnessKind, triggerAppleFitnessLaunch } from "../../lib/apple-fitness";
 import { fmt, today } from "../../lib/date";
 import {
   EQUIPMENT,
@@ -230,6 +231,9 @@ export function WorkoutEditorModal({
     enabledPlates,
     showPlateMath,
     warmupScheme,
+    appleFitnessAutoLaunch,
+    appleStrengthLaunch,
+    appleCardioLaunch,
   } = prefs;
   const [wakeActive, setWakeActive] = useState(false);
 
@@ -823,6 +827,8 @@ export function WorkoutEditorModal({
 
   const restInfo = rest ? restProgress(rest, nowMs) : null;
   const isPausedClock = timing.runningSince == null;
+  const fitnessKind = inferAppleFitnessKind(exercises, title);
+  const activeLaunchMode = fitnessKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
 
   return (
     <div className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""}`}>
@@ -901,6 +907,20 @@ export function WorkoutEditorModal({
           <div className="workout-progress-strip">
             <progress value={doneSets} max={Math.max(1, totalSets)} />
             <span className="workout-live-vol">{fmt(liveVolume, 0)} kg</span>
+            {activeLaunchMode !== "off" ? (
+              <button
+                type="button"
+                className="micro-chip"
+                style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 4, minHeight: 24, padding: "2px 8px", fontSize: 11 }}
+                title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
+                onClick={() => {
+                  triggerHaptic("light");
+                  triggerAppleFitnessLaunch(fitnessKind, { prefs, notify });
+                }}
+              >
+                <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "传统力量"}
+              </button>
+            ) : null}
           </div>
         </header>
       ) : null}
@@ -1179,6 +1199,51 @@ export function WorkoutEditorModal({
                 <small className="muted">
                   当前梯度：{WARMUP_SCHEMES.find((s) => s.id === warmupScheme)?.desc ?? ""}
                 </small>
+              </div>
+            </div>
+
+            <div className="session-settings-group">
+              <h4 className="session-settings-group-title">Apple 健身联动</h4>
+              <label className="switch-chip">
+                <span>开练自动跳转 Apple 健身</span>
+                <input
+                  className="switch"
+                  type="checkbox"
+                  checked={appleFitnessAutoLaunch}
+                  onChange={(e) => updatePref("appleFitnessAutoLaunch", e.target.checked)}
+                />
+              </label>
+              <div className="session-menu-quick" style={{ marginTop: 8 }}>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    triggerHaptic("light");
+                    triggerAppleFitnessLaunch("strength", { prefs, notify });
+                  }}
+                >
+                  <Icon name="heart" size={14} /> 启动传统力量
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    triggerHaptic("light");
+                    triggerAppleFitnessLaunch("cardio", { prefs, notify });
+                  }}
+                >
+                  <Icon name="heart" size={14} /> 打开健身(有氧)
+                </button>
+                <button
+                  type="button"
+                  className="quiet"
+                  onClick={() => {
+                    triggerHaptic("light");
+                    triggerAppleFitnessLaunch("strength", { prefs, forceMode: "fitness_app", notify });
+                  }}
+                >
+                  直接打开健身 App
+                </button>
               </div>
             </div>
 

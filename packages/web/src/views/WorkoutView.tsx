@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../components/Icon";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { apiFetch } from "../lib/api";
+import { triggerAppleFitnessLaunch } from "../lib/apple-fitness";
 import { displayWeekday, duration, fmt, shortDate } from "../lib/date";
 import {
   FEELINGS,
@@ -15,6 +16,7 @@ import {
   type TrainedExerciseSummary,
   type WorkoutData,
 } from "../lib/domain";
+import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   openAiWorkoutModal,
@@ -36,6 +38,7 @@ export function WorkoutView() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const notify = useUiStore((s) => s.notify);
   const cached = peekQuery<WorkoutViewSnap>("view:workout", userId)?.data;
 
   const [records, setRecords] = useState<Array<RecordEnvelope<WorkoutData>>>(() => cached?.records ?? []);
@@ -167,6 +170,16 @@ export function WorkoutView() {
             </button>
             <button type="button" className="secondary-button" onClick={() => openAiWorkoutModal()}>
               <Icon name="bolt" size={16} /> AI 记训练
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                triggerHaptic("light");
+                triggerAppleFitnessLaunch("cardio", { notify });
+              }}
+            >
+              <Icon name="heart" size={15} /> Apple 有氧
             </button>
             <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
               <Icon name="plus" size={16} /> 记一次训练

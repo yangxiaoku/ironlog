@@ -44,6 +44,7 @@ const WeightEditorModal = lazy(() => import("../components/weight/WeightEditorMo
 const WorkoutEditorModal = lazy(() => import("../components/workout/WorkoutEditorModal").then((m) => ({ default: m.WorkoutEditorModal })));
 const WorkoutReportModal = lazy(() => import("../components/workout/WorkoutReportModal").then((m) => ({ default: m.WorkoutReportModal })));
 import { apiFetch } from "./api";
+import { inferAppleFitnessKind, triggerAppleFitnessLaunch } from "./apple-fitness";
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
 import { shortDate, today } from "./date";
@@ -62,11 +63,13 @@ import {
   type WorkoutData,
 } from "./domain";
 import { useUiStore } from "../store/useUiStore";
+import { readWorkoutPreferences } from "./workout-helpers";
 
 export interface WorkoutEditorOptions {
   record?: RecordEnvelope<WorkoutData>;
   goals?: ProfileGoals | null;
   seed?: Partial<WorkoutData>;
+  skipAppleAutoLaunch?: boolean;
 }
 
 function isWorkoutEnvelope(val: unknown): val is RecordEnvelope<WorkoutData> {
@@ -106,6 +109,13 @@ export function openWorkoutEditor(
       />
     ),
   });
+  if (!record && (!seed?.date || seed.date === today()) && !opts.skipAppleAutoLaunch) {
+    const prefs = readWorkoutPreferences();
+    if (prefs.appleFitnessAutoLaunch) {
+      const kind = inferAppleFitnessKind(seed?.exercises, seed?.title);
+      triggerAppleFitnessLaunch(kind, { prefs, silentNonIos: true });
+    }
+  }
 }
 
 export async function resumeLocalWorkoutDraft(
@@ -113,19 +123,19 @@ export async function resumeLocalWorkoutDraft(
   goals?: ProfileGoals | null,
 ): Promise<void> {
   if (!userId) {
-    openWorkoutEditor({ goals });
+    openWorkoutEditor({ goals, skipAppleAutoLaunch: true });
     return;
   }
   const found = findLocalWorkoutDraft(userId);
   if (!found) {
-    openWorkoutEditor({ goals });
+    openWorkoutEditor({ goals, skipAppleAutoLaunch: true });
     return;
   }
   const prefix = `ironlog-web-draft:${userId}:`;
   const suffix = found.key.startsWith(prefix) ? found.key.slice(prefix.length) : "new";
   const recordId = suffix && suffix !== "new" ? suffix : undefined;
   if (!recordId) {
-    openWorkoutEditor({ goals });
+    openWorkoutEditor({ goals, skipAppleAutoLaunch: true });
     return;
   }
   try {
@@ -164,7 +174,7 @@ export async function resumeLocalWorkoutDraft(
       };
       openWorkoutEditor({ record: fallbackRecord, goals });
     } catch {
-      openWorkoutEditor({ goals });
+      openWorkoutEditor({ goals, skipAppleAutoLaunch: true });
     }
   }
 }

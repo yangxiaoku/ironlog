@@ -238,6 +238,11 @@ const workoutPrefsBase = {
   showPlateMath: z.boolean(),
   warmupScheme: z.enum(["light", "standard", "heavy"]),
   soundStyle: z.enum(["chime", "marimba", "bell"]),
+  appleFitnessAutoLaunch: z.boolean(),
+  appleStrengthLaunch: z.enum(["shortcut", "fitness_app", "off"]),
+  appleCardioLaunch: z.enum(["shortcut", "fitness_app", "off"]),
+  appleStrengthShortcutName: z.string().trim().min(1).max(80),
+  appleCardioShortcutName: z.string().trim().min(1).max(80),
 };
 
 export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
@@ -260,6 +265,11 @@ export const workoutPrefsSchema = z.object({
   showPlateMath: workoutPrefsBase.showPlateMath.default(true),
   warmupScheme: workoutPrefsBase.warmupScheme.default("standard"),
   soundStyle: workoutPrefsBase.soundStyle.default("chime"),
+  appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(false),
+  appleStrengthLaunch: workoutPrefsBase.appleStrengthLaunch.default("shortcut"),
+  appleCardioLaunch: workoutPrefsBase.appleCardioLaunch.default("fitness_app"),
+  appleStrengthShortcutName: workoutPrefsBase.appleStrengthShortcutName.default("铁记开始力量"),
+  appleCardioShortcutName: workoutPrefsBase.appleCardioShortcutName.default("铁记开始有氧"),
 });
 export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
 

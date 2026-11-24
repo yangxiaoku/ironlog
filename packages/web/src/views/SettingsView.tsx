@@ -3,6 +3,7 @@ import { Icon } from "../components/Icon";
 import { AiSettingsCard } from "../components/ai/AiSettingsCard";
 import type { AiStatus } from "../components/ai/AiModals";
 import { apiFetch } from "../lib/api";
+import { openAppleShortcutCreator, triggerAppleFitnessLaunch } from "../lib/apple-fitness";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
 import { createRestAudio, triggerHaptic } from "../lib/haptics-audio";
@@ -10,6 +11,8 @@ import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   ALL_PLATES,
   BAR_PRESETS,
+  DEFAULT_APPLE_CARDIO_SHORTCUT,
+  DEFAULT_APPLE_STRENGTH_SHORTCUT,
   PROFILE_VERSION_EVENT,
   readWorkoutPreferences,
   REST_SOUND_PRESETS,
@@ -19,6 +22,7 @@ import {
   WEIGHT_STEP_PRESETS,
   WORKOUT_PREFS_EVENT,
   writeWorkoutPreference,
+  type AppleFitnessLaunchMode,
   type WorkoutPreferences,
 } from "../lib/workout-helpers";
 import {
@@ -98,7 +102,21 @@ export function SettingsView() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [workoutPrefs, setWorkoutPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
+  const [strengthShortcutInput, setStrengthShortcutInput] = useState(
+    () => readWorkoutPreferences().appleStrengthShortcutName,
+  );
+  const [cardioShortcutInput, setCardioShortcutInput] = useState(
+    () => readWorkoutPreferences().appleCardioShortcutName,
+  );
   const restAudio = useMemo(() => createRestAudio(() => true), []);
+
+  useEffect(() => {
+    setStrengthShortcutInput(workoutPrefs.appleStrengthShortcutName);
+  }, [workoutPrefs.appleStrengthShortcutName]);
+
+  useEffect(() => {
+    setCardioShortcutInput(workoutPrefs.appleCardioShortcutName);
+  }, [workoutPrefs.appleCardioShortcutName]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1104,6 +1122,203 @@ export function SettingsView() {
                       当前梯度：{WARMUP_SCHEMES.find((s) => s.id === workoutPrefs.warmupScheme)?.desc ?? ""}
                     </small>
                   </div>
+                </section>
+
+                <section className="form-section">
+                  <h3 className="form-section-title">Apple 健身联动跳转</h3>
+                  <div className="session-options">
+                    <label className="switch-chip">
+                      <span>新建今日训练时自动跳转</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.appleFitnessAutoLaunch}
+                        onChange={(e) => updateWorkoutPref("appleFitnessAutoLaunch", e.target.checked)}
+                      />
+                    </label>
+                  </div>
+                  <small className="muted">
+                    仅在 iPhone / iPad 上新建当日训练时生效，补录历史或恢复草稿不会触发。
+                  </small>
+
+                  <div className="field">
+                    <span>力量训练跳转方式</span>
+                    <div className="segments">
+                      {(
+                        [
+                          ["shortcut", "快捷指令直达传统力量"],
+                          ["fitness_app", "打开「健身」App"],
+                          ["off", "关闭"],
+                        ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
+                      ).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={workoutPrefs.appleStrengthLaunch === mode}
+                          onClick={() => updateWorkoutPref("appleStrengthLaunch", mode)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {workoutPrefs.appleStrengthLaunch === "shortcut" ? (
+                    <div className="field">
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <span>力量快捷指令名称</span>
+                        <button
+                          type="button"
+                          className="quiet"
+                          onClick={() =>
+                            triggerAppleFitnessLaunch("strength", {
+                              prefs: {
+                                ...workoutPrefs,
+                                appleStrengthShortcutName: strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT,
+                              },
+                              notify,
+                            })
+                          }
+                        >
+                          测试跳转
+                        </button>
+                      </div>
+                      <input
+                        value={strengthShortcutInput}
+                        maxLength={80}
+                        placeholder={DEFAULT_APPLE_STRENGTH_SHORTCUT}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setStrengthShortcutInput(val);
+                          if (val.trim()) updateWorkoutPref("appleStrengthShortcutName", val.trim().slice(0, 80));
+                        }}
+                        onBlur={() => {
+                          const normalized = strengthShortcutInput.trim().slice(0, 80) || DEFAULT_APPLE_STRENGTH_SHORTCUT;
+                          setStrengthShortcutInput(normalized);
+                          updateWorkoutPref("appleStrengthShortcutName", normalized);
+                        }}
+                      />
+                    </div>
+                  ) : workoutPrefs.appleStrengthLaunch === "fitness_app" ? (
+                    <div>
+                      <button
+                        type="button"
+                        className="quiet"
+                        onClick={() => triggerAppleFitnessLaunch("strength", { prefs: workoutPrefs, notify })}
+                      >
+                        测试打开健身
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <div className="field">
+                    <span>有氧运动跳转方式</span>
+                    <div className="segments">
+                      {(
+                        [
+                          ["fitness_app", "打开「健身」App"],
+                          ["shortcut", "运行有氧快捷指令"],
+                          ["off", "关闭"],
+                        ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
+                      ).map(([mode, label]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          aria-pressed={workoutPrefs.appleCardioLaunch === mode}
+                          onClick={() => updateWorkoutPref("appleCardioLaunch", mode)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  {workoutPrefs.appleCardioLaunch === "shortcut" ? (
+                    <div className="field">
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                        <span>有氧快捷指令名称</span>
+                        <button
+                          type="button"
+                          className="quiet"
+                          onClick={() =>
+                            triggerAppleFitnessLaunch("cardio", {
+                              prefs: {
+                                ...workoutPrefs,
+                                appleCardioShortcutName: cardioShortcutInput.trim() || DEFAULT_APPLE_CARDIO_SHORTCUT,
+                              },
+                              notify,
+                            })
+                          }
+                        >
+                          测试跳转
+                        </button>
+                      </div>
+                      <input
+                        value={cardioShortcutInput}
+                        maxLength={80}
+                        placeholder={DEFAULT_APPLE_CARDIO_SHORTCUT}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setCardioShortcutInput(val);
+                          if (val.trim()) updateWorkoutPref("appleCardioShortcutName", val.trim().slice(0, 80));
+                        }}
+                        onBlur={() => {
+                          const normalized = cardioShortcutInput.trim().slice(0, 80) || DEFAULT_APPLE_CARDIO_SHORTCUT;
+                          setCardioShortcutInput(normalized);
+                          updateWorkoutPref("appleCardioShortcutName", normalized);
+                        }}
+                      />
+                    </div>
+                  ) : workoutPrefs.appleCardioLaunch === "fitness_app" ? (
+                    <div>
+                      <button
+                        type="button"
+                        className="quiet"
+                        onClick={() => triggerAppleFitnessLaunch("cardio", { prefs: workoutPrefs, notify })}
+                      >
+                        测试打开健身
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <details className="overview-more" style={{ marginTop: 6 }}>
+                    <summary>
+                      <span>
+                        <strong>10 秒配置 iPhone「开始传统力量」快捷指令</strong>
+                        <small>苹果不开放健身内部子页 URL，通过快捷指令即可直达传统力量训练</small>
+                      </span>
+                      <Icon name="chevron" size={16} />
+                    </summary>
+                    <div className="overview-more-body" style={{ display: "grid", gap: 8 }}>
+                      <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4, fontSize: 13 }}>
+                        <li>点击下方「去快捷指令新建」（或打开 iPhone「快捷指令」App 点右上角 `+`）。</li>
+                        <li>
+                          搜索添加动作 <strong>「开始体能训练」</strong> → 运动选 <strong>「传统力量训练」</strong>（目标选「开放式」）。
+                        </li>
+                        <li>
+                          将快捷指令命名为 <strong>{strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT}</strong>{" "}
+                          即完成；有氧如需弹出运动选择，可同样建一条{" "}
+                          <strong>{cardioShortcutInput.trim() || DEFAULT_APPLE_CARDIO_SHORTCUT}</strong> 并将运动设为「每次询问」。
+                        </li>
+                      </ol>
+                      <div className="heading-actions" style={{ justifyContent: "flex-start" }}>
+                        <button type="button" className="secondary-button" onClick={() => openAppleShortcutCreator(notify)}>
+                          去快捷指令新建
+                        </button>
+                        <button
+                          type="button"
+                          className="quiet"
+                          onClick={() =>
+                            triggerAppleFitnessLaunch("cardio", {
+                              prefs: workoutPrefs,
+                              forceMode: "fitness_app",
+                              notify,
+                            })
+                          }
+                        >
+                          直接打开苹果健身 App
+                        </button>
+                      </div>
+                    </div>
+                  </details>
                 </section>
               </div>
             </section>

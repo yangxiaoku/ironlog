@@ -1,5 +1,10 @@
 export const soundPreference = "ironlog-web-rest-sound";
 export const soundStylePreference = "ironlog-web-rest-sound-style";
+export const appleFitnessAutoLaunchPreference = "ironlog-web-apple-fitness-auto";
+export const appleStrengthLaunchPreference = "ironlog-web-apple-strength-mode";
+export const appleCardioLaunchPreference = "ironlog-web-apple-cardio-mode";
+export const appleStrengthShortcutPreference = "ironlog-web-apple-strength-shortcut";
+export const appleCardioShortcutPreference = "ironlog-web-apple-cardio-shortcut";
 export const screenPreference = "ironlog-web-workout-screen";
 export const rirPreference = "ironlog-web-show-rir";
 export const dialPreference = "ironlog-web-auto-rest-dial";
@@ -28,6 +33,10 @@ export const REST_STEP_PRESETS = [10, 15, 30] as const;
 
 export type WarmupScheme = "light" | "standard" | "heavy";
 export type RestSoundStyle = "chime" | "marimba" | "bell";
+export type AppleFitnessLaunchMode = "shortcut" | "fitness_app" | "off";
+
+export const DEFAULT_APPLE_STRENGTH_SHORTCUT = "铁记开始力量";
+export const DEFAULT_APPLE_CARDIO_SHORTCUT = "铁记开始有氧";
 
 export const REST_SOUND_PRESETS: ReadonlyArray<{ id: RestSoundStyle; label: string }> = [
   { id: "chime", label: "柔和风铃" },
@@ -99,6 +108,11 @@ export interface WorkoutPreferences {
   showPlateMath: boolean;
   warmupScheme: WarmupScheme;
   soundStyle: RestSoundStyle;
+  appleFitnessAutoLaunch: boolean;
+  appleStrengthLaunch: AppleFitnessLaunchMode;
+  appleCardioLaunch: AppleFitnessLaunchMode;
+  appleStrengthShortcutName: string;
+  appleCardioShortcutName: string;
 }
 
 export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
@@ -119,6 +133,11 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   showPlateMath: true,
   warmupScheme: "standard",
   soundStyle: "chime",
+  appleFitnessAutoLaunch: false,
+  appleStrengthLaunch: "shortcut",
+  appleCardioLaunch: "fitness_app",
+  appleStrengthShortcutName: DEFAULT_APPLE_STRENGTH_SHORTCUT,
+  appleCardioShortcutName: DEFAULT_APPLE_CARDIO_SHORTCUT,
 };
 
 function readBoolPrefValue(key: string, defaultOn: boolean): boolean {
@@ -190,6 +209,33 @@ function readSoundStylePref(): RestSoundStyle {
   return DEFAULT_WORKOUT_PREFERENCES.soundStyle;
 }
 
+function isAppleLaunchMode(raw: unknown): raw is AppleFitnessLaunchMode {
+  return raw === "shortcut" || raw === "fitness_app" || raw === "off";
+}
+
+function readAppleLaunchModePref(key: string, fallback: AppleFitnessLaunchMode): AppleFitnessLaunchMode {
+  if (typeof localStorage === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    if (isAppleLaunchMode(raw)) return raw;
+  } catch {}
+  return fallback;
+}
+
+function sanitizeShortcutName(raw: unknown, fallback: string): string {
+  if (typeof raw !== "string") return fallback;
+  const trimmed = raw.trim().slice(0, 80);
+  return trimmed || fallback;
+}
+
+function readShortcutNamePref(key: string, fallback: string): string {
+  if (typeof localStorage === "undefined") return fallback;
+  try {
+    return sanitizeShortcutName(localStorage.getItem(key), fallback);
+  } catch {}
+  return fallback;
+}
+
 /**
  * Safely reads unified in-session workout preferences with validated defaults.
  */
@@ -224,6 +270,26 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     showPlateMath: readBoolPrefValue(plateMathPreference, DEFAULT_WORKOUT_PREFERENCES.showPlateMath),
     warmupScheme: readWarmupSchemePref(),
     soundStyle: readSoundStylePref(),
+    appleFitnessAutoLaunch: readBoolPrefValue(
+      appleFitnessAutoLaunchPreference,
+      DEFAULT_WORKOUT_PREFERENCES.appleFitnessAutoLaunch,
+    ),
+    appleStrengthLaunch: readAppleLaunchModePref(
+      appleStrengthLaunchPreference,
+      DEFAULT_WORKOUT_PREFERENCES.appleStrengthLaunch,
+    ),
+    appleCardioLaunch: readAppleLaunchModePref(
+      appleCardioLaunchPreference,
+      DEFAULT_WORKOUT_PREFERENCES.appleCardioLaunch,
+    ),
+    appleStrengthShortcutName: readShortcutNamePref(
+      appleStrengthShortcutPreference,
+      DEFAULT_APPLE_STRENGTH_SHORTCUT,
+    ),
+    appleCardioShortcutName: readShortcutNamePref(
+      appleCardioShortcutPreference,
+      DEFAULT_APPLE_CARDIO_SHORTCUT,
+    ),
   };
 }
 
@@ -322,6 +388,27 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
       case "soundStyle":
         localStorage.setItem(soundStylePreference, String(value));
         break;
+      case "appleFitnessAutoLaunch":
+        localStorage.setItem(appleFitnessAutoLaunchPreference, value ? "on" : "off");
+        break;
+      case "appleStrengthLaunch":
+        localStorage.setItem(appleStrengthLaunchPreference, String(value));
+        break;
+      case "appleCardioLaunch":
+        localStorage.setItem(appleCardioLaunchPreference, String(value));
+        break;
+      case "appleStrengthShortcutName":
+        localStorage.setItem(
+          appleStrengthShortcutPreference,
+          sanitizeShortcutName(value, DEFAULT_APPLE_STRENGTH_SHORTCUT),
+        );
+        break;
+      case "appleCardioShortcutName":
+        localStorage.setItem(
+          appleCardioShortcutPreference,
+          sanitizeShortcutName(value, DEFAULT_APPLE_CARDIO_SHORTCUT),
+        );
+        break;
     }
   } catch {}
 }
@@ -358,6 +445,7 @@ export function applyRemoteWorkoutPreferences(
     "autoStartRestTimer",
     "autoAdvanceExercise",
     "showPlateMath",
+    "appleFitnessAutoLaunch",
   ] as const;
   for (const key of boolKeys) {
     if (typeof remote[key] === "boolean") persistSinglePreference(key, remote[key]!);
@@ -395,6 +483,20 @@ export function applyRemoteWorkoutPreferences(
   if (remote.soundStyle === "chime" || remote.soundStyle === "marimba" || remote.soundStyle === "bell") {
     persistSinglePreference("soundStyle", remote.soundStyle);
   }
+  if (isAppleLaunchMode(remote.appleStrengthLaunch)) {
+    persistSinglePreference("appleStrengthLaunch", remote.appleStrengthLaunch);
+  }
+  if (isAppleLaunchMode(remote.appleCardioLaunch)) {
+    persistSinglePreference("appleCardioLaunch", remote.appleCardioLaunch);
+  }
+  if (typeof remote.appleStrengthShortcutName === "string") {
+    const cleaned = remote.appleStrengthShortcutName.trim().slice(0, 80);
+    if (cleaned) persistSinglePreference("appleStrengthShortcutName", cleaned);
+  }
+  if (typeof remote.appleCardioShortcutName === "string") {
+    const cleaned = remote.appleCardioShortcutName.trim().slice(0, 80);
+    if (cleaned) persistSinglePreference("appleCardioShortcutName", cleaned);
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
@@ -420,6 +522,11 @@ const ALL_WORKOUT_PREF_KEYS = [
   hapticsPreference,
   plateMathPreference,
   warmupSchemePreference,
+  appleFitnessAutoLaunchPreference,
+  appleStrengthLaunchPreference,
+  appleCardioLaunchPreference,
+  appleStrengthShortcutPreference,
+  appleCardioShortcutPreference,
 ] as const;
 
 /**
