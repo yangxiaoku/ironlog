@@ -1181,16 +1181,27 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
           </div>
           <ol className="shortcut-steps">
             <li>
-              在上方选好指标或运动，点 <b>「复制 Base64」</b>（也可下载 <code>.shortcut</code> 文件）；
+              <b>方式 A（推荐 · 网页在线签名，免装工具）</b>：点击上方 <b>「下载 .shortcut」</b> 保存通用模板 → 打开{" "}
+              <a href="https://sign.shortcuty.app" target="_blank" rel="noopener noreferrer">
+                sign.shortcuty.app
+              </a>{" "}
+              上传刚下载的文件 → 签完下载后点 <b>添加快捷指令</b>；
             </li>
             <li>
-              打开你 iPhone 里的 <b>「Base64 解码 / 签名」快捷指令工具</b>，从剪贴板还原出 <code>.shortcut</code> 并完成签名，点击 <b>添加快捷指令</b>；
+              <b>方式 B（配合 Base64 / 手机签名快捷指令）</b>：点上方 <b>「复制 Base64」</b>（或下载 <code>.shortcut</code>），到{" "}
+              <a href="https://routinehub.co" target="_blank" rel="noopener noreferrer">
+                routinehub.co
+              </a>{" "}
+              搜索安装 <b>Sign Shortcut File</b> 等签名快捷指令，用手机解码签名后点 <b>添加快捷指令</b>；
             </li>
             <li>
-              导入时 iOS 会依次弹窗询问 <b>「服务器地址」</b> 和 <b>「设备上传令牌」</b>，回到本页点上方 <b>复制地址 / 复制令牌</b> 粘贴即完成（第三方签名全程看不到你的凭据）。
+              导入时 iOS 会依次弹窗询问 <b>「服务器地址」</b> 和 <b>「设备上传令牌」</b>，回到本页点上方{" "}
+              <b>复制地址 / 复制令牌</b> 粘贴即完成（⚠️ <b>仅将当前「通用安全模板」提交给第三方签名</b>
+              ，切勿上传含明文令牌的预填版）；
             </li>
             <li>
-              绑定自动化：<b>每日同步</b>建议设为每天 <b>23:30 睡前亮屏时段 / 充电时</b>「立即运行」（防锁屏读健康受限）；<b>单场训练</b>绑到 Apple Watch 体能训练触发器。
+              绑定自动化：<b>每日同步</b>建议设为每天 <b>23:30 睡前亮屏时段 / 充电时</b>「立即运行」（防锁屏读健康受限）；
+              <b>单场训练</b>绑到 Apple Watch 体能训练触发器。
             </li>
           </ol>
         </div>
