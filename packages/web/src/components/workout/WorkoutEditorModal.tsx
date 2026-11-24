@@ -6,6 +6,7 @@ import {
   FEELINGS,
   MUSCLES,
   SET_TYPES,
+  estimated1RM,
   summarizeWorkoutRecord,
   workoutDraftKey,
   type CatalogueExercise,
@@ -50,7 +51,7 @@ import {
   snapWarmupWeight,
   soundPreference,
 } from "../../lib/workout-helpers";
-import { openAiAdaptWorkoutModal } from "../../lib/record-openers";
+import { openAiAdaptWorkoutModal, openExerciseDetailModal } from "../../lib/record-openers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -215,15 +216,32 @@ export function WorkoutEditorModal({
   const restAlarmFiredForRef = useRef<number | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
 
+  const isWorkoutTop = useUiStore((s) => s.modals.at(-1)?.layout === "workout");
+
   // Sync `.is-live-workout` on parent <dialog> while live session runs
   useEffect(() => {
     const dialog = document.getElementById("dialog");
     if (!dialog) return;
-    if (!isHistoricalEdit) dialog.classList.add("is-live-workout");
+    if (!isHistoricalEdit && isWorkoutTop) dialog.classList.add("is-live-workout");
+    else dialog.classList.remove("is-live-workout");
     return () => {
       dialog.classList.remove("is-live-workout");
     };
-  }, [isHistoricalEdit]);
+  }, [isHistoricalEdit, isWorkoutTop]);
+
+  const handleMinimize = () => {
+    if (draftStorageKey && !isHistoricalEdit && typeof localStorage !== "undefined") {
+      try {
+        localStorage.setItem(
+          draftStorageKey,
+          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest }),
+        );
+      } catch {}
+    }
+    triggerHaptic("light");
+    closeAllModals();
+    notify("训练已收起至底部悬浮条 · 计时与休息继续中");
+  };
 
   // Auto-save local draft so accidental browser close never loses sets
   useEffect(() => {
@@ -667,6 +685,14 @@ export function WorkoutEditorModal({
               <button
                 type="button"
                 className="workout-finish-pill secondary-button"
+                title="收起面板，保留悬浮计时与休息倒计时"
+                onClick={handleMinimize}
+              >
+                收起
+              </button>
+              <button
+                type="button"
+                className="workout-finish-pill secondary-button"
                 disabled={saving}
                 onClick={() => void submitWorkout("active")}
               >
@@ -956,11 +982,27 @@ export function WorkoutEditorModal({
             const exDoneCount = row.sets.filter((s) => s.completed).length;
             const settingsExpanded = openSettingsIds.has(row.id);
             const refSets = refsByExId.get(row.exerciseId) ?? [];
-            const refText = refSets
-              .filter((r): r is NonNullable<typeof r> => r != null)
+            const validRefs = refSets.filter((r): r is NonNullable<typeof r> => Boolean(r));
+            const refText = validRefs
               .slice(0, 4)
               .map((r) => (isTimed ? `${r.seconds}s` : `${r.weight}×${r.reps}`))
               .join(", ");
+
+            const prevBestE1rm = !isTimed
+              ? Math.max(0, ...validRefs.map((r) => estimated1RM(r.weight, r.reps)))
+              : 0;
+            const prevTopWeight = !isTimed
+              ? Math.max(0, ...validRefs.map((r) => r.weight))
+              : 0;
+            const todayBestE1rm = !isTimed
+              ? Math.max(
+                  0,
+                  ...row.sets
+                    .filter((s) => s.completed && s.type !== "warmup")
+                    .map((s) => estimated1RM(s.weight, s.reps)),
+                )
+              : 0;
+            const e1rmGain = prevBestE1rm > 0 && todayBestE1rm > prevBestE1rm ? todayBestE1rm - prevBestE1rm : 0;
 
             return (
               <section
@@ -985,7 +1027,15 @@ export function WorkoutEditorModal({
 
                   <div className="ex-hero-title-col">
                     <div className="ex-hero-title-row">
-                      <h3>{snap?.name ?? row.exerciseId}</h3>
+                      <button
+                        type="button"
+                        className="ex-title-btn"
+                        title="查看动作百科图解与个人历史曲线"
+                        onClick={() => openExerciseDetailModal(row.exerciseId, snap?.name ?? row.exerciseId)}
+                      >
+                        <h3>{snap?.name ?? row.exerciseId}</h3>
+                        <Icon name="book" size={14} />
+                      </button>
                       <span className="ex-set-ratio">
                         {exDoneCount}/{row.sets.length} 组
                       </span>
@@ -1048,6 +1098,15 @@ export function WorkoutEditorModal({
                         </button>
                       ) : null}
                     </div>
+                    {prevBestE1rm > 0 ? (
+                      <div>
+                        <span className={`ex-prog-pill${e1rmGain > 0 ? " is-pr" : ""}`}>
+                          {e1rmGain > 0
+                            ? `已突破上次 E1RM +${fmt(e1rmGain, 1)} kg`
+                            : `渐进参考：${prevTopWeight > 0 ? `${fmt(round2(prevTopWeight + 2.5))} kg 或 +1 次` : "+1 次"}（目标 E1RM ${fmt(prevBestE1rm, 1)} kg）`}
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 

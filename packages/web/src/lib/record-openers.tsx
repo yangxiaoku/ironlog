@@ -18,6 +18,7 @@ const HealthDataWebhookModal = lazy(() => import("../components/apple/AppleHealt
 
 const BadgeDetailModal = lazy(() => import("../components/badges/BadgeDetailModal").then((m) => ({ default: m.BadgeDetailModal })));
 const CalendarDayModal = lazy(() => import("../components/calendar/DayDossier").then((m) => ({ default: m.CalendarDayModal })));
+const CommandPaletteModal = lazy(() => import("../components/CommandPaletteModal").then((m) => ({ default: m.CommandPaletteModal })));
 const DietEditorModal = lazy(() => import("../components/diet/DietEditorModal").then((m) => ({ default: m.DietEditorModal })));
 const EditMealTemplateModal = lazy(() => import("../components/diet/MealTemplateModal").then((m) => ({ default: m.EditMealTemplateModal })));
 const SaveMealTemplateModal = lazy(() => import("../components/diet/MealTemplateModal").then((m) => ({ default: m.SaveMealTemplateModal })));
@@ -602,5 +603,18 @@ export function openBadgeDetailModal(badge: BadgeItem, onPinnedChange?: (pinned:
     title: badge.title,
     layout: "badge",
     content: <BadgeDetailModal badge={badge} onPinnedChange={onPinnedChange} />,
+  });
+}
+
+export function openCommandPalette(): void {
+  const ui = useUiStore.getState();
+  if (ui.modals.some((m) => m.title === "快速搜索与命令面板")) {
+    ui.closeTopModal();
+    return;
+  }
+  ui.openModal({
+    title: "快速搜索与命令面板",
+    wide: true,
+    content: <CommandPaletteModal />,
   });
 }

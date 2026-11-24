@@ -3,7 +3,7 @@ import { today } from "../lib/date";
 import { findLocalWorkoutDraft } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { prefetchWorkspace } from "../lib/prefetch";
-import { openWorkoutEditor } from "../lib/record-openers";
+import { openCommandPalette, openWorkoutEditor } from "../lib/record-openers";
 import {
   DESTINATIONS,
   MOBILE_TABS,
@@ -15,6 +15,7 @@ import {
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { Icon } from "./Icon";
+import { LiveWorkoutBar } from "./LiveWorkoutBar";
 import { MatrixText } from "./MatrixText";
 import { MoreSheetBody } from "./MoreSheet";
 import { QuickRecordSheetBody } from "./QuickRecordSheet";
@@ -203,6 +204,20 @@ export function AppShell({ children }: { children: ReactNode }) {
                 待同步 {pendingSyncCount}
               </button>
             ) : null}
+            <button
+              type="button"
+              className="cmd-trigger-pill"
+              aria-label="打开命令面板与快速搜索 (Ctrl+K)"
+              title="快速搜索动作 / 跳转页面 (Ctrl+K)"
+              onClick={() => {
+                triggerHaptic("light");
+                openCommandPalette();
+              }}
+            >
+              <Icon name="search" size={14} />
+              <span>搜索</span>
+              <kbd>⌘K</kbd>
+            </button>
             <span className="local-date">
               <Icon name="calendar" size={16} />
               <time dateTime={todayStr}>
@@ -273,6 +288,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+      <LiveWorkoutBar />
     </>
   );
 }

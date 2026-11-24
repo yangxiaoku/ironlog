@@ -7,6 +7,7 @@ import { useMobileGuards } from "./hooks/useMobileGuards";
 import { configureApi } from "./lib/api";
 import { prefetchViewChunk, viewLoaders } from "./lib/prefetch";
 import { configureQueryCache } from "./lib/query-cache";
+import { openCommandPalette } from "./lib/record-openers";
 import { useAuthStore } from "./store/useAuthStore";
 import { useUiStore } from "./store/useUiStore";
 
@@ -49,6 +50,17 @@ export function App() {
         void useUiStore.getState().syncOfflineQueue(uid, { silent: true });
       }
     });
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        openCommandPalette();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   let mainContent: React.ReactNode;
