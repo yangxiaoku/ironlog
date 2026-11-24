@@ -50,6 +50,7 @@ import {
   snapWarmupWeight,
   soundPreference,
 } from "../../lib/workout-helpers";
+import { openAiAdaptWorkoutModal } from "../../lib/record-openers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -175,7 +176,11 @@ export function WorkoutEditorModal({
     };
   }, [record, seed, draftStorageKey, todayStr]);
 
-  const isHistoricalEdit = record?.data.status === "completed";
+  const [savedRecord, setSavedRecord] = useState<RecordEnvelope<WorkoutData> | undefined>(record);
+  const savedRecordRef = useRef<RecordEnvelope<WorkoutData> | undefined>(record);
+  savedRecordRef.current = savedRecord;
+
+  const isHistoricalEdit = (savedRecord ?? record)?.data.status === "completed";
   const [workoutId] = useState<string>(() => record?.id ?? newId());
   const [sessionStart] = useState<string>(() => record?.data.startedAt ?? new Date().toISOString());
 
@@ -448,21 +453,15 @@ export function WorkoutEditorModal({
     notify(`已加入 ${warmups.length} 组递增热身`);
   };
 
-  const submitWorkout = async (targetStatus: "active" | "completed") => {
+  const buildWorkoutPayload = (targetStatus: "active" | "completed") => {
+    const curRec = savedRecordRef.current;
     const cleanTitle = title.trim() || "自由训练";
-    if (!exercises.length && targetStatus === "completed") {
-      setError("请至少添加一个动作后再结束训练");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
     const nowDate = new Date();
     const endedAt =
       targetStatus === "active"
         ? null
-        : record?.data.endedAt && date === record.data.date
-          ? record.data.endedAt
+        : curRec?.data.endedAt && date === curRec.data.date
+          ? curRec.data.endedAt
           : date === todayStr
             ? nowDate.toISOString()
             : new Date(Date.parse(sessionStart) + Math.max(0, elapsedSeconds) * 1000).toISOString();
@@ -487,13 +486,13 @@ export function WorkoutEditorModal({
       startedAt: sessionStart,
       endedAt,
       status: targetStatus,
-      durationUnknown: record?.data.durationUnknown,
+      durationUnknown: curRec?.data.durationUnknown,
       notes: notes.trim(),
       feeling,
-      source: record?.data.source ?? "manual",
-      planId: record?.data.planId ?? null,
-      planVersion: record?.data.planVersion ?? null,
-      routineId: record?.data.routineId ?? null,
+      source: curRec?.data.source ?? "manual",
+      planId: curRec?.data.planId ?? null,
+      planVersion: curRec?.data.planVersion ?? null,
+      routineId: curRec?.data.routineId ?? null,
       exercises: sanitizedExercises,
       timing: pausedTiming,
       restEndsAt: resting && rest ? Math.round(rest.end) : null,
@@ -504,10 +503,49 @@ export function WorkoutEditorModal({
       opId: newId(),
       id: workoutId,
       kind: "workout" as const,
-      baseVersion: record?.version ?? 0,
+      baseVersion: curRec?.version ?? 0,
       deleted: false,
       data: workoutData,
     };
+
+    return { cleanTitle, workoutData, body };
+  };
+
+  const ensureSavedDraft = async (): Promise<RecordEnvelope<WorkoutData>> => {
+    if (!exercises.length) {
+      throw new Error("请先添加至少一个训练动作后再使用 AI 调整");
+    }
+    const curRec = savedRecordRef.current;
+    const status = curRec?.data.status === "completed" ? "completed" : "active";
+    const { workoutData, body } = buildWorkoutPayload(status);
+    const res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
+      method: "POST",
+      body,
+    });
+    const saved: RecordEnvelope<WorkoutData> = res.record ?? {
+      id: workoutId,
+      kind: "workout",
+      version: (curRec?.version ?? 0) + 1,
+      deleted: false,
+      updatedAt: new Date().toISOString(),
+      data: workoutData,
+    };
+    savedRecordRef.current = saved;
+    setSavedRecord(saved);
+    bumpDataEpoch();
+    return saved;
+  };
+
+  const submitWorkout = async (targetStatus: "active" | "completed") => {
+    if (!exercises.length && targetStatus === "completed") {
+      setError("请至少添加一个动作后再结束训练");
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+    const curRec = savedRecordRef.current;
+    const { cleanTitle, workoutData, body } = buildWorkoutPayload(targetStatus);
 
     try {
       const res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
@@ -522,11 +560,13 @@ export function WorkoutEditorModal({
       const saved: RecordEnvelope<WorkoutData> = res.record ?? {
         id: workoutId,
         kind: "workout",
-        version: (record?.version ?? 0) + 1,
+        version: (curRec?.version ?? 0) + 1,
         deleted: false,
         updatedAt: new Date().toISOString(),
         data: workoutData,
       };
+      savedRecordRef.current = saved;
+      setSavedRecord(saved);
       if (targetStatus === "completed" && onCompleted) {
         onCompleted(saved);
       } else {
@@ -555,7 +595,8 @@ export function WorkoutEditorModal({
   };
 
   const handleDeleteWorkout = () => {
-    if (!record) return;
+    const curRec = savedRecordRef.current;
+    if (!curRec) return;
     openConfirm({
       title: "删除训练记录",
       message: `确定要删除「${title}」吗？此操作不可撤销。`,
@@ -565,11 +606,11 @@ export function WorkoutEditorModal({
           method: "POST",
           body: {
             opId: newId(),
-            id: record.id,
+            id: curRec.id,
             kind: "workout",
-            baseVersion: record.version,
+            baseVersion: curRec.version,
             deleted: true,
-            data: record.data,
+            data: curRec.data,
           },
         });
         if (draftStorageKey && typeof localStorage !== "undefined") {
@@ -749,7 +790,26 @@ export function WorkoutEditorModal({
               </div>
             </div>
             <div className="session-menu-quick">
-              {record ? (
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() =>
+                  openAiAdaptWorkoutModal({
+                    ensureSavedWorkout: ensureSavedDraft,
+                    onApplied: (updated) => {
+                      savedRecordRef.current = updated;
+                      setSavedRecord(updated);
+                      setExercises(updated.data.exercises);
+                      setOpenMenu(false);
+                      bumpDataEpoch();
+                      notify("已应用 AI 训中调整");
+                    },
+                  })
+                }
+              >
+                <Icon name="bolt" size={15} /> AI 训中调整
+              </button>
+              {savedRecord ? (
                 <button type="button" className="danger" onClick={handleDeleteWorkout}>
                   删除本条记录
                 </button>

@@ -1,6 +1,6 @@
 import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
-import { openDietEditor, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
+import { openDietEditor, openStrengthCalcModal, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
 import { useUiStore } from "../store/useUiStore";
 import { Icon, type IconName } from "./Icon";
 
@@ -37,16 +37,14 @@ const QUICK_OPTIONS: QuickOption[] = [
   {
     kind: "calc",
     title: "1RM 与配片计算器",
-    desc: "估算 1RM、百分比负荷与杠铃配片图（阶段三迁入）",
+    desc: "估算 1RM、百分比负荷与杠铃配片图",
     accent: "calc-accent",
     icon: "bolt",
   },
 ];
 
 export function QuickRecordSheetBody() {
-  const navigate = useUiStore((s) => s.navigate);
   const closeModalSilent = useUiStore((s) => s.closeModalSilent);
-  const notify = useUiStore((s) => s.notify);
 
   return (
     <div className="quick-record-sheet-body">
@@ -66,8 +64,7 @@ export function QuickRecordSheetBody() {
               } else if (item.kind === "weight") {
                 openWeightEditor({ date: today() });
               } else {
-                navigate("plan");
-                notify("1RM 计算器将在阶段三迁入 React 弹窗");
+                openStrengthCalcModal();
               }
             }}
           >

@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "dev": "npm run dev -w @ironlog/server",
-    "build": "npm run build -w @ironlog/shared && npm run build -w @ironlog/server && npm run build -w @ironlog/mcp && npm run build:web",
+    "build": "npm run build -w @ironlog/shared && npm run build -w @ironlog/server && npm run build -w @ironlog/mcp && npm run build:web && npm run build:web-react",
     "typecheck": "npm run build -w @ironlog/shared && tsc -p packages/server --noEmit && tsc -p packages/mcp --noEmit",
     "check:web": "tsc -p tsconfig.web.json",
     "build:web": "node scripts/build-web.mjs",

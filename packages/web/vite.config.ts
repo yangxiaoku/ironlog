@@ -58,6 +58,7 @@ export default defineConfig({
     proxy: {
       "/api": apiProxy,
       "/auth": apiProxy,
+      "/media": apiProxy,
     },
   },
 });

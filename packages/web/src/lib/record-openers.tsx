@@ -1,15 +1,46 @@
+import { useState } from "react";
+import { AiAdaptWorkoutModal, AiDietModal, AiPlanModal, AiReviewModal, AiWorkoutModal } from "../components/ai/AiModals";
+import {
+  AppleDailyDetailsModal,
+  AppleWorkoutDetailsModal,
+  DeviceSetupModal,
+  HealthDataImportModal,
+  HealthDataWebhookModal,
+  type AppleDailyEntry,
+  type AppleWorkoutAgendaItem,
+} from "../components/apple/AppleHealthModals";
+import { BadgeDetailModal } from "../components/badges/BadgeDetailModal";
+import { CalendarDayModal } from "../components/calendar/DayDossier";
 import { DietEditorModal, type RecentFoodPreset } from "../components/diet/DietEditorModal";
 import { EditMealTemplateModal, SaveMealTemplateModal } from "../components/diet/MealTemplateModal";
+import { CustomExerciseModal, ExerciseDetailModal } from "../components/exercises/ExerciseModals";
+import { Icon } from "../components/Icon";
+import { OnboardingModal } from "../components/onboarding/OnboardingModal";
+import {
+  DaySchedulerModal,
+  PlanBuilderModal,
+  PlanDraftModal,
+  RoutinePreviewModal,
+  TemplateEditorModal,
+} from "../components/plan/PlanModals";
+import { BackupRestoreModal, CsvImportModal, IssueApiTokenModal, PlanImportModal } from "../components/settings/DataModals";
+import { ShareCardModal, type ShareCardModalProps } from "../components/share/ShareCardModal";
+import { StrengthCalcModal } from "../components/tools/StrengthCalcModal";
 import { MeasurementModal } from "../components/weight/MeasurementModal";
 import { WeightEditorModal } from "../components/weight/WeightEditorModal";
 import { WorkoutEditorModal } from "../components/workout/WorkoutEditorModal";
 import { WorkoutReportModal } from "../components/workout/WorkoutReportModal";
+import type { BadgeItem } from "./badges";
+import { copyText } from "./clipboard";
 import { shortDate, today } from "./date";
 import type {
+  CatalogueExercise,
   DietData,
   MealKey,
   MealTemplateData,
   MeasurementEntry,
+  PlanData,
+  PlannedExercise,
   ProfileGoals,
   RecordEnvelope,
   WeightData,
@@ -17,15 +48,32 @@ import type {
 } from "./domain";
 import { useUiStore } from "../store/useUiStore";
 
-export function openWorkoutEditor({
-  record,
-  goals,
-  seed,
-}: {
+export interface WorkoutEditorOptions {
   record?: RecordEnvelope<WorkoutData>;
   goals?: ProfileGoals | null;
   seed?: Partial<WorkoutData>;
-} = {}): void {
+}
+
+function isWorkoutEnvelope(val: unknown): val is RecordEnvelope<WorkoutData> {
+  return Boolean(val && typeof val === "object" && "id" in val && "data" in val);
+}
+
+export function openWorkoutEditor(options?: WorkoutEditorOptions): void;
+export function openWorkoutEditor(
+  record?: RecordEnvelope<WorkoutData>,
+  goals?: ProfileGoals | null,
+  seed?: Partial<WorkoutData>,
+): void;
+export function openWorkoutEditor(
+  arg1?: WorkoutEditorOptions | RecordEnvelope<WorkoutData>,
+  arg2?: ProfileGoals | null,
+  arg3?: Partial<WorkoutData>,
+): void {
+  const opts: WorkoutEditorOptions =
+    arg2 !== undefined || arg3 !== undefined || arg1 === undefined || isWorkoutEnvelope(arg1)
+      ? { record: arg1 as RecordEnvelope<WorkoutData> | undefined, goals: arg2, seed: arg3 }
+      : (arg1 ?? {});
+  const { record, goals, seed } = opts;
   const ui = useUiStore.getState();
   ui.openModal({
     title: record ? `编辑：${record.data.title}` : seed?.title ? `开始：${seed.title}` : "记录训练",
@@ -45,15 +93,26 @@ export function openWorkoutEditor({
   });
 }
 
-export function openWorkoutReport({
-  workoutId,
-  record,
-  goals,
-}: {
+export interface WorkoutReportOptions {
   workoutId: string;
   record?: RecordEnvelope<WorkoutData>;
   goals?: ProfileGoals | null;
-}): void {
+}
+
+export function openWorkoutReport(options: WorkoutReportOptions): void;
+export function openWorkoutReport(
+  workoutId: string,
+  record?: RecordEnvelope<WorkoutData>,
+  goals?: ProfileGoals | null,
+): void;
+export function openWorkoutReport(
+  arg1: WorkoutReportOptions | string,
+  arg2?: RecordEnvelope<WorkoutData>,
+  arg3?: ProfileGoals | null,
+): void {
+  const opts: WorkoutReportOptions =
+    typeof arg1 === "string" ? { workoutId: arg1, record: arg2, goals: arg3 } : arg1;
+  const { workoutId, record, goals } = opts;
   const ui = useUiStore.getState();
   ui.openModal({
     title: record?.data.title ?? "训练复盘",
@@ -147,5 +206,389 @@ export function openMeasurementModal(existing: MeasurementEntry | null = null): 
   useUiStore.getState().openModal({
     title: existing ? `编辑 ${shortDate(existing.date)} 围度` : "记录身体围度",
     content: <MeasurementModal existing={existing} />,
+  });
+}
+
+export function openStrengthCalcModal(): void {
+  useUiStore.getState().openModal({
+    title: "1RM 与配片计算器",
+    wide: true,
+    layout: "report",
+    content: <StrengthCalcModal />,
+  });
+}
+
+export function openDailyShareModal(arg?: string | { date?: string; onBack?: (() => void) | null }): void {
+  const opts = typeof arg === "string" ? { date: arg } : (arg ?? {});
+  const d = opts.date ?? today();
+  useUiStore.getState().openModal({
+    title: `${shortDate(d)} · 训练打卡海报`,
+    layout: "report",
+    content: <ShareCardModal date={d} onBack={opts.onBack ?? null} />,
+  });
+}
+
+export function openWorkoutShareModal({
+  singleReport = null,
+  singleHealth = null,
+  onBack = null,
+}: Pick<ShareCardModalProps, "singleReport" | "singleHealth" | "onBack">): void {
+  useUiStore.getState().openModal({
+    title: singleHealth ? "生成健康体能海报" : "生成本场训练海报",
+    layout: "report",
+    content: <ShareCardModal singleReport={singleReport} singleHealth={singleHealth} onBack={onBack} />,
+  });
+}
+
+export function openAiReviewModal(): void {
+  useUiStore.getState().openModal({
+    title: "AI 训练与营养周报",
+    wide: true,
+    content: <AiReviewModal />,
+  });
+}
+
+export function openAiDietModal({ initialDate }: { initialDate?: string } = {}): void {
+  useUiStore.getState().openModal({
+    title: "AI 一句话记饮食",
+    wide: true,
+    content: <AiDietModal initialDate={initialDate} />,
+  });
+}
+
+export function openAiWorkoutModal({ initialDate }: { initialDate?: string } = {}): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: "AI 文本记录训练",
+    wide: true,
+    content: (
+      <AiWorkoutModal
+        initialDate={initialDate}
+        onEditParsed={(seed) => {
+          ui.closeAllModals();
+          openWorkoutEditor({ seed });
+        }}
+        onSavedReport={(saved) => {
+          ui.closeAllModals();
+          openWorkoutReport({ workoutId: saved.id, record: saved });
+        }}
+      />
+    ),
+  });
+}
+
+export function openAiPlanModal(activePlanId?: string | null): void {
+  useUiStore.getState().openModal({
+    title: "AI 智能生成周期计划",
+    wide: true,
+    content: <AiPlanModal activePlanId={activePlanId} />,
+  });
+}
+
+export function openAiAdaptWorkoutModal({
+  ensureSavedWorkout,
+  onApplied,
+}: {
+  ensureSavedWorkout: () => Promise<RecordEnvelope<WorkoutData>>;
+  onApplied: (updated: RecordEnvelope<WorkoutData>) => void;
+}): void {
+  useUiStore.getState().openModal({
+    title: "AI 训中临场调整",
+    wide: true,
+    content: <AiAdaptWorkoutModal ensureSavedWorkout={ensureSavedWorkout} onApplied={onApplied} />,
+  });
+}
+
+export function openCsvImportModal({ onSuccess }: { onSuccess?: () => void } = {}): void {
+  useUiStore.getState().openModal({
+    title: "从 Strong / Hevy CSV 导入",
+    wide: true,
+    content: <CsvImportModal onSuccess={onSuccess} />,
+  });
+}
+
+export function openBackupRestoreModal({ onSuccess }: { onSuccess?: () => void } = {}): void {
+  useUiStore.getState().openModal({
+    title: "恢复完整备份",
+    wide: true,
+    content: <BackupRestoreModal onSuccess={onSuccess} />,
+  });
+}
+
+export function openIssueApiTokenModal({ onIssued }: { onIssued?: () => void } = {}): void {
+  useUiStore.getState().openModal({
+    title: "新建个人 API 密钥",
+    content: <IssueApiTokenModal onIssued={onIssued} />,
+  });
+}
+
+export function openPlanImportModal({
+  hasActivePlan,
+  expectedRevision,
+  onImported,
+}: {
+  hasActivePlan: boolean;
+  expectedRevision: number;
+  onImported?: () => void;
+}): void {
+  useUiStore.getState().openModal({
+    title: "从 JSON 导入训练计划",
+    wide: true,
+    content: (
+      <PlanImportModal
+        hasActivePlan={hasActivePlan}
+        expectedRevision={expectedRevision}
+        onImported={onImported}
+      />
+    ),
+  });
+}
+
+export function openHealthDataImportModal({ onImported }: { onImported?: () => void } = {}): void {
+  useUiStore.getState().openModal({
+    title: "导入 Apple Health 导出包",
+    content: <HealthDataImportModal onImported={onImported} />,
+  });
+}
+
+export function openHealthDataWebhookModal({ onRefresh }: { onRefresh?: () => void } = {}): void {
+  useUiStore.getState().openModal({
+    title: "Apple Health 快捷指令同步",
+    content: <HealthDataWebhookModal onRefresh={onRefresh} />,
+  });
+}
+
+export function openDeviceSetupModal({ onRefresh }: { onRefresh?: () => void } = {}): void {
+  useUiStore.getState().openModal({
+    title: "配置设备同步",
+    content: <DeviceSetupModal onRefresh={onRefresh} />,
+  });
+}
+
+export function openAppleDailyDetailsModal(daily: AppleDailyEntry): void {
+  useUiStore.getState().openModal({
+    title: `${shortDate(daily.date)} Apple Health 每日体能`,
+    wide: true,
+    layout: "report",
+    content: <AppleDailyDetailsModal daily={daily} />,
+  });
+}
+
+export function openAppleWorkoutDetailsModal(
+  arg:
+    | AppleWorkoutAgendaItem
+    | {
+        item: AppleWorkoutAgendaItem;
+        back?: (() => void) | null;
+        onOpenWorkout?: (workoutId: string) => void;
+      },
+): void {
+  const opts = "item" in arg ? arg : { item: arg };
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: opts.item.title || "Apple 体能训练",
+    wide: true,
+    layout: "report",
+    content: (
+      <AppleWorkoutDetailsModal
+        item={opts.item}
+        back={Boolean(opts.back)}
+        onOpenWorkout={
+          opts.onOpenWorkout ??
+          ((workoutId) => {
+            ui.closeTopModal();
+            openWorkoutReport({ workoutId });
+          })
+        }
+      />
+    ),
+  });
+}
+
+export function openOnboardingModal({
+  currentProfile = null,
+  initialStep = 1,
+}: {
+  currentProfile?: ProfileGoals | null;
+  initialStep?: number;
+} = {}): void {
+  useUiStore.getState().openModal({
+    title: "新手引导 · 快速上手",
+    wide: true,
+    layout: "onboarding",
+    content: <OnboardingModal currentProfile={currentProfile} initialStep={initialStep} />,
+  });
+}
+
+export function openPlanBuilderModal(
+  existingPlan: { id: string; version?: number; data: PlanData } | null = null,
+): void {
+  useUiStore.getState().openModal({
+    title: existingPlan ? `编辑计划：${existingPlan.data.name}` : "新建周期计划",
+    wide: true,
+    layout: "report",
+    content: <PlanBuilderModal existingPlan={existingPlan} />,
+  });
+}
+
+export function openTemplateEditorModal(
+  existingTemplate: RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }> | null = null,
+): void {
+  useUiStore.getState().openModal({
+    title: existingTemplate ? `编辑训练日模板：${existingTemplate.data.name}` : "新建训练日模板",
+    wide: true,
+    layout: "report",
+    content: <TemplateEditorModal existingTemplate={existingTemplate} />,
+  });
+}
+
+export function openPlanDraftModal(
+  record: RecordEnvelope<PlanData>,
+  catalogueMap: Map<string, CatalogueExercise>,
+  expectedRevision: number,
+): void {
+  useUiStore.getState().openModal({
+    title: `AI 计划草稿：${record.data.name}`,
+    wide: true,
+    content: <PlanDraftModal record={record} catalogueMap={catalogueMap} expectedRevision={expectedRevision} />,
+  });
+}
+
+export function openDayScheduler(
+  date: string,
+  options: { onSaved?: (savedDate: string) => void; onStartPreview?: (d: string) => void } = {},
+): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: `编排 ${shortDate(date)} 训练日`,
+    wide: true,
+    layout: "report",
+    content: (
+      <DaySchedulerModal
+        date={date}
+        onSaved={options.onSaved}
+        onStartPreview={
+          options.onStartPreview ??
+          ((d) => {
+            ui.closeTopModal();
+            openRoutinePreview({ id: d, source: "scheduled", date: d });
+          })
+        }
+      />
+    ),
+  });
+}
+
+export function openRoutinePreview({
+  id,
+  source = "plan",
+  date = today(),
+}: {
+  id: string;
+  source?: "plan" | "template" | "scheduled";
+  date?: string;
+}): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: "今日训练准备",
+    wide: true,
+    layout: "report",
+    content: (
+      <RoutinePreviewModal
+        id={id}
+        source={source}
+        date={date}
+        onEditScheduledDay={(d) => {
+          ui.closeTopModal();
+          openDayScheduler(d);
+        }}
+        onLaunchWorkout={(seed, goals) => {
+          ui.closeAllModals();
+          openWorkoutEditor({ seed, goals });
+        }}
+      />
+    ),
+  });
+}
+
+function ExerciseCopyButton({ getTitle }: { getTitle: () => string }) {
+  const notify = useUiStore((s) => s.notify);
+  const [copied, setCopied] = useState(false);
+
+  return (
+    <button
+      type="button"
+      className="quiet copy-exercise"
+      onClick={() => {
+        const name = getTitle();
+        void copyText(name).then((ok) => {
+          if (ok) {
+            setCopied(true);
+            notify(`已复制「${name}」`);
+            window.setTimeout(() => setCopied(false), 1800);
+          } else {
+            notify("无法自动复制，请长按标题复制");
+          }
+        });
+      }}
+    >
+      <Icon name="copy" size={14} /> {copied ? "已复制" : "复制动作名"}
+    </button>
+  );
+}
+
+export function openExerciseDetailModal(
+  exerciseId: string,
+  exerciseName?: string,
+  customRecord: RecordEnvelope<CatalogueExercise> | null = null,
+): void {
+  const ui = useUiStore.getState();
+  const titleRef = { current: customRecord?.data.name || exerciseName || exerciseId };
+  ui.openModal({
+    title: titleRef.current,
+    wide: true,
+    layout: "exercise",
+    headerAction: <ExerciseCopyButton getTitle={() => titleRef.current} />,
+    content: (
+      <ExerciseDetailModal
+        exerciseId={exerciseId}
+        customRecord={customRecord}
+        onResolvedTitle={(resolved) => {
+          titleRef.current = resolved;
+        }}
+        onEditCustom={(rec) => {
+          ui.closeTopModal();
+          openCustomExerciseModal(rec);
+        }}
+        onQuickStart={(seed) => {
+          ui.closeAllModals();
+          openWorkoutEditor({ seed });
+        }}
+      />
+    ),
+  });
+}
+
+export function openCustomExerciseModal(existing: RecordEnvelope<CatalogueExercise> | null = null): void {
+  useUiStore.getState().openModal({
+    title: existing ? `编辑自定义动作：${existing.data.name}` : "新建自定义动作",
+    content: <CustomExerciseModal existing={existing} />,
+  });
+}
+
+export function openCalendarDayModal(initialDate: string, onDateChange?: (d: string) => void): void {
+  useUiStore.getState().openModal({
+    title: `${shortDate(initialDate)} 训练日程`,
+    wide: true,
+    layout: "report",
+    content: <CalendarDayModal initialDate={initialDate} onDateChange={onDateChange} />,
+  });
+}
+
+export function openBadgeDetailModal(badge: BadgeItem, onPinnedChange?: (pinned: string[]) => void): void {
+  useUiStore.getState().openModal({
+    title: badge.title,
+    layout: "badge",
+    content: <BadgeDetailModal badge={badge} onPinnedChange={onPinnedChange} />,
   });
 }

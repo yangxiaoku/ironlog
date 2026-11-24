@@ -304,6 +304,7 @@ export function ModalHost() {
         <>
           <header className="dialog-head">
             <h2 id="dialog-title">{dialogTitle}</h2>
+            {activeModal?.headerAction ?? null}
             <button
               type="button"
               className="icon-button"

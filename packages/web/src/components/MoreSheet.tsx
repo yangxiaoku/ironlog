@@ -1,6 +1,6 @@
 import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
-import { openDietEditor, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
+import { openDietEditor, openOnboardingModal, openStrengthCalcModal, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
 import { MORE_WORKSPACES, VIEW_WORKSPACE, WORKSPACES, type ViewId, type WorkspaceId } from "../lib/routes";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -121,6 +121,30 @@ export function MoreSheetBody() {
       </nav>
 
       <footer className="more-foot">
+        {userId ? (
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => {
+              triggerHaptic("light");
+              closeModalSilent();
+              openOnboardingModal({ initialStep: 1 });
+            }}
+          >
+            <Icon name="book" size={16} /> 使用指南
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="quiet"
+          onClick={() => {
+            triggerHaptic("light");
+            closeModalSilent();
+            openStrengthCalcModal();
+          }}
+        >
+          <Icon name="bolt" size={16} /> 力量计算器
+        </button>
         {userId ? (
           <button
             type="button"

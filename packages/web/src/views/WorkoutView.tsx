@@ -15,7 +15,7 @@ import {
   type TrainedExerciseSummary,
   type WorkoutData,
 } from "../lib/domain";
-import { openWorkoutEditor, openWorkoutReport } from "../lib/record-openers";
+import { openAiWorkoutModal, openCsvImportModal, openWorkoutEditor, openWorkoutReport } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
@@ -135,9 +135,17 @@ export function WorkoutView() {
         title="训练记录"
         view="workout"
         controls={
-          <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
-            <Icon name="plus" size={16} /> 记一次训练
-          </button>
+          <div className="heading-actions">
+            <button type="button" className="secondary-button" onClick={() => openCsvImportModal()}>
+              <Icon name="upload" size={15} /> 导入 CSV
+            </button>
+            <button type="button" className="secondary-button" onClick={() => openAiWorkoutModal()}>
+              <Icon name="bolt" size={16} /> AI 记训练
+            </button>
+            <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
+              <Icon name="plus" size={16} /> 记一次训练
+            </button>
+          </div>
         }
       />
 

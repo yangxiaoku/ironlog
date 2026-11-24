@@ -809,18 +809,23 @@ test("静态资源 ETag/Gzip 协商与动作详情 304 缓存验证", async () =
   try {
     mountWebAssets(app);
 
-    const rawCss = await app.request("/app/styles.css");
+    const indexRes = await app.request("/app/");
+    assert.equal(indexRes.status, 200);
+    const indexHtml = await indexRes.text();
+    const cssPath = indexHtml.match(/\/app\/assets\/[A-Za-z0-9._-]+\.css/)?.[0] ?? "/app/styles.css";
+
+    const rawCss = await app.request(cssPath);
     assert.equal(rawCss.status, 200);
     const etag = rawCss.headers.get("ETag");
     assert.ok(etag);
     const rawSize = (await rawCss.arrayBuffer()).byteLength;
 
-    const notModifiedCss = await app.request("/app/styles.css", {
+    const notModifiedCss = await app.request(cssPath, {
       headers: { "If-None-Match": etag },
     });
     assert.equal(notModifiedCss.status, 304);
 
-    const gzCss = await app.request("/app/styles.css", {
+    const gzCss = await app.request(cssPath, {
       headers: { "Accept-Encoding": "gzip" },
     });
     assert.equal(gzCss.status, 200);

@@ -287,6 +287,7 @@ export interface WorkoutReportResponse {
   planId?: string | null;
   routineId?: string | null;
   canSyncToActivePlan?: boolean;
+  activePlanRevision?: number;
   duration: number | null;
   sets: number;
   volume: number;
@@ -325,6 +326,20 @@ export interface WorkoutReportResponse {
   }>;
 }
 
+export interface ExerciseIllustrationFrame {
+  path: string;
+  caption?: string;
+}
+
+export interface ExerciseIllustration {
+  gifPath?: string | null;
+  frames?: ExerciseIllustrationFrame[];
+  author?: string;
+  license?: string;
+  licenseUrl?: string;
+  sourceUrl?: string;
+}
+
 export interface CatalogueExercise {
   id: string;
   name: string;
@@ -334,11 +349,54 @@ export interface CatalogueExercise {
   secondaryMuscles?: MuscleKey[];
   equipment: EquipmentKey;
   mode: ExerciseMode;
+  category?: string;
   volumeMultiplier: number;
   instructions?: string[];
   description?: string;
   mistakes?: string[];
   custom?: boolean;
+  thumbnail?: string | null;
+  illustration?: ExerciseIllustration | null;
+  source?: {
+    name?: string;
+    url?: string;
+    author?: string;
+    license?: string;
+  } | null;
+}
+
+export type ProgressionRule = "double" | "linear" | "greyskull" | "manual";
+
+export interface PlannedExercise {
+  exerciseId: string;
+  sets: number;
+  repsMin: number;
+  repsMax: number;
+  weight: number | null;
+  seconds: number;
+  restSeconds: number;
+  targetRir: number;
+  progression: ProgressionRule;
+  increment: number;
+  backupExerciseId?: string | null;
+  supersetGroup?: string | null;
+}
+
+export interface PlanRoutine {
+  id: string;
+  name: string;
+  exercises: PlannedExercise[];
+}
+
+export interface PlanData {
+  name: string;
+  weeks: number;
+  schedule?: "rotation" | "weekdays";
+  weekdays?: number[];
+  rationale?: string;
+  source?: string;
+  parentId?: string | null;
+  routines: PlanRoutine[];
 }
 
 export interface TrainedExerciseSummary {

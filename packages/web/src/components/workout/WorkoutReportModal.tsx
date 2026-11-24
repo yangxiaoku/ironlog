@@ -13,7 +13,9 @@ import {
   type WorkoutReportResponse,
 } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
+import { openAppleWorkoutDetailsModal, openWorkoutReport, openWorkoutShareModal } from "../../lib/record-openers";
 import { useUiStore } from "../../store/useUiStore";
+import { AppleLine, type AppleWorkoutAgendaItem } from "../apple/AppleHealthModals";
 import { Icon } from "../Icon";
 import { MatrixText } from "../MatrixText";
 
@@ -49,18 +51,38 @@ export function WorkoutReportModal({
   const notify = useUiStore((s) => s.notify);
 
   const [report, setReport] = useState<WorkoutReportResponse | null>(null);
+  const [appleItem, setAppleItem] = useState<AppleWorkoutAgendaItem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
   const [copied, setCopied] = useState(false);
+  const [syncArmed, setSyncArmed] = useState(false);
+  const [syncedRoutineName, setSyncedRoutineName] = useState("");
+  const [savedTemplate, setSavedTemplate] = useState(false);
 
   useEffect(() => {
     let active = true;
     setLoading(true);
     setError("");
+    setAppleItem(null);
+    setSyncArmed(false);
+    setSyncedRoutineName("");
+    setSavedTemplate(false);
     void apiFetch<WorkoutReportResponse>(`/api/web/workout-report/${encodeURIComponent(workoutId)}`)
       .then((res) => {
-        if (active) setReport(res);
+        if (!active) return;
+        setReport(res);
+        if (res.date) {
+          void apiFetch<AppleWorkoutAgendaItem[]>(
+            `/api/integrations/apple-health/agenda?from=${encodeURIComponent(res.date)}&through=${encodeURIComponent(res.date)}`,
+          )
+            .then((items) => {
+              if (!active) return;
+              const linked = items.find((item) => item.manualWorkoutId === res.id) ?? null;
+              setAppleItem(linked);
+            })
+            .catch(() => {});
+        }
       })
       .catch((err) => {
         if (active) setError((err as Error)?.message || "加载训练复盘失败");
@@ -196,6 +218,99 @@ export function WorkoutReportModal({
     });
   };
 
+  const handleSaveTemplate = async () => {
+    if (savedTemplate || busyAction) return;
+    setBusyAction("template");
+    try {
+      const full = await fetchFullRecord();
+      const plannedExercises = full.data.exercises.map((row) => {
+        const mode = row.snapshot?.mode ?? "reps";
+        const workSets = row.sets.filter((s) => s.type !== "warmup");
+        const pool = workSets.length ? workSets : row.sets;
+        const maxWeight = Math.max(...pool.map((s) => s.weight || 0), 0);
+        const avgReps = Math.max(
+          1,
+          Math.round(pool.reduce((s, x) => s + (x.reps || 8), 0) / Math.max(1, pool.length)),
+        );
+        const maxSec = Math.max(...pool.map((s) => s.seconds || 0), mode === "timed" ? 30 : 0);
+        return {
+          exerciseId: row.exerciseId,
+          sets: Math.max(1, Math.min(100, pool.length)),
+          repsMin: mode === "timed" ? 1 : Math.max(1, avgReps - 2),
+          repsMax: mode === "timed" ? 1 : avgReps,
+          weight: maxWeight > 0 ? maxWeight : null,
+          seconds: mode === "timed" ? Math.max(1, maxSec) : 0,
+          restSeconds: row.restSeconds ?? 90,
+          targetRir: 2,
+          progression: "double",
+          increment: 2.5,
+          backupExerciseId: null,
+          supersetGroup: row.supersetGroup ?? null,
+        };
+      });
+      if (!plannedExercises.length) {
+        notify("本场没有动作可存为模板");
+        return;
+      }
+      const tplId = `tpl_${crypto.randomUUID().slice(0, 12)}`;
+      const tplName = full.data.title || "自定义训练模板";
+      await apiFetch("/api/records", {
+        method: "POST",
+        body: {
+          opId: crypto.randomUUID(),
+          id: tplId,
+          kind: "template",
+          baseVersion: 0,
+          deleted: false,
+          data: { id: tplId, name: tplName, exercises: plannedExercises },
+        },
+      });
+      triggerHaptic("success");
+      setSavedTemplate(true);
+      bumpDataEpoch();
+      notify(`已保存「${tplName}」至训练计划模板库`);
+    } catch (err) {
+      notify((err as Error)?.message || "存为模板失败");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const handleSyncToPlan = async () => {
+    if (syncedRoutineName || busyAction) return;
+    if (!syncArmed) {
+      setSyncArmed(true);
+      return;
+    }
+    setBusyAction("sync");
+    try {
+      const res = await apiFetch<{ syncedRoutineName: string }>("/api/web/plans/sync-routine", {
+        method: "POST",
+        body: {
+          workoutId: report.id,
+          expectedRevision: report.activePlanRevision,
+        },
+      });
+      triggerHaptic("success");
+      setSyncedRoutineName(res.syncedRoutineName);
+      bumpDataEpoch();
+      notify(`已将本场动作、组数与超级组同步至计划「${res.syncedRoutineName}」`);
+    } catch (err) {
+      setSyncArmed(false);
+      notify((err as Error)?.message || "同步回计划失败");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
+  const handleShare = () => {
+    openWorkoutShareModal({
+      singleReport: report,
+      singleHealth: appleItem,
+      onBack: () => openWorkoutReport({ workoutId: report.id, record, goals }),
+    });
+  };
+
   const cmp = report.previousComparison;
 
   return (
@@ -205,6 +320,12 @@ export function WorkoutReportModal({
         {report.feeling ? <span>体感 {FEELINGS[report.feeling]}</span> : null}
         <span>训练已完成</span>
       </div>
+
+      {appleItem ? (
+        <div style={{ marginBottom: 12 }}>
+          <AppleLine item={appleItem} onClick={() => openAppleWorkoutDetailsModal(appleItem)} />
+        </div>
+      ) : null}
 
       <div className="report-stats">
         <div>
@@ -323,6 +444,35 @@ export function WorkoutReportModal({
             onClick={() => void handleEdit()}
           >
             编辑
+          </button>
+          {report.canSyncToActivePlan ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busyAction !== "" || Boolean(syncedRoutineName)}
+              onClick={() => void handleSyncToPlan()}
+            >
+              <Icon name="refresh" size={15} />{" "}
+              {syncedRoutineName ? "已同步回计划" : syncArmed ? "确认同步？" : "同步回计划"}
+            </button>
+          ) : null}
+          {report.exercises.length ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busyAction !== "" || savedTemplate}
+              onClick={() => void handleSaveTemplate()}
+            >
+              <Icon name="bookmark" size={15} /> {savedTemplate ? "已存为模板" : "存为模板"}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="secondary-button"
+            disabled={busyAction !== ""}
+            onClick={handleShare}
+          >
+            <Icon name="download" size={15} /> 分享记录
           </button>
           <button type="button" className="quiet" onClick={() => void handleCopy()}>
             <Icon name="copy" size={15} /> {copied ? "已复制训练摘要" : "复制摘要"}

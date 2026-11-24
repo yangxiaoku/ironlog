@@ -133,10 +133,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             {demo ? "演示模式" : userId ? "已登录" : "未登录"}
           </span>
           <div className="sidebar-foot-actions">
-            <span className="phase-badge" title="React 迁移阶段二：训练/饮食/体重闭环">
-              <i className="phase-badge-dot" aria-hidden="true" />
-              React v2
-            </span>
             <button
               type="button"
               className="icon-button"

@@ -43,6 +43,16 @@ export function displayWeekday(iso: string): string {
   return weekdayFmt.format(new Date(`${iso}T12:00:00+08:00`));
 }
 
+export function monthDays(ym: string): { beginning: number; days: number } {
+  const [yStr, mStr] = ym.split("-");
+  const y = Number(yStr) || new Date().getUTCFullYear();
+  const m = Number(mStr) || 1;
+  const first = new Date(Date.UTC(y, m - 1, 1));
+  const beginning = (first.getUTCDay() + 6) % 7;
+  const days = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return { beginning, days };
+}
+
 export function guessMeal(): "breakfast" | "lunch" | "snack" | "dinner" {
   const hour = new Date(Date.now() + 8 * 3_600_000).getUTCHours();
   return hour < 10 ? "breakfast" : hour < 14 ? "lunch" : hour < 17 ? "snack" : "dinner";

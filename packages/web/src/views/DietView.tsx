@@ -17,6 +17,7 @@ import {
 } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import {
+  openAiDietModal,
   openDietEditor,
   openEditMealTemplateModal,
   openSaveMealTemplateModal,
@@ -246,6 +247,13 @@ export function DietView() {
               <Icon name="copy" size={15} /> 复刻昨日 ({prevDayRows.length})
             </button>
           ) : null}
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => openAiDietModal({ initialDate: date })}
+          >
+            <Icon name="bolt" size={16} /> AI 记饮食
+          </button>
           <button
             type="button"
             className="primary-button"

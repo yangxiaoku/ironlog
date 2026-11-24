@@ -6,6 +6,8 @@ import { parseHashView, type ViewId } from "../lib/routes";
 
 export type ThemeMode = "dark" | "light";
 export type ModalLayout = "" | "menu" | "workout" | "report" | "badge" | "exercise" | "onboarding";
+export type PlanTab = "current" | "horizon" | "starters" | "templates" | "drafts";
+export type SettingsTab = "statistics" | "profile" | "devices" | "ai" | "account";
 
 export interface ToastAction {
   label: string;
@@ -23,6 +25,8 @@ export interface ModalEntry {
   title: string;
   wide?: boolean;
   layout?: ModalLayout;
+  headerAction?: ReactNode;
+  onClose?: () => void;
   content: ReactNode;
 }
 
@@ -35,6 +39,8 @@ export interface ConfirmEntry {
 
 export interface UiState {
   view: ViewId;
+  planTab: PlanTab;
+  settingsTab: SettingsTab;
   theme: ThemeMode;
   online: boolean;
   pendingSyncCount: number;
@@ -46,6 +52,10 @@ export interface UiState {
   silentCloseSeq: number;
   setView: (view: ViewId) => void;
   navigate: (view: ViewId) => void;
+  setPlanTab: (tab: PlanTab) => void;
+  setSettingsTab: (tab: SettingsTab) => void;
+  openPlanSection: (tab: PlanTab) => void;
+  openSettingsSection: (tab: SettingsTab) => void;
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
   setOnline: (online: boolean) => void;
@@ -86,6 +96,8 @@ applyThemeToDom(initialTheme);
 
 export const useUiStore = create<UiState>((set, get) => ({
   view: typeof location !== "undefined" ? parseHashView(location.hash) : "overview",
+  planTab: "current",
+  settingsTab: "statistics",
   theme: initialTheme,
   online: typeof navigator !== "undefined" ? navigator.onLine : true,
   pendingSyncCount: 0,
@@ -106,6 +118,24 @@ export const useUiStore = create<UiState>((set, get) => ({
     } else {
       set({ view });
     }
+  },
+
+  setPlanTab(planTab) {
+    set({ planTab });
+  },
+
+  setSettingsTab(settingsTab) {
+    set({ settingsTab });
+  },
+
+  openPlanSection(planTab) {
+    set({ planTab });
+    get().navigate("plan");
+  },
+
+  openSettingsSection(settingsTab) {
+    set({ settingsTab });
+    get().navigate("settings");
   },
 
   setTheme(theme) {
@@ -188,22 +218,38 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
 
   closeTopModal() {
+    const closing = get().modals.at(-1);
     set((s) => ({
       modals: s.modals.slice(0, -1),
       confirm: null,
     }));
+    try {
+      closing?.onClose?.();
+    } catch {}
   },
 
   closeAllModals() {
+    const closing = get().modals;
     set({ modals: [], confirm: null });
+    for (const entry of closing) {
+      try {
+        entry.onClose?.();
+      } catch {}
+    }
   },
 
   closeModalSilent() {
+    const closing = get().modals;
     set((s) => ({
       modals: [],
       confirm: null,
       silentCloseSeq: s.silentCloseSeq + 1,
     }));
+    for (const entry of closing) {
+      try {
+        entry.onClose?.();
+      } catch {}
+    }
   },
 
   openConfirm(entry) {

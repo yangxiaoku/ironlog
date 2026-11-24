@@ -7,11 +7,16 @@ import { useMobileGuards } from "./hooks/useMobileGuards";
 import { configureApi } from "./lib/api";
 import { useAuthStore } from "./store/useAuthStore";
 import { useUiStore } from "./store/useUiStore";
+import { AnalyticsView } from "./views/AnalyticsView";
+import { BadgesView } from "./views/BadgesView";
+import { CalendarView } from "./views/CalendarView";
 import { DietView } from "./views/DietView";
+import { ExercisesView } from "./views/ExercisesView";
 import { OverviewView } from "./views/OverviewView";
+import { PlanView } from "./views/PlanView";
+import { SettingsView } from "./views/SettingsView";
 import { WeightView } from "./views/WeightView";
 import { WorkoutView } from "./views/WorkoutView";
-import { WorkspaceStubView } from "./views/WorkspaceStubView";
 
 configureApi({
   getDemoToken: () => useAuthStore.getState().demoToken,
@@ -40,7 +45,7 @@ export function App() {
   let mainContent: React.ReactNode;
   if (!booted) {
     mainContent = <p className="empty">正在加载铁记…</p>;
-  } else if (!userId) {
+  } else if (!userId && view !== "exercises") {
     mainContent = <AuthScreen />;
   } else if (view === "overview") {
     mainContent = <OverviewView />;
@@ -50,8 +55,20 @@ export function App() {
     mainContent = <DietView />;
   } else if (view === "weight") {
     mainContent = <WeightView />;
+  } else if (view === "plan") {
+    mainContent = <PlanView />;
+  } else if (view === "exercises") {
+    mainContent = <ExercisesView />;
+  } else if (view === "calendar") {
+    mainContent = <CalendarView />;
+  } else if (view === "analytics") {
+    mainContent = <AnalyticsView />;
+  } else if (view === "badges") {
+    mainContent = <BadgesView />;
+  } else if (view === "settings") {
+    mainContent = <SettingsView />;
   } else {
-    mainContent = <WorkspaceStubView view={view} />;
+    mainContent = <OverviewView />;
   }
 
   return (

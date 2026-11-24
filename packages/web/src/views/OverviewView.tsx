@@ -1,13 +1,23 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { LoadChart, MiniSparkline, MuscleDistributionCard, WeekStrip, WeightChart } from "../components/Charts";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotCheckIcon, DotPlayIcon, ThinMeter } from "../components/Meters";
+import {
+  AppleDailyStrip,
+  AppleLine,
+  type AppleDailyEntry,
+  type AppleWorkoutAgendaItem,
+} from "../components/apple/AppleHealthModals";
+import { BadgesOverviewStrip } from "../components/badges/BadgesOverviewStrip";
+import { WelcomeChecklist, onboardingSeenKey } from "../components/onboarding/WelcomeChecklist";
 import { apiFetch } from "../lib/api";
+import type { BadgeSummary } from "../lib/badges";
 import { duration, fmt, shortDate, today } from "../lib/date";
 import {
   FEELINGS,
   INTERVALS,
+  findLocalWorkoutDraft,
   shiftDateStr,
   type LoadMetricKey,
   type MuscleKey,
@@ -15,7 +25,18 @@ import {
   type PeriodDays,
   type TodayResponse,
 } from "../lib/domain";
-import { openDietEditor, openWeightEditor, openWorkoutEditor, openWorkoutReport } from "../lib/record-openers";
+import {
+  openAiReviewModal,
+  openAppleDailyDetailsModal,
+  openAppleWorkoutDetailsModal,
+  openDailyShareModal,
+  openDietEditor,
+  openOnboardingModal,
+  openRoutinePreview,
+  openWeightEditor,
+  openWorkoutEditor,
+  openWorkoutReport,
+} from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
@@ -23,6 +44,8 @@ export function OverviewView() {
   const userId = useAuthStore((s) => s.userId);
   const demo = useAuthStore((s) => s.demo);
   const username = useAuthStore((s) => s.username);
+  const isNewUser = useAuthStore((s) => s.isNewUser);
+  const appleHealthConnected = useAuthStore((s) => s.appleHealthConnected);
 
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -38,23 +61,60 @@ export function OverviewView() {
 
   const [stats, setStats] = useState<OverviewStatsResponse | null>(null);
   const [day, setDay] = useState<TodayResponse | null>(null);
+  const [badges, setBadges] = useState<BadgeSummary | null>(null);
+  const [hasPlan, setHasPlan] = useState(false);
+  const [visiblePanels, setVisiblePanels] = useState<string[] | null>(null);
+  const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(null);
+  const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const autoOnboardedUserRef = useRef("");
 
   useEffect(() => {
     let active = true;
     const query = new URLSearchParams({ through });
     if (period) query.set("days", String(period));
+    const currentToday = today();
     setLoading(true);
     setError("");
     void Promise.all([
       apiFetch<OverviewStatsResponse>(`/api/web/statistics?${query.toString()}`),
       apiFetch<TodayResponse>("/api/web/today").catch(() => null),
+      apiFetch<BadgeSummary>("/api/web/badges").catch(() => null),
+      apiFetch<{ panels?: string[] }>("/api/web/preferences").catch(() => null),
+      apiFetch<{ planId?: string | null }>("/api/web/schedule").catch(() => null),
+      appleHealthConnected
+        ? apiFetch<{ entries?: AppleDailyEntry[] }>(
+            `/api/integrations/apple-health/daily?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
+          ).catch(() => null)
+        : Promise.resolve(null),
+      appleHealthConnected
+        ? apiFetch<AppleWorkoutAgendaItem[]>(
+            `/api/integrations/apple-health/agenda?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
+          ).catch(() => [])
+        : Promise.resolve([]),
     ])
-      .then(([statsRes, todayRes]) => {
+      .then(([statsRes, todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes]) => {
         if (!active) return;
         setStats(statsRes);
         setDay(todayRes);
+        setBadges(badgesRes);
+        setHasPlan(Boolean(schedRes?.planId || todayRes?.planned));
+        setVisiblePanels(Array.isArray(prefsRes?.panels) ? prefsRes.panels : null);
+        setAppleDaily(dailyRes?.entries?.[0] ?? null);
+        setAppleAgenda(Array.isArray(agendaRes) ? agendaRes : []);
+
+        if (
+          !demo &&
+          userId &&
+          isNewUser &&
+          autoOnboardedUserRef.current !== userId &&
+          typeof localStorage !== "undefined" &&
+          !localStorage.getItem(onboardingSeenKey(userId))
+        ) {
+          autoOnboardedUserRef.current = userId;
+          openOnboardingModal({ currentProfile: statsRes.goals, initialStep: 1 });
+        }
       })
       .catch((err) => {
         if (!active) return;
@@ -66,7 +126,7 @@ export function OverviewView() {
     return () => {
       active = false;
     };
-  }, [userId, dataEpoch, through, period]);
+  }, [userId, demo, isNewUser, appleHealthConnected, dataEpoch, through, period]);
 
   if (loading && !stats) {
     return (
@@ -110,11 +170,25 @@ export function OverviewView() {
   const weightSub =
     wDelta || (stats.goals?.targetWeight ? `目标 ${fmt(stats.goals.targetWeight, 1)} kg` : day?.weight == null && latestWeight != null ? "最近" : "点击记录");
 
+  const localDraft = findLocalWorkoutDraft(userId);
+
   const openTodayTraining = () => {
     if (day?.active?.id) {
       void apiFetch<any>(`/api/web/records/workout/${encodeURIComponent(day.active.id)}`)
         .then((rec) => openWorkoutEditor({ record: rec, goals: stats.goals }))
         .catch(() => openWorkoutEditor({ goals: stats.goals }));
+      return;
+    }
+    if (localDraft) {
+      openWorkoutEditor({ goals: stats.goals });
+      return;
+    }
+    if (day?.planned?.date === todayKey) {
+      openRoutinePreview({
+        id: day.planned.source === "scheduled" ? day.planned.date : day.planned.id,
+        source: day.planned.source === "scheduled" ? "scheduled" : "plan",
+        date: day.planned.date,
+      });
       return;
     }
     const todayRecent = stats.recent.find((r) => r.date === todayKey);
@@ -133,7 +207,15 @@ export function OverviewView() {
         active: true,
         completed: false,
       }
-    : day?.planned?.date === todayKey
+    : localDraft
+      ? {
+          main: "本机训练草稿",
+          note: "有未提交组数",
+          label: "恢复草稿",
+          active: false,
+          completed: false,
+        }
+      : day?.planned?.date === todayKey
       ? {
           main: day.planned.name,
           note: `${day.planned.exercises} 个动作`,
@@ -214,6 +296,13 @@ export function OverviewView() {
               <button
                 type="button"
                 className="quiet hero-share-btn"
+                onClick={() => openDailyShareModal({ date: todayKey })}
+              >
+                <Icon name="download" size={14} /> 分享记录
+              </button>
+              <button
+                type="button"
+                className="quiet"
                 onClick={() => {
                   bumpDataEpoch();
                   notify("已刷新首页数据");
@@ -315,6 +404,8 @@ export function OverviewView() {
         ) : null}
       </div>
 
+      {isNewUser && !demo ? <WelcomeChecklist stats={stats} currentDay={day} hasPlan={hasPlan} /> : null}
+
       <div className="section-bar stats-header">
         <div>
           <h2>训练表现</h2>
@@ -406,40 +497,56 @@ export function OverviewView() {
       </div>
 
       <div className="dashboard">
-        <LoadChart data={stats} metric={metric} onMetricChange={setMetric} />
-        <MuscleDistributionCard
-          data={stats}
-          mode={atlasMode}
-          selectedMuscle={selectedMuscle}
-          onModeChange={setAtlasMode}
-          onSelectMuscle={setSelectedMuscle}
-        />
-        <section className="panel panel-weight" id="panel-weight">
-          <header className="panel-head">
-            <div>
-              <h2>体重趋势</h2>
-              <p>
-                {shortDate(since30)} – {shortDate(todayKey)}
-              </p>
-            </div>
-            <button type="button" className="quiet" onClick={() => navigate("weight")}>
-              体重档案 <Icon name="chevron" size={14} />
-            </button>
-          </header>
-          <WeightChart
-            rows={weightSeries}
-            from={stats.from}
-            to={stats.through}
-            goal={stats.goals?.targetWeight ?? null}
-            showAverage={weightSeries.length >= 2}
-          />
-        </section>
+        {(visiblePanels ? visiblePanels.filter((p) => p === "load" || p === "muscle" || p === "weight") : ["load", "muscle", "weight"]).map(
+          (panelId) => {
+            if (panelId === "load") {
+              return <LoadChart key="load" data={stats} metric={metric} onMetricChange={setMetric} />;
+            }
+            if (panelId === "muscle") {
+              return (
+                <MuscleDistributionCard
+                  key="muscle"
+                  data={stats}
+                  mode={atlasMode}
+                  selectedMuscle={selectedMuscle}
+                  onModeChange={setAtlasMode}
+                  onSelectMuscle={setSelectedMuscle}
+                />
+              );
+            }
+            return (
+              <section key="weight" className="panel panel-weight" id="panel-weight">
+                <header className="panel-head">
+                  <div>
+                    <h2>体重趋势</h2>
+                    <p>
+                      {shortDate(since30)} – {shortDate(todayKey)}
+                    </p>
+                  </div>
+                  <button type="button" className="quiet" onClick={() => navigate("weight")}>
+                    体重档案 <Icon name="chevron" size={14} />
+                  </button>
+                </header>
+                <WeightChart
+                  rows={weightSeries}
+                  from={stats.from}
+                  to={stats.through}
+                  goal={stats.goals?.targetWeight ?? null}
+                  showAverage={weightSeries.length >= 2}
+                />
+              </section>
+            );
+          },
+        )}
       </div>
 
       <section className="panel recent">
         <header className="panel-head">
           <h2>近期训练</h2>
           <div className="heading-actions">
+            <button type="button" className="quiet ai-inline-btn" onClick={() => openAiReviewModal()}>
+              <Icon name="bolt" size={15} /> AI 复盘
+            </button>
             <button type="button" className="quiet" onClick={() => openWorkoutEditor({ goals: stats.goals })}>
               <Icon name="plus" size={15} /> 开始训练
             </button>
@@ -479,6 +586,32 @@ export function OverviewView() {
           </div>
         )}
       </section>
+
+      <BadgesOverviewStrip rawSummary={badges} />
+
+      {appleHealthConnected && (appleDaily || appleAgenda.length > 0) ? (
+        <details className="overview-more">
+          <summary>
+            <span>
+              <strong>Apple 健康今日同步</strong>
+              <small>{appleAgenda.length ? `${appleAgenda.length} 项体能记录` : "步数 · 睡眠 · 心率恢复"}</small>
+            </span>
+            <Icon name="chevron" size={16} />
+          </summary>
+          <div className="overview-more-body">
+            {appleDaily ? (
+              <AppleDailyStrip daily={appleDaily} onOpenDetails={openAppleDailyDetailsModal} />
+            ) : null}
+            {appleAgenda.length ? (
+              <div className="sync-list">
+                {appleAgenda.map((item) => (
+                  <AppleLine key={item.id} item={item} onClick={() => openAppleWorkoutDetailsModal(item)} />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </details>
+      ) : null}
     </>
   );
 }
