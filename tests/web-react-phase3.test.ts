@@ -18,6 +18,7 @@ import {
   buildIronlogEventShortcut,
   buildIronlogRecentWorkoutShortcut,
   buildMacSignCommand,
+  encodeShortcutXmlToBase64,
   normalizeServerOrigin,
 } from "../packages/web/src/lib/shortcut-gen.ts";
 
@@ -63,6 +64,105 @@ test("packages/web/src/lib/shortcut-gen generates valid Apple Shortcut plists an
   });
   assert.ok(daily.xml.includes("https://iron.example.com/api/integrations/apple-health/daily"));
   assert.ok(buildMacSignCommand().includes("shortcuts sign"));
+  assert.equal(Buffer.from(evt.base64, "base64").toString("utf8"), evt.xml);
+});
+
+function assertBalancedPlistContainers(xml: string) {
+  assert.ok(xml.startsWith('<?xml version="1.0" encoding="UTF-8"?>'));
+  assert.ok(xml.includes("<!DOCTYPE plist PUBLIC"));
+  assert.ok(xml.includes('<plist version="1.0">'));
+  const stack: string[] = [];
+  const tagRe = /<\/?([A-Za-z0-9_-]+)(?:\s+[^>]*)?\/?>/g;
+  for (const match of xml.matchAll(tagRe)) {
+    const token = match[0];
+    const tag = match[1]!;
+    if (token.startsWith("<?") || token.startsWith("<!") || token.endsWith("/>")) continue;
+    if (token.startsWith("</")) {
+      const open = stack.pop();
+      assert.equal(open, tag, `mismatched closing </${tag}> (expected </${open ?? "none"}>)`);
+    } else {
+      stack.push(tag);
+    }
+  }
+  assert.deepEqual(stack, [], "all XML plist tags balanced");
+}
+
+test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts with WFWorkflowImportQuestions and Base64", () => {
+  const secretToken = "tok_should_never_leak_999";
+  const secretOrigin = "https://secret-vps.example.com";
+
+  const makeUniversalChecks = (
+    built: { filename: string; xml: string; base64: string; endpoint: string },
+    expectedPaths: string[],
+  ) => {
+    assert.ok(built.filename.startsWith("铁记-通用-"));
+    assert.ok(!built.xml.includes(secretToken), `${built.filename} must not embed literal token`);
+    assert.ok(!built.xml.includes(secretOrigin), `${built.filename} must not embed literal origin`);
+    assertBalancedPlistContainers(built.xml);
+
+    // Must contain WFWorkflowImportQuestions pointing to action index 1 and 2 WFTextActionText
+    assert.ok(built.xml.includes("<key>WFWorkflowImportQuestions</key>"));
+    assert.ok(built.xml.includes("<key>ActionIndex</key>\n\t\t\t<integer>1</integer>"));
+    assert.ok(built.xml.includes("<key>ActionIndex</key>\n\t\t\t<integer>2</integer>"));
+    assert.ok(built.xml.includes("<key>ParameterKey</key>\n\t\t\t<string>WFTextActionText</string>"));
+    const actionIds = [...built.xml.matchAll(/<key>WFWorkflowActionIdentifier<\/key>\s*<string>([^<]+)<\/string>/g)].map(
+      (m) => m[1],
+    );
+    assert.deepEqual(
+      actionIds.slice(0, 3),
+      ["is.workflow.actions.comment", "is.workflow.actions.gettext", "is.workflow.actions.gettext"],
+      `${built.filename} places origin & token gettext actions at exact indices 1 and 2`,
+    );
+
+    // Must wire magic variable Bearer &#xFFFC; at range {7, 1} and URL at range {0, 1}
+    assert.ok(built.xml.includes("<string>Bearer &#xFFFC;</string>"));
+    assert.ok(built.xml.includes("<key>{7, 1}</key>"));
+    assert.ok(built.xml.includes("<key>{0, 1}</key>"));
+    for (const p of expectedPaths) {
+      assert.ok(built.xml.includes(`<string>&#xFFFC;${p}</string>`), `${built.filename} contains magic URL path ${p}`);
+    }
+
+    // UTF-8 Base64 round-trip matches exact XML
+    assert.equal(built.base64, encodeShortcutXmlToBase64(built.xml));
+    assert.equal(Buffer.from(built.base64, "base64").toString("utf8"), built.xml);
+  };
+
+  // Can omit serverOrigin & token completely
+  const dailyNoCreds = buildIronlogDailyHealthShortcut({
+    useImportQuestions: true,
+    metrics: ["steps", "sleepSamples", "hrvMs"],
+  });
+  makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
+
+  // Passing serverOrigin & token in universal mode STILL strips them cleanly
+  const recent = buildIronlogRecentWorkoutShortcut({
+    serverOrigin: secretOrigin,
+    token: secretToken,
+    activityType: "running",
+    windowMinutes: 30,
+    useImportQuestions: true,
+  });
+  makeUniversalChecks(recent, ["/api/integrations/apple-health/workouts"]);
+
+  const evtStart = buildIronlogEventShortcut({
+    event: "start",
+    serverOrigin: secretOrigin,
+    token: secretToken,
+    useImportQuestions: true,
+  });
+  makeUniversalChecks(evtStart, ["/api/integrations/apple-health/events"]);
+
+  const evtEnd = buildIronlogEventShortcut({
+    event: "end",
+    serverOrigin: secretOrigin,
+    token: secretToken,
+    activityType: "traditionalStrengthTraining",
+    useImportQuestions: true,
+  });
+  makeUniversalChecks(evtEnd, [
+    "/api/integrations/apple-health/events/active?activityType=traditionalStrengthTraining",
+    "/api/integrations/apple-health/events",
+  ]);
 });
 
 test("packages/web/src/lib/badges filters Apple badges when disconnected and orders overview picks", () => {

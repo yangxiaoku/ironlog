@@ -625,6 +625,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
   const [error, setError] = useState("");
 
   // Step 2 export options
+  const [universalMode, setUniversalMode] = useState(true);
   const [dailyMetrics, setDailyMetrics] = useState<Set<string>>(() => new Set(APPLE_HEALTH_DEFAULT_METRICS));
   const [workoutMode, setWorkoutMode] = useState<"recent" | "pair">("recent");
   const [activityType, setActivityType] = useState(APPLE_SHORTCUT_SPORTS[0]!.activityType);
@@ -760,6 +761,37 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
   const sport = APPLE_SHORTCUT_SPORTS.find((s) => s.activityType === activityType);
   const sportLabel = sport?.label ?? activityType;
   const macCommand = buildMacSignCommand();
+  const cleanOrigin = originCheck.valid ? originCheck.normalized : originInput.trim().replace(/\/+$/, "");
+
+  const handleDownloadShortcut = <T extends { filename: string; xml: string }>(
+    buildFn: () => T,
+    extraNotice?: (built: T) => string,
+  ) => {
+    setError("");
+    try {
+      const built = buildFn();
+      triggerShortcutDownload(built.filename, built.xml);
+      notify(extraNotice ? extraNotice(built) : `已导出 ${built.filename}`);
+    } catch (err) {
+      setError((err as Error)?.message || "导出失败");
+    }
+  };
+
+  const handleCopyBase64 = (buildFn: () => { filename: string; base64: string }) => {
+    setError("");
+    try {
+      const built = buildFn();
+      void copyText(built.base64).then((ok) =>
+        notify(
+          ok
+            ? `已复制 ${built.filename} 的 Base64，可直接用手机签名工具还原导入`
+            : "无法自动复制，请改用「下载 .shortcut」",
+        ),
+      );
+    } catch (err) {
+      setError((err as Error)?.message || "生成 Base64 失败");
+    }
+  };
 
   const applyPreset = (preset: "default" | "watch" | "auto" | "all") => {
     if (preset === "all") {
@@ -775,13 +807,30 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
 
   return (
     <div className="dialog-form shortcut-modal" id="shortcut-export">
-      <p className="muted">令牌已自动写入快捷指令。每日健康同步读取今天和前两天，按采样日期保存；单场训练可单独上传。</p>
+      <div className="field">
+        <span>导出模式</span>
+        <div className="segments">
+          <button type="button" aria-pressed={universalMode} onClick={() => setUniversalMode(true)}>
+            通用安全模板（推荐 · 导入时弹窗填令牌）
+          </button>
+          <button type="button" aria-pressed={!universalMode} onClick={() => setUniversalMode(false)}>
+            预填直出（仅限自己 Mac 本地签名）
+          </button>
+        </div>
+      </div>
+
+      <p className="muted">
+        {universalMode
+          ? "通用模板不含任何服务器地址与令牌，交给手机第三方工具签名也完全安全；导入 iPhone 时系统会自动弹窗让你粘贴地址和令牌。"
+          : "预填模式已把服务器地址与上传令牌直接写入快捷指令，仅建议在你自己的 Mac 终端本地签名使用。"}
+      </p>
+
       <label className="field">
         <span>铁记服务器地址</span>
         <input
           type="url"
           placeholder="https://ironlog.example.com"
-          required
+          required={!universalMode}
           value={originInput}
           onChange={(e) => {
             setError("");
@@ -793,10 +842,44 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
         {originCheck.valid ? originCheck.warning : ""}
       </p>
 
+      {universalMode ? (
+        <div className="shortcut-card">
+          <div className="shortcut-card-head">
+            <span className="shortcut-tag">CREDENTIALS</span>
+            <strong>导入时一键复制凭据（不会写入快捷指令）</strong>
+          </div>
+          <small>签名完成并点「添加快捷指令」时，iPhone 会依次弹窗询问以下两项，点此复制粘贴即可：</small>
+          <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() =>
+                void copyText(cleanOrigin).then((ok) =>
+                  notify(ok ? `已复制服务器地址：${cleanOrigin}` : "无法自动复制，请手动复制上方输入框地址"),
+                )
+              }
+            >
+              <Icon name="copy" size={15} /> 复制地址
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() =>
+                void copyText(token).then((ok) =>
+                  notify(ok ? "已复制设备上传令牌（仅令牌本身，无需 Bearer）" : "请展开底部备用区长按复制"),
+                )
+              }
+            >
+              <Icon name="copy" size={15} /> 复制令牌
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <section className="shortcut-daily-box">
         <div className="shortcut-card-head">
           <span className="shortcut-tag">DAILY SYNC</span>
-          <strong>铁记-每日全量健康同步.shortcut</strong>
+          <strong>{universalMode ? "铁记-通用-每日全量健康同步.shortcut" : "铁记-每日全量健康同步.shortcut"}</strong>
         </div>
         <p className="muted">
           ⚠️ iOS 只要遇到某项在「健康」里查到 <b>0 条记录</b>或未授权，就会弹出<b>「未找到样本」</b>（如未手动录过的腰围/饮水/膳食营养、未支持血氧、或
@@ -848,26 +931,42 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
             </div>
           ))}
         </div>
-        <button
-          type="button"
-          className="primary-button"
-          onClick={() => {
-            setError("");
-            try {
-              const built = buildIronlogDailyHealthShortcut({
-                serverOrigin: originInput,
-                token,
-                metrics: [...dailyMetrics],
-              });
-              triggerShortcutDownload(built.filename, built.xml);
-              notify(`已导出 ${built.filename}（含 ${built.metricCount} 项健康指标）`);
-            } catch (err) {
-              setError((err as Error)?.message || "导出失败");
+        <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className={universalMode ? "primary-button" : "secondary-button"}
+            onClick={() =>
+              handleCopyBase64(() =>
+                buildIronlogDailyHealthShortcut({
+                  serverOrigin: originInput,
+                  token,
+                  metrics: [...dailyMetrics],
+                  useImportQuestions: universalMode,
+                }),
+              )
             }
-          }}
-        >
-          <Icon name="download" size={16} /> 下载每日健康同步（已选 {dailyMetrics.size} 项）
-        </button>
+          >
+            <Icon name="copy" size={16} /> 复制 Base64（{dailyMetrics.size} 项）
+          </button>
+          <button
+            type="button"
+            className={universalMode ? "secondary-button" : "primary-button"}
+            onClick={() =>
+              handleDownloadShortcut(
+                () =>
+                  buildIronlogDailyHealthShortcut({
+                    serverOrigin: originInput,
+                    token,
+                    metrics: [...dailyMetrics],
+                    useImportQuestions: universalMode,
+                  }),
+                (built) => `已导出 ${built.filename}（含 ${built.metricCount} 项健康指标）`,
+              )
+            }
+          >
+            <Icon name="download" size={16} /> 下载 .shortcut
+          </button>
+        </div>
       </section>
 
       <details className="training-details" open>
@@ -929,31 +1028,49 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
               <div className="shortcut-card">
                 <div className="shortcut-card-head">
                   <span className="shortcut-tag">AUTO POST</span>
-                  <strong>铁记-结束直传-{sportLabel}.shortcut</strong>
+                  <strong>
+                    {universalMode ? `铁记-通用-结束直传-${sportLabel}.shortcut` : `铁记-结束直传-${sportLabel}.shortcut`}
+                  </strong>
                 </div>
                 <small>手表结束训练 5 秒后，自动拉取最近窗口内的活动能量、心率均值/峰值及对应距离并直接写入铁记。</small>
-                <button
-                  type="button"
-                  className="primary-button"
-                  onClick={() => {
-                    setError("");
-                    try {
-                      const built = buildIronlogRecentWorkoutShortcut({
-                        serverOrigin: originInput,
-                        token,
-                        activityType,
-                        environment,
-                        windowMinutes: recentWindowMinutes,
-                      });
-                      triggerShortcutDownload(built.filename, built.xml);
-                      notify(`已导出 ${built.filename}`);
-                    } catch (err) {
-                      setError((err as Error)?.message || "导出失败");
+                <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className={universalMode ? "primary-button" : "secondary-button"}
+                    onClick={() =>
+                      handleCopyBase64(() =>
+                        buildIronlogRecentWorkoutShortcut({
+                          serverOrigin: originInput,
+                          token,
+                          activityType,
+                          environment,
+                          windowMinutes: recentWindowMinutes,
+                          useImportQuestions: universalMode,
+                        }),
+                      )
                     }
-                  }}
-                >
-                  <Icon name="download" size={16} /> 下载结束直传快捷指令 (.shortcut)
-                </button>
+                  >
+                    <Icon name="copy" size={16} /> 复制 Base64
+                  </button>
+                  <button
+                    type="button"
+                    className={universalMode ? "secondary-button" : "primary-button"}
+                    onClick={() =>
+                      handleDownloadShortcut(() =>
+                        buildIronlogRecentWorkoutShortcut({
+                          serverOrigin: originInput,
+                          token,
+                          activityType,
+                          environment,
+                          windowMinutes: recentWindowMinutes,
+                          useImportQuestions: universalMode,
+                        }),
+                      )
+                    }
+                  >
+                    <Icon name="download" size={16} /> 下载 .shortcut
+                  </button>
+                </div>
               </div>
             </div>
           ) : (
@@ -961,60 +1078,92 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
               <div className="shortcut-card">
                 <div className="shortcut-card-head">
                   <span className="shortcut-tag">START</span>
-                  <strong>铁记-开始-{sportLabel}.shortcut</strong>
+                  <strong>{universalMode ? `铁记-通用-开始-${sportLabel}.shortcut` : `铁记-开始-${sportLabel}.shortcut`}</strong>
                 </div>
                 <small>开练时上报 event: "start"</small>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    setError("");
-                    try {
-                      const built = buildIronlogEventShortcut({
-                        event: "start",
-                        serverOrigin: originInput,
-                        token,
-                        activityType,
-                        environment,
-                      });
-                      triggerShortcutDownload(built.filename, built.xml);
-                      notify(`已导出 ${built.filename}`);
-                    } catch (err) {
-                      setError((err as Error)?.message || "导出失败");
+                <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      handleCopyBase64(() =>
+                        buildIronlogEventShortcut({
+                          event: "start",
+                          serverOrigin: originInput,
+                          token,
+                          activityType,
+                          environment,
+                          useImportQuestions: universalMode,
+                        }),
+                      )
                     }
-                  }}
-                >
-                  <Icon name="download" size={16} /> 下载开始
-                </button>
+                  >
+                    <Icon name="copy" size={15} /> 复制 Base64
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      handleDownloadShortcut(() =>
+                        buildIronlogEventShortcut({
+                          event: "start",
+                          serverOrigin: originInput,
+                          token,
+                          activityType,
+                          environment,
+                          useImportQuestions: universalMode,
+                        }),
+                      )
+                    }
+                  >
+                    <Icon name="download" size={15} /> 下载
+                  </button>
+                </div>
               </div>
               <div className="shortcut-card">
                 <div className="shortcut-card-head">
                   <span className="shortcut-tag">END</span>
-                  <strong>铁记-结束-{sportLabel}.shortcut</strong>
+                  <strong>{universalMode ? `铁记-通用-结束-${sportLabel}.shortcut` : `铁记-结束-${sportLabel}.shortcut`}</strong>
                 </div>
                 <small>结束时自动计算时长、匹配今日计划，并抓热量/心率/距离</small>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    setError("");
-                    try {
-                      const built = buildIronlogEventShortcut({
-                        event: "end",
-                        serverOrigin: originInput,
-                        token,
-                        activityType,
-                        environment,
-                      });
-                      triggerShortcutDownload(built.filename, built.xml);
-                      notify(`已导出 ${built.filename}`);
-                    } catch (err) {
-                      setError((err as Error)?.message || "导出失败");
+                <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      handleCopyBase64(() =>
+                        buildIronlogEventShortcut({
+                          event: "end",
+                          serverOrigin: originInput,
+                          token,
+                          activityType,
+                          environment,
+                          useImportQuestions: universalMode,
+                        }),
+                      )
                     }
-                  }}
-                >
-                  <Icon name="download" size={16} /> 下载结束
-                </button>
+                  >
+                    <Icon name="copy" size={15} /> 复制 Base64
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() =>
+                      handleDownloadShortcut(() =>
+                        buildIronlogEventShortcut({
+                          event: "end",
+                          serverOrigin: originInput,
+                          token,
+                          activityType,
+                          environment,
+                          useImportQuestions: universalMode,
+                        }),
+                      )
+                    }
+                  >
+                    <Icon name="download" size={15} /> 下载
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -1025,35 +1174,61 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
         {error}
       </p>
 
-      <div className="shortcut-mac-box">
-        <div className="shortcut-mac-head">
-          <strong>Mac 终端一行签名命令（同时签名以上全部 .shortcut）</strong>
-          <button
-            type="button"
-            className="quiet"
-            onClick={() => void copyText(macCommand).then((ok) => notify(ok ? "Mac 签名命令已复制" : "无法自动复制，请长按复制"))}
-          >
-            <Icon name="copy" size={15} /> 复制命令
-          </button>
+      {universalMode ? (
+        <div className="shortcut-mac-box">
+          <div className="shortcut-mac-head">
+            <strong>纯 iPhone（无 Mac）导入步骤（防泄露令牌）</strong>
+          </div>
+          <ol className="shortcut-steps">
+            <li>
+              在上方选好指标或运动，点 <b>「复制 Base64」</b>（也可下载 <code>.shortcut</code> 文件）；
+            </li>
+            <li>
+              打开你 iPhone 里的 <b>「Base64 解码 / 签名」快捷指令工具</b>，从剪贴板还原出 <code>.shortcut</code> 并完成签名，点击 <b>添加快捷指令</b>；
+            </li>
+            <li>
+              导入时 iOS 会依次弹窗询问 <b>「服务器地址」</b> 和 <b>「设备上传令牌」</b>，回到本页点上方 <b>复制地址 / 复制令牌</b> 粘贴即完成（第三方签名全程看不到你的凭据）。
+            </li>
+            <li>
+              绑定自动化：<b>每日同步</b>建议设为每天 <b>23:30 睡前亮屏时段 / 充电时</b>「立即运行」（防锁屏读健康受限）；<b>单场训练</b>绑到 Apple Watch 体能训练触发器。
+            </li>
+          </ol>
         </div>
-        <pre className="shortcut-code">
-          <code>{macCommand}</code>
-        </pre>
-        <ol className="shortcut-steps">
-          <li>下载需要的 <code>.shortcut</code> 文件到 Mac「下载」文件夹；</li>
-          <li>
-            打开 Mac「<b>终端</b>」粘贴上方命令回车，将自动生成并打开 <code>ironlog-signed</code> 目录；
-          </li>
-          <li>
-            把已签名的文件 <b>AirDrop 到 iPhone</b> 并添加（<b>每日全量健康同步须在 iPhone 运行</b>
-            ，Mac 无健康数据库；若个别指标因 iOS 版本译名微调显示未选，在手机端轻点该蓝色标签重选一次即可）；
-          </li>
-          <li>
-            绑定自动化：<b>每日全量同步</b>建议设为每天 <b>23:30 睡前亮屏时段 / 充电时</b>「立即运行」（防锁屏读健康受限）；
-            <b>开始 / 结束训练</b>绑到 Apple Watch 体能训练对应触发器。
-          </li>
-        </ol>
-      </div>
+      ) : null}
+
+      <details className="training-details" open={!universalMode}>
+        <summary>
+          <span>Mac 终端一行签名命令（可选 · 本地签名全部 铁记-*.shortcut）</span>
+          <Icon name="chevron" size={14} />
+        </summary>
+        <div className="details-body">
+          <div className="shortcut-mac-box" style={{ marginTop: 0 }}>
+            <div className="shortcut-mac-head">
+              <strong>Mac 终端签名命令</strong>
+              <button
+                type="button"
+                className="quiet"
+                onClick={() => void copyText(macCommand).then((ok) => notify(ok ? "Mac 签名命令已复制" : "无法自动复制，请长按复制"))}
+              >
+                <Icon name="copy" size={15} /> 复制命令
+              </button>
+            </div>
+            <pre className="shortcut-code">
+              <code>{macCommand}</code>
+            </pre>
+            <ol className="shortcut-steps">
+              <li>下载需要的 <code>.shortcut</code> 文件到 Mac「下载」文件夹；</li>
+              <li>
+                打开 Mac「<b>终端</b>」粘贴上方命令回车，将自动生成并打开 <code>ironlog-signed</code> 目录；
+              </li>
+              <li>
+                把已签名的文件 <b>AirDrop 到 iPhone</b> 并添加（<b>每日全量健康同步须在 iPhone 运行</b>
+                ，Mac 无健康数据库；若个别指标因 iOS 版本译名微调显示未选，在手机端轻点该蓝色标签重选一次即可）。
+              </li>
+            </ol>
+          </div>
+        </div>
+      </details>
 
       <details className="training-details">
         <summary>

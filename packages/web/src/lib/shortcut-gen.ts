@@ -309,12 +309,21 @@ interface OutputAttachmentRef {
 
 type VarAttachmentRef = string | { name: string; aggrandizements?: ReadonlyArray<Aggrandizement> };
 
+export interface ShortcutImportQuestion {
+  actionIndex: number;
+  parameterKey: string;
+  defaultValue: string;
+  text: string;
+}
+
 interface DictionaryFieldItem {
   key: string;
   value?: string;
   itemType?: number;
   outputAttachment?: OutputAttachmentRef | null;
   varAttachment?: VarAttachmentRef | null;
+  multiRawText?: string | null;
+  rawAttachments?: Array<{ range: string; entry: AttachmentEntry }> | null;
 }
 
 function tokenStringXml({
@@ -373,9 +382,9 @@ function tokenStringXml({
 
 function dictionaryFieldXml(items: DictionaryFieldItem[], indent: number): string {
   const pad = "\t".repeat(indent);
-  const serializedItems = items.map(({ key, value = "", itemType = 0, outputAttachment = null, varAttachment = null }) => {
+  const serializedItems = items.map(({ key, value = "", itemType = 0, outputAttachment = null, varAttachment = null, multiRawText = null, rawAttachments = null }) => {
     const keyXml = indentBlock(tokenStringXml({ text: key }), indent + 4);
-    const valXml = indentBlock(tokenStringXml({ text: value, outputAttachment, varAttachment }), indent + 4);
+    const valXml = indentBlock(tokenStringXml({ text: value, outputAttachment, varAttachment, multiRawText, rawAttachments }), indent + 4);
     return `${pad}\t\t\t<dict>\n`
       + `${pad}\t\t\t\t<key>WFItemType</key>\n`
       + `${pad}\t\t\t\t<integer>${itemType}</integer>\n`
@@ -428,22 +437,96 @@ function currentDateActionXml({ uuid }: { uuid: string }): string {
   ].join("\n"));
 }
 
+function textActionXml({ uuid, text = "" }: { uuid: string; text?: string }): string {
+  return actionBlockXml("is.workflow.actions.gettext", [
+    "\t\t\t\t<key>UUID</key>",
+    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
+    "\t\t\t\t<key>WFTextActionText</key>",
+    `\t\t\t\t<string>${escapeXml(text)}</string>`,
+  ].join("\n"));
+}
+
+function buildUniversalConfigPrelude(uuidFactory: () => string): {
+  originUuid: string;
+  tokenUuid: string;
+  actions: string[];
+  importQuestions: ShortcutImportQuestion[];
+} {
+  const originUuid = uuidFactory();
+  const tokenUuid = uuidFactory();
+  return {
+    originUuid,
+    tokenUuid,
+    actions: [
+      textActionXml({ uuid: originUuid, text: "" }),
+      textActionXml({ uuid: tokenUuid, text: "" }),
+    ],
+    importQuestions: [
+      {
+        actionIndex: 1,
+        parameterKey: "WFTextActionText",
+        defaultValue: "",
+        text: "请输入铁记服务器地址（例如 http://你的IP:8080 或 https://你的域名，末尾不要斜杠）",
+      },
+      {
+        actionIndex: 2,
+        parameterKey: "WFTextActionText",
+        defaultValue: "",
+        text: "请粘贴铁记设备上传令牌（在铁记网页「设置 → Apple 健康」复制，只填令牌本身，无需写 Bearer）",
+      },
+    ],
+  };
+}
+
+export function encodeShortcutXmlToBase64(xml: string): string {
+  const bytes = new TextEncoder().encode(xml);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
 function downloadJsonActionXml({
   uuid,
-  endpoint,
-  token,
+  endpoint = "",
+  endpointPath,
+  token = "",
+  originUuid,
+  tokenUuid,
   bodyItems = null,
   method = "POST",
 }: {
   uuid: string;
-  endpoint: string;
-  token: string;
+  endpoint?: string;
+  endpointPath?: string;
+  token?: string;
+  originUuid?: string;
+  tokenUuid?: string;
   bodyItems?: DictionaryFieldItem[] | null;
   method?: "GET" | "POST";
 }): string {
-  const headerItems: DictionaryFieldItem[] = [{ key: "Authorization", value: `Bearer ${token}` }];
+  const headerItems: DictionaryFieldItem[] = tokenUuid
+    ? [
+        {
+          key: "Authorization",
+          multiRawText: "Bearer &#xFFFC;",
+          rawAttachments: [{ range: "{7, 1}", entry: { outputName: "Text", outputUuid: tokenUuid } }],
+        },
+      ]
+    : [{ key: "Authorization", value: `Bearer ${token}` }];
   if (method !== "GET" && bodyItems) headerItems.push({ key: "Content-Type", value: "application/json" });
   const headersXml = dictionaryFieldXml(headerItems, 4);
+  const urlValueXml = originUuid && endpointPath
+    ? indentBlock(
+        tokenStringXml({
+          multiRawText: `&#xFFFC;${escapeXml(endpointPath)}`,
+          rawAttachments: [{ range: "{0, 1}", entry: { outputName: "Text", outputUuid: originUuid } }],
+        }),
+        4,
+      )
+    : `\t\t\t\t<string>${escapeXml(endpoint)}</string>`;
   const params = [
     "\t\t\t\t<key>ShowHeaders</key>",
     "\t\t\t\t<true/>",
@@ -454,7 +537,7 @@ function downloadJsonActionXml({
     "\t\t\t\t<key>WFHTTPMethod</key>",
     `\t\t\t\t<string>${escapeXml(method)}</string>`,
     "\t\t\t\t<key>WFURL</key>",
-    `\t\t\t\t<string>${escapeXml(endpoint)}</string>`,
+    urlValueXml,
   ];
   if (method !== "GET" && bodyItems) {
     params.splice(
@@ -952,7 +1035,32 @@ function conditionalHasValueBlock({
   return [openIf, ...bodyActions, closeIf];
 }
 
-function wrapShortcutPlist(actionBlocks: string[]): string {
+function wrapShortcutPlist(actionBlocks: string[], importQuestions: ShortcutImportQuestion[] = []): string {
+  const importQuestionsLines = importQuestions.length
+    ? [
+        "\t<key>WFWorkflowImportQuestions</key>",
+        "\t<array>",
+        ...importQuestions.flatMap((q) => [
+          "\t\t<dict>",
+          "\t\t\t<key>ActionIndex</key>",
+          `\t\t\t<integer>${q.actionIndex}</integer>`,
+          "\t\t\t<key>Category</key>",
+          "\t\t\t<string>Parameter</string>",
+          "\t\t\t<key>DefaultValue</key>",
+          `\t\t\t<string>${escapeXml(q.defaultValue)}</string>`,
+          "\t\t\t<key>ParameterKey</key>",
+          `\t\t\t<string>${escapeXml(q.parameterKey)}</string>`,
+          "\t\t\t<key>Text</key>",
+          `\t\t\t<string>${escapeXml(q.text)}</string>`,
+          "\t\t</dict>",
+        ]),
+        "\t</array>",
+      ]
+    : [
+        "\t<key>WFWorkflowImportQuestions</key>",
+        "\t<array/>",
+      ];
+
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
@@ -973,8 +1081,7 @@ function wrapShortcutPlist(actionBlocks: string[]): string {
     "\t\t<key>WFWorkflowIconStartColor</key>",
     "\t\t<integer>431817727</integer>",
     "\t</dict>",
-    "\t<key>WFWorkflowImportQuestions</key>",
-    "\t<array/>",
+    ...importQuestionsLines,
     "\t<key>WFWorkflowInputContentItemClasses</key>",
     "\t<array>",
     "\t\t<string>WFStringContentItem</string>",
@@ -1020,12 +1127,14 @@ function resolveWorkoutConfig({
   activityType,
   environment,
   locale,
+  useImportQuestions = false,
 }: {
   serverOrigin?: string;
   token?: string;
   activityType: string;
   environment?: string;
   locale: string;
+  useImportQuestions?: boolean;
 }) {
   if (!ACTIVITY_TYPE_RE.test(String(activityType ?? ""))) {
     throw new Error("运动类型标识不合法");
@@ -1036,8 +1145,8 @@ function resolveWorkoutConfig({
     throw new Error("运动环境必须为 indoor、outdoor 或 unknown");
   }
   const resolvedLocale = resolveShortcutLocale(locale);
-  const cleanToken = validateToken(token);
-  const base = normalizeServerOrigin(serverOrigin);
+  const cleanToken = useImportQuestions ? "" : validateToken(token);
+  const base = useImportQuestions ? "" : normalizeServerOrigin(serverOrigin);
   const distanceSpec = sport?.hasDistance && sport.distanceMode ? DISTANCE_SAMPLE_SPECS[sport.distanceMode] ?? null : null;
   return {
     sport,
@@ -1158,6 +1267,7 @@ export function buildIronlogEventShortcut({
   environment,
   collectMetrics = true,
   locale = "zh-Hans",
+  useImportQuestions = false,
   uuids,
   uuidFactory = makeUuid,
 }: {
@@ -1168,6 +1278,7 @@ export function buildIronlogEventShortcut({
   environment?: string;
   collectMetrics?: boolean;
   locale?: string;
+  useImportQuestions?: boolean;
   uuids?: { date?: string; request?: string };
   uuidFactory?: () => string;
 } = {}) {
@@ -1179,13 +1290,17 @@ export function buildIronlogEventShortcut({
     cleanToken,
     base,
     distanceSpec,
-  } = resolveWorkoutConfig({ serverOrigin, token, activityType, environment, locale });
+  } = resolveWorkoutConfig({ serverOrigin, token, activityType, environment, locale, useImportQuestions });
 
-  const endpoint = `${base}/api/integrations/apple-health/events`;
+  const endpointPath = "/api/integrations/apple-health/events";
+  const endpoint = useImportQuestions ? `<导入时填写>${endpointPath}` : `${base}${endpointPath}`;
+  const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
   const dateUuid = uuids?.date ?? uuidFactory();
   const requestUuid = uuids?.request ?? uuidFactory();
   const eventLabel = event === "start" ? "开始" : "结束";
-  const filename = `铁记-${eventLabel}-${sportLabel}.shortcut`;
+  const filename = useImportQuestions
+    ? `铁记-通用-${eventLabel}-${sportLabel}.shortcut`
+    : `铁记-${eventLabel}-${sportLabel}.shortcut`;
 
   if (event === "start" || collectMetrics === false) {
     const commentText = [
@@ -1194,27 +1309,42 @@ export function buildIronlogEventShortcut({
       `绑定方式：iPhone「快捷指令 → 自动化 → + → Apple Watch 体能训练（${eventLabel}时 · 立即运行）」选择本快捷指令。`,
     ].join("\n");
 
-    const xml = wrapShortcutPlist([
-      commentActionXml(commentText),
-      currentDateActionXml({ uuid: dateUuid }),
-      downloadJsonActionXml({
-        uuid: requestUuid,
-        endpoint,
-        token: cleanToken,
-        bodyItems: [
-          { key: "schemaVersion", value: "1", itemType: 3 },
-          { key: "event", value: event },
-          { key: "activityType", value: activityType },
-          { key: "environment", value: resolvedEnv },
-          { key: "occurredAt", outputAttachment: { name: "Date", uuid: dateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-        ],
-      }),
-    ]);
+    const xml = wrapShortcutPlist(
+      [
+        commentActionXml(commentText),
+        ...(prelude ? prelude.actions : []),
+        currentDateActionXml({ uuid: dateUuid }),
+        downloadJsonActionXml({
+          uuid: requestUuid,
+          endpoint,
+          endpointPath: prelude ? endpointPath : undefined,
+          token: cleanToken,
+          originUuid: prelude?.originUuid,
+          tokenUuid: prelude?.tokenUuid,
+          bodyItems: [
+            { key: "schemaVersion", value: "1", itemType: 3 },
+            { key: "event", value: event },
+            { key: "activityType", value: activityType },
+            { key: "environment", value: resolvedEnv },
+            { key: "occurredAt", outputAttachment: { name: "Date", uuid: dateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+          ],
+        }),
+      ],
+      prelude?.importQuestions ?? [],
+    );
 
-    return { filename, shortcutName: filename.replace(/\.shortcut$/, ""), endpoint, locale: resolvedLocale, xml };
+    return {
+      filename,
+      shortcutName: filename.replace(/\.shortcut$/, ""),
+      endpoint,
+      locale: resolvedLocale,
+      xml,
+      base64: encodeShortcutXmlToBase64(xml),
+    };
   }
 
-  const activeEndpoint = `${base}/api/integrations/apple-health/events/active?activityType=${encodeURIComponent(activityType)}`;
+  const activeEndpointPath = `/api/integrations/apple-health/events/active?activityType=${encodeURIComponent(activityType)}`;
+  const activeEndpoint = `${base}${activeEndpointPath}`;
   const activeReqUuid = uuidFactory();
   const elapsedValUuid = uuidFactory();
   const startRawUuid = uuidFactory();
@@ -1236,51 +1366,61 @@ export function buildIronlogEventShortcut({
     `绑定方式：iPhone「快捷指令 → 自动化 → + → Apple Watch 体能训练（结束时 · 立即运行）」选择本快捷指令，需先配对同名「开始」自动化。`,
   ].join("\n");
 
-  const xml = wrapShortcutPlist([
-    commentActionXml(commentText),
-    delayActionXml(5),
-    currentDateActionXml({ uuid: dateUuid }),
-    downloadJsonActionXml({
-      uuid: activeReqUuid,
-      endpoint: activeEndpoint,
-      token: cleanToken,
-      method: "GET",
-    }),
-    getDictionaryValueActionXml({
-      uuid: elapsedValUuid,
-      key: "elapsedMinutes",
-      inputUuid: activeReqUuid,
-      inputName: "Contents of URL",
-    }),
-    ...conditionalHasValueBlock({
-      groupUuid: uuidFactory(),
-      inputUuid: elapsedValUuid,
-      inputName: "Dictionary Value",
-      bodyActions: [
-        adjustDateSubtractMinutesActionXml({
-          uuid: startRawUuid,
-          minutesUuid: elapsedValUuid,
-          minutesOutputName: "Dictionary Value",
-          inputUuid: dateUuid,
-          inputName: "Date",
-        }),
-        ...metrics.actions,
-      ],
-    }),
-    downloadJsonActionXml({
-      uuid: requestUuid,
-      endpoint,
-      token: cleanToken,
-      bodyItems: [
-        { key: "schemaVersion", value: "1", itemType: 3 },
-        { key: "event", value: "end" },
-        { key: "activityType", value: activityType },
-        { key: "environment", value: resolvedEnv },
-        { key: "occurredAt", outputAttachment: { name: "Date", uuid: dateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-        ...metrics.bodyItems,
-      ],
-    }),
-  ]);
+  const xml = wrapShortcutPlist(
+    [
+      commentActionXml(commentText),
+      ...(prelude ? prelude.actions : []),
+      delayActionXml(5),
+      currentDateActionXml({ uuid: dateUuid }),
+      downloadJsonActionXml({
+        uuid: activeReqUuid,
+        endpoint: activeEndpoint,
+        endpointPath: prelude ? activeEndpointPath : undefined,
+        token: cleanToken,
+        originUuid: prelude?.originUuid,
+        tokenUuid: prelude?.tokenUuid,
+        method: "GET",
+      }),
+      getDictionaryValueActionXml({
+        uuid: elapsedValUuid,
+        key: "elapsedMinutes",
+        inputUuid: activeReqUuid,
+        inputName: "Contents of URL",
+      }),
+      ...conditionalHasValueBlock({
+        groupUuid: uuidFactory(),
+        inputUuid: elapsedValUuid,
+        inputName: "Dictionary Value",
+        bodyActions: [
+          adjustDateSubtractMinutesActionXml({
+            uuid: startRawUuid,
+            minutesUuid: elapsedValUuid,
+            minutesOutputName: "Dictionary Value",
+            inputUuid: dateUuid,
+            inputName: "Date",
+          }),
+          ...metrics.actions,
+        ],
+      }),
+      downloadJsonActionXml({
+        uuid: requestUuid,
+        endpoint,
+        endpointPath: prelude ? endpointPath : undefined,
+        token: cleanToken,
+        originUuid: prelude?.originUuid,
+        tokenUuid: prelude?.tokenUuid,
+        bodyItems: [
+          { key: "schemaVersion", value: "1", itemType: 3 },
+          { key: "event", value: "end" },
+          { key: "activityType", value: activityType },
+          { key: "environment", value: resolvedEnv },
+          { key: "occurredAt", outputAttachment: { name: "Date", uuid: dateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+          ...metrics.bodyItems,
+        ],
+      }),
+    ],
+    prelude?.importQuestions ?? [],
+  );
 
   return {
     filename,
@@ -1288,6 +1428,7 @@ export function buildIronlogEventShortcut({
     endpoint,
     locale: resolvedLocale,
     xml,
+    base64: encodeShortcutXmlToBase64(xml),
   };
 }
 
@@ -1298,6 +1439,7 @@ export function buildIronlogRecentWorkoutShortcut({
   environment,
   windowMinutes = 45,
   locale = "zh-Hans",
+  useImportQuestions = false,
   uuidFactory = makeUuid,
 }: {
   serverOrigin?: string;
@@ -1306,6 +1448,7 @@ export function buildIronlogRecentWorkoutShortcut({
   environment?: string;
   windowMinutes?: number;
   locale?: string;
+  useImportQuestions?: boolean;
   uuidFactory?: () => string;
 } = {}) {
   const resolvedMinutes = Number(windowMinutes);
@@ -1319,10 +1462,14 @@ export function buildIronlogRecentWorkoutShortcut({
     cleanToken,
     base,
     distanceSpec,
-  } = resolveWorkoutConfig({ serverOrigin, token, activityType, environment, locale });
+  } = resolveWorkoutConfig({ serverOrigin, token, activityType, environment, locale, useImportQuestions });
 
-  const endpoint = `${base}/api/integrations/apple-health/workouts`;
-  const filename = `铁记-结束直传-${sportLabel}.shortcut`;
+  const endpointPath = "/api/integrations/apple-health/workouts";
+  const endpoint = useImportQuestions ? `<导入时填写>${endpointPath}` : `${base}${endpointPath}`;
+  const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
+  const filename = useImportQuestions
+    ? `铁记-通用-结束直传-${sportLabel}.shortcut`
+    : `铁记-结束直传-${sportLabel}.shortcut`;
   const nowDateUuid = uuidFactory();
   const startRawUuid = uuidFactory();
   const requestUuid = uuidFactory();
@@ -1344,30 +1491,37 @@ export function buildIronlogRecentWorkoutShortcut({
     `绑定方式：iPhone「快捷指令 → 自动化 → + → Apple Watch 体能训练（结束任何体能训练 / ${sportLabel} · 立即运行）」选择本快捷指令即可；如单次训练更长/更短，可在下方动作里微调 ${resolvedMinutes} 分钟窗口。`,
   ].join("\n");
 
-  const xml = wrapShortcutPlist([
-    commentActionXml(commentText),
-    delayActionXml(5),
-    currentDateActionXml({ uuid: nowDateUuid }),
-    adjustDateSubtractMinutesActionXml({ uuid: startRawUuid, minutes: resolvedMinutes, inputUuid: nowDateUuid, inputName: "Date" }),
-    ...metrics.actions,
-    downloadJsonActionXml({
-      uuid: requestUuid,
-      endpoint,
-      token: cleanToken,
-      bodyItems: [
-        { key: "schemaVersion", value: "1", itemType: 3 },
-        { key: "source", value: "shortcut" },
-        { key: "captureMethod", value: "trigger" },
-        { key: "durationKind", value: "event_elapsed" },
-        { key: "activityType", value: activityType },
-        { key: "environment", value: resolvedEnv },
-        { key: "startedAt", outputAttachment: { name: "Adjusted Date", uuid: startRawUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-        { key: "endedAt", outputAttachment: { name: "Date", uuid: nowDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-        { key: "durationMinutes", value: String(resolvedMinutes), itemType: 3 },
-        ...metrics.bodyItems,
-      ],
-    }),
-  ]);
+  const xml = wrapShortcutPlist(
+    [
+      commentActionXml(commentText),
+      ...(prelude ? prelude.actions : []),
+      delayActionXml(5),
+      currentDateActionXml({ uuid: nowDateUuid }),
+      adjustDateSubtractMinutesActionXml({ uuid: startRawUuid, minutes: resolvedMinutes, inputUuid: nowDateUuid, inputName: "Date" }),
+      ...metrics.actions,
+      downloadJsonActionXml({
+        uuid: requestUuid,
+        endpoint,
+        endpointPath: prelude ? endpointPath : undefined,
+        token: cleanToken,
+        originUuid: prelude?.originUuid,
+        tokenUuid: prelude?.tokenUuid,
+        bodyItems: [
+          { key: "schemaVersion", value: "1", itemType: 3 },
+          { key: "source", value: "shortcut" },
+          { key: "captureMethod", value: "trigger" },
+          { key: "durationKind", value: "event_elapsed" },
+          { key: "activityType", value: activityType },
+          { key: "environment", value: resolvedEnv },
+          { key: "startedAt", outputAttachment: { name: "Adjusted Date", uuid: startRawUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+          { key: "endedAt", outputAttachment: { name: "Date", uuid: nowDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+          { key: "durationMinutes", value: String(resolvedMinutes), itemType: 3 },
+          ...metrics.bodyItems,
+        ],
+      }),
+    ],
+    prelude?.importQuestions ?? [],
+  );
 
   return {
     filename,
@@ -1376,6 +1530,7 @@ export function buildIronlogRecentWorkoutShortcut({
     locale: resolvedLocale,
     windowMinutes: resolvedMinutes,
     xml,
+    base64: encodeShortcutXmlToBase64(xml),
   };
 }
 
@@ -1385,6 +1540,7 @@ export function buildIronlogDailyHealthShortcut({
   groups = APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id),
   metrics = null,
   locale = "zh-Hans",
+  useImportQuestions = false,
   uuidFactory = makeUuid,
 }: {
   serverOrigin?: string;
@@ -1392,12 +1548,15 @@ export function buildIronlogDailyHealthShortcut({
   groups?: string[];
   metrics?: string[] | null;
   locale?: string;
+  useImportQuestions?: boolean;
   uuidFactory?: () => string;
 } = {}) {
   const resolvedLocale = resolveShortcutLocale(locale);
-  const cleanToken = validateToken(token);
-  const base = normalizeServerOrigin(serverOrigin);
-  const endpoint = `${base}/api/integrations/apple-health/daily`;
+  const cleanToken = useImportQuestions ? "" : validateToken(token);
+  const base = useImportQuestions ? "" : normalizeServerOrigin(serverOrigin);
+  const endpointPath = "/api/integrations/apple-health/daily";
+  const endpoint = useImportQuestions ? `<导入时填写>${endpointPath}` : `${base}${endpointPath}`;
+  const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
 
   let activeGroups: HealthDailyGroupDef[];
   let selectedGroups: string[];
@@ -1415,7 +1574,9 @@ export function buildIronlogDailyHealthShortcut({
     selectedMetrics = activeGroups.flatMap((g) => g.metrics);
   }
   const groupNames = activeGroups.map((g) => g.label).join("、");
-  const filename = "铁记-每日全量健康同步.shortcut";
+  const filename = useImportQuestions
+    ? "铁记-通用-每日全量健康同步.shortcut"
+    : "铁记-每日全量健康同步.shortcut";
 
   const commentText = [
     `铁记（Ironlog）每日 Apple 健康同步：${groupNames}（共 ${selectedMetrics.length} 项）`,
@@ -1423,7 +1584,10 @@ export function buildIronlogDailyHealthShortcut({
     `提示：① 首次运行请在 iPhone「健康 App → 头像 → 隐私 → App → 快捷指令」打开已选指标权限；② 若某项健康数据最近无记录，iOS 快捷指令会弹窗「未找到样本」，建议只在网页端勾选你平时确实有数据的指标。`,
   ].join("\n");
 
-  const actions: string[] = [commentActionXml(commentText)];
+  const actions: string[] = [
+    commentActionXml(commentText),
+    ...(prelude ? prelude.actions : []),
+  ];
   const jsonBodyItems: DictionaryFieldItem[] = [
     { key: "schemaVersion", value: "1", itemType: 3 },
     { key: "shortcutGenVersion", value: "3" },
@@ -1486,10 +1650,14 @@ export function buildIronlogDailyHealthShortcut({
   actions.push(downloadJsonActionXml({
     uuid: uuidFactory(),
     endpoint,
+    endpointPath: prelude ? endpointPath : undefined,
     token: cleanToken,
+    originUuid: prelude?.originUuid,
+    tokenUuid: prelude?.tokenUuid,
     bodyItems: jsonBodyItems,
   }));
 
+  const xml = wrapShortcutPlist(actions, prelude?.importQuestions ?? []);
   return {
     filename,
     shortcutName: filename.replace(/\.shortcut$/, ""),
@@ -1497,7 +1665,8 @@ export function buildIronlogDailyHealthShortcut({
     locale: resolvedLocale,
     metricCount: selectedMetrics.length,
     groups: selectedGroups,
-    xml: wrapShortcutPlist(actions),
+    xml,
+    base64: encodeShortcutXmlToBase64(xml),
   };
 }
 
