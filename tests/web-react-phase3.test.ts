@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { mountWebAssets } from "../packages/server/src/web-assets.ts";
@@ -378,4 +378,15 @@ test("packages/web/src/lib/query-cache deduplicates in-flight fetches, honors ep
 
   invalidateQueryCache("u_cache");
   assert.equal(peekQuery("/api/web/test-stats", "u_cache"), undefined);
+});
+
+test("packages/web/src/styles/ironlog.css fixes mobile MoreSheet horizontal overflow and 2x2 footer clipping", () => {
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+  assert.match(css, /\.more-sheet-body[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
+  assert.match(css, /\.more-shortcuts\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(
+    css,
+    /\.more-foot\s*\{[\s\S]*?display:\s*grid;[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/,
+  );
+  assert.match(css, /dialog\.mobile-sheet\s*\{[\s\S]*?max-height:\s*88dvh;[\s\S]*?overflow-x:\s*hidden;/);
 });
