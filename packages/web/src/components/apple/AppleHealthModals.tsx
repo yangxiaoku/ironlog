@@ -820,18 +820,18 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
         <span>导出模式</span>
         <div className="segments">
           <button type="button" aria-pressed={universalMode} onClick={() => setUniversalMode(true)}>
-            通用安全模板（推荐 · 导入时弹窗填令牌）
+            通用模板（推荐）
           </button>
           <button type="button" aria-pressed={!universalMode} onClick={() => setUniversalMode(false)}>
-            预填直出（仅限自己 Mac 本地签名）
+            预填直出（Mac 本地）
           </button>
         </div>
       </div>
 
       <p className="muted">
         {universalMode
-          ? "通用模板不含任何服务器地址与令牌，交给手机第三方工具签名也完全安全；导入 iPhone 时系统会自动弹窗让你粘贴地址和令牌。"
-          : "预填模式已把服务器地址与上传令牌直接写入快捷指令，仅建议在你自己的 Mac 终端本地签名使用。"}
+          ? "通用模板不含服务器地址与令牌，交给网页或手机工具签名也完全安全；导入 iPhone 时弹窗粘贴即可。"
+          : "预填模式已把地址与令牌直接写入文件，仅建议在你自己的 Mac 终端本地签名使用。"}
       </p>
 
       <label className="field">
@@ -858,7 +858,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
             <strong>导入时一键复制凭据（不会写入快捷指令）</strong>
           </div>
           <small>签名完成并点「添加快捷指令」时，iPhone 会依次弹窗询问以下两项，点此复制粘贴即可：</small>
-          <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+          <div className="shortcut-action-row">
             <button
               type="button"
               className="secondary-button"
@@ -891,128 +891,115 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
           <strong>{universalMode ? `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut` : "铁记-Apple健康全能联动.shortcut"}</strong>
         </div>
         <p className="muted">
-          <b>1 个文件搞定全部联动：</b>只需导入并签名这 1 个全能快捷指令，即可承接铁记网页全部智能跳转，或在手机上直接点开弹出 4 合 1 菜单：
-          <br />• <b>开练（<code>strength</code> / <code>cardio</code>）</b>：力量自动打卡开始事件并打开「健身」App，有氧直达「健身」App
-          <br />• <b>完练（<code>end</code>）</b>：自动抓心率、活动能量与距离回传铁记（优先匹配开始事件，未打卡开始则按兜底窗口直传）
-          <br />• <b>每日健康（<code>daily</code>）</b>：上传下方勾选的步数、睡眠、体重、静息心率、HRV 等健康样本
+          1 个文件统管 <b>开练打卡 + 跳转健身</b>（<code>strength</code> / <code>cardio</code>）、
+          <b>完练自动抓心率热量</b>（<code>end</code>）与 <b>每日健康同步</b>（<code>daily</code>）；手机直接点击会弹出 4 合 1 菜单。
         </p>
 
-        <div className="shortcut-config-grid">
-          <label className="field">
-            <span>默认力量 / 运动类型</span>
-            <select
-              value={activityType}
-              onChange={(e) => {
-                const val = e.target.value;
-                setActivityType(val);
-                const matched = APPLE_SHORTCUT_SPORTS.find((s) => s.activityType === val);
-                if (matched) setEnvironment(matched.defaultEnvironment);
-              }}
-            >
-              {APPLE_SHORTCUT_SPORTS.map((s) => (
-                <option key={s.activityType} value={s.activityType}>
-                  {s.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span>运动环境</span>
-            <select value={environment} onChange={(e) => setEnvironment(e.target.value as ShortcutEnvironment)}>
-              {(Object.entries(APPLE_SHORTCUT_ENVIRONMENTS) as Array<[ShortcutEnvironment, string]>).map(([k, lbl]) => (
-                <option key={k} value={k}>
-                  {lbl}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label className="field">
-          <span>未打卡「开始」时的兜底回溯窗口</span>
-          <select value={String(recentWindowMinutes)} onChange={(e) => setRecentWindowMinutes(Number(e.target.value))}>
-            {Object.entries(APPLE_SHORTCUT_RECENT_WINDOWS).map(([k, lbl]) => (
-              <option key={k} value={k}>
-                {lbl}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <p className="muted">
-          ⚠️ iOS 只要遇到某项在「健康」里查到 <b>0 条记录</b>或未授权，就会弹出<b>「未找到样本」</b>（如未手动录过的腰围/饮水/膳食营养、未支持血氧、或
-          <b>凌晨 0 点刚过</b>尚未写入今日的静息能量）。推荐点下方<b>「自动体征全项 (14项)」</b>，并在 iPhone{" "}
-          <b>健康 App → 头像 → 隐私 → App → 快捷指令</b> 打开对应开关。
-        </p>
         <div className="shortcut-preset-row">
           <button type="button" className="secondary-button shortcut-preset-btn" onClick={() => applyPreset("default")}>
-            基础防弹窗 (4项)
+            基础 4项
           </button>
           <button type="button" className="secondary-button shortcut-preset-btn" onClick={() => applyPreset("watch")}>
-            Watch 日常 (8项)
+            Watch 8项
           </button>
           <button type="button" className="secondary-button shortcut-preset-btn" onClick={() => applyPreset("auto")}>
-            自动体征全项 (14项)
+            自动体征 14项
           </button>
           <button type="button" className="secondary-button shortcut-preset-btn" onClick={() => applyPreset("all")}>
-            全选全部 (22项)
+            全选 22项
           </button>
         </div>
-        <div className="shortcut-check-grid">
-          {APPLE_HEALTH_DAILY_GROUPS.map((group) => (
-            <div key={group.id} className="shortcut-metric-group">
-              <div className="shortcut-metric-head">
-                <b>{group.label}</b>
-                <small>{group.description}</small>
-              </div>
-              <div className="shortcut-pill-grid">
-                {group.metrics.map((metric) => (
-                  <label key={metric.key} className="shortcut-pill">
-                    <input
-                      type="checkbox"
-                      checked={dailyMetrics.has(metric.key)}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setDailyMetrics((prev) => {
-                          const next = new Set(prev);
-                          if (checked) next.add(metric.key);
-                          else next.delete(metric.key);
-                          return next;
-                        });
-                      }}
-                    />
-                    <span>{metric.typeLabel}</span>
-                    {metric.emptyHint ? <small className="shortcut-pill-hint">{metric.emptyHint}</small> : null}
-                  </label>
-                ))}
-              </div>
+
+        <details className="settings-accordion">
+          <summary>
+            <span>自定义运动类型与健康指标</span>
+            <span className="settings-accordion-meta">
+              <span>{sportLabel} · {dailyMetrics.size} 项</span>
+              <Icon name="chevron" size={14} />
+            </span>
+          </summary>
+          <div className="settings-accordion-body">
+            <div className="shortcut-config-grid">
+              <label className="field">
+                <span>默认力量 / 运动类型</span>
+                <select
+                  value={activityType}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setActivityType(val);
+                    const matched = APPLE_SHORTCUT_SPORTS.find((s) => s.activityType === val);
+                    if (matched) setEnvironment(matched.defaultEnvironment);
+                  }}
+                >
+                  {APPLE_SHORTCUT_SPORTS.map((s) => (
+                    <option key={s.activityType} value={s.activityType}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>运动环境</span>
+                <select value={environment} onChange={(e) => setEnvironment(e.target.value as ShortcutEnvironment)}>
+                  {(Object.entries(APPLE_SHORTCUT_ENVIRONMENTS) as Array<[ShortcutEnvironment, string]>).map(([k, lbl]) => (
+                    <option key={k} value={k}>
+                      {lbl}
+                    </option>
+                  ))}
+                </select>
+              </label>
             </div>
-          ))}
-        </div>
-        <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+            <label className="field">
+              <span>未打卡「开始」时的兜底回溯窗口</span>
+              <select value={String(recentWindowMinutes)} onChange={(e) => setRecentWindowMinutes(Number(e.target.value))}>
+                {Object.entries(APPLE_SHORTCUT_RECENT_WINDOWS).map(([k, lbl]) => (
+                  <option key={k} value={k}>
+                    {lbl}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <small className="muted">
+              ⚠️ 若某项在 iPhone「健康」中为 0 条记录或未授权会提示「未找到样本」，建议先用「自动体征 14项」并在健康隐私设置打开快捷指令权限。
+            </small>
+            <div className="shortcut-check-grid">
+              {APPLE_HEALTH_DAILY_GROUPS.map((group) => (
+                <div key={group.id} className="shortcut-metric-group">
+                  <div className="shortcut-metric-head">
+                    <b>{group.label}</b>
+                    <small>{group.description}</small>
+                  </div>
+                  <div className="shortcut-pill-grid">
+                    {group.metrics.map((metric) => (
+                      <label key={metric.key} className="shortcut-pill">
+                        <input
+                          type="checkbox"
+                          checked={dailyMetrics.has(metric.key)}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setDailyMetrics((prev) => {
+                              const next = new Set(prev);
+                              if (checked) next.add(metric.key);
+                              else next.delete(metric.key);
+                              return next;
+                            });
+                          }}
+                        />
+                        <span>{metric.typeLabel}</span>
+                        {metric.emptyHint ? <small className="shortcut-pill-hint">{metric.emptyHint}</small> : null}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </details>
+
+        <div className="shortcut-action-row">
           <button
             type="button"
-            className={universalMode ? "primary-button" : "secondary-button"}
-            onClick={() =>
-              handleCopyBase64(
-                () =>
-                  buildIronlogUnifiedAppleHubShortcut({
-                    serverOrigin: originInput,
-                    token,
-                    activityType,
-                    environment,
-                    windowMinutes: recentWindowMinutes,
-                    metrics: [...dailyMetrics],
-                    useImportQuestions: universalMode,
-                  }),
-                (built) => writeWorkoutPreference("appleHubShortcutName", built.shortcutName),
-              )
-            }
-          >
-            <Icon name="copy" size={16} /> 复制全能 Base64（{dailyMetrics.size} 项 + 开练/完练）
-          </button>
-          <button
-            type="button"
-            className={universalMode ? "secondary-button" : "primary-button"}
+            className="primary-button"
             onClick={() =>
               handleDownloadShortcut(
                 () =>
@@ -1032,6 +1019,27 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
           >
             <Icon name="download" size={16} /> 下载全能 .shortcut
           </button>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() =>
+              handleCopyBase64(
+                () =>
+                  buildIronlogUnifiedAppleHubShortcut({
+                    serverOrigin: originInput,
+                    token,
+                    activityType,
+                    environment,
+                    windowMinutes: recentWindowMinutes,
+                    metrics: [...dailyMetrics],
+                    useImportQuestions: universalMode,
+                  }),
+                (built) => writeWorkoutPreference("appleHubShortcutName", built.shortcutName),
+              )
+            }
+          >
+            <Icon name="copy" size={16} /> 复制 Base64
+          </button>
         </div>
       </section>
 
@@ -1047,7 +1055,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
               <strong>{universalMode ? "铁记-通用-每日全量健康同步.shortcut" : "铁记-每日全量健康同步.shortcut"}</strong>
             </div>
             <small>使用上方当前勾选的 {dailyMetrics.size} 项健康指标单独导出。</small>
-            <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+            <div className="shortcut-action-row">
               <button
                 type="button"
                 className="secondary-button"
@@ -1102,7 +1110,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 </strong>
               </div>
               <small>使用上方选定的 {sportLabel}（{recentWindowMinutes} 分钟窗口），手表结束训练 5 秒后直传。</small>
-              <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+              <div className="shortcut-action-row">
                 <button
                   type="button"
                   className="secondary-button"
@@ -1149,7 +1157,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                   <strong>{universalMode ? `铁记-通用-开始-${sportLabel}.shortcut` : `铁记-开始-${sportLabel}.shortcut`}</strong>
                 </div>
                 <small>开练时上报 event: "start"</small>
-                <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                <div className="shortcut-action-row">
                   <button
                     type="button"
                     className="secondary-button"
@@ -1194,7 +1202,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                   <strong>{universalMode ? `铁记-通用-结束-${sportLabel}.shortcut` : `铁记-结束-${sportLabel}.shortcut`}</strong>
                 </div>
                 <small>结束时自动计算时长、匹配今日计划，并抓热量/心率/距离</small>
-                <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                <div className="shortcut-action-row">
                   <button
                     type="button"
                     className="secondary-button"

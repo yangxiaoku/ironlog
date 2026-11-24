@@ -398,4 +398,8 @@ test("packages/web/src/styles/ironlog.css defines cohesive Settings accordions, 
   assert.match(css, /\.settings-quick-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
   assert.match(css, /\.settings-backup-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/);
   assert.match(css, /\.panel-head\s+\.heading-actions\s*\{[\s\S]*?width:\s*auto;[\s\S]*?display:\s*inline-flex;/);
+  assert.match(css, /\.shortcut-action-row\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(css, /\.settings-content\s+\.settings-form\s*>\s*\.form-section:first-child\s*\{[\s\S]*?border-top:\s*0;/);
+  assert.match(css, /\.diet-toolbar-actions\s*>\s*:last-child:nth-child\(odd\)\s*\{[\s\S]*?grid-column:\s*1\s*\/\s*-1;/);
+  assert.match(css, /\.workout-apple-chip\s*\{[\s\S]*?display:\s*inline-flex;/);
 });

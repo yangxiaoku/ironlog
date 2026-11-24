@@ -910,8 +910,7 @@ export function WorkoutEditorModal({
             {activeLaunchMode !== "off" ? (
               <button
                 type="button"
-                className="micro-chip"
-                style={{ flex: "none", display: "inline-flex", alignItems: "center", gap: 4, minHeight: 24, padding: "2px 8px", fontSize: 11 }}
+                className="micro-chip workout-apple-chip"
                 title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
                 onClick={() => {
                   triggerHaptic("light");

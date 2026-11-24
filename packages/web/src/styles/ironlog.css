@@ -555,22 +555,6 @@ dialog.workout-dialog .workout-inline-add-btn {
   padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
 }
 
-.session-settings-group .segments,
-.settings-workout-prefs-panel .segments {
-  width: 100%;
-  border-radius: 14px;
-  padding: 4px;
-  gap: 4px;
-}
-
-.session-settings-group .segments button,
-.settings-workout-prefs-panel .segments button {
-  flex: 1 1 auto;
-  border-radius: 10px;
-  padding-inline: 10px;
-  text-align: center;
-}
-
 .workout-form.show-rir .exercise-editor.timed-exercise {
   --workout-columns: 30px minmax(0, 1fr) 38px 36px;
 }
@@ -829,5 +813,113 @@ dialog.workout-dialog .workout-inline-add-btn {
 
   .settings-backup-grid > :last-child:nth-child(odd) {
     grid-column: 1 / -1;
+  }
+}
+
+/* Second craft pass: hairline cleanup, sticky desktop settings nav, shortcut modal grids & mobile hero/diet polish */
+.settings-content .settings-form > .form-section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+@media (min-width: 631px) {
+  .settings-sections {
+    position: sticky;
+    top: 76px;
+  }
+}
+
+.shortcut-modal .segments,
+.session-settings-group .segments {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  width: 100%;
+  border-radius: 12px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.shortcut-modal .segments button,
+.session-settings-group .segments button {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  border-radius: 9px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.shortcut-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+.shortcut-action-row button {
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  justify-content: center;
+}
+
+.shortcut-preset-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.shortcut-preset-btn {
+  width: 100%;
+  min-height: 34px;
+  justify-content: center;
+  font-size: 12.5px;
+}
+
+.hero-top-actions {
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.hero-refresh-btn {
+  min-width: 32px;
+  min-height: 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+}
+
+.workout-apple-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+@media (max-width: 630px) {
+  .settings-sections .segments {
+    scroll-snap-type: x proximity;
+  }
+
+  .settings-sections .segments button {
+    scroll-snap-align: start;
+  }
+
+  .diet-toolbar-actions > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+
+  .hydration-head {
+    gap: 8px;
+  }
+
+  .hydration-head .quiet {
+    flex: none;
+    font-size: 12px;
+    padding: 0 8px;
+    min-height: 28px;
   }
 }

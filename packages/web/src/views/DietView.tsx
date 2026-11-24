@@ -437,6 +437,7 @@ export function DietView() {
               <button
                 type="button"
                 className="quiet"
+                title={`已喝 ${waterCups} 杯，点击切换每日饮水目标`}
                 onClick={() => {
                   const next = WATER_GOALS[(WATER_GOALS.indexOf(waterGoal) + 1) % WATER_GOALS.length]!;
                   setWaterGoal(next);
@@ -446,7 +447,7 @@ export function DietView() {
                   notify(`每日饮水目标已设为 ${fmt(next, 0)} ml`);
                 }}
               >
-                {waterPct}% ({waterCups}杯) · 切换目标
+                {waterPct}% · 目标
               </button>
             </div>
             <ThinMeter ratio={waterMl / waterGoal} label="每日饮水完成度" />

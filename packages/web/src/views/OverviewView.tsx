@@ -354,19 +354,22 @@ export function OverviewView() {
               <button
                 type="button"
                 className="quiet hero-share-btn"
+                aria-label="分享今日记录"
                 onClick={() => openDailyShareModal({ date: todayKey })}
               >
-                <Icon name="download" size={14} /> 分享记录
+                <Icon name="download" size={14} /> 分享
               </button>
               <button
                 type="button"
-                className="quiet"
+                className="icon-button hero-refresh-btn"
+                aria-label="刷新首页数据"
+                title="刷新首页数据"
                 onClick={() => {
                   bumpDataEpoch();
                   notify("已刷新首页数据");
                 }}
               >
-                <Icon name="refresh" size={14} /> 刷新
+                <Icon name="refresh" size={14} />
               </button>
               <div className="hero-status">
                 <i />
@@ -617,9 +620,6 @@ export function OverviewView() {
           <div className="heading-actions">
             <button type="button" className="quiet ai-inline-btn" onClick={() => openAiReviewModal()}>
               <Icon name="bolt" size={15} /> AI 复盘
-            </button>
-            <button type="button" className="quiet" onClick={() => openWorkoutEditor({ goals: stats.goals })}>
-              <Icon name="plus" size={15} /> 开始训练
             </button>
             <button type="button" className="quiet" onClick={() => navigate("workout")}>
               全部训练 <Icon name="chevron" size={16} />
