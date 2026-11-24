@@ -233,28 +233,53 @@ export function WorkoutView() {
               <h2>力量基准榜</h2>
               <p>
                 已累计 {trainedItems.length} 个训练动作
-                {sbdTotal != null ? ` · 三大项估算总和 ${fmt(sbdTotal, 1)} kg` : ""}
+                {sbdTotal != null ? ` · 三大项估算总和 ${fmt(sbdTotal, 1)} kg` : ""} · 点击卡片筛选记录
               </p>
             </div>
+            {prPicks.some((ex) => ex.name === query) ? (
+              <button
+                type="button"
+                className="quiet"
+                onClick={() => {
+                  setQuery("");
+                  setShownCount(15);
+                }}
+              >
+                清除动作筛选
+              </button>
+            ) : null}
           </header>
           <div className="pr-wall-grid">
-            {prPicks.map((ex) => (
-              <div key={ex.id} className="pr-wall-card">
-                <span className="pr-wall-name">{ex.name}</span>
-                <strong>
-                  {ex.mode === "timed"
-                    ? `${fmt(ex.bestHold)} 秒`
-                    : ex.best1rm != null
-                      ? `${fmt(ex.best1rm)} kg`
-                      : ex.bestWeight != null
-                        ? `${fmt(ex.bestWeight)} kg`
-                        : "—"}
-                </strong>
-                <small>
-                  {ex.sessionsCount} 场 · {ex.totalWorkSets} 工作组
-                </small>
-              </div>
-            ))}
+            {prPicks.map((ex) => {
+              const isSelected = query === ex.name;
+              return (
+                <button
+                  key={ex.id}
+                  type="button"
+                  className={`pr-wall-card${isSelected ? " is-active" : ""}`}
+                  aria-pressed={isSelected}
+                  onClick={() => {
+                    triggerHaptic("light");
+                    setQuery(isSelected ? "" : ex.name);
+                    setShownCount(15);
+                  }}
+                >
+                  <span className="pr-wall-name">{ex.name}</span>
+                  <strong>
+                    {ex.mode === "timed"
+                      ? `${fmt(ex.bestHold)} 秒`
+                      : ex.best1rm != null
+                        ? `${fmt(ex.best1rm)} kg`
+                        : ex.bestWeight != null
+                          ? `${fmt(ex.bestWeight)} kg`
+                          : "—"}
+                  </strong>
+                  <small>
+                    {ex.sessionsCount} 场 · {ex.totalWorkSets} 工作组
+                  </small>
+                </button>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -321,6 +346,9 @@ export function WorkoutView() {
                     {list.map((rec) => {
                       const { sets, volume } = summarizeWorkoutRecord(rec.data);
                       const sec = workoutSeconds(rec.data);
+                      const exNames = (rec.data.exercises ?? [])
+                        .map((ex) => ex.snapshot?.name)
+                        .filter((n): n is string => Boolean(n));
                       return (
                         <button
                           key={rec.id}
@@ -337,6 +365,12 @@ export function WorkoutView() {
                               {duration(sec)}
                               {rec.data.feeling ? ` · ${FEELINGS[rec.data.feeling]}` : ""}
                             </small>
+                            {exNames.length ? (
+                              <small className="workout-row-exercises">
+                                {exNames.slice(0, 3).join(" · ")}
+                                {exNames.length > 3 ? ` 等 ${exNames.length} 项` : ""}
+                              </small>
+                            ) : null}
                           </span>
                           <span className="record-number">
                             {sets} 组{volume > 0 ? ` · ${fmt(volume)} kg` : ""}

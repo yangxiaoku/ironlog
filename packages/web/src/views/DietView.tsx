@@ -389,8 +389,24 @@ export function DietView() {
 
           {targetKcal ? (
             <>
-              <p className="diet-goal">每日目标 {fmt(targetKcal, 0)} kcal</p>
               <DotMeter ratio={dayRows.length ? totalKcal / targetKcal : 0} count={20} label="热量完成度" />
+              <div className="diet-budget-strip" aria-label="今日热量预算">
+                <div>
+                  <span>已摄入</span>
+                  <strong>{dayRows.length ? fmt(totalKcal, 0) : "0"}</strong>
+                  <small>kcal</small>
+                </div>
+                <div className={kcalDiff != null && kcalDiff < 0 ? "is-over" : "is-focus"}>
+                  <span>{kcalDiff != null && kcalDiff < 0 ? "已超出" : "今日剩余"}</span>
+                  <strong>{fmt(Math.abs(kcalDiff ?? targetKcal), 0)}</strong>
+                  <small>kcal</small>
+                </div>
+                <div>
+                  <span>每日目标</span>
+                  <strong>{fmt(targetKcal, 0)}</strong>
+                  <small>kcal</small>
+                </div>
+              </div>
             </>
           ) : null}
 
@@ -489,13 +505,20 @@ export function DietView() {
             const entries = dayRows.filter((r) => r.data.meal === mealKey);
             const prevMealEntries = prevDayRows.filter((r) => r.data.meal === mealKey);
             const mealCal = entries.reduce((s, r) => s + r.data.calories, 0);
+            const mealProt = entries.reduce((s, r) => s + r.data.protein, 0);
+            const mealCarbs = entries.reduce((s, r) => s + r.data.carbs, 0);
+            const mealFat = entries.reduce((s, r) => s + r.data.fat, 0);
 
             return (
               <section key={mealKey} className="panel meal-card">
                 <header className="panel-head">
                   <div>
                     <h2>{mealLabel}</h2>
-                    <p>{entries.length ? `${fmt(mealCal, 0)} kcal` : "暂无记录"}</p>
+                    <p>
+                      {entries.length
+                        ? `${fmt(mealCal, 0)} kcal · 蛋 ${fmt(mealProt, 0)} · 碳 ${fmt(mealCarbs, 0)} · 脂 ${fmt(mealFat, 0)}g`
+                        : "暂无记录"}
+                    </p>
                   </div>
                   <div className="meal-head-actions">
                     {!entries.length && prevMealEntries.length ? (
@@ -547,6 +570,11 @@ export function DietView() {
                     </span>
                     <span>
                       <strong>{entry.data.name}</strong>
+                      {entry.data.protein > 0 || entry.data.carbs > 0 || entry.data.fat > 0 ? (
+                        <small className="food-macro-sub">
+                          蛋 {fmt(entry.data.protein, 0)}g · 碳 {fmt(entry.data.carbs, 0)}g · 脂 {fmt(entry.data.fat, 0)}g
+                        </small>
+                      ) : null}
                     </span>
                     <span className="record-number">{fmt(entry.data.calories)} kcal</span>
                     <Icon name="chevron" size={15} />

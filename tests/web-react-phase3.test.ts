@@ -430,3 +430,33 @@ test("AnalyticsView and OverviewView organize statistics into 4 clear categories
   assert.match(css, /\.analytics-deck > \.analytics-panel:only-child,/);
   assert.match(css, /\.dashboard\.is-single-panel\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
 });
+
+test("AppShell, OverviewView, DietView, and WorkoutView preserve all features with clean hierarchy and Bento CSS", () => {
+  const shell = readFileSync(resolve(process.cwd(), "packages/web/src/components/AppShell.tsx"), "utf8");
+  const overview = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
+  const diet = readFileSync(resolve(process.cwd(), "packages/web/src/views/DietView.tsx"), "utf8");
+  const workout = readFileSync(resolve(process.cwd(), "packages/web/src/views/WorkoutView.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(shell, /className="primary-button sidebar-quick-cta"/);
+  assert.match(shell, /className="nav-group-label"/);
+  assert.match(shell, /MOBILE_TABS/);
+
+  assert.match(overview, /today-cta-pill/);
+  assert.match(overview, /day\.nutrition\.protein/);
+  assert.match(overview, /is-two-panel/);
+  assert.match(overview, /is-single-panel/);
+
+  assert.match(diet, /className="diet-budget-strip"/);
+  assert.match(diet, /className="food-macro-sub"/);
+
+  assert.match(workout, /className=\{`pr-wall-card/);
+  assert.match(workout, /className="workout-row-exercises"/);
+
+  assert.match(css, /\.sidebar-quick-cta\s*\{/);
+  assert.match(css, /\.today-cta-pill\s*\{/);
+  assert.match(css, /\.diet-budget-strip\s*\{/);
+  assert.match(css, /\.diet-summary\s*\{[\s\S]*?position:\s*sticky;/);
+  assert.match(css, /\.dashboard:not\(\.is-two-panel\):not\(\.is-single-panel\) > #panel-weight/);
+  assert.match(css, /\.pr-wall-grid\s*\{[\s\S]*?grid-auto-flow:\s*column;/);
+});

@@ -20,7 +20,8 @@ import { MatrixText } from "./MatrixText";
 import { MoreSheetBody } from "./MoreSheet";
 import { QuickRecordSheetBody } from "./QuickRecordSheet";
 
-const PRIMARY_NAV: WorkspaceId[] = ["overview", "workout", "diet", "calendar", "analytics", "badges"];
+const DAILY_NAV: WorkspaceId[] = ["overview", "workout", "diet", "calendar"];
+const INSIGHT_NAV: WorkspaceId[] = ["analytics", "badges"];
 const SECONDARY_NAV: WorkspaceId[] = ["settings"];
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -92,9 +93,33 @@ export function AppShell({ children }: { children: ReactNode }) {
           <img width={43} height={43} src="/app/icon-192.png" alt="" />
         </a>
 
+        {userId ? (
+          <button
+            type="button"
+            className="primary-button sidebar-quick-cta"
+            aria-label="快捷速记（训练、饮食、体重或计算器）"
+            onClick={() => {
+              triggerHaptic("light");
+              openModal({
+                title: "快捷速记",
+                layout: "menu",
+                content: <QuickRecordSheetBody />,
+              });
+            }}
+          >
+            <Icon name="plus" size={16} />
+            <span>快捷速记</span>
+          </button>
+        ) : null}
+
         <nav className="desktop-nav">
-          {PRIMARY_NAV.map(renderDesktopLink)}
+          <span className="nav-group-label">日常</span>
+          {DAILY_NAV.map(renderDesktopLink)}
           <span className="nav-divider" aria-hidden="true" />
+          <span className="nav-group-label">洞察</span>
+          {INSIGHT_NAV.map(renderDesktopLink)}
+          <span className="nav-divider" aria-hidden="true" />
+          <span className="nav-group-label">系统</span>
           {SECONDARY_NAV.map(renderDesktopLink)}
         </nav>
 

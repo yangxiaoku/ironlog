@@ -290,6 +290,10 @@ export function OverviewView() {
               completed: false,
             };
 
+  const isPlannedToday = Boolean(
+    !trainingTile.active && !trainingTile.completed && (day?.planned?.date === todayKey || localDraft),
+  );
+
   // Compute trailing weight average for weight card if not already provided
   const since30 = shiftDateStr(todayKey, -29);
   let left = 0;
@@ -410,7 +414,7 @@ export function OverviewView() {
           <section className="today-strip" aria-label="今日摘要">
             <button
               type="button"
-              className={`today-training${trainingTile.active ? " is-training" : ""}`}
+              className={`today-training${trainingTile.active ? " is-training" : isPlannedToday ? " is-planned" : ""}`}
               onClick={openTodayTraining}
             >
               <span className="play-squircle">
@@ -419,12 +423,14 @@ export function OverviewView() {
               <span className="today-training-main">
                 <span className="today-caption">
                   {trainingTile.active ? <span className="training-led" aria-hidden="true" /> : null}
-                  今日训练 · {trainingTile.label}
+                  今日训练
                 </span>
                 <strong>{trainingTile.main}</strong>
                 {trainingTile.note ? <small>{trainingTile.note}</small> : null}
               </span>
-              <Icon name="chevron" size={18} />
+              <span className={`today-cta-pill${trainingTile.active ? " is-live" : trainingTile.completed ? " is-done" : ""}`}>
+                {trainingTile.label}
+              </span>
             </button>
 
             <button
@@ -442,7 +448,10 @@ export function OverviewView() {
               </strong>
               {day.nutrition.count ? (
                 <>
-                  <small>/ {fmt(day.nutrition.target, 0)} kcal</small>
+                  <small>
+                    / {fmt(day.nutrition.target, 0)} kcal
+                    {day.nutrition.protein > 0 ? ` · 蛋 ${fmt(day.nutrition.protein, 0)}g` : ""}
+                  </small>
                   <ThinMeter
                     ratio={day.nutrition.target ? day.nutrition.calories / day.nutrition.target : 0}
                     label="热量进度"
@@ -598,7 +607,15 @@ export function OverviewView() {
               ))}
             </div>
           ) : null}
-          <div className={`dashboard${renderedPanels.length === 1 ? " is-single-panel" : ""}`}>
+          <div
+            className={`dashboard${
+              renderedPanels.length === 1
+                ? " is-single-panel"
+                : renderedPanels.length === 2
+                  ? " is-two-panel"
+                  : ""
+            }`}
+          >
             {renderedPanels.map((panelId) => {
               if (panelId === "load") {
                 return <LoadChart key="load" data={stats} metric={metric} onMetricChange={setMetric} />;
