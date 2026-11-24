@@ -47,7 +47,7 @@ iOS 15+ 要求导入的 `.shortcut` 文件必须经过签名。手头没有 Mac 
 
 1. 在「统计后台 → Apple 健康」点击 **「生成上传快捷指令」**，输入设备名称并确认公网服务器地址（如 `https://ironlog.example.com`）。
 2. 在导出弹窗中按需下载：
-   - **每日全量健康同步**（`铁记-每日全量健康同步.shortcut` → `POST /api/integrations/apple-health/daily`）：v3 回看今天和前两天。活动与饮食累积量按样本日期汇总，睡眠按连续睡眠段的结束日期归档，体征上传这三天内最新的样本与日期。缺少样本的指标留空。有新称重时，按采样日补充体重与体脂记录，保留手动称重。
+   - **每日全量健康同步**（`铁记-每日全量健康同步.shortcut` → `POST /api/integrations/apple-health/daily`）：v3 回看最近 1 天（24 小时），避免样本过多卡顿。活动与饮食累积量按样本日期汇总，睡眠按连续睡眠段的结束日期归档，体征上传近 1 天内最新的样本与日期。缺少样本的指标留空。有新称重时，按采样日补充体重与体脂记录，保留手动称重。
    - **单场训练打卡**（`铁记-开始-*.shortcut` 与 `铁记-结束-*.shortcut` → `POST /api/integrations/apple-health/events`）：按运动类型导出开始与结束配对文件。
 3. 在 Mac 打开「终端 (Terminal)」，复制弹窗中的一行签名命令并回车：
    - 命令会使用 `plutil -convert binary1` 转为二进制 plist，再通过 `shortcuts sign --mode anyone` 完成签名并输出到 `~/Downloads/ironlog-signed`。

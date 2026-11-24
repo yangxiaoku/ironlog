@@ -151,7 +151,7 @@ test("normalizeServerOrigin 与 assessServerOrigin 正确识别本地地址与�
   assert.ok("en" in APPLE_SHORTCUT_HEALTH_LOCALES);
 });
 
-test("buildIronlogDailyHealthShortcut 生成三天查询并携带按日归档所需的日期", () => {
+test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档所需的日期", () => {
   let seq = 0;
   const daily = buildIronlogDailyHealthShortcut({
     serverOrigin: "https://ironlog.example.com",
@@ -176,7 +176,7 @@ test("buildIronlogDailyHealthShortcut 生成三天查询并携带按日归档所
     "<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>",
     "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>",
     "<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>",
-    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>",
+    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>",
     "<string>Steps</string>",
     "<string>count</string>",
     "<string>Active Calories</string>",
@@ -192,7 +192,7 @@ test("buildIronlogDailyHealthShortcut 生成三天查询并携带按日归档所
     "<string>Resting Heart Rate</string>",
     "<string>Heart Rate Variability</string>",
     "<string>Cardio Fitness</string>",
-    "<string>Blood Oxygen</string>",
+    "<string>Oxygen Saturation</string>",
     "<string>Water</string>",
     "<string>Protein</string>",
     "v_sleepSamples",
@@ -206,13 +206,15 @@ test("buildIronlogDailyHealthShortcut 生成三天查询并携带按日归档所
     assert.ok(daily.xml.includes(needle), `Expected generated daily shortcut XML to contain ${needle}`);
   }
 
-  // Must use canonical English HealthKit keys internally even for zh-Hans Shortcuts, not Chinese UI display strings
+  // Must use canonical English HealthKit keys internally even for zh-Hans Shortcuts, and 1-day lookback without Blood Oxygen typo
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
   assert.ok(!daily.xml.includes("<integer>1002</integer>"));
   assert.ok(!daily.xml.includes("WFHKSampleFilteringGroupBy"));
   assert.ok(!daily.xml.includes("<string>步数</string>"));
   assert.ok(!daily.xml.includes("<string>体重</string>"));
   assert.ok(!daily.xml.includes("<string>VO2 Max</string>"));
+  assert.ok(!daily.xml.includes("<string>Blood Oxygen</string>"));
+  assert.ok(!daily.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
 
   // Optional English locale remains valid and emits identical canonical keys
   const english = buildIronlogDailyHealthShortcut({

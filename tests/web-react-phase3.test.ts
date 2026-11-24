@@ -132,9 +132,13 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   // Can omit serverOrigin & token completely
   const dailyNoCreds = buildIronlogDailyHealthShortcut({
     useImportQuestions: true,
-    metrics: ["steps", "sleepSamples", "hrvMs"],
+    metrics: ["steps", "sleepSamples", "hrvMs", "bloodOxygenPct"],
   });
   makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
+  assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
+  assert.ok(!dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
+  assert.ok(dailyNoCreds.xml.includes("<string>Oxygen Saturation</string>"));
+  assert.ok(!dailyNoCreds.xml.includes("<string>Blood Oxygen</string>"));
 
   // Passing serverOrigin & token in universal mode STILL strips them cleanly
   const recent = buildIronlogRecentWorkoutShortcut({
@@ -176,14 +180,18 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
     token: secretToken,
     activityType: "traditionalStrengthTraining",
     windowMinutes: 45,
-    metrics: ["steps", "sleepSamples", "hrvMs"],
+    metrics: ["steps", "sleepSamples", "hrvMs", "bloodOxygenPct"],
     useImportQuestions: true,
   });
 
   assert.equal(hubUniversal.filename, `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut`);
   assert.equal(hubUniversal.shortcutName, DEFAULT_APPLE_HUB_SHORTCUT_NAME);
   assert.equal(hubUniversal.windowMinutes, 45);
-  assert.equal(hubUniversal.metricCount, 3);
+  assert.equal(hubUniversal.metricCount, 4);
+  assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
+  assert.ok(!hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>Oxygen Saturation</string>"));
+  assert.ok(!hubUniversal.xml.includes("<string>Blood Oxygen</string>"));
   assert.ok(!hubUniversal.xml.includes(secretToken), "universal hub shortcut must not embed literal token");
   assert.ok(!hubUniversal.xml.includes(secretOrigin), "universal hub shortcut must not embed literal origin");
   assertBalancedPlistContainers(hubUniversal.xml);

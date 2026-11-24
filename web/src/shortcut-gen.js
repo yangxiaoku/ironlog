@@ -59,7 +59,7 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
   {
     id: "sleep",
     label: "睡眠分期与效率",
-    description: "近三天的深睡、核心、REM、清醒与卧床，按结束日期归档",
+    description: "近 1 天的深睡、核心、REM、清醒与卧床，按结束日期归档",
     metrics: [
       { key: "sleepSamples", typeLabel: "睡眠", typeLabelEn: "Sleep", mode: "sleepIntervals", jsonKey: "sleepSamples" },
     ],
@@ -67,7 +67,7 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
   {
     id: "body",
     label: "体重、体脂与围度",
-    description: "近三天的最新体重、体脂率、去脂体重、BMI 和腰围",
+    description: "近 1 天的最新体重、体脂率、去脂体重、BMI 和腰围",
     metrics: [
       { key: "weightKg", typeLabel: "体重", typeLabelEn: "Weight", unit: "kg", mode: "latest", jsonKey: "weightKg", measuredAtKey: "weightMeasuredAt" },
       { key: "bodyFatPct", typeLabel: "体脂率", typeLabelEn: "Body Fat Percentage", unit: null, mode: "latest", jsonKey: "bodyFatPct", measuredAtKey: "bodyFatMeasuredAt" },
@@ -85,7 +85,7 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
       { key: "heartRateBpm", typeLabel: "心率", typeLabelEn: "Heart Rate", unit: null, mode: "latest", jsonKey: "heartRateBpm" },
       { key: "hrvMs", typeLabel: "心率变异性", typeLabelEn: "Heart Rate Variability", unit: "ms", mode: "latest", jsonKey: "hrvMs" },
       { key: "vo2Max", typeLabel: "最大摄氧量", typeLabelEn: "Cardio Fitness", unit: null, mode: "latest", jsonKey: "vo2Max" },
-      { key: "bloodOxygenPct", typeLabel: "血氧", typeLabelEn: "Blood Oxygen", unit: null, mode: "latest", jsonKey: "bloodOxygenPct", emptyHint: "需测过" },
+      { key: "bloodOxygenPct", typeLabel: "血氧", typeLabelEn: "Oxygen Saturation", unit: null, mode: "latest", jsonKey: "bloodOxygenPct", emptyHint: "需测过" },
       { key: "respiratoryRate", typeLabel: "呼吸频率", typeLabelEn: "Respiratory Rate", unit: null, mode: "latest", jsonKey: "respiratoryRate" },
     ],
   },
@@ -135,7 +135,7 @@ const ACTIVITY_TYPE_RE = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
 const VALID_EVENTS = new Set(["start", "end"]);
 const VALID_ENVIRONMENTS = new Set(Object.keys(APPLE_SHORTCUT_ENVIRONMENTS));
 const VALID_DAILY_GROUPS = new Set(APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id));
-const DAILY_LOOKBACK_DAYS = 3;
+const DAILY_LOOKBACK_DAYS = 1;
 
 /** Escape special characters for XML text nodes. */
 export function escapeXml(value) {
