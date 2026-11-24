@@ -6,8 +6,11 @@ import {
   calculateMonotonyAndStrain,
   calculateSetInol,
   estimatedOneRepMax,
+  evaluateEffortAndRepZones,
+  evaluateNutritionEnergyBalance,
   evaluateProteinAdequacy,
   evaluateSessionInol,
+  evaluateSymmetryAndFrequency,
   evaluateWeeklyMuscleDose,
   evaluateWeightChangeRate,
   localDate,
@@ -276,7 +279,10 @@ test("数据分析接口鉴权、空账户默认值、多维度指标与文献�
     assert.equal(data.citations.schoenfeld2017.year, 2017);
     assert.equal(data.citations.williams2017.year, 2017);
     assert.equal(data.citations.plews2013.year, 2013);
-    assert.equal(Object.keys(data.citations).length, 9);
+    assert.equal(data.citations.schoenfeld2016.year, 2016);
+    assert.equal(data.citations.zourdos2016.year, 2016);
+    assert.equal(data.citations.hall2008.year, 2008);
+    assert.equal(Object.keys(data.citations).length, 12);
   } finally {
     db.close();
   }
@@ -607,7 +613,56 @@ test("高次数 1RM 不断崖下跌、协同肌群 0.5 折算组数及罗马尼�
     assert.equal(analytics.ipfGl.components.deadliftRaw1RM, expectedRdl1Rm);
     assert.equal(analytics.ipfGl.components.deadlift1RM, expectedRdl1Rm);
     assert.equal(analytics.ipfGl.components.deadliftSourceName, "罗马尼亚硬拉");
+
+    // 4. Symmetry, frequency, effort spectrum, and period breakdown populated cleanly
+    assert.equal(analytics.muscles.symmetry?.pushPullStatus, "push_dominant");
+    assert.equal(analytics.effortSpectrum?.totalWorkSets, 4);
+    assert.equal(analytics.effortSpectrum?.repZones.strength.sets, 1);
+    assert.equal(analytics.effortSpectrum?.repZones.hypertrophy.sets, 3);
+    assert.equal(analytics.weeklyBreakdown.length, 1);
+    assert.equal(analytics.exerciseProgress.length, 3);
   } finally {
     db.close();
   }
+});
+
+test("科学拓展算法验证：推拉对称性、RIR 强度分布与自适应 TDEE 反推", () => {
+  const sym = evaluateSymmetryAndFrequency(
+    { chest: 10, shoulders: 4, back: 12, legs: 14, arms: 6, core: 4 },
+    { chest: 8, back: 8, legs: 6, shoulders: 8, arms: 6, core: 4 },
+  );
+  assert.equal(sym.pushSets, 12);
+  assert.equal(sym.pullSets, 12);
+  assert.equal(sym.pushPullRatio, 1);
+  assert.equal(sym.pushPullStatus, "balanced");
+  assert.equal(sym.frequencyByMuscle.chest, 2);
+
+  const effort = evaluateEffortAndRepZones([
+    { reps: 5, rir: 2, weight: 100, mode: "reps" },
+    { reps: 8, rir: 1, weight: 80, mode: "reps" },
+    { reps: 15, rir: 4, weight: 40, mode: "reps" },
+  ]);
+  assert.equal(effort.repZones.strength.sets, 1);
+  assert.equal(effort.repZones.hypertrophy.sets, 1);
+  assert.equal(effort.repZones.metabolic.sets, 1);
+  assert.equal(effort.rirDistribution.loggedCount, 3);
+  assert.equal(effort.stimulatingSets, 2);
+
+  const energy = evaluateNutritionEnergyBalance({
+    dailyMacros: [
+      { date: "2026-11-01", calories: 2200, protein: 160, carbs: 240, fat: 66, isTrainingDay: true },
+      { date: "2026-11-02", calories: 2000, protein: 150, carbs: 200, fat: 66, isTrainingDay: false },
+      { date: "2026-11-03", calories: 2200, protein: 160, carbs: 240, fat: 66, isTrainingDay: true },
+      { date: "2026-11-04", calories: 2000, protein: 150, carbs: 200, fat: 66, isTrainingDay: false },
+      { date: "2026-11-05", calories: 2100, protein: 155, carbs: 220, fat: 66, isTrainingDay: true },
+    ],
+    targetCalories: 2100,
+    weightSlopeKgPerWeek: -0.5, // ~550 kcal/day deficit => TDEE ~ 2100 + 550 = 2650 kcal
+    weightSampleCount: 5,
+    weightRSquared: 0.85,
+  });
+  assert.equal(energy.avgCalories, 2100);
+  assert.equal(energy.estimatedTdeeKcal, 2650);
+  assert.equal(energy.trainingDayAvgKcal, 2167);
+  assert.equal(energy.restDayAvgKcal, 2000);
 });

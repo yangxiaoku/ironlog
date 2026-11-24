@@ -272,3 +272,141 @@
   background: color-mix(in srgb, var(--red) 13%, var(--inset));
   color: var(--red-ink);
 }
+
+/* Scientific Analytics Enhancements */
+.sci-symmetry-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+}
+
+.sci-symmetry-strip > div {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+
+.sci-symmetry-strip span {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.sci-symmetry-strip strong {
+  font: 700 18px/1.2 var(--mono);
+  color: var(--ink);
+}
+
+.sci-symmetry-strip small {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.sci-symmetry-badge-col {
+  grid-column: 1 / -1;
+  padding-top: 8px;
+  border-top: 1px dotted var(--edge);
+  gap: 4px;
+}
+
+.sci-spectrum-box {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  display: grid;
+  gap: 8px;
+}
+
+.sci-spectrum-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.sci-spectrum-head small {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.sci-stack-bar {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--edge);
+  gap: 2px;
+}
+
+.sci-stack-bar i {
+  display: block;
+  height: 100%;
+}
+
+.rep-str,
+.sci-spectrum-legend .rep-str {
+  background: var(--red);
+}
+
+.rep-hyp,
+.sci-spectrum-legend .rep-hyp {
+  background: var(--ink);
+}
+
+.rep-met,
+.sci-spectrum-legend .rep-met {
+  background: var(--soft);
+}
+
+.sci-spectrum-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.sci-spectrum-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.sci-spectrum-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.sci-rir-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px;
+  padding-top: 6px;
+  border-top: 1px dotted var(--edge);
+  font-size: 11.5px;
+}
+
+.sci-rir-row span {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.sci-rir-row small {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.physio-energy-wide {
+  grid-column: 1 / -1;
+}

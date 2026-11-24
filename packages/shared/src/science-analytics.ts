@@ -94,6 +94,30 @@ export const SCIENCE_CITATIONS: Record<string, LiteratureCitation> = {
     journal: "Sports Medicine, 43(9):773–781",
     takeaway: "静息 HRV（rMSSD）经自然对数 ln(rMSSD) 变换后以个体均值±0.5 SD 最小有意义变化（SWC）评估恢复偏离更具生理稳定性。",
   },
+  schoenfeld2016: {
+    id: "schoenfeld2016",
+    authors: "Schoenfeld, B. J., Ogborn, D., & Krieger, J. W.",
+    year: 2016,
+    title: "Effects of Resistance Training Frequency on Measures of Muscle Hypertrophy: A Systematic Review and Meta-Analysis",
+    journal: "Sports Medicine, 46(11), 1689-1697",
+    takeaway: "在每周总组数相同的情况下，主要肌群每周训练 ≥2 次（分两次以上刺激）比每周只练 1 次具有更显著的肌肥大收益。",
+  },
+  zourdos2016: {
+    id: "zourdos2016",
+    authors: "Zourdos, M. C., Klemp, A., Dolan, C., et al.",
+    year: 2016,
+    title: "Novel Resistance Training–Specific Rating of Perceived Exertion Scale Measuring Repetitions in Reserve",
+    journal: "Journal of Strength and Conditioning Research, 30(1), 267-275",
+    takeaway: "使用保留次数（RIR）管理抗阻强度，将多数有效工作组控制在 RIR 1–3 可兼顾机械张力募集与中枢疲劳恢复。",
+  },
+  hall2008: {
+    id: "hall2008",
+    authors: "Hall, K. D.",
+    year: 2008,
+    title: "What is the required energy deficit per unit weight loss?",
+    journal: "International Journal of Obesity, 32(3), 573-576",
+    takeaway: "结合长期饮食热量均值与体重趋势斜率（约 7700 kcal/kg 能量密度换算），可比静态公式更精准反推个体的真实日均消耗（TDEE）。",
+  },
 };
 
 export type AcwrZone = "deload" | "sweet_spot" | "caution" | "danger";
@@ -665,5 +689,311 @@ export function evaluateWeightChangeRate(
     category,
     categoryLabel,
     advice,
+  };
+}
+
+export interface SymmetryAndFrequencyReport {
+  frequencyByMuscle: Record<string, number>;
+  pushSets: number;
+  pullSets: number;
+  pushPullRatio: number | null;
+  pushPullStatus: "balanced" | "push_dominant" | "pull_dominant" | "no_data";
+  pushPullLabel: string;
+  upperSets: number;
+  lowerSets: number;
+  upperLowerRatio: number | null;
+  advice: string;
+}
+
+/**
+ * Evaluates weekly per-muscle stimulus frequency (Schoenfeld 2016) and
+ * Push:Pull / Upper:Lower structural balance across active muscles.
+ */
+export function evaluateSymmetryAndFrequency(
+  muscleSets7d: Record<string, number>,
+  muscleSessionDays28d: Record<string, number>,
+): SymmetryAndFrequencyReport {
+  const frequencyByMuscle: Record<string, number> = {};
+  for (const key of ["chest", "back", "legs", "shoulders", "arms", "core"]) {
+    frequencyByMuscle[key] = Math.round(((muscleSessionDays28d[key] ?? 0) / 4) * 10) / 10;
+  }
+
+  const chest = muscleSets7d.chest ?? 0;
+  const shoulders = muscleSets7d.shoulders ?? 0;
+  const back = muscleSets7d.back ?? 0;
+  const arms = muscleSets7d.arms ?? 0;
+  const legs = muscleSets7d.legs ?? 0;
+
+  const pushSets = Math.round((chest + shoulders * 0.5) * 10) / 10;
+  const pullSets = Math.round(back * 10) / 10;
+  const pushPullRatio =
+    pullSets > 0 ? Math.round((pushSets / pullSets) * 100) / 100 : pushSets > 0 ? 9.9 : null;
+
+  let pushPullStatus: SymmetryAndFrequencyReport["pushPullStatus"] = "no_data";
+  let pushPullLabel = "暂无推拉对比";
+  let advice = "累计胸部/肩部推举与背部划船下拉记录后，会自动评估前后链推拉平衡。";
+
+  if (pushSets > 0 || pullSets > 0) {
+    if (pushPullRatio == null || pushPullRatio > 1.35) {
+      pushPullStatus = "push_dominant";
+      pushPullLabel = "推力组偏多 (>1.35:1)";
+      advice = "推类动作（胸/前束）明显多于拉类（背部），长期易导致圆肩与肩峰压力上升，建议补 2–4 组划船或面拉平衡体态。";
+    } else if (pushPullRatio < 0.7) {
+      pushPullStatus = "pull_dominant";
+      pushPullLabel = "拉力主导 (<0.7:1)";
+      advice = "背部拉类容量充足，有利于肩胛稳定；可按目标适当保留卧推与推举节奏。";
+    } else {
+      pushPullStatus = "balanced";
+      pushPullLabel = "推拉均衡 (0.7–1.35:1)";
+      advice = "前后链推拉容量配比健康，有利于肩关节稳定与双侧协同进步。";
+    }
+  }
+
+  const upperSets = Math.round((chest + back + shoulders + arms) * 10) / 10;
+  const lowerSets = Math.round(legs * 10) / 10;
+  const upperLowerRatio =
+    lowerSets > 0 ? Math.round((upperSets / lowerSets) * 100) / 100 : upperSets > 0 ? 9.9 : null;
+
+  return {
+    frequencyByMuscle,
+    pushSets,
+    pullSets,
+    pushPullRatio,
+    pushPullStatus,
+    pushPullLabel,
+    upperSets,
+    lowerSets,
+    upperLowerRatio,
+    advice,
+  };
+}
+
+export interface ZoneSlice {
+  sets: number;
+  pct: number;
+}
+
+export interface EffortAndRepZonesReport {
+  totalWorkSets: number;
+  repZones: {
+    strength: ZoneSlice;
+    hypertrophy: ZoneSlice;
+    metabolic: ZoneSlice;
+  };
+  rirDistribution: {
+    loggedCount: number;
+    avgRir: number | null;
+    nearFailure: ZoneSlice;
+    optimal: ZoneSlice;
+    reserveHigh: ZoneSlice;
+  };
+  stimulatingSets: number;
+  advice: string;
+}
+
+/**
+ * Evaluates resistance training rep-loading zones (1-5 / 6-12 / 13+) and
+ * Zourdos (2016) RIR proximity-to-failure distribution.
+ */
+export function evaluateEffortAndRepZones(
+  sets: ReadonlyArray<{ reps: number; rir?: number | null; mode?: string; weight: number; setType?: string }>,
+): EffortAndRepZonesReport {
+  let strength = 0;
+  let hypertrophy = 0;
+  let metabolic = 0;
+  let loggedCount = 0;
+  let rirSum = 0;
+  let nearFailure = 0;
+  let optimal = 0;
+  let reserveHigh = 0;
+  let stimulatingSets = 0;
+
+  const repsSets = sets.filter((s) => s.mode !== "timed" && s.reps > 0);
+  const repTotal = repsSets.length;
+  for (const s of repsSets) {
+    if (s.reps <= 5) strength++;
+    else if (s.reps <= 12) hypertrophy++;
+    else metabolic++;
+
+    const validRir = s.rir != null && Number.isFinite(s.rir) && s.rir >= 0 && s.rir <= 5;
+    if (validRir) {
+      const rir = s.rir!;
+      loggedCount++;
+      rirSum += rir;
+      if (rir <= 1) nearFailure++;
+      else if (rir <= 3) optimal++;
+      else reserveHigh++;
+      if (rir <= 3) stimulatingSets++;
+    } else if (s.setType === "failure" || s.setType === "drop" || s.setType === "rest_pause") {
+      stimulatingSets++;
+    }
+  }
+
+  const pct = (part: number, total: number) => (total > 0 ? Math.round((part / total) * 100) : 0);
+  const avgRir = loggedCount > 0 ? Math.round((rirSum / loggedCount) * 10) / 10 : null;
+
+  let advice = "完成带次数记录的抗阻工作组后，自动分析次数强度区间与力竭逼近程度。";
+  if (repTotal > 0) {
+    if (loggedCount >= 5 && avgRir != null) {
+      if (avgRir <= 1.2) {
+        advice = `已记录 ${loggedCount} 组 RIR（均值 ${avgRir}），接近极限组偏多，注意关节与中枢疲劳管理。`;
+      } else if (avgRir <= 3.0) {
+        advice = `平均保留次数 RIR ${avgRir}，核心组精准落在 1–3 RIR 高效增肌刺激区，刺激与恢复兼顾。`;
+      } else {
+        advice = `平均 RIR ${avgRir} 偏保守，主项动作最后两组可再多推 1–2 次接近 RIR 1–2。`;
+      }
+    } else {
+      const hypoPct = pct(hypertrophy, repTotal);
+      const strPct = pct(strength, repTotal);
+      advice = `6–12 次肌肥大区间占比 ${hypoPct}%，1–5 次大重量区间占比 ${strPct}%；开启训练页 RIR 记录可解锁神经疲劳精确追踪。`;
+    }
+  }
+
+  return {
+    totalWorkSets: sets.length,
+    repZones: {
+      strength: { sets: strength, pct: pct(strength, repTotal) },
+      hypertrophy: { sets: hypertrophy, pct: pct(hypertrophy, repTotal) },
+      metabolic: { sets: metabolic, pct: pct(metabolic, repTotal) },
+    },
+    rirDistribution: {
+      loggedCount,
+      avgRir,
+      nearFailure: { sets: nearFailure, pct: pct(nearFailure, loggedCount) },
+      optimal: { sets: optimal, pct: pct(optimal, loggedCount) },
+      reserveHigh: { sets: reserveHigh, pct: pct(reserveHigh, loggedCount) },
+    },
+    stimulatingSets,
+    advice,
+  };
+}
+
+export interface NutritionEnergyBalanceReport {
+  daysLogged: number;
+  trainingDaysLogged: number;
+  restDaysLogged: number;
+  avgCalories: number;
+  avgProtein: number;
+  avgCarbs: number;
+  avgFat: number;
+  macroPct: { protein: number; carbs: number; fat: number };
+  calorieTarget: number;
+  calorieAdherencePct: number | null;
+  trainingDayAvgKcal: number | null;
+  restDayAvgKcal: number | null;
+  trainingDayAvgProtein: number | null;
+  restDayAvgProtein: number | null;
+  estimatedTdeeKcal: number | null;
+  tdeeConfidence: "high" | "moderate" | "insufficient";
+  energyAdvice: string;
+}
+
+/**
+ * Computes macro split, training-day vs rest-day intake, and adaptive TDEE
+ * from observed caloric intake + weight regression slope (Hall 2008).
+ */
+export function evaluateNutritionEnergyBalance({
+  dailyMacros,
+  targetCalories,
+  weightSlopeKgPerWeek,
+  weightSampleCount,
+  weightRSquared,
+}: {
+  dailyMacros: ReadonlyArray<{
+    date: string;
+    calories: number;
+    protein: number;
+    carbs: number;
+    fat: number;
+    isTrainingDay: boolean;
+  }>;
+  targetCalories: number;
+  weightSlopeKgPerWeek: number | null;
+  weightSampleCount: number;
+  weightRSquared: number | null;
+}): NutritionEnergyBalanceReport {
+  const valid = dailyMacros.filter((d) => d.calories > 0 || d.protein > 0);
+  const daysLogged = valid.length;
+  if (!daysLogged) {
+    return {
+      daysLogged: 0,
+      trainingDaysLogged: 0,
+      restDaysLogged: 0,
+      avgCalories: 0,
+      avgProtein: 0,
+      avgCarbs: 0,
+      avgFat: 0,
+      macroPct: { protein: 0, carbs: 0, fat: 0 },
+      calorieTarget: targetCalories,
+      calorieAdherencePct: null,
+      trainingDayAvgKcal: null,
+      restDayAvgKcal: null,
+      trainingDayAvgProtein: null,
+      restDayAvgProtein: null,
+      estimatedTdeeKcal: null,
+      tdeeConfidence: "insufficient",
+      energyAdvice: "累计 5 天以上饮食与 3 次以上称重后，系统会自动反推你的真实日均代谢消耗（自适应 TDEE）。",
+    };
+  }
+
+  const avgCalories = Math.round(valid.reduce((s, d) => s + d.calories, 0) / daysLogged);
+  const avgProtein = Math.round(valid.reduce((s, d) => s + d.protein, 0) / daysLogged);
+  const avgCarbs = Math.round(valid.reduce((s, d) => s + d.carbs, 0) / daysLogged);
+  const avgFat = Math.round(valid.reduce((s, d) => s + d.fat, 0) / daysLogged);
+
+  const pKcal = avgProtein * 4;
+  const cKcal = avgCarbs * 4;
+  const fKcal = avgFat * 9;
+  const macroTotal = Math.max(1, pKcal + cKcal + fKcal);
+  const proteinPct = Math.round((pKcal / macroTotal) * 100);
+  const carbsPct = Math.round((cKcal / macroTotal) * 100);
+  const fatPct = Math.max(0, 100 - proteinPct - carbsPct);
+
+  const trainDays = valid.filter((d) => d.isTrainingDay);
+  const restDays = valid.filter((d) => !d.isTrainingDay);
+  const avgOf = (arr: typeof valid, pick: (x: (typeof valid)[number]) => number) =>
+    arr.length ? Math.round(arr.reduce((s, x) => s + pick(x), 0) / arr.length) : null;
+
+  const trainingDayAvgKcal = avgOf(trainDays, (x) => x.calories);
+  const restDayAvgKcal = avgOf(restDays, (x) => x.calories);
+  const trainingDayAvgProtein = avgOf(trainDays, (x) => x.protein);
+  const restDayAvgProtein = avgOf(restDays, (x) => x.protein);
+
+  const calorieAdherencePct =
+    targetCalories > 0 ? Math.round((avgCalories / targetCalories) * 100) : null;
+
+  let estimatedTdeeKcal: number | null = null;
+  let tdeeConfidence: NutritionEnergyBalanceReport["tdeeConfidence"] = "insufficient";
+  if (daysLogged >= 5 && weightSampleCount >= 3 && weightSlopeKgPerWeek != null && avgCalories >= 800) {
+    const dailyImbalance = (weightSlopeKgPerWeek * 7700) / 7;
+    estimatedTdeeKcal = Math.max(900, Math.min(6500, Math.round(avgCalories - dailyImbalance)));
+    tdeeConfidence = daysLogged >= 10 && weightSampleCount >= 5 && (weightRSquared ?? 0) >= 0.35 ? "high" : "moderate";
+  }
+
+  let energyAdvice = `近 ${daysLogged} 天日均摄入 ${avgCalories} kcal（碳水 ${carbsPct}% · 蛋白 ${proteinPct}% · 脂肪 ${fatPct}%）。`;
+  if (estimatedTdeeKcal != null) {
+    energyAdvice += ` 结合体重趋势反推你的真实日均总消耗（自适应 TDEE）约 ${estimatedTdeeKcal} kcal（温和减脂参考 ~${Math.max(1100, estimatedTdeeKcal - 400)} kcal，干净增肌参考 ~${estimatedTdeeKcal + 250} kcal）。`;
+  } else {
+    energyAdvice += " 继续记录满 5 天饮食与 3 次体重后，可由代谢斜率反推真实维持热量。";
+  }
+
+  return {
+    daysLogged,
+    trainingDaysLogged: trainDays.length,
+    restDaysLogged: restDays.length,
+    avgCalories,
+    avgProtein,
+    avgCarbs,
+    avgFat,
+    macroPct: { protein: proteinPct, carbs: carbsPct, fat: fatPct },
+    calorieTarget: targetCalories,
+    calorieAdherencePct,
+    trainingDayAvgKcal,
+    restDayAvgKcal,
+    trainingDayAvgProtein,
+    restDayAvgProtein,
+    estimatedTdeeKcal,
+    tdeeConfidence,
+    energyAdvice,
   };
 }

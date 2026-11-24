@@ -51,11 +51,70 @@ interface AnalyticsResponse {
       muscleName: string;
       sets: number;
       avg4WeekSets: number;
+      freqPerWeek?: number;
       category: "optimal" | "overreaching" | "maintenance";
       categoryLabel: string;
       advice: string;
     }>;
+    symmetry?: {
+      pushSets: number;
+      pullSets: number;
+      pushPullRatio: number | null;
+      pushPullStatus: "balanced" | "push_dominant" | "pull_dominant" | "no_data";
+      pushPullLabel: string;
+      upperSets: number;
+      lowerSets: number;
+      upperLowerRatio: number | null;
+      advice: string;
+    };
   };
+  effortSpectrum?: {
+    totalWorkSets: number;
+    repZones: {
+      strength: { sets: number; pct: number };
+      hypertrophy: { sets: number; pct: number };
+      metabolic: { sets: number; pct: number };
+    };
+    rirDistribution: {
+      loggedCount: number;
+      avgRir: number | null;
+      nearFailure: { sets: number; pct: number };
+      optimal: { sets: number; pct: number };
+      reserveHigh: { sets: number; pct: number };
+    };
+    stimulatingSets: number;
+    advice: string;
+  };
+  periodComparison?: {
+    current: { sessions: number; activeDays: number; workSets: number; tonnageKg: number; durationMinutes: number; dietDaysLogged: number };
+    previous: { sessions: number; activeDays: number; workSets: number; tonnageKg: number; durationMinutes: number; dietDaysLogged: number };
+    deltas: { sessionsPct: number | null; workSetsPct: number | null; tonnagePct: number | null };
+  };
+  weeklyBreakdown?: Array<{
+    weekIndex: number;
+    from: string;
+    through: string;
+    sessions: number;
+    activeDays: number;
+    workSets: number;
+    hardSets: number;
+    tonnageKg: number;
+    durationMinutes: number;
+    load: number;
+  }>;
+  exerciseProgress?: Array<{
+    id: string;
+    name: string;
+    muscle: string;
+    mode: string;
+    sessions: number;
+    workSets: number;
+    tonnageKg: number;
+    first1RM: number;
+    last1RM: number;
+    best1RM: number;
+    delta1RM: number;
+  }>;
   inol: {
     lifts: Array<{
       name: string;
@@ -83,7 +142,7 @@ interface AnalyticsResponse {
   };
   nutrition: {
     protein: {
-      status: "optimal" | "suboptimal";
+      status: "optimal" | "suboptimal" | "high";
       statusLabel: string;
       averageGramsPerDay: number;
       averageGramsPerKg: number;
@@ -92,6 +151,25 @@ interface AnalyticsResponse {
       totalDaysLogged: number;
       complianceRatePct: number;
       advice: string;
+    };
+    energy?: {
+      daysLogged: number;
+      trainingDaysLogged: number;
+      restDaysLogged: number;
+      avgCalories: number;
+      avgProtein: number;
+      avgCarbs: number;
+      avgFat: number;
+      macroPct: { protein: number; carbs: number; fat: number };
+      calorieTarget: number;
+      calorieAdherencePct: number | null;
+      trainingDayAvgKcal: number | null;
+      restDayAvgKcal: number | null;
+      trainingDayAvgProtein: number | null;
+      restDayAvgProtein: number | null;
+      estimatedTdeeKcal: number | null;
+      tdeeConfidence: "high" | "moderate" | "insufficient";
+      energyAdvice: string;
     };
   };
   bodyweight: {
@@ -588,6 +666,9 @@ export function AnalyticsView() {
     else if (bw.category === "rapid_gain") bodyParts.push(`近期每周涨重约 ${slopeAbs} kg 偏快，注意控制多余热量`);
     else bodyParts.push("近期体重过滤单日波动后整体平稳");
   }
+  if (nutrition.energy?.estimatedTdeeKcal) {
+    bodyParts.push(`自适应代谢反推维持热量约 ${fmt(nutrition.energy.estimatedTdeeKcal, 0)} kcal/天`);
+  }
   if (bodyParts.length) bodyTip = `${bodyParts.join("；")}。`;
 
   let muscleTip = `本周有 ${optMuscles} / 6 个大肌群练够了推荐组数，分布很均衡。`;
@@ -600,6 +681,8 @@ export function AnalyticsView() {
     muscleTip = lacking
       ? `${lacking}这周练的组数偏少（不足 10 组），下周可以适当多给它们补一两个动作。`
       : "个别部位这周总组数偏高，记得留够肌肉恢复时间。";
+  } else if (muscles.symmetry?.pushPullStatus === "push_dominant") {
+    muscleTip += ` 但推力组（胸肩 ${muscles.symmetry.pushSets} 组）明显多于背部拉力组（${muscles.symmetry.pullSets} 组），建议适当增加划船/下拉平衡肩胛。`;
   }
 
   const handleAdoptAppleWeight = async () => {
@@ -734,6 +817,33 @@ export function AnalyticsView() {
           .join(","),
       );
     }
+    for (const wk of data.weeklyBreakdown ?? []) {
+      lines.push(
+        [
+          "周训练明细",
+          `${wk.from}至${wk.through}`,
+          `第${wk.weekIndex}周 · ${wk.sessions}场 · ${wk.workSets}组 · ${wk.tonnageKg}kg`,
+          "铁记周报",
+          ...Array(20).fill(""),
+          wk.durationMinutes * 60,
+        ]
+          .map(csvCell)
+          .join(","),
+      );
+    }
+    for (const ex of data.exerciseProgress ?? []) {
+      lines.push(
+        [
+          "动作进步",
+          data.through ?? today(),
+          `${ex.name} · ${ex.workSets}组 · ${ex.tonnageKg}kg · e1RM ${ex.best1RM}kg (${ex.delta1RM >= 0 ? "+" : ""}${ex.delta1RM}kg)`,
+          "铁记力量",
+          ...Array(21).fill(""),
+        ]
+          .map(csvCell)
+          .join(","),
+      );
+    }
     if (body?.hasData || rec?.hasData) {
       lines.push(
         [
@@ -838,6 +948,12 @@ export function AnalyticsView() {
       periodDays: data.period,
       userProfile: data.userProfile,
       trainingSummary: data.trainingSummary,
+      periodComparison: data.periodComparison,
+      weeklyBreakdown: data.weeklyBreakdown,
+      exerciseProgress: data.exerciseProgress,
+      effortSpectrum: data.effortSpectrum,
+      symmetry: muscles.symmetry,
+      energyNutrition: nutrition.energy,
       appleDaily: data.appleDaily,
       appleWorkouts: data.appleWorkouts,
     };
@@ -1085,17 +1201,15 @@ export function AnalyticsView() {
             </button>
           ) : null}
           <button type="button" aria-pressed={activeSection === "reports"} onClick={() => setSection("reports")}>
-            {hasApple ? "明细与报表" : "训练报表与文献"}
+            周期报表与导出
           </button>
         </div>
         <span className="analytics-subnav-meta">
           {activeSection === "health"
             ? "聚焦 Apple 健康体成分、睡眠与心率恢复"
             : activeSection === "training"
-              ? "聚焦负荷节奏、肌群组数、强度与饮食"
-              : hasApple
-                ? "聚焦每日体征流水表、运动统计与导出"
-                : "聚焦力量训练汇总报表、导出与科研文献"}
+              ? "聚焦负荷节奏、肌群推拉均衡、次数/RIR 与自适应能量代谢"
+              : "周期对比、周度明细、动作 1RM 进步榜与数据导出"}
         </span>
       </div>
 
@@ -1240,45 +1354,11 @@ export function AnalyticsView() {
               </div>
             </section>
 
-            <section className="panel analytics-panel panel-muscle-dose" id="panel-muscle-dose">
-              <header className="panel-head">
-                <div>
-                  <h2>各部位练到位了吗</h2>
-                  <p>每个大肌群每周练 10–20 组最容易长肌肉</p>
-                </div>
-                <span className="atlas-pill">10–20 组/周最佳</span>
-              </header>
-              <div className="muscle-dose-list">
-                {muscles.audits.map((m) => {
-                  const pct = Math.min(100, Math.round((m.sets / 24) * 100));
-                  const pillClass =
-                    m.category === "optimal" ? "is-sweet" : m.category === "overreaching" ? "is-danger" : "is-deload";
-                  return (
-                    <div key={m.muscleName} className="muscle-dose-row">
-                      <div className="muscle-dose-meta">
-                        <span className="muscle-name">{m.muscleName}</span>
-                        <span className="muscle-sets">
-                          <strong>{m.sets}</strong> 组/周 <small>(近4周均 {fmt(m.avg4WeekSets, 1)})</small>
-                        </span>
-                        <span className={`kpi-pill ${pillClass}`}>{m.categoryLabel}</span>
-                      </div>
-                      <div className="muscle-dose-track">
-                        <div className="dose-zone-marker opt-start" style={{ left: `${(10 / 24) * 100}%` }} title="最低增肌阈值 10 组" />
-                        <div className="dose-zone-marker opt-end" style={{ left: `${(20 / 24) * 100}%` }} title="高容量上限 20 组" />
-                        <div className={`muscle-dose-bar ${pillClass}`} style={{ width: `${pct}%` }} />
-                      </div>
-                      <p className="muscle-dose-advice">{m.advice}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
             <section className="panel analytics-panel panel-monotony" id="panel-monotony">
               <header className="panel-head">
                 <div>
-                  <h2>练休安排合不合理</h2>
-                  <p>轻重日与休息日错开，比每天硬练同样强度更不容易累</p>
+                  <h2>练休起伏 · 次数与力竭强度谱</h2>
+                  <p>轻重交替安排恢复日，并监测 1–5 / 6–12 / 13+ 次数分布与 RIR 逼近力竭质量</p>
                 </div>
                 <span className="atlas-pill">
                   {monotony.current.monotony < 1.5 ? "有张有弛" : monotony.current.monotony < 2.0 ? "起伏偏平" : "太过单调"}
@@ -1306,11 +1386,133 @@ export function AnalyticsView() {
                   </small>
                 </div>
               </div>
+              {data.effortSpectrum && data.effortSpectrum.totalWorkSets > 0 ? (
+                <div className="sci-spectrum-box">
+                  <div className="sci-spectrum-head">
+                    <strong>近 {data.period} 天次数区间分布（有效组 {data.effortSpectrum.totalWorkSets} 组）</strong>
+                    {data.effortSpectrum.rirDistribution.avgRir != null ? (
+                      <small>均 RIR {data.effortSpectrum.rirDistribution.avgRir}</small>
+                    ) : null}
+                  </div>
+                  <div className="sci-stack-bar" role="img" aria-label="次数区间比例">
+                    {data.effortSpectrum.repZones.strength.pct > 0 ? (
+                      <i
+                        className="rep-str"
+                        style={{ width: `${data.effortSpectrum.repZones.strength.pct}%` }}
+                        title={`1-5次 绝对力量 ${data.effortSpectrum.repZones.strength.sets} 组`}
+                      />
+                    ) : null}
+                    {data.effortSpectrum.repZones.hypertrophy.pct > 0 ? (
+                      <i
+                        className="rep-hyp"
+                        style={{ width: `${data.effortSpectrum.repZones.hypertrophy.pct}%` }}
+                        title={`6-12次 肌肥大 ${data.effortSpectrum.repZones.hypertrophy.sets} 组`}
+                      />
+                    ) : null}
+                    {data.effortSpectrum.repZones.metabolic.pct > 0 ? (
+                      <i
+                        className="rep-met"
+                        style={{ width: `${data.effortSpectrum.repZones.metabolic.pct}%` }}
+                        title={`13+次 代谢耐力 ${data.effortSpectrum.repZones.metabolic.sets} 组`}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="sci-spectrum-legend">
+                    <span><i className="rep-str" /> 1–5次 力量 {data.effortSpectrum.repZones.strength.pct}% ({data.effortSpectrum.repZones.strength.sets}组)</span>
+                    <span><i className="rep-hyp" /> 6–12次 增肌 {data.effortSpectrum.repZones.hypertrophy.pct}% ({data.effortSpectrum.repZones.hypertrophy.sets}组)</span>
+                    <span><i className="rep-met" /> 13+次 耐力 {data.effortSpectrum.repZones.metabolic.pct}% ({data.effortSpectrum.repZones.metabolic.sets}组)</span>
+                  </div>
+                  {data.effortSpectrum.rirDistribution.loggedCount > 0 ? (
+                    <div className="sci-rir-row">
+                      <span>RIR 逼近力竭 ({data.effortSpectrum.rirDistribution.loggedCount} 组已记)</span>
+                      <small>
+                        RIR 0–1 力竭 {data.effortSpectrum.rirDistribution.nearFailure.pct}% ·
+                        RIR 2–3 最佳 {data.effortSpectrum.rirDistribution.optimal.pct}% ·
+                        RIR 4+ 轻松 {data.effortSpectrum.rirDistribution.reserveHigh.pct}%
+                      </small>
+                    </div>
+                  ) : null}
+                  <p className="muscle-dose-advice">{data.effortSpectrum.advice}</p>
+                </div>
+              ) : null}
               <div className="sci-insight-box">
                 <div className="sci-insight-head">
                   <Icon name="rest" size={15} /> <span>恢复节奏提醒</span>
                 </div>
                 <p>{monotony.current.monotonyAdvice} 高效练法要有重训日、轻练日和休息日，不要每天练到差不多的疲劳度。</p>
+              </div>
+            </section>
+
+            <section className="panel analytics-panel panel-muscle-dose" id="panel-muscle-dose">
+              <header className="panel-head">
+                <div>
+                  <h2>各部位练到位了吗 · 频次与推拉比</h2>
+                  <p>每周 10–20 组、频次 ≥2 次/周最易增肌，推拉比 0.7–1.35 更护肩</p>
+                </div>
+                <span className="atlas-pill">10–20 组/周最佳</span>
+              </header>
+              {muscles.symmetry && (muscles.symmetry.pushSets > 0 || muscles.symmetry.pullSets > 0) ? (
+                <div className="sci-symmetry-strip">
+                  <div>
+                    <span>推 / 拉比例</span>
+                    <strong>
+                      {muscles.symmetry.pushPullRatio != null ? `${fmt(muscles.symmetry.pushPullRatio, 2)} : 1` : "—"}
+                    </strong>
+                    <small>
+                      推 {muscles.symmetry.pushSets} · 拉 {muscles.symmetry.pullSets} 组
+                    </small>
+                  </div>
+                  <div>
+                    <span>上 / 下肢比</span>
+                    <strong>
+                      {muscles.symmetry.upperLowerRatio != null ? `${fmt(muscles.symmetry.upperLowerRatio, 2)} : 1` : "—"}
+                    </strong>
+                    <small>
+                      上 {muscles.symmetry.upperSets} · 下 {muscles.symmetry.lowerSets} 组
+                    </small>
+                  </div>
+                  <div className="sci-symmetry-badge-col">
+                    <span
+                      className={`kpi-pill ${
+                        muscles.symmetry.pushPullStatus === "balanced"
+                          ? "is-sweet"
+                          : muscles.symmetry.pushPullStatus === "push_dominant"
+                            ? "is-caution"
+                            : ""
+                      }`}
+                    >
+                      {muscles.symmetry.pushPullLabel}
+                    </span>
+                    <small>{muscles.symmetry.advice}</small>
+                  </div>
+                </div>
+              ) : null}
+              <div className="muscle-dose-list">
+                {muscles.audits.map((m) => {
+                  const pct = Math.min(100, Math.round((m.sets / 24) * 100));
+                  const pillClass =
+                    m.category === "optimal" ? "is-sweet" : m.category === "overreaching" ? "is-danger" : "is-deload";
+                  return (
+                    <div key={m.muscleName} className="muscle-dose-row">
+                      <div className="muscle-dose-meta">
+                        <span className="muscle-name">{m.muscleName}</span>
+                        <span className="muscle-sets">
+                          <strong>{m.sets}</strong> 组/周{" "}
+                          <small>
+                            (4周均 {fmt(m.avg4WeekSets, 1)} · {fmt(m.freqPerWeek ?? 0, 1)}x/周)
+                          </small>
+                        </span>
+                        <span className={`kpi-pill ${pillClass}`}>{m.categoryLabel}</span>
+                      </div>
+                      <div className="muscle-dose-track">
+                        <div className="dose-zone-marker opt-start" style={{ left: `${(10 / 24) * 100}%` }} title="最低增肌阈值 10 组" />
+                        <div className="dose-zone-marker opt-end" style={{ left: `${(20 / 24) * 100}%` }} title="高容量上限 20 组" />
+                        <div className={`muscle-dose-bar ${pillClass}`} style={{ width: `${pct}%` }} />
+                      </div>
+                      <p className="muscle-dose-advice">{m.advice}</p>
+                    </div>
+                  );
+                })}
               </div>
             </section>
 
@@ -1433,8 +1635,8 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-nutrition-physio" id="panel-nutrition-physio">
               <header className="panel-head">
                 <div>
-                  <h2>吃够蛋白了吗 · 体重真实走势</h2>
-                  <p>自动排除喝水起伏，看长期减脂增肌节奏稳不稳</p>
+                  <h2>能量代谢、宏量比例与体重真实走势</h2>
+                  <p>结合热量、蛋白与体重斜率反推真实维持热量（自适应 TDEE）并过滤喝水波动</p>
                 </div>
                 <span className="atlas-pill">建议蛋白 ≥1.6 g/kg</span>
               </header>
@@ -1442,7 +1644,7 @@ export function AnalyticsView() {
                 <div className="physio-block">
                   <div className="physio-top">
                     <strong>每天蛋白质吃够没</strong>
-                    <span className={`kpi-pill ${nutrition.protein.status === "optimal" ? "is-sweet" : "is-caution"}`}>
+                    <span className={`kpi-pill ${nutrition.protein.status === "optimal" || nutrition.protein.status === "high" ? "is-sweet" : "is-caution"}`}>
                       {nutrition.protein.statusLabel}
                     </span>
                   </div>
@@ -1518,6 +1720,57 @@ export function AnalyticsView() {
                     </div>
                   )}
                 </div>
+
+                {nutrition.energy && nutrition.energy.daysLogged > 0 ? (
+                  <div className="physio-block physio-energy-wide">
+                    <div className="physio-top">
+                      <strong>热量结构与自适应 TDEE 反推</strong>
+                      {nutrition.energy.estimatedTdeeKcal != null ? (
+                        <span className="kpi-pill is-sweet">
+                          推算维持 {fmt(nutrition.energy.estimatedTdeeKcal, 0)} kcal
+                        </span>
+                      ) : (
+                        <span className="kpi-pill">热量达成 {nutrition.energy.calorieAdherencePct ?? "—"}%</span>
+                      )}
+                    </div>
+                    <div className="physio-nums">
+                      <div>
+                        <span>日均实际摄入</span>
+                        <strong>
+                          {fmt(nutrition.energy.avgCalories, 0)} <small>kcal</small>
+                        </strong>
+                        <small>目标 {fmt(nutrition.energy.calorieTarget, 0)} kcal</small>
+                      </div>
+                      <div>
+                        <span>训练日 / 休息日</span>
+                        <strong>
+                          {nutrition.energy.trainingDayAvgKcal != null ? fmt(nutrition.energy.trainingDayAvgKcal, 0) : "—"}
+                          {" / "}
+                          {nutrition.energy.restDayAvgKcal != null ? fmt(nutrition.energy.restDayAvgKcal, 0) : "—"}
+                        </strong>
+                        <small>日均千卡对照</small>
+                      </div>
+                      <div>
+                        <span>三大营养素均量</span>
+                        <strong>
+                          {nutrition.energy.avgCarbs}/{nutrition.energy.avgProtein}/{nutrition.energy.avgFat}
+                        </strong>
+                        <small>碳/蛋/脂 (克/天)</small>
+                      </div>
+                    </div>
+                    <div className="sci-stack-bar" role="img" aria-label="三大营养素热量比例">
+                      <i className="rep-hyp" style={{ width: `${nutrition.energy.macroPct.protein}%` }} title={`蛋白 ${nutrition.energy.macroPct.protein}%`} />
+                      <i className="rep-str" style={{ width: `${nutrition.energy.macroPct.carbs}%` }} title={`碳水 ${nutrition.energy.macroPct.carbs}%`} />
+                      <i className="rep-met" style={{ width: `${nutrition.energy.macroPct.fat}%` }} title={`脂肪 ${nutrition.energy.macroPct.fat}%`} />
+                    </div>
+                    <div className="sci-spectrum-legend">
+                      <span><i className="rep-hyp" /> 蛋白 {nutrition.energy.macroPct.protein}%</span>
+                      <span><i className="rep-str" /> 碳水 {nutrition.energy.macroPct.carbs}%</span>
+                      <span><i className="rep-met" /> 脂肪 {nutrition.energy.macroPct.fat}%</span>
+                    </div>
+                    <p className="physio-advice">{nutrition.energy.energyAdvice}</p>
+                  </div>
+                ) : null}
               </div>
             </section>
           </>
@@ -1975,6 +2228,166 @@ export function AnalyticsView() {
                   </button>
                 </div>
               </header>
+
+              {data.periodComparison ? (
+                <div className="apple-report-subblock">
+                  <div className="apple-report-subhead">
+                    <strong>周期对照报表（近 {data.period} 天 vs 上一 {data.period} 天）</strong>
+                    <small>训练频次、工作组数、总吨位与饮食打卡对比</small>
+                  </div>
+                  <div className="health-metrics apple-workout-kpis">
+                    <div>
+                      <span>训练场次 / 活跃天</span>
+                      <strong>
+                        {fmt(data.periodComparison.current.sessions, 0)} 场{" "}
+                        <small>({data.periodComparison.current.activeDays} 天)</small>
+                      </strong>
+                      <small>
+                        上期 {data.periodComparison.previous.sessions} 场
+                        {data.periodComparison.deltas.sessionsPct != null
+                          ? ` (${data.periodComparison.deltas.sessionsPct >= 0 ? "+" : ""}${data.periodComparison.deltas.sessionsPct}%)`
+                          : ""}
+                      </small>
+                    </div>
+                    <div>
+                      <span>有效工作组</span>
+                      <strong>
+                        {fmt(data.periodComparison.current.workSets, 0)} <small>组</small>
+                      </strong>
+                      <small>
+                        上期 {data.periodComparison.previous.workSets} 组
+                        {data.periodComparison.deltas.workSetsPct != null
+                          ? ` (${data.periodComparison.deltas.workSetsPct >= 0 ? "+" : ""}${data.periodComparison.deltas.workSetsPct}%)`
+                          : ""}
+                      </small>
+                    </div>
+                    <div>
+                      <span>力量总容量</span>
+                      <strong>
+                        {fmt(data.periodComparison.current.tonnageKg, 0)} <small>kg</small>
+                      </strong>
+                      <small>
+                        上期 {fmt(data.periodComparison.previous.tonnageKg, 0)} kg
+                        {data.periodComparison.deltas.tonnagePct != null
+                          ? ` (${data.periodComparison.deltas.tonnagePct >= 0 ? "+" : ""}${data.periodComparison.deltas.tonnagePct}%)`
+                          : ""}
+                      </small>
+                    </div>
+                    <div>
+                      <span>累计训练 / 饮食天</span>
+                      <strong>
+                        {fmt(data.periodComparison.current.durationMinutes, 0)} <small>分</small>
+                      </strong>
+                      <small>
+                        饮食打卡 {data.periodComparison.current.dietDaysLogged} 天（上期 {data.periodComparison.previous.dietDaysLogged} 天）
+                      </small>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              {data.weeklyBreakdown && data.weeklyBreakdown.length > 0 ? (
+                <div className="apple-report-subblock">
+                  <div className="apple-report-subhead">
+                    <strong>按周训练节奏与负荷分解（共 {data.weeklyBreakdown.length} 周）</strong>
+                    <small>统计每周有效组、高强度逼近组（RIR ≤2 / 力竭）与真实容量走势</small>
+                  </div>
+                  <div className="apple-table-scroll">
+                    <table className="apple-ledger-table">
+                      <thead>
+                        <tr>
+                          <th>周期</th>
+                          <th>场次 / 活跃天</th>
+                          <th>有效组 (高强度)</th>
+                          <th>力量总容量</th>
+                          <th>训练时长</th>
+                          <th>综合负荷</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.weeklyBreakdown.map((wk) => (
+                          <tr key={wk.weekIndex}>
+                            <td>
+                              <b>第 {wk.weekIndex} 周</b>
+                              <small className="apple-cell-sub">
+                                {shortDate(wk.from)}–{shortDate(wk.through)}
+                              </small>
+                            </td>
+                            <td>
+                              <b>{wk.sessions} 场</b>
+                              <small className="apple-cell-sub">{wk.activeDays} 个训练日</small>
+                            </td>
+                            <td>
+                              <b>{wk.workSets} 组</b>
+                              {wk.hardSets > 0 ? <small className="apple-cell-sub">高强 {wk.hardSets} 组</small> : null}
+                            </td>
+                            <td>
+                              <b>{fmt(wk.tonnageKg, 0)} kg</b>
+                            </td>
+                            <td>{wk.durationMinutes ? `${wk.durationMinutes} 分钟` : "—"}</td>
+                            <td>{fmt(wk.load, 0)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {data.exerciseProgress && data.exerciseProgress.length > 0 ? (
+                <div className="apple-report-subblock">
+                  <div className="apple-report-subhead">
+                    <strong>核心动作进步追踪榜（Top {data.exerciseProgress.length}）</strong>
+                    <small>对照本周期首次与最近一次估算 1RM 变化</small>
+                  </div>
+                  <div className="apple-table-scroll">
+                    <table className="apple-ledger-table">
+                      <thead>
+                        <tr>
+                          <th>动作名称</th>
+                          <th>练过场次</th>
+                          <th>有效组</th>
+                          <th>周期容量</th>
+                          <th>估算 1RM (初 → 末)</th>
+                          <th>周期变化</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.exerciseProgress.map((ex) => (
+                          <tr key={ex.id}>
+                            <td>
+                              <b>{ex.name}</b>
+                            </td>
+                            <td>{ex.sessions} 场</td>
+                            <td>{ex.workSets} 组</td>
+                            <td>{ex.tonnageKg > 0 ? `${fmt(ex.tonnageKg, 0)} kg` : "—"}</td>
+                            <td>
+                              {ex.best1RM > 0 ? (
+                                <b>
+                                  {fmt(ex.first1RM, 1)} → {fmt(ex.last1RM, 1)} kg
+                                  <small className="apple-cell-sub">峰值 {fmt(ex.best1RM, 1)} kg</small>
+                                </b>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td>
+                              {ex.best1RM > 0 && ex.sessions >= 2 && ex.delta1RM !== 0 ? (
+                                <span className={`kpi-pill ${ex.delta1RM > 0 ? "is-sweet" : "is-caution"}`}>
+                                  {ex.delta1RM > 0 ? "+" : ""}
+                                  {fmt(ex.delta1RM, 1)} kg
+                                </span>
+                              ) : (
+                                <span className="muted">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
 
               {entriesDesc.length > 0 ? (
                 <div className="apple-report-subblock">

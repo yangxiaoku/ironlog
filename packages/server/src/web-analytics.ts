@@ -4,8 +4,11 @@ import {
   calculateIpfGlPoints,
   calculateMonotonyAndStrain,
   calculateSetInol,
+  evaluateEffortAndRepZones,
+  evaluateNutritionEnergyBalance,
   evaluateProteinAdequacy,
   evaluateSessionInol,
+  evaluateSymmetryAndFrequency,
   evaluateWeeklyMuscleDose,
   evaluateWeightChangeRate,
   estimatedOneRepMax,
@@ -14,6 +17,7 @@ import {
   muscleNames,
   profileSchema,
   SCIENCE_CITATIONS,
+  workoutDurationSeconds,
   type Exercise,
   type Diet,
   type Weight,
@@ -40,6 +44,8 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const historyDays = displayPeriod + 28;
   const historyStart = shiftDay(through, 1 - historyDays);
   const displayStart = shiftDay(through, 1 - displayPeriod);
+  const prevPeriodStart = shiftDay(displayStart, -displayPeriod);
+  const prevPeriodEnd = shiftDay(displayStart, -1);
 
   const profileRecord = store.get(userId, "profile", "settings");
   const profile = profileSchema.parse(profileRecord?.deleted ? {} : profileRecord?.data ?? {});
@@ -91,6 +97,14 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     arms: 0,
     core: 0,
   };
+  const muscleSessionDays28d: Record<string, Set<string>> = {
+    chest: new Set(),
+    back: new Set(),
+    legs: new Set(),
+    shoulders: new Set(),
+    arms: new Set(),
+    core: new Set(),
+  };
 
   const past7DaysStart = shiftDay(through, -6);
   const past28DaysStart = shiftDay(through, -27);
@@ -100,16 +114,83 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const exerciseRecentSets = new Map<string, { date: string; sets: { reps: number; weight: number }[] }>();
   const exerciseWeeklySets = new Map<string, { reps: number; weight: number }[]>();
   const periodTrainingDays = new Set<string>();
+  const allTrainingDates = new Set<string>();
+  const prevTrainingDays = new Set<string>();
   let periodSessions = 0;
   let periodWorkSets = 0;
   let periodTonnageKg = 0;
+  let periodDurationSec = 0;
+  let prevSessions = 0;
+  let prevWorkSets = 0;
+  let prevTonnageKg = 0;
+  let prevDurationSec = 0;
 
-  for (const { workout } of workouts) {
+  const periodEffortSets: Array<{ reps: number; rir?: number | null; mode?: string; weight: number; setType?: string }> = [];
+  const displayStartMs = Date.parse(displayStart + "T00:00:00Z");
+  const weeklyBuckets = new Map<number, {
+    from: string;
+    through: string;
+    sessions: number;
+    days: Set<string>;
+    workSets: number;
+    hardSets: number;
+    tonnageKg: number;
+    durationSeconds: number;
+    load: number;
+  }>();
+  const exercisePeriodProgress = new Map<string, {
+    id: string;
+    name: string;
+    muscle: string;
+    mode: string;
+    sessions: Set<string>;
+    workSets: number;
+    tonnageKg: number;
+    firstDate: string;
+    first1RM: number;
+    lastDate: string;
+    last1RM: number;
+    best1RM: number;
+  }>();
+
+  for (const { id: workoutId, workout } of workouts) {
     let workoutLoad = 0;
+    allTrainingDates.add(workout.date);
+    const durSec = workoutDurationSeconds(workout) ?? 0;
     const inPeriod = workout.date >= displayStart && workout.date <= through;
+    const inPrevPeriod = workout.date >= prevPeriodStart && workout.date <= prevPeriodEnd;
+
+    let weekEntry: ReturnType<typeof weeklyBuckets.get> | undefined;
     if (inPeriod) {
       periodSessions++;
       periodTrainingDays.add(workout.date);
+      periodDurationSec += durSec;
+      const weekIdx = Math.max(0, Math.floor((Date.parse(workout.date + "T00:00:00Z") - displayStartMs) / (7 * 86_400_000)));
+      weekEntry = weeklyBuckets.get(weekIdx);
+      if (!weekEntry) {
+        const wFrom = shiftDay(displayStart, weekIdx * 7);
+        const wToRaw = shiftDay(wFrom, 6);
+        const wTo = wToRaw > through ? through : wToRaw;
+        weekEntry = {
+          from: wFrom,
+          through: wTo,
+          sessions: 0,
+          days: new Set(),
+          workSets: 0,
+          hardSets: 0,
+          tonnageKg: 0,
+          durationSeconds: 0,
+          load: 0,
+        };
+        weeklyBuckets.set(weekIdx, weekEntry);
+      }
+      weekEntry.sessions++;
+      weekEntry.days.add(workout.date);
+      weekEntry.durationSeconds += durSec;
+    } else if (inPrevPeriod) {
+      prevSessions++;
+      prevTrainingDays.add(workout.date);
+      prevDurationSec += durSec;
     }
 
     for (const item of workout.exercises) {
@@ -122,9 +203,31 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       const isPast7 = workout.date >= past7DaysStart;
       const isPast28 = workout.date >= past28DaysStart;
 
+      let periodExBest1RM = 0;
+      let periodExSets = 0;
+      let periodExTonnage = 0;
+
       for (const set of item.sets) {
         if (!isValidWorkSet(set, exercise?.mode)) continue;
-        if (inPeriod) periodWorkSets++;
+        if (inPeriod) {
+          periodWorkSets++;
+          periodExSets++;
+          if (weekEntry) weekEntry.workSets++;
+          const isHard =
+            (set.rir != null && Number.isFinite(set.rir) && set.rir <= 2) ||
+            set.type === "failure" ||
+            set.type === "drop";
+          if (isHard && weekEntry) weekEntry.hardSets++;
+          periodEffortSets.push({
+            reps: set.reps,
+            rir: set.rir ?? null,
+            mode: exercise?.mode ?? "reps",
+            weight: set.weight,
+            setType: set.type,
+          });
+        } else if (inPrevPeriod) {
+          prevWorkSets++;
+        }
 
         if (exercise?.muscle) {
           if (isPast7) {
@@ -132,23 +235,37 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
           }
           if (isPast28) {
             muscleSetsPast28Days[exercise.muscle] = (muscleSetsPast28Days[exercise.muscle] ?? 0) + 1;
+            muscleSessionDays28d[exercise.muscle]?.add(workout.date);
           }
           for (const sec of secondaryMuscles) {
             if (sec === exercise.muscle || !(sec in muscleSetsPast7Days)) continue;
             if (isPast7) muscleSetsPast7Days[sec] = (muscleSetsPast7Days[sec] ?? 0) + 0.5;
-            if (isPast28) muscleSetsPast28Days[sec] = (muscleSetsPast28Days[sec] ?? 0) + 0.5;
+            if (isPast28) {
+              muscleSetsPast28Days[sec] = (muscleSetsPast28Days[sec] ?? 0) + 0.5;
+              muscleSessionDays28d[sec]?.add(workout.date);
+            }
           }
         }
 
         if (exercise && exercise.mode === "reps" && set.weight > 0 && set.reps > 0) {
           const setVolume = set.weight * set.reps * exercise.volumeMultiplier;
-          workoutLoad += setVolume;
-          if (inPeriod) periodTonnageKg += setVolume;
+          const hasValidRir = set.rir != null && Number.isFinite(set.rir) && set.rir >= 0 && set.rir <= 4;
+          const effortMult = set.rir != null && Number.isFinite(set.rir) && set.rir >= 0 && set.rir <= 5
+            ? 1 + (5 - set.rir) * 0.05
+            : 1;
+          workoutLoad += setVolume * effortMult;
+          if (inPeriod) {
+            periodTonnageKg += setVolume;
+            periodExTonnage += setVolume;
+            if (weekEntry) weekEntry.tonnageKg += setVolume;
+          } else if (inPrevPeriod) {
+            prevTonnageKg += setVolume;
+          }
 
           // Adjust effective reps by RIR (Helms / Zourdos RPE-1RM equivalence) when valid RIR (0–4) is logged
-          const hasValidRir = set.rir != null && Number.isFinite(set.rir) && set.rir >= 0 && set.rir <= 4;
           const effectiveReps = hasValidRir ? set.reps + set.rir! : set.reps;
           const estimate = estimatedOneRepMax(set.weight, Math.min(effectiveReps, 12));
+          if (inPeriod) periodExBest1RM = Math.max(periodExBest1RM, estimate);
           const currentBest = exercise1RMs.get(item.exerciseId);
           exercise1RMs.set(item.exerciseId, {
             name: exercise.name,
@@ -172,13 +289,57 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
           } else if (recent.date === workout.date) {
             recent.sets.push({ reps: set.reps, weight: set.weight });
           }
-        } else if (isValidWorkSet(set, exercise?.mode)) {
-          // If bodyweight/timed without weight, assign surrogate load
-          workoutLoad += 50;
+        } else if (exercise?.mode === "assisted" && set.reps > 0) {
+          const effectiveLoad = Math.max(15, userWeightKg - Math.min(userWeightKg - 15, set.weight));
+          workoutLoad += Math.round(effectiveLoad * set.reps * exercise.volumeMultiplier);
+        } else if (exercise?.mode === "timed") {
+          workoutLoad += Math.max(30, Math.round((set.seconds || 30) * 1.8));
+        } else if (set.reps > 0) {
+          // Bodyweight reps scaled by user body mass
+          const bwLoad = Math.round(userWeightKg * 0.6 * Math.min(set.reps, 40) * (exercise?.volumeMultiplier ?? 1));
+          workoutLoad += Math.max(15, bwLoad);
+        }
+      }
+
+      if (inPeriod && periodExSets > 0 && exercise) {
+        const prev = exercisePeriodProgress.get(item.exerciseId);
+        const rounded1RM = Math.round(periodExBest1RM * 10) / 10;
+        if (!prev) {
+          const sessions = new Set<string>([workoutId]);
+          exercisePeriodProgress.set(item.exerciseId, {
+            id: item.exerciseId,
+            name: exercise.name,
+            muscle: exercise.muscle ?? "other",
+            mode: exercise.mode ?? "reps",
+            sessions,
+            workSets: periodExSets,
+            tonnageKg: periodExTonnage,
+            firstDate: workout.date,
+            first1RM: rounded1RM,
+            lastDate: workout.date,
+            last1RM: rounded1RM,
+            best1RM: rounded1RM,
+          });
+        } else {
+          prev.sessions.add(workoutId);
+          prev.workSets += periodExSets;
+          prev.tonnageKg += periodExTonnage;
+          if (rounded1RM > 0) {
+            if (prev.first1RM === 0 || workout.date < prev.firstDate) {
+              prev.firstDate = workout.date;
+              prev.first1RM = rounded1RM;
+            }
+            if (workout.date >= prev.lastDate) {
+              prev.lastDate = workout.date;
+              prev.last1RM = rounded1RM;
+            }
+            prev.best1RM = Math.max(prev.best1RM, rounded1RM);
+          }
         }
       }
     }
 
+    if (weekEntry) weekEntry.load += Math.round(workoutLoad);
     if (dailyLoadsMap.has(workout.date)) {
       dailyLoadsMap.set(workout.date, (dailyLoadsMap.get(workout.date) ?? 0) + workoutLoad);
     }
@@ -205,7 +366,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const currentMonotony = calculateMonotonyAndStrain(past7Loads);
   const prevMonotony = calculateMonotonyAndStrain(prev7Loads);
 
-  // Muscle Volume Dose-Response Audits
+  // Muscle Volume Dose-Response & Symmetry / Frequency Audits
+  const muscleDaysCount28d = Object.fromEntries(
+    Object.entries(muscleSessionDays28d).map(([k, s]) => [k, s.size]),
+  );
+  const symmetry = evaluateSymmetryAndFrequency(muscleSetsPast7Days, muscleDaysCount28d);
   const muscleAudits = Object.entries(muscleSetsPast7Days).map(([key, sets]) => {
     const name = muscleNames[key as keyof typeof muscleNames] ?? key;
     const roundedSets = Math.round(sets * 10) / 10;
@@ -214,8 +379,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     return {
       ...audit,
       avg4WeekSets: avg28Sets,
+      freqPerWeek: symmetry.frequencyByMuscle[key] ?? 0,
     };
   });
+
+  const effortSpectrum = evaluateEffortAndRepZones(periodEffortSets);
 
   const sumWeeklyInol = (sets: { reps: number; weight: number }[], best1RM: number) => {
     let total = 0;
@@ -242,6 +410,8 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
           id.includes("press") ||
           name.includes("推举")),
     },
+    { key: "row", match: (id: string, name: string) => id.includes("row") || name.includes("划船") },
+    { key: "pullup", match: (id: string, name: string) => id.includes("pull-up") || id.includes("chin-up") || name.includes("引体") },
   ];
 
   const inolSummaries = [];
@@ -350,17 +520,27 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     ? calculateIpfGlPoints(userGender, userWeightKg, total3Lift, "classic_3lift")
     : null;
 
-  // Morton Nutrition: Protein Adequacy over the past 30 days
+  // Morton Nutrition & Full Energy Balance over the past 30 days
   const dietRecords = store.list(userId, "diet");
   const dailyProteinsMap = new Map<string, number>();
+  const dailyMacrosMap = new Map<string, { calories: number; protein: number; carbs: number; fat: number }>();
   const periodDietDays = new Set<string>();
+  const prevDietDays = new Set<string>();
   for (const record of dietRecords) {
     const diet = record.data as Diet;
     if (diet.date >= displayStart && diet.date <= through) {
       periodDietDays.add(diet.date);
+    } else if (diet.date >= prevPeriodStart && diet.date <= prevPeriodEnd) {
+      prevDietDays.add(diet.date);
     }
     if (diet.date >= shiftDay(through, -29) && diet.date <= through) {
       dailyProteinsMap.set(diet.date, (dailyProteinsMap.get(diet.date) ?? 0) + (diet.protein ?? 0));
+      const curM = dailyMacrosMap.get(diet.date) ?? { calories: 0, protein: 0, carbs: 0, fat: 0 };
+      curM.calories += diet.calories ?? 0;
+      curM.protein += diet.protein ?? 0;
+      curM.carbs += diet.carbs ?? 0;
+      curM.fat += diet.fat ?? 0;
+      dailyMacrosMap.set(diet.date, curM);
     }
   }
   const dailyProteinsArray = Array.from(dailyProteinsMap.entries()).map(([date, proteinGrams]) => ({
@@ -376,6 +556,78 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     .filter((w) => w.date >= shiftDay(through, -35) && w.date <= through)
     .map((w) => ({ date: w.date, weight: w.weight }));
   const weightRateReport = evaluateWeightChangeRate(recentWeights);
+
+  const dailyMacrosArray = Array.from(dailyMacrosMap.entries()).map(([date, m]) => ({
+    date,
+    ...m,
+    isTrainingDay: allTrainingDates.has(date),
+  }));
+  const energyNutrition = evaluateNutritionEnergyBalance({
+    dailyMacros: dailyMacrosArray,
+    targetCalories: profile.calories,
+    weightSlopeKgPerWeek: weightRateReport?.weeklySlopeKg ?? null,
+    weightSampleCount: recentWeights.length,
+    weightRSquared: weightRateReport?.rSquared ?? null,
+  });
+
+  const pctDelta = (curr: number, prev: number) =>
+    prev > 0 ? Math.round(((curr - prev) / prev) * 100) : curr > 0 ? 100 : null;
+
+  const periodComparison = {
+    current: {
+      sessions: periodSessions,
+      activeDays: periodTrainingDays.size,
+      workSets: periodWorkSets,
+      tonnageKg: Math.round(periodTonnageKg),
+      durationMinutes: Math.round(periodDurationSec / 60),
+      dietDaysLogged: periodDietDays.size,
+    },
+    previous: {
+      sessions: prevSessions,
+      activeDays: prevTrainingDays.size,
+      workSets: prevWorkSets,
+      tonnageKg: Math.round(prevTonnageKg),
+      durationMinutes: Math.round(prevDurationSec / 60),
+      dietDaysLogged: prevDietDays.size,
+    },
+    deltas: {
+      sessionsPct: pctDelta(periodSessions, prevSessions),
+      workSetsPct: pctDelta(periodWorkSets, prevWorkSets),
+      tonnagePct: pctDelta(Math.round(periodTonnageKg), Math.round(prevTonnageKg)),
+    },
+  };
+
+  const weeklyBreakdown = [...weeklyBuckets.entries()]
+    .sort((a, b) => b[0] - a[0])
+    .map(([weekIdx, w]) => ({
+      weekIndex: weekIdx + 1,
+      from: w.from,
+      through: w.through,
+      sessions: w.sessions,
+      activeDays: w.days.size,
+      workSets: w.workSets,
+      hardSets: w.hardSets,
+      tonnageKg: Math.round(w.tonnageKg),
+      durationMinutes: Math.round(w.durationSeconds / 60),
+      load: Math.round(w.load),
+    }));
+
+  const exerciseProgress = [...exercisePeriodProgress.values()]
+    .sort((a, b) => (b.sessions.size * 10 + b.workSets) - (a.sessions.size * 10 + a.workSets))
+    .slice(0, 12)
+    .map((e) => ({
+      id: e.id,
+      name: e.name,
+      muscle: e.muscle,
+      mode: e.mode,
+      sessions: e.sessions.size,
+      workSets: e.workSets,
+      tonnageKg: Math.round(e.tonnageKg),
+      first1RM: e.first1RM,
+      last1RM: e.last1RM,
+      best1RM: e.best1RM,
+      delta1RM: e.first1RM > 0 && e.last1RM > 0 ? Math.round((e.last1RM - e.first1RM) * 10) / 10 : 0,
+    }));
   const appleWorkoutsSummary = summarizeAppleWorkouts(
     projectAppleTraining(store, userId, through, catalogue, workouts).entries.filter(
       (entry) => entry.date >= displayStart && entry.date <= through,
@@ -415,8 +667,13 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     },
     muscles: {
       audits: muscleAudits,
+      symmetry,
       citations: SCIENCE_CITATIONS.schoenfeld2017,
     },
+    effortSpectrum,
+    periodComparison,
+    weeklyBreakdown,
+    exerciseProgress,
     inol: {
       lifts: inolSummaries,
       citations: SCIENCE_CITATIONS.hristovInol,
@@ -436,6 +693,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     },
     nutrition: {
       protein: proteinReport,
+      energy: energyNutrition,
       citations: SCIENCE_CITATIONS.morton2018,
     },
     bodyweight: {
