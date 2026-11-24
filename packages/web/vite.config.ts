@@ -48,11 +48,46 @@ export default defineConfig({
         ],
       },
       workbox: {
-        globPatterns: ["**/*.{js,css,html,png,jpg,webmanifest}"],
+        globPatterns: ["**/*.{js,css,html,webmanifest}", "icon-*.png"],
         navigateFallback: "/app/index.html",
+        runtimeCaching: [
+          {
+            urlPattern: /^\/app\/.*\.(?:png|jpg|jpeg|webp|svg|woff2)$/i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "ironlog-static-media",
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 150,
+                maxAgeSeconds: 30 * 24 * 60 * 60,
+              },
+            },
+          },
+          {
+            urlPattern: /^\/media\/exercises\//i,
+            handler: "CacheFirst",
+            options: {
+              cacheName: "ironlog-exercise-media",
+              cacheableResponse: { statuses: [0, 200] },
+              expiration: {
+                maxEntries: 400,
+                maxAgeSeconds: 30 * 24 * 60 * 60,
+              },
+            },
+          },
+        ],
       },
     }),
   ],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          "vendor-react": ["react", "react-dom", "zustand"],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     proxy: {

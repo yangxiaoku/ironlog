@@ -5,6 +5,7 @@ import type { AiStatus } from "../components/ai/AiModals";
 import { apiFetch } from "../lib/api";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
+import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   openBackupRestoreModal,
   openCsvImportModal,
@@ -127,50 +128,74 @@ export function SettingsView() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const applySettings = ([prefs, profRes, devs, ai, toks]: [
+      PreferencesRes,
+      { version: number; profile: ProfileGoals },
+      AppleDeviceToken[],
+      AiStatus,
+      ApiTokenItem[],
+    ]) => {
+      setPrefRevision(prefs.revision);
+      setPrefDays(prefs.days);
+      setIncludeWarmups(Boolean(prefs.includeWarmups));
+      const chosen = new Set(prefs.panels);
+      setSelectedPanels(chosen);
+      setPanelOrder([...prefs.panels, ...Object.keys(PANEL_NAMES).filter((id) => !chosen.has(id))]);
+
+      const g = profRes.profile;
+      setProfileVersion(profRes.version);
+      setProfileGoalObj(g);
+      setCalories(String(g.calories ?? 2200));
+      setProtein(String(g.protein ?? 150));
+      setCarbs(String(g.carbs ?? 240));
+      setFat(String(g.fat ?? 70));
+      setDaysPerWeek(String(g.daysPerWeek ?? 4));
+      setRestSeconds(String(g.restSeconds ?? 90));
+      setTargetWeight(g.targetWeight != null ? String(g.targetWeight) : "");
+      setEquipment(new Set((g.equipment ?? ["barbell", "dumbbell", "machine"]) as EquipmentKey[]));
+      const ep = g.energyProfile;
+      setEnergyEnabled(Boolean(ep));
+      if (ep) {
+        setHeightCm(String(ep.heightCm));
+        setEnergyWeightKg(String(ep.weightKg));
+        setWeightDate(ep.weightDate);
+        setBirthDate(ep.birthDate);
+        setSex(ep.sex);
+        setActivityFactor(String(ep.activityFactor));
+        setContext(ep.context);
+      }
+
+      setDevices(devs);
+      setAiStatus(ai);
+      setApiTokens(toks);
+    };
+
+    const cachedSettings = peekQuery<[
+      PreferencesRes,
+      { version: number; profile: ProfileGoals },
+      AppleDeviceToken[],
+      AiStatus,
+      ApiTokenItem[],
+    ]>("view:settings", userId)?.data;
+
+    if (cachedSettings) {
+      applySettings(cachedSettings);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
     void Promise.all([
-      apiFetch<PreferencesRes>("/api/web/preferences"),
-      apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile"),
-      apiFetch<AppleDeviceToken[]>("/api/integrations/apple-health/tokens").catch(() => []),
-      apiFetch<AiStatus>("/api/ai/status").catch(() => ({ ready: false, mode: "unconfigured" as const, model: null })),
-      apiFetch<ApiTokenItem[]>("/api/tokens").catch(() => []),
+      cachedApiFetch<PreferencesRes>("/api/web/preferences", { epoch: dataEpoch, userId }),
+      cachedApiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }),
+      cachedApiFetch<AppleDeviceToken[]>("/api/integrations/apple-health/tokens", { epoch: dataEpoch, userId }).catch(() => []),
+      cachedApiFetch<AiStatus>("/api/ai/status", { epoch: dataEpoch, userId }).catch(() => ({ ready: false, mode: "unconfigured" as const, model: null })),
+      cachedApiFetch<ApiTokenItem[]>("/api/tokens", { epoch: dataEpoch, userId }).catch(() => []),
     ])
-      .then(([prefs, profRes, devs, ai, toks]) => {
+      .then((bundle) => {
         if (!active) return;
-        setPrefRevision(prefs.revision);
-        setPrefDays(prefs.days);
-        setIncludeWarmups(Boolean(prefs.includeWarmups));
-        const chosen = new Set(prefs.panels);
-        setSelectedPanels(chosen);
-        setPanelOrder([...prefs.panels, ...Object.keys(PANEL_NAMES).filter((id) => !chosen.has(id))]);
-
-        const g = profRes.profile;
-        setProfileVersion(profRes.version);
-        setProfileGoalObj(g);
-        setCalories(String(g.calories ?? 2200));
-        setProtein(String(g.protein ?? 150));
-        setCarbs(String(g.carbs ?? 240));
-        setFat(String(g.fat ?? 70));
-        setDaysPerWeek(String(g.daysPerWeek ?? 4));
-        setRestSeconds(String(g.restSeconds ?? 90));
-        setTargetWeight(g.targetWeight != null ? String(g.targetWeight) : "");
-        setEquipment(new Set((g.equipment ?? ["barbell", "dumbbell", "machine"]) as EquipmentKey[]));
-        const ep = g.energyProfile;
-        setEnergyEnabled(Boolean(ep));
-        if (ep) {
-          setHeightCm(String(ep.heightCm));
-          setEnergyWeightKg(String(ep.weightKg));
-          setWeightDate(ep.weightDate);
-          setBirthDate(ep.birthDate);
-          setSex(ep.sex);
-          setActivityFactor(String(ep.activityFactor));
-          setContext(ep.context);
-        }
-
-        setDevices(devs);
-        setAiStatus(ai);
-        setApiTokens(toks);
+        writeQueryCache("view:settings", bundle, { userId, epoch: dataEpoch });
+        applySettings(bundle);
       })
       .catch((err) => {
         if (active) setError((err as Error)?.message || "加载设置失败");

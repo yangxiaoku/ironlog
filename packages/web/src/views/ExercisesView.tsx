@@ -4,6 +4,7 @@ import { WorkspaceTabs } from "../components/WorkspaceTabs";
 import { apiFetch } from "../lib/api";
 import { safeExerciseMediaUrl } from "../lib/catalogue";
 import { fmt, shortDate } from "../lib/date";
+import { cachedApiFetch, peekQuery } from "../lib/query-cache";
 import {
   EQUIPMENT,
   MUSCLES,
@@ -114,10 +115,10 @@ export function ExercisesView() {
       try {
         const [favs, customs, mineProfile] = userId
           ? await Promise.all([
-              apiFetch<Array<RecordEnvelope<FavoriteData>>>("/api/records/favorite").catch(() => []),
-              apiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise").catch(() => []),
+              cachedApiFetch<Array<RecordEnvelope<FavoriteData>>>("/api/records/favorite", { epoch: dataEpoch, userId }).catch(() => []),
+              cachedApiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise", { epoch: dataEpoch, userId }).catch(() => []),
               equipmentFilter === "__mine__"
-                ? apiFetch<{ profile?: { equipment?: string[] } }>("/api/web/profile").catch(() => null)
+                ? cachedApiFetch<{ profile?: { equipment?: string[] } }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null)
                 : Promise.resolve(null),
             ])
           : [[], [], null];
@@ -138,7 +139,7 @@ export function ExercisesView() {
             : null;
 
         if (scope === "trained" && userId) {
-          const trainedReply = await apiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises");
+          const trainedReply = await cachedApiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises", { epoch: dataEpoch, userId });
           if (seq !== seqRef.current) return;
           const metricScore = (ex: DisplayExerciseItem) =>
             ex.mode === "timed" ? ex.bestHold ?? 0 : ex.best1rm ?? ex.bestWeight ?? 0;
@@ -165,9 +166,10 @@ export function ExercisesView() {
             .slice(0, 100)
             .map((ex) => ex.id);
           if (lookupIds.length) {
-            const lookup = await apiFetch<{ items?: Array<{ id: string; thumbnail?: string | null }> }>(
+            const lookupKey = `catalogue:lookup:${[...lookupIds].sort().join(",")}`;
+            const lookup = await cachedApiFetch<{ items?: Array<{ id: string; thumbnail?: string | null }> }>(
               "/api/catalogue/exercises/lookup",
-              { method: "POST", body: { ids: lookupIds }, token: "" },
+              { method: "POST", body: { ids: lookupIds }, token: "", cacheKey: lookupKey, userId: "public", epoch: 0 },
             ).catch(() => ({ items: [] }));
             if (seq !== seqRef.current) return;
             const thumbMap = new Map((lookup.items ?? []).map((c) => [c.id, c.thumbnail]));
@@ -192,10 +194,14 @@ export function ExercisesView() {
             const builtinFavIds = [...favIds].filter((id) => !customIds.has(id)).slice(0, 100);
             let builtinFavs: DisplayExerciseItem[] = [];
             if (builtinFavIds.length) {
-              const details = await apiFetch<{ items?: CatalogueExercise[] }>("/api/catalogue/exercises/details", {
+              const detailsKey = `catalogue:details:${[...builtinFavIds].sort().join(",")}`;
+              const details = await cachedApiFetch<{ items?: CatalogueExercise[] }>("/api/catalogue/exercises/details", {
                 method: "POST",
                 body: { ids: builtinFavIds },
                 token: "",
+                cacheKey: detailsKey,
+                userId: "public",
+                epoch: 0,
               });
               if (seq !== seqRef.current) return;
               builtinFavs = (details.items ?? [])
@@ -220,9 +226,10 @@ export function ExercisesView() {
         if (equipmentFilter && equipmentFilter !== "__mine__") q.set("equipment", equipmentFilter);
         if (append && cursorArg) q.set("cursor", cursorArg);
 
-        const data = await apiFetch<{ items: CatalogueExercise[]; total: number; nextCursor: string | null }>(
-          `/api/catalogue/exercises?${q.toString()}`,
-          { token: "" },
+        const catalogueUrl = `/api/catalogue/exercises?${q.toString()}`;
+        const data = await cachedApiFetch<{ items: CatalogueExercise[]; total: number; nextCursor: string | null }>(
+          catalogueUrl,
+          { token: "", userId: "public", epoch: 0 },
         );
         if (seq !== seqRef.current) return;
 

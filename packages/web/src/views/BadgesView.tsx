@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotMeter } from "../components/Meters";
-import { apiFetch } from "../lib/api";
 import {
   BADGE_TIER_LABELS,
   filterVisibleBadges,
@@ -10,6 +9,7 @@ import {
   type BadgeSummary,
 } from "../lib/badges";
 import { fmt } from "../lib/date";
+import { cachedApiFetch, peekQuery } from "../lib/query-cache";
 import { openBadgeDetailModal } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -20,8 +20,8 @@ export function BadgesView() {
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
 
-  const [rawSummary, setRawSummary] = useState<BadgeSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [rawSummary, setRawSummary] = useState<BadgeSummary | null>(() => peekQuery<BadgeSummary>("/api/web/badges", userId)?.data ?? null);
+  const [loading, setLoading] = useState(() => !peekQuery("/api/web/badges", userId));
   const [error, setError] = useState("");
   const [category, setCategory] = useState("");
   const [status, setStatus] = useState<"all" | "unlocked" | "chasing">("all");
@@ -34,9 +34,15 @@ export function BadgesView() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const stale = peekQuery<BadgeSummary>("/api/web/badges", userId)?.data;
+    if (stale) {
+      setRawSummary(stale);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
-    void apiFetch<BadgeSummary>("/api/web/badges")
+    void cachedApiFetch<BadgeSummary>("/api/web/badges", { epoch: dataEpoch, userId })
       .then((res) => {
         if (active) setRawSummary(res);
       })

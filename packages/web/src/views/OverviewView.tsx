@@ -14,6 +14,7 @@ import { WelcomeChecklist, onboardingSeenKey } from "../components/onboarding/We
 import { apiFetch } from "../lib/api";
 import type { BadgeSummary } from "../lib/badges";
 import { duration, fmt, shortDate, today } from "../lib/date";
+import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   FEELINGS,
   INTERVALS,
@@ -59,14 +60,28 @@ export function OverviewView() {
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleKey | "">("");
   const [weekDate, setWeekDate] = useState<string>("");
 
-  const [stats, setStats] = useState<OverviewStatsResponse | null>(null);
-  const [day, setDay] = useState<TodayResponse | null>(null);
-  const [badges, setBadges] = useState<BadgeSummary | null>(null);
-  const [hasPlan, setHasPlan] = useState(false);
-  const [visiblePanels, setVisiblePanels] = useState<string[] | null>(null);
-  const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(null);
-  const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  interface OverviewSnapshot {
+    stats: OverviewStatsResponse;
+    day: TodayResponse | null;
+    badges: BadgeSummary | null;
+    hasPlan: boolean;
+    visiblePanels: string[] | null;
+    appleDaily: AppleDailyEntry | null;
+    appleAgenda: AppleWorkoutAgendaItem[];
+  }
+  const initialQuery = new URLSearchParams({ through });
+  if (period) initialQuery.set("days", String(period));
+  const initialCacheKey = `view:overview:${initialQuery.toString()}:${appleHealthConnected ? 1 : 0}`;
+  const cachedInit = peekQuery<OverviewSnapshot>(initialCacheKey, userId)?.data;
+
+  const [stats, setStats] = useState<OverviewStatsResponse | null>(() => cachedInit?.stats ?? null);
+  const [day, setDay] = useState<TodayResponse | null>(() => cachedInit?.day ?? null);
+  const [badges, setBadges] = useState<BadgeSummary | null>(() => cachedInit?.badges ?? null);
+  const [hasPlan, setHasPlan] = useState<boolean>(() => cachedInit?.hasPlan ?? false);
+  const [visiblePanels, setVisiblePanels] = useState<string[] | null>(() => cachedInit?.visiblePanels ?? null);
+  const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(() => cachedInit?.appleDaily ?? null);
+  const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>(() => cachedInit?.appleAgenda ?? []);
+  const [loading, setLoading] = useState(() => !cachedInit);
   const [error, setError] = useState("");
   const autoOnboardedUserRef = useRef("");
 
@@ -75,34 +90,59 @@ export function OverviewView() {
     const query = new URLSearchParams({ through });
     if (period) query.set("days", String(period));
     const currentToday = today();
-    setLoading(true);
+    const viewKey = `view:overview:${query.toString()}:${appleHealthConnected ? 1 : 0}`;
+    const staleHit = peekQuery<OverviewSnapshot>(viewKey, userId)?.data;
+    if (staleHit) {
+      setStats(staleHit.stats);
+      setDay(staleHit.day);
+      setBadges(staleHit.badges);
+      setHasPlan(staleHit.hasPlan);
+      setVisiblePanels(staleHit.visiblePanels);
+      setAppleDaily(staleHit.appleDaily);
+      setAppleAgenda(staleHit.appleAgenda);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
     void Promise.all([
-      apiFetch<OverviewStatsResponse>(`/api/web/statistics?${query.toString()}`),
-      apiFetch<TodayResponse>("/api/web/today").catch(() => null),
-      apiFetch<BadgeSummary>("/api/web/badges").catch(() => null),
-      apiFetch<{ panels?: string[] }>("/api/web/preferences").catch(() => null),
-      apiFetch<{ planId?: string | null }>("/api/web/schedule").catch(() => null),
+      cachedApiFetch<OverviewStatsResponse>(`/api/web/statistics?${query.toString()}`, { epoch: dataEpoch, userId }),
+      cachedApiFetch<TodayResponse>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<BadgeSummary>("/api/web/badges", { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<{ panels?: string[] }>("/api/web/preferences", { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<{ planId?: string | null }>("/api/web/schedule", { epoch: dataEpoch, userId }).catch(() => null),
       appleHealthConnected
-        ? apiFetch<{ entries?: AppleDailyEntry[] }>(
+        ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
             `/api/integrations/apple-health/daily?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
+            { epoch: dataEpoch, userId },
           ).catch(() => null)
         : Promise.resolve(null),
       appleHealthConnected
-        ? apiFetch<AppleWorkoutAgendaItem[]>(
+        ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
             `/api/integrations/apple-health/agenda?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
+            { epoch: dataEpoch, userId },
           ).catch(() => [])
         : Promise.resolve([]),
     ])
       .then(([statsRes, todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes]) => {
         if (!active) return;
-        setStats(statsRes);
-        setDay(todayRes);
-        setBadges(badgesRes);
-        setHasPlan(Boolean(schedRes?.planId || todayRes?.planned));
-        setVisiblePanels(Array.isArray(prefsRes?.panels) ? prefsRes.panels : null);
-        setAppleDaily(dailyRes?.entries?.[0] ?? null);
-        setAppleAgenda(Array.isArray(agendaRes) ? agendaRes : []);
+        const nextSnap: OverviewSnapshot = {
+          stats: statsRes,
+          day: todayRes,
+          badges: badgesRes,
+          hasPlan: Boolean(schedRes?.planId || todayRes?.planned),
+          visiblePanels: Array.isArray(prefsRes?.panels) ? prefsRes.panels : null,
+          appleDaily: dailyRes?.entries?.[0] ?? null,
+          appleAgenda: Array.isArray(agendaRes) ? agendaRes : [],
+        };
+        writeQueryCache(viewKey, nextSnap, { userId, epoch: dataEpoch });
+        setStats(nextSnap.stats);
+        setDay(nextSnap.day);
+        setBadges(nextSnap.badges);
+        setHasPlan(nextSnap.hasPlan);
+        setVisiblePanels(nextSnap.visiblePanels);
+        setAppleDaily(nextSnap.appleDaily);
+        setAppleAgenda(nextSnap.appleAgenda);
 
         if (
           !demo &&

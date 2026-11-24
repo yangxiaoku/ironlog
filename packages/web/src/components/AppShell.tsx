@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { today } from "../lib/date";
 import { findLocalWorkoutDraft } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
+import { prefetchWorkspace } from "../lib/prefetch";
 import { openWorkoutEditor } from "../lib/record-openers";
 import {
   DESTINATIONS,
@@ -64,6 +65,8 @@ export function AppShell({ children }: { children: ReactNode }) {
       href={`#${id}`}
       aria-label={WORKSPACES[id].label}
       aria-current={id === activeWs ? "page" : undefined}
+      onPointerEnter={() => prefetchWorkspace(id, userId)}
+      onFocus={() => prefetchWorkspace(id, userId)}
       onClick={(e) => handleNavClick(e, id)}
     >
       <Icon name={WORKSPACES[id].icon} />
@@ -100,6 +103,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               key={id}
               href={`#${id}`}
               aria-current={id === activeWs ? "page" : undefined}
+              onPointerEnter={() => prefetchWorkspace(id, userId)}
               onClick={(e) => handleNavClick(e, id)}
             >
               <Icon name={id} />

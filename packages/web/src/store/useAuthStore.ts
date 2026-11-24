@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { apiFetch } from "../lib/api";
 import { clearQueue } from "../lib/offline-queue";
+import { invalidateQueryCache } from "../lib/query-cache";
 import { useUiStore } from "./useUiStore";
 
 export type AuthMode = "login" | "register";
@@ -104,6 +105,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       try {
         localStorage.setItem("ironlog-web-account-seen", "1");
       } catch {}
+      invalidateQueryCache();
       useUiStore.getState().bumpDataEpoch();
       return account;
     } finally {
@@ -121,6 +123,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   clearUser() {
     const prevUserId = get().userId;
+    invalidateQueryCache();
     useUiStore.getState().closeModalSilent();
     if (prevUserId && typeof localStorage !== "undefined") {
       clearQueue(localStorage, prevUserId);

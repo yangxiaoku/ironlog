@@ -1,22 +1,25 @@
-import { useEffect } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { AppShell } from "./components/AppShell";
 import { AuthScreen } from "./components/AuthScreen";
 import { ModalHost } from "./components/ModalHost";
 import { ToastHost } from "./components/ToastHost";
 import { useMobileGuards } from "./hooks/useMobileGuards";
 import { configureApi } from "./lib/api";
+import { prefetchViewChunk, viewLoaders } from "./lib/prefetch";
+import { configureQueryCache } from "./lib/query-cache";
 import { useAuthStore } from "./store/useAuthStore";
 import { useUiStore } from "./store/useUiStore";
-import { AnalyticsView } from "./views/AnalyticsView";
-import { BadgesView } from "./views/BadgesView";
-import { CalendarView } from "./views/CalendarView";
-import { DietView } from "./views/DietView";
-import { ExercisesView } from "./views/ExercisesView";
-import { OverviewView } from "./views/OverviewView";
-import { PlanView } from "./views/PlanView";
-import { SettingsView } from "./views/SettingsView";
-import { WeightView } from "./views/WeightView";
-import { WorkoutView } from "./views/WorkoutView";
+
+const OverviewView = lazy(viewLoaders.overview);
+const WorkoutView = lazy(viewLoaders.workout);
+const DietView = lazy(viewLoaders.diet);
+const WeightView = lazy(viewLoaders.weight);
+const PlanView = lazy(viewLoaders.plan);
+const ExercisesView = lazy(viewLoaders.exercises);
+const CalendarView = lazy(viewLoaders.calendar);
+const AnalyticsView = lazy(viewLoaders.analytics);
+const BadgesView = lazy(viewLoaders.badges);
+const SettingsView = lazy(viewLoaders.settings);
 
 configureApi({
   getDemoToken: () => useAuthStore.getState().demoToken,
@@ -24,6 +27,11 @@ configureApi({
   onMutate: () => {
     useUiStore.getState().bumpDataEpoch();
   },
+});
+
+configureQueryCache({
+  getUserId: () => useAuthStore.getState().userId,
+  getDataEpoch: () => useUiStore.getState().dataEpoch,
 });
 
 export function App() {
@@ -34,6 +42,7 @@ export function App() {
   const view = useUiStore((s) => s.view);
 
   useEffect(() => {
+    prefetchViewChunk(useUiStore.getState().view);
     void useAuthStore.getState().bootstrap().then(() => {
       const uid = useAuthStore.getState().userId;
       if (uid && navigator.onLine) {
@@ -73,7 +82,11 @@ export function App() {
 
   return (
     <>
-      <AppShell>{mainContent}</AppShell>
+      <AppShell>
+        <Suspense fallback={<div className="empty loading" role="status">正在加载页面…</div>}>
+          {mainContent}
+        </Suspense>
+      </AppShell>
       <ModalHost />
       <ToastHost />
     </>

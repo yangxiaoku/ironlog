@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useUiStore } from "../store/useUiStore";
 import { Icon } from "./Icon";
 
@@ -324,7 +324,9 @@ export function ModalHost() {
             const isTop = idx === modals.length - 1;
             return (
               <div key={modal.id} style={isTop ? { display: "contents" } : { display: "none" }} aria-hidden={!isTop}>
-                {modal.content}
+                <Suspense fallback={<div className="dialog-form"><p className="muted" style={{ padding: "18px 0" }}>正在加载窗口…</p></div>}>
+                  {modal.content}
+                </Suspense>
               </div>
             );
           })}

@@ -6,6 +6,11 @@ import { Hono } from "hono";
 import { mountWebAssets } from "../packages/server/src/web-assets.ts";
 import { filterVisibleBadges, selectOverviewBadges, type BadgeItem, type BadgeSummary } from "../packages/web/src/lib/badges.ts";
 import {
+  cachedQuery,
+  invalidateQueryCache,
+  peekQuery,
+} from "../packages/web/src/lib/query-cache.ts";
+import {
   APPLE_HEALTH_DAILY_GROUPS,
   APPLE_SHORTCUT_SPORTS,
   assessServerOrigin,
@@ -131,6 +136,10 @@ test("mountWebAssets serves React build from packages/web/dist by default and su
     const swRes = await app.request("/app/sw.js");
     assert.equal(swRes.status, 200);
 
+    const iconRes = await app.request("/app/icon-192.png");
+    assert.equal(iconRes.status, 200);
+    assert.match(iconRes.headers.get("Cache-Control") ?? "", /max-age=86400/);
+
     const traversalRes = await app.request("/app/../package.json");
     assert.equal(traversalRes.status, 404);
 
@@ -148,4 +157,42 @@ test("mountWebAssets serves React build from packages/web/dist by default and su
     if (prevLegacy === undefined) delete process.env.IRONLOG_WEB_LEGACY;
     else process.env.IRONLOG_WEB_LEGACY = prevLegacy;
   }
+});
+
+test("packages/web/src/lib/query-cache deduplicates in-flight fetches, honors epoch invalidation, and clears on logout", async () => {
+  invalidateQueryCache();
+  let calls = 0;
+  let resolveSlow!: (value: { count: number }) => void;
+  const slowFetcher = () => {
+    calls++;
+    return new Promise<{ count: number }>((res) => {
+      resolveSlow = res;
+    });
+  };
+
+  const p1 = cachedQuery("/api/web/test-stats", slowFetcher, { userId: "u_cache", epoch: 1 });
+  const p2 = cachedQuery("/api/web/test-stats", slowFetcher, { userId: "u_cache", epoch: 1 });
+  assert.equal(calls, 1, "concurrent calls on same user & epoch should coalesce");
+  resolveSlow({ count: 42 });
+
+  const [r1, r2] = await Promise.all([p1, p2]);
+  assert.deepEqual(r1, { count: 42 });
+  assert.deepEqual(r2, { count: 42 });
+
+  const hit = await cachedQuery("/api/web/test-stats", async () => {
+    calls++;
+    return { count: 99 };
+  }, { userId: "u_cache", epoch: 1 });
+  assert.equal(calls, 1, "fresh cache hit within epoch & TTL must skip fetcher");
+  assert.deepEqual(hit, { count: 42 });
+
+  const refreshed = await cachedQuery("/api/web/test-stats", async () => {
+    calls++;
+    return { count: 43 };
+  }, { userId: "u_cache", epoch: 2 });
+  assert.equal(calls, 2, "bumped dataEpoch should trigger fresh fetch");
+  assert.deepEqual(refreshed, { count: 43 });
+
+  invalidateQueryCache("u_cache");
+  assert.equal(peekQuery("/api/web/test-stats", "u_cache"), undefined);
 });

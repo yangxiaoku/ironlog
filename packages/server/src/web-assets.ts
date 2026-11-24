@@ -67,7 +67,12 @@ export function mountWebAssets(app: Hono<{ Variables: { userId: string } }>) {
       return c.notFound();
     }
     c.header("Content-Type", mime[ext]!);
-    c.header("Cache-Control", name.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache");
+    const cacheControl = name.startsWith("assets/")
+      ? "public, max-age=31536000, immutable"
+      : ext === "jpg" || ext === "png" || ext === "svg" || ext === "webp" || ext === "woff2"
+        ? "public, max-age=86400, stale-while-revalidate=604800"
+        : "no-cache";
+    c.header("Cache-Control", cacheControl);
     c.header("ETag", entry.etag);
     c.header("Content-Security-Policy", csp);
     if (entry.gzip) c.header("Vary", "Accept-Encoding");

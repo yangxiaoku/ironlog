@@ -3,7 +3,6 @@ import { MiniSparkline, WeightChart } from "../components/Charts";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
-import { apiFetch } from "../lib/api";
 import { displayWeekday, fmt, shortDate, today } from "../lib/date";
 import {
   MEASUREMENT_SPECS,
@@ -13,36 +12,50 @@ import {
   type RecordEnvelope,
   type WeightData,
 } from "../lib/domain";
+import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import { openMeasurementModal, openWeightEditor } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
+interface WeightViewSnap {
+  records: Array<RecordEnvelope<WeightData>>;
+  measurements: MeasurementEntry[];
+  goals: ProfileGoals | null;
+}
+
 export function WeightView() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const cached = peekQuery<WeightViewSnap>("view:weight", userId)?.data;
 
-  const [records, setRecords] = useState<Array<RecordEnvelope<WeightData>>>([]);
-  const [measurements, setMeasurements] = useState<MeasurementEntry[]>([]);
-  const [goals, setGoals] = useState<ProfileGoals | null>(null);
+  const [records, setRecords] = useState<Array<RecordEnvelope<WeightData>>>(() => cached?.records ?? []);
+  const [measurements, setMeasurements] = useState<MeasurementEntry[]>(() => cached?.measurements ?? []);
+  const [goals, setGoals] = useState<ProfileGoals | null>(() => cached?.goals ?? null);
   const [shownWeights, setShownWeights] = useState(12);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cached);
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (!peekQuery("view:weight", userId)) setLoading(true);
     void Promise.all([
-      apiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight"),
-      apiFetch<MeasurementEntry[]>("/api/web/measurements").catch(() => []),
-      apiFetch<{ profile: ProfileGoals }>("/api/web/profile").catch(() => null),
+      cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }),
+      cachedApiFetch<MeasurementEntry[]>("/api/web/measurements", { epoch: dataEpoch, userId }).catch(() => []),
+      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
     ])
       .then(([weightRows, measureRows, profRes]) => {
         if (!active) return;
         const sorted = weightRows
           .filter((r) => !r.deleted)
           .sort((a, b) => b.data.date.localeCompare(a.data.date) || b.updatedAt.localeCompare(a.updatedAt));
-        setRecords(sorted);
-        setMeasurements(measureRows ?? []);
-        setGoals(profRes?.profile ?? null);
+        const nextSnap: WeightViewSnap = {
+          records: sorted,
+          measurements: measureRows ?? [],
+          goals: profRes?.profile ?? null,
+        };
+        writeQueryCache("view:weight", nextSnap, { userId, epoch: dataEpoch });
+        setRecords(nextSnap.records);
+        setMeasurements(nextSnap.measurements);
+        setGoals(nextSnap.goals);
       })
       .finally(() => {
         if (active) setLoading(false);

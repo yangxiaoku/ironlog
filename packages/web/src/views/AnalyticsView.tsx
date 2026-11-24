@@ -8,6 +8,7 @@ import { downloadClientFile } from "../components/settings/DataModals";
 import { apiFetch } from "../lib/api";
 import { duration, fmt, shortDate, today } from "../lib/date";
 import type { EquipmentKey, ProfileGoals, RecordEnvelope, WeightData } from "../lib/domain";
+import { cachedApiFetch, peekQuery } from "../lib/query-cache";
 import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -465,17 +466,26 @@ export function AnalyticsView() {
   const [acwrActiveIdx, setAcwrActiveIdx] = useState<number | null>(null);
   const [busyAction, setBusyAction] = useState("");
 
-  const [data, setData] = useState<AnalyticsResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const initAnalyticsPath = `/api/web/analytics?${new URLSearchParams({ days: String(period), through }).toString()}`;
+  const cachedAnalytics = peekQuery<AnalyticsResponse>(initAnalyticsPath, userId)?.data ?? null;
+  const [data, setData] = useState<AnalyticsResponse | null>(cachedAnalytics);
+  const [loading, setLoading] = useState(() => !cachedAnalytics);
   const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
     const query = new URLSearchParams({ days: String(period), through });
-    setLoading(true);
+    const reqPath = `/api/web/analytics?${query.toString()}`;
+    const stale = peekQuery<AnalyticsResponse>(reqPath, userId)?.data;
+    if (stale) {
+      setData(stale);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError("");
     setAcwrActiveIdx(null);
-    void apiFetch<AnalyticsResponse>(`/api/web/analytics?${query.toString()}`)
+    void cachedApiFetch<AnalyticsResponse>(reqPath, { epoch: dataEpoch, userId })
       .then((res) => {
         if (active) setData(res);
       })

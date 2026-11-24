@@ -1,35 +1,47 @@
-import { useState } from "react";
-import { AiAdaptWorkoutModal, AiDietModal, AiPlanModal, AiReviewModal, AiWorkoutModal } from "../components/ai/AiModals";
-import {
-  AppleDailyDetailsModal,
-  AppleWorkoutDetailsModal,
-  DeviceSetupModal,
-  HealthDataImportModal,
-  HealthDataWebhookModal,
-  type AppleDailyEntry,
-  type AppleWorkoutAgendaItem,
-} from "../components/apple/AppleHealthModals";
-import { BadgeDetailModal } from "../components/badges/BadgeDetailModal";
-import { CalendarDayModal } from "../components/calendar/DayDossier";
-import { DietEditorModal, type RecentFoodPreset } from "../components/diet/DietEditorModal";
-import { EditMealTemplateModal, SaveMealTemplateModal } from "../components/diet/MealTemplateModal";
-import { CustomExerciseModal, ExerciseDetailModal } from "../components/exercises/ExerciseModals";
+import { lazy, useState } from "react";
+import type { AppleDailyEntry, AppleWorkoutAgendaItem } from "../components/apple/AppleHealthModals";
+import type { RecentFoodPreset } from "../components/diet/DietEditorModal";
+import type { ShareCardModalProps } from "../components/share/ShareCardModal";
 import { Icon } from "../components/Icon";
-import { OnboardingModal } from "../components/onboarding/OnboardingModal";
-import {
-  DaySchedulerModal,
-  PlanBuilderModal,
-  PlanDraftModal,
-  RoutinePreviewModal,
-  TemplateEditorModal,
-} from "../components/plan/PlanModals";
-import { BackupRestoreModal, CsvImportModal, IssueApiTokenModal, PlanImportModal } from "../components/settings/DataModals";
-import { ShareCardModal, type ShareCardModalProps } from "../components/share/ShareCardModal";
-import { StrengthCalcModal } from "../components/tools/StrengthCalcModal";
-import { MeasurementModal } from "../components/weight/MeasurementModal";
-import { WeightEditorModal } from "../components/weight/WeightEditorModal";
-import { WorkoutEditorModal } from "../components/workout/WorkoutEditorModal";
-import { WorkoutReportModal } from "../components/workout/WorkoutReportModal";
+
+const AiAdaptWorkoutModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiAdaptWorkoutModal })));
+const AiDietModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiDietModal })));
+const AiPlanModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiPlanModal })));
+const AiReviewModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiReviewModal })));
+const AiWorkoutModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiWorkoutModal })));
+
+const AppleDailyDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleDailyDetailsModal })));
+const AppleWorkoutDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleWorkoutDetailsModal })));
+const DeviceSetupModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.DeviceSetupModal })));
+const HealthDataImportModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.HealthDataImportModal })));
+const HealthDataWebhookModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.HealthDataWebhookModal })));
+
+const BadgeDetailModal = lazy(() => import("../components/badges/BadgeDetailModal").then((m) => ({ default: m.BadgeDetailModal })));
+const CalendarDayModal = lazy(() => import("../components/calendar/DayDossier").then((m) => ({ default: m.CalendarDayModal })));
+const DietEditorModal = lazy(() => import("../components/diet/DietEditorModal").then((m) => ({ default: m.DietEditorModal })));
+const EditMealTemplateModal = lazy(() => import("../components/diet/MealTemplateModal").then((m) => ({ default: m.EditMealTemplateModal })));
+const SaveMealTemplateModal = lazy(() => import("../components/diet/MealTemplateModal").then((m) => ({ default: m.SaveMealTemplateModal })));
+const CustomExerciseModal = lazy(() => import("../components/exercises/ExerciseModals").then((m) => ({ default: m.CustomExerciseModal })));
+const ExerciseDetailModal = lazy(() => import("../components/exercises/ExerciseModals").then((m) => ({ default: m.ExerciseDetailModal })));
+const OnboardingModal = lazy(() => import("../components/onboarding/OnboardingModal").then((m) => ({ default: m.OnboardingModal })));
+
+const DaySchedulerModal = lazy(() => import("../components/plan/PlanModals").then((m) => ({ default: m.DaySchedulerModal })));
+const PlanBuilderModal = lazy(() => import("../components/plan/PlanModals").then((m) => ({ default: m.PlanBuilderModal })));
+const PlanDraftModal = lazy(() => import("../components/plan/PlanModals").then((m) => ({ default: m.PlanDraftModal })));
+const RoutinePreviewModal = lazy(() => import("../components/plan/PlanModals").then((m) => ({ default: m.RoutinePreviewModal })));
+const TemplateEditorModal = lazy(() => import("../components/plan/PlanModals").then((m) => ({ default: m.TemplateEditorModal })));
+
+const BackupRestoreModal = lazy(() => import("../components/settings/DataModals").then((m) => ({ default: m.BackupRestoreModal })));
+const CsvImportModal = lazy(() => import("../components/settings/DataModals").then((m) => ({ default: m.CsvImportModal })));
+const IssueApiTokenModal = lazy(() => import("../components/settings/DataModals").then((m) => ({ default: m.IssueApiTokenModal })));
+const PlanImportModal = lazy(() => import("../components/settings/DataModals").then((m) => ({ default: m.PlanImportModal })));
+
+const ShareCardModal = lazy(() => import("../components/share/ShareCardModal").then((m) => ({ default: m.ShareCardModal })));
+const StrengthCalcModal = lazy(() => import("../components/tools/StrengthCalcModal").then((m) => ({ default: m.StrengthCalcModal })));
+const MeasurementModal = lazy(() => import("../components/weight/MeasurementModal").then((m) => ({ default: m.MeasurementModal })));
+const WeightEditorModal = lazy(() => import("../components/weight/WeightEditorModal").then((m) => ({ default: m.WeightEditorModal })));
+const WorkoutEditorModal = lazy(() => import("../components/workout/WorkoutEditorModal").then((m) => ({ default: m.WorkoutEditorModal })));
+const WorkoutReportModal = lazy(() => import("../components/workout/WorkoutReportModal").then((m) => ({ default: m.WorkoutReportModal })));
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
 import { shortDate, today } from "./date";

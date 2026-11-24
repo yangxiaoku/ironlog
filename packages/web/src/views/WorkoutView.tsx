@@ -15,18 +15,26 @@ import {
   type TrainedExerciseSummary,
   type WorkoutData,
 } from "../lib/domain";
+import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import { openAiWorkoutModal, openCsvImportModal, openWorkoutEditor, openWorkoutReport } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
+interface WorkoutViewSnap {
+  records: Array<RecordEnvelope<WorkoutData>>;
+  trainedItems: TrainedExerciseSummary[];
+  goals: ProfileGoals | null;
+}
+
 export function WorkoutView() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const cached = peekQuery<WorkoutViewSnap>("view:workout", userId)?.data;
 
-  const [records, setRecords] = useState<Array<RecordEnvelope<WorkoutData>>>([]);
-  const [trainedItems, setTrainedItems] = useState<TrainedExerciseSummary[]>([]);
-  const [goals, setGoals] = useState<ProfileGoals | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [records, setRecords] = useState<Array<RecordEnvelope<WorkoutData>>>(() => cached?.records ?? []);
+  const [trainedItems, setTrainedItems] = useState<TrainedExerciseSummary[]>(() => cached?.trainedItems ?? []);
+  const [goals, setGoals] = useState<ProfileGoals | null>(() => cached?.goals ?? null);
+  const [loading, setLoading] = useState(() => !cached);
 
   const [query, setQuery] = useState("");
   const [muscle, setMuscle] = useState<MuscleKey | "">("");
@@ -34,17 +42,23 @@ export function WorkoutView() {
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    if (!peekQuery("view:workout", userId)) setLoading(true);
     void Promise.all([
-      apiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout"),
-      apiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises").catch(() => ({ items: [] })),
-      apiFetch<{ profile: ProfileGoals }>("/api/web/profile").catch(() => null),
+      cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
+      cachedApiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises", { epoch: dataEpoch, userId }).catch(() => ({ items: [] })),
+      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
     ])
       .then(([recs, trainedRes, profRes]) => {
         if (!active) return;
-        setRecords(recs.filter((r) => !r.deleted && r.data.status !== "cancelled"));
-        setTrainedItems(trainedRes.items ?? []);
-        setGoals(profRes?.profile ?? null);
+        const nextSnap: WorkoutViewSnap = {
+          records: recs.filter((r) => !r.deleted && r.data.status !== "cancelled"),
+          trainedItems: trainedRes.items ?? [],
+          goals: profRes?.profile ?? null,
+        };
+        writeQueryCache("view:workout", nextSnap, { userId, epoch: dataEpoch });
+        setRecords(nextSnap.records);
+        setTrainedItems(nextSnap.trainedItems);
+        setGoals(nextSnap.goals);
       })
       .finally(() => {
         if (active) setLoading(false);

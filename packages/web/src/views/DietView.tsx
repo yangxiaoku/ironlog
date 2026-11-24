@@ -16,6 +16,7 @@ import {
   type RecordEnvelope,
 } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
+import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   openAiDietModal,
   openDietEditor,
@@ -43,9 +44,15 @@ export function DietView() {
 
   const todayStr = today();
   const [date, setDate] = useState(todayStr);
-  const [records, setRecords] = useState<Array<RecordEnvelope<DietData>>>([]);
-  const [templates, setTemplates] = useState<Array<RecordEnvelope<MealTemplateData>>>([]);
-  const [goals, setGoals] = useState<ProfileGoals | null>(null);
+  interface DietViewSnap {
+    records: Array<RecordEnvelope<DietData>>;
+    templates: Array<RecordEnvelope<MealTemplateData>>;
+    goals: ProfileGoals | null;
+  }
+  const cachedDiet = peekQuery<DietViewSnap>("view:diet", userId)?.data;
+  const [records, setRecords] = useState<Array<RecordEnvelope<DietData>>>(() => cachedDiet?.records ?? []);
+  const [templates, setTemplates] = useState<Array<RecordEnvelope<MealTemplateData>>>(() => cachedDiet?.templates ?? []);
+  const [goals, setGoals] = useState<ProfileGoals | null>(() => cachedDiet?.goals ?? null);
   const [dietDone, setDietDone] = useState(false);
   const [waterMl, setWaterMl] = useState(0);
   const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl());
@@ -55,14 +62,20 @@ export function DietView() {
   useEffect(() => {
     let active = true;
     void Promise.all([
-      apiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet"),
-      apiFetch<Array<RecordEnvelope<MealTemplateData>>>("/api/records/mealTemplate").catch(() => []),
-      apiFetch<{ profile: ProfileGoals }>("/api/web/profile").catch(() => null),
+      cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
+      cachedApiFetch<Array<RecordEnvelope<MealTemplateData>>>("/api/records/mealTemplate", { epoch: dataEpoch, userId }).catch(() => []),
+      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
     ]).then(([dietRows, tplRows, profRes]) => {
       if (!active) return;
-      setRecords(dietRows.filter((r) => !r.deleted));
-      setTemplates(tplRows.filter((r) => !r.deleted));
-      setGoals(profRes?.profile ?? null);
+      const snap: DietViewSnap = {
+        records: dietRows.filter((r) => !r.deleted),
+        templates: tplRows.filter((r) => !r.deleted),
+        goals: profRes?.profile ?? null,
+      };
+      writeQueryCache("view:diet", snap, { userId, epoch: dataEpoch });
+      setRecords(snap.records);
+      setTemplates(snap.templates);
+      setGoals(snap.goals);
     });
     return () => {
       active = false;
@@ -72,9 +85,10 @@ export function DietView() {
   useEffect(() => {
     let active = true;
     void Promise.all([
-      apiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`).catch(() => null),
-      apiFetch<{ entries?: Array<{ waterMl?: number }> }>(
+      cachedApiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<{ entries?: Array<{ waterMl?: number }> }>(
         `/api/integrations/apple-health/daily?from=${date}&through=${date}`,
+        { epoch: dataEpoch, userId },
       ).catch(() => null),
     ]).then(([marker, dailyRes]) => {
       if (!active) return;

@@ -8,6 +8,7 @@ import { exportPlanAsJson } from "../components/settings/DataModals";
 import { apiFetch } from "../lib/api";
 import { resolveCatalogueMap } from "../lib/catalogue";
 import { fmt, formatWeekdayZh, shortDate, today } from "../lib/date";
+import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   EQUIPMENT,
   MUSCLES,
@@ -65,33 +66,52 @@ export function PlanView() {
   const navigate = useUiStore((s) => s.navigate);
   const notify = useUiStore((s) => s.notify);
 
-  const [loading, setLoading] = useState(true);
+  interface PlanViewSnap {
+    activePlan: ActivePlanResponse | null;
+    templates: Array<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }>>;
+    drafts: Array<RecordEnvelope<PlanData>>;
+    aiReady: boolean;
+    currentDay: TodayResponse & { applePlan?: { routineId: string; name: string } | null } | null;
+    schedule: ScheduleResponse | null;
+    starterPlans: StarterPlan[];
+    catalogueMap: Map<string, CatalogueExercise>;
+  }
+  const cachedPlan = peekQuery<PlanViewSnap>("view:plan", userId)?.data;
+
+  const [loading, setLoading] = useState(() => !cachedPlan);
   const [error, setError] = useState("");
-  const [activePlan, setActivePlan] = useState<ActivePlanResponse | null>(null);
-  const [templates, setTemplates] = useState<Array<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }>>>([]);
-  const [drafts, setDrafts] = useState<Array<RecordEnvelope<PlanData>>>([]);
-  const [aiReady, setAiReady] = useState(false);
-  const [currentDay, setCurrentDay] = useState<TodayResponse & { applePlan?: { routineId: string; name: string } | null } | null>(null);
-  const [schedule, setSchedule] = useState<ScheduleResponse | null>(null);
-  const [starterPlans, setStarterPlans] = useState<StarterPlan[]>([]);
-  const [catalogueMap, setCatalogueMap] = useState<Map<string, CatalogueExercise>>(() => new Map());
+  const [activePlan, setActivePlan] = useState<ActivePlanResponse | null>(() => cachedPlan?.activePlan ?? null);
+  const [templates, setTemplates] = useState<Array<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }>>>(
+    () => cachedPlan?.templates ?? [],
+  );
+  const [drafts, setDrafts] = useState<Array<RecordEnvelope<PlanData>>>(() => cachedPlan?.drafts ?? []);
+  const [aiReady, setAiReady] = useState(() => cachedPlan?.aiReady ?? false);
+  const [currentDay, setCurrentDay] = useState<TodayResponse & { applePlan?: { routineId: string; name: string } | null } | null>(
+    () => cachedPlan?.currentDay ?? null,
+  );
+  const [schedule, setSchedule] = useState<ScheduleResponse | null>(() => cachedPlan?.schedule ?? null);
+  const [starterPlans, setStarterPlans] = useState<StarterPlan[]>(() => cachedPlan?.starterPlans ?? []);
+  const [catalogueMap, setCatalogueMap] = useState<Map<string, CatalogueExercise>>(
+    () => cachedPlan?.catalogueMap ?? new Map(),
+  );
   const [armedStarterId, setArmedStarterId] = useState("");
   const [adoptingId, setAdoptingId] = useState("");
 
   useEffect(() => {
     let active = true;
-    setLoading(true);
+    const stalePlan = peekQuery<PlanViewSnap>("view:plan", userId)?.data;
+    if (!stalePlan) setLoading(true);
     setError("");
     void (async () => {
       try {
         const [activeRes, templatesRes, draftsRes, meRes, todayRes, schedRes, startersRes] = await Promise.all([
-          apiFetch<ActivePlanResponse | null>("/api/plans/active"),
-          apiFetch<Array<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }>>>("/api/records/template"),
-          apiFetch<Array<RecordEnvelope<PlanData>>>("/api/records/plan"),
-          apiFetch<{ aiReady?: boolean }>("/api/me"),
-          apiFetch<TodayResponse & { applePlan?: { routineId: string; name: string } | null }>("/api/web/today").catch(() => null),
-          apiFetch<ScheduleResponse>("/api/web/schedule").catch(() => null),
-          apiFetch<StarterPlan[]>("/api/web/starter-plans").catch(() => []),
+          cachedApiFetch<ActivePlanResponse | null>("/api/plans/active", { epoch: dataEpoch, userId }),
+          cachedApiFetch<Array<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }>>>("/api/records/template", { epoch: dataEpoch, userId }),
+          cachedApiFetch<Array<RecordEnvelope<PlanData>>>("/api/records/plan", { epoch: dataEpoch, userId }),
+          cachedApiFetch<{ aiReady?: boolean }>("/api/me", { epoch: dataEpoch, userId }),
+          cachedApiFetch<TodayResponse & { applePlan?: { routineId: string; name: string } | null }>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId }).catch(() => null),
+          cachedApiFetch<ScheduleResponse>("/api/web/schedule", { epoch: dataEpoch, userId }).catch(() => null),
+          cachedApiFetch<StarterPlan[]>("/api/web/starter-plans", { epoch: dataEpoch, userId }).catch(() => []),
         ]);
 
         const activeTemplates = templatesRes.filter((t) => !t.deleted);
@@ -111,14 +131,25 @@ export function PlanView() {
         const catMap = await resolveCatalogueMap(ids);
 
         if (!active) return;
-        setActivePlan(activeRes);
-        setTemplates(activeTemplates);
-        setDrafts(unapplied);
-        setAiReady(Boolean(meRes?.aiReady));
-        setCurrentDay(todayRes);
-        setSchedule(schedRes);
-        setStarterPlans(startersRes);
-        setCatalogueMap(catMap);
+        const nextSnap: PlanViewSnap = {
+          activePlan: activeRes,
+          templates: activeTemplates,
+          drafts: unapplied,
+          aiReady: Boolean(meRes?.aiReady),
+          currentDay: todayRes,
+          schedule: schedRes,
+          starterPlans: startersRes,
+          catalogueMap: catMap,
+        };
+        writeQueryCache("view:plan", nextSnap, { userId, epoch: dataEpoch });
+        setActivePlan(nextSnap.activePlan);
+        setTemplates(nextSnap.templates);
+        setDrafts(nextSnap.drafts);
+        setAiReady(nextSnap.aiReady);
+        setCurrentDay(nextSnap.currentDay);
+        setSchedule(nextSnap.schedule);
+        setStarterPlans(nextSnap.starterPlans);
+        setCatalogueMap(nextSnap.catalogueMap);
       } catch (err) {
         if (active) setError((err as Error)?.message || "加载训练计划失败");
       } finally {
