@@ -5,3 +5,5 @@ node_modules
 *.jpg
 !web/assets/visuals/*.jpg
 web/dist
+packages/web/dist
+packages/web/public

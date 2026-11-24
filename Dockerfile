@@ -7,7 +7,7 @@ COPY web/src ./web/src
 COPY web/assets ./web/assets
 COPY third_party/musclemap/LICENSE ./third_party/musclemap/LICENSE
 COPY scripts/build-web.mjs ./scripts/build-web.mjs
-RUN npm ci && npm run build -w @ironlog/shared && npm run build -w @ironlog/server && npm run build:web && npm prune --omit=dev
+RUN npm ci && npm run build -w @ironlog/shared && npm run build -w @ironlog/server && npm run build:web && npm run build:web-react && npm prune --omit=dev
 
 FROM node:24-alpine AS runtime
 RUN apk add --no-cache libstdc++ && mkdir -p /app/data && chown node:node /app/data
