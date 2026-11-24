@@ -14,7 +14,8 @@ import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
 type AnalyticsPeriod = 14 | 30 | 60 | 90;
-type AnalyticsSection = "training" | "health" | "reports";
+type AnalyticsSection = "load" | "strength" | "body" | "reports";
+type ReportCategory = "all" | "training" | "progress" | "apple";
 type BodyChartKey = "weightKg" | "bodyFatPct" | "waistCm";
 type RecoveryChartKey = "restingHeartRateBpm" | "hrvMs" | "bloodOxygenPct" | "steps" | "distanceKm" | "activeEnergyKcal";
 
@@ -539,7 +540,8 @@ export function AnalyticsView() {
 
   const [period, setPeriod] = useState<AnalyticsPeriod>(30);
   const [through, setThrough] = useState<string>(() => today());
-  const [section, setSection] = useState<AnalyticsSection>("training");
+  const [section, setSection] = useState<AnalyticsSection>("load");
+  const [reportCategory, setReportCategory] = useState<ReportCategory>("all");
   const [appleBodyChart, setAppleBodyChart] = useState<BodyChartKey>("weightKg");
   const [appleRecoveryChart, setAppleRecoveryChart] = useState<RecoveryChartKey>("restingHeartRateBpm");
   const [appleWorkoutFilter, setAppleWorkoutFilter] = useState<"all" | "device">("all");
@@ -611,7 +613,8 @@ export function AnalyticsView() {
       appleDaily?.recoveryReport?.hasData ||
       (appleWorkouts?.totalCount ?? 0) > 0,
   );
-  const activeSection: AnalyticsSection = !hasApple && section === "health" ? "training" : section;
+  const activeSection: AnalyticsSection = section;
+  const jumpToSection = (next: AnalyticsSection) => setSection(next);
 
   const currAcwr = acwr.current;
   const acwrBadgeClass =
@@ -1021,6 +1024,24 @@ export function AnalyticsView() {
     (activeWorkoutBucket?.totalCaloriesKcal ?? 0) === 0 &&
     filteredWorkouts.every((r) => r.captureMethod === "trigger");
 
+  const hasAppleReportData = Boolean(
+    hasApple &&
+      (entriesDesc.length > 0 ||
+        (appleWorkouts?.totalCount ?? 0) > 0 ||
+        appleDaily?.weeklyComparison ||
+        appleDaily?.coverageSummary),
+  );
+  const activeReportCategory: ReportCategory = !hasAppleReportData && reportCategory === "apple" ? "all" : reportCategory;
+  const showTrainingReport = activeReportCategory === "all" || activeReportCategory === "training";
+  const showProgressReport = activeReportCategory === "all" || activeReportCategory === "progress";
+  const showAppleReport = hasAppleReportData && (activeReportCategory === "all" || activeReportCategory === "apple");
+  const hasTrainingReportBlock = Boolean(data.periodComparison || (data.weeklyBreakdown && data.weeklyBreakdown.length > 0));
+  const hasProgressReportBlock = Boolean(data.exerciseProgress && data.exerciseProgress.length > 0);
+  const hasVisibleReportBlock =
+    (showTrainingReport && hasTrainingReportBlock) ||
+    (showProgressReport && hasProgressReportBlock) ||
+    showAppleReport;
+
   const ewmaAlert =
     currAcwr.ewmaZone === "danger" && currAcwr.zone !== "danger"
       ? " 提醒：这最近两天训练量突然冲得有点猛，即使周平均还没超标，明天也建议放缓一点。"
@@ -1107,7 +1128,12 @@ export function AnalyticsView() {
       </div>
 
       <div className="kpis analytics-kpis">
-        <div className={`kpi-card ${acwrBadgeClass}`}>
+        <button
+          type="button"
+          className={`kpi-card kpi-card-btn ${acwrBadgeClass}${activeSection === "load" ? " is-selected" : ""}`}
+          aria-pressed={activeSection === "load"}
+          onClick={() => jumpToSection("load")}
+        >
           <span className="kpi-label">训练节奏（负荷比）</span>
           <div className="kpi-val-row">
             <strong className="kpi-value">{fmt(currAcwr.acwr, 2)}</strong>
@@ -1116,10 +1142,15 @@ export function AnalyticsView() {
           <span className="kpi-sub">
             近7天 {fmt(currAcwr.acuteLoad)} kg · 平时每周 {fmt(currAcwr.chronicLoad)} kg
           </span>
-        </div>
+        </button>
 
         {readinessScore != null && rec ? (
-          <div className={`kpi-card ${readinessToneClass}`}>
+          <button
+            type="button"
+            className={`kpi-card kpi-card-btn ${readinessToneClass}${activeSection === "load" ? " is-selected" : ""}`}
+            aria-pressed={activeSection === "load"}
+            onClick={() => jumpToSection("load")}
+          >
             <span className="kpi-label">今日身体准备度</span>
             <div className="kpi-val-row">
               <strong className="kpi-value">
@@ -1138,39 +1169,65 @@ export function AnalyticsView() {
                 .filter(Boolean)
                 .join(" · ") || "综合心率与睡眠恢复"}
             </span>
-          </div>
+          </button>
         ) : (
-          <div
-            className={`kpi-card ${
-              monotony.current.monotonyLevel === "high"
-                ? "is-danger"
-                : monotony.current.monotonyLevel === "moderate"
+          <button
+            type="button"
+            className={`kpi-card kpi-card-btn ${
+              bodyweight.report?.category === "optimal_cut" || bodyweight.report?.category === "lean_bulk"
+                ? "is-sweet"
+                : bodyweight.report?.category === "rapid_loss" || bodyweight.report?.category === "rapid_gain"
                   ? "is-caution"
-                  : "is-sweet"
-            }`}
+                  : ""
+            }${activeSection === "body" ? " is-selected" : ""}`}
+            aria-pressed={activeSection === "body"}
+            onClick={() => jumpToSection("body")}
           >
-            <span className="kpi-label">练休起伏</span>
+            <span className="kpi-label">体态与代谢</span>
             <div className="kpi-val-row">
               <strong className="kpi-value">
-                {monotony.current.monotonyLevel === "high"
-                  ? "太单一"
-                  : monotony.current.monotonyLevel === "moderate"
-                    ? "较平均"
-                    : "张弛有度"}
+                {bodyweight.report ? (
+                  <>
+                    {(bodyweight.report.weeklySlopeKg ?? 0) > 0 ? "+" : ""}
+                    {fmt(bodyweight.report.weeklySlopeKg ?? bodyweight.report.deltaKg, 2)} <small>kg/周</small>
+                  </>
+                ) : nutrition.protein.totalDaysLogged > 0 ? (
+                  <>
+                    {fmt(nutrition.protein.averageGramsPerKg, 2)} <small>g/kg</small>
+                  </>
+                ) : (
+                  "—"
+                )}
               </strong>
-              <span className="kpi-pill">
-                {monotony.current.monotonyLevel === "high"
-                  ? "多留休息日"
-                  : monotony.current.monotonyLevel === "moderate"
-                    ? "轻重交替"
-                    : "恢复节奏好"}
+              <span
+                className={`kpi-pill ${
+                  bodyweight.report?.category === "optimal_cut" || bodyweight.report?.category === "lean_bulk"
+                    ? "is-sweet"
+                    : nutrition.protein.status === "optimal" || nutrition.protein.status === "high"
+                      ? "is-sweet"
+                      : ""
+                }`}
+              >
+                {(
+                  bodyweight.report?.categoryLabel ??
+                  (nutrition.protein.totalDaysLogged > 0 ? nutrition.protein.statusLabel : "待记录")
+                ).replace(/\s*\([^)]*\)/, "")}
               </span>
             </div>
-            <span className="kpi-sub">重训与休息错开更不容易疲劳堆积</span>
-          </div>
+            <span className="kpi-sub">
+              {nutrition.protein.totalDaysLogged > 0
+                ? `日均蛋白 ${fmt(nutrition.protein.averageGramsPerDay)} g · 达标 ${nutrition.protein.complianceRatePct}%`
+                : "记饮食与称重后追踪代谢走势"}
+            </span>
+          </button>
         )}
 
-        <div className="kpi-card is-sweet">
+        <button
+          type="button"
+          className={`kpi-card kpi-card-btn is-sweet${activeSection === "strength" ? " is-selected" : ""}`}
+          aria-pressed={activeSection === "strength"}
+          onClick={() => jumpToSection("strength")}
+        >
           <span className="kpi-label">肌群练到位</span>
           <div className="kpi-val-row">
             <strong className="kpi-value">
@@ -1179,9 +1236,14 @@ export function AnalyticsView() {
             <span className="kpi-pill is-sweet">{optMuscles >= 4 ? "分布均衡" : "部分偏少"}</span>
           </div>
           <span className="kpi-sub">建议每个部位每周 10–20 组</span>
-        </div>
+        </button>
 
-        <div className="kpi-card">
+        <button
+          type="button"
+          className={`kpi-card kpi-card-btn${activeSection === "strength" ? " is-selected" : ""}`}
+          aria-pressed={activeSection === "strength"}
+          onClick={() => jumpToSection("strength")}
+        >
           <span className="kpi-label">同体重力量</span>
           <div className="kpi-val-row">
             <strong className="kpi-value">
@@ -1197,7 +1259,7 @@ export function AnalyticsView() {
                 ? "卧推同体型排名分"
                 : "完成深蹲/卧推/硬拉后评估"}
           </span>
-        </div>
+        </button>
       </div>
 
       <section className="coach-summary-strip" aria-label="本周核心建议">
@@ -1211,32 +1273,39 @@ export function AnalyticsView() {
         </ul>
       </section>
 
-      <div className="analytics-subnav" role="navigation" aria-label="分析板块筛选">
+      <div className="analytics-subnav" role="navigation" aria-label="统计分类切换">
         <div className="segments">
-          <button type="button" aria-pressed={activeSection === "training"} onClick={() => setSection("training")}>
-            训练与力量
-          </button>
-          {hasApple ? (
-            <button type="button" aria-pressed={activeSection === "health"} onClick={() => setSection("health")}>
-              身体与恢复
+          {(
+            [
+              ["load", "负荷恢复"],
+              ["strength", "肌群力量"],
+              ["body", "体态饮食"],
+              ["reports", "周期报表"],
+            ] as ReadonlyArray<readonly [AnalyticsSection, string]>
+          ).map(([k, label]) => (
+            <button key={k} type="button" aria-pressed={activeSection === k} onClick={() => setSection(k)}>
+              {label}
             </button>
-          ) : null}
-          <button type="button" aria-pressed={activeSection === "reports"} onClick={() => setSection("reports")}>
-            周期报表与导出
-          </button>
+          ))}
         </div>
         <span className="analytics-subnav-meta">
-          {activeSection === "health"
-            ? "聚焦 Apple 健康体成分、睡眠与心率恢复"
-            : activeSection === "training"
-              ? "聚焦负荷节奏、肌群推拉均衡、次数/RIR 与自适应能量代谢"
-              : "周期对比、周度明细、动作 1RM 进步榜与数据导出"}
+          {activeSection === "load"
+            ? hasApple
+              ? "负荷比、练休起伏、次数/RIR 强度与 Apple 恢复准备度"
+              : "负荷比、练休起伏与次数/RIR 强度谱"
+            : activeSection === "strength"
+              ? "各部位周组数、推拉/上下肢对称、核心大重量压力与相对力量档位"
+              : activeSection === "body"
+                ? hasApple
+                  ? "每日蛋白达标、抗噪体重斜率、自适应 TDEE 与体成分热量建议"
+                  : "每日蛋白达标、抗噪体重斜率与热量结构/自适应 TDEE"
+                : "周期对照、按周训练分解、动作 1RM 进步榜与数据导出"}
         </span>
       </div>
 
       <div className="analytics-deck">
-        {/* TRAINING SECTION */}
-        {activeSection === "training" ? (
+        {/* LOAD & RECOVERY SECTION */}
+        {activeSection === "load" ? (
           <>
             <section className="panel analytics-panel panel-acwr" id="panel-acwr">
               <header className="panel-head">
@@ -1464,6 +1533,227 @@ export function AnalyticsView() {
               </div>
             </section>
 
+            {hasApple ? (
+              <section className="panel analytics-panel panel-apple-recovery" id="panel-apple-recovery">
+                <header className="panel-head">
+                  <div>
+                    <h2>身体恢复与日常活力</h2>
+                    <p>
+                      {rec?.hasData || appleDaily?.activityReport?.hasData
+                        ? rec?.baselineMode === "personal_baseline"
+                          ? "自动对照你最近几天的个人平时水平，看今天疲不疲劳"
+                          : rec?.hasData
+                            ? "当前先按健康标准区间评估（同步满 3 天后会自动对照个人平时习惯）"
+                            : "记录日常步数与步行状态"
+                        : "同步静息心率、HRV、血氧、呼吸频率和睡眠后每天帮你看恢复状态"}
+                    </p>
+                  </div>
+                  {rec?.readinessScore != null ? (
+                    <span className={`kpi-pill ${toneClass(rec.readinessTone)}`}>
+                      准备度 {rec.readinessScore} 分 · {rec.readinessLabel.split(" · ")[0]}
+                    </span>
+                  ) : (
+                    <button type="button" className="quiet" onClick={() => openDeviceSetupModal()}>
+                      <Icon name="plus" size={14} /> 生成快捷指令
+                    </button>
+                  )}
+                </header>
+
+                {rec?.hasData || appleDaily?.activityReport?.hasData ? (
+                  <>
+                    {rec?.readinessScore != null ? (
+                      <div className={`apple-readiness-banner ${toneClass(rec.readinessTone)}`}>
+                        <div className="apple-readiness-score">
+                          <div className="apple-readiness-matrix">
+                            <MatrixText value={String(rec.readinessScore)} />
+                          </div>
+                          <div>
+                            <small>今日身体准备度 / 100</small>
+                            <strong>{rec.readinessLabel}</strong>
+                          </div>
+                        </div>
+                        <div className="apple-readiness-meter">
+                          <DotMeter
+                            ratio={rec.readinessScore / 100}
+                            count={10}
+                            label={`准备度 ${rec.readinessScore} / 100`}
+                          />
+                          <small>{rec.readinessScore}% 综合状态</small>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="apple-signal-grid">
+                      {(rec?.signals ?? []).map((s) => {
+                        const band = s.rangeBand;
+                        const digits =
+                          s.key === "hrvMs" ||
+                          s.key === "respiratoryRate" ||
+                          s.key === "bloodOxygenPct" ||
+                          s.key === "sleepMinutes"
+                            ? 1
+                            : 0;
+                        const span = band ? band.max - band.min : 0;
+                        const pct = (v: number) => (span > 0 && band ? Math.min(100, Math.max(0, ((v - band.min) / span) * 100)) : 0);
+                        return (
+                          <div key={s.key} className="apple-signal-card">
+                            <div className="apple-signal-top">
+                              <span>{s.label}</span>
+                              <span className={`kpi-pill ${toneClass(s.tone)}`}>{s.statusLabel}</span>
+                            </div>
+                            <strong>
+                              {fmt(s.value, digits)} {s.unit}
+                            </strong>
+                            {band && span > 0 ? (
+                              <div className="apple-signal-gauge" aria-hidden="true">
+                                <div
+                                  className="apple-gauge-opt"
+                                  style={{
+                                    left: `${pct(band.optMin).toFixed(1)}%`,
+                                    width: `${Math.max(4, pct(band.optMax) - pct(band.optMin)).toFixed(1)}%`,
+                                  }}
+                                />
+                                <i className={`apple-gauge-pin ${toneClass(s.tone)}`} style={{ left: `${pct(s.value).toFixed(1)}%` }} />
+                              </div>
+                            ) : null}
+                            <small>{s.detail}</small>
+                          </div>
+                        );
+                      })}
+
+                      {rec?.heartRateLatest ? (
+                        <div className="apple-signal-card">
+                          <div className="apple-signal-top">
+                            <span>即时心率</span>
+                            <span className="kpi-pill is-sweet">
+                              {rec.heartRateLatest.spreadFromRhr != null
+                                ? `高于静息 +${fmt(rec.heartRateLatest.spreadFromRhr, 0)} bpm`
+                                : shortDate(rec.heartRateLatest.date)}
+                            </span>
+                          </div>
+                          <strong>{fmt(rec.heartRateLatest.value, 0)} bpm</strong>
+                          <small>最近采样 {shortDate(rec.heartRateLatest.date)}</small>
+                        </div>
+                      ) : null}
+
+                      {rec?.vo2MaxLatest ? (
+                        <div className="apple-signal-card">
+                          <div className="apple-signal-top">
+                            <span>最大摄氧量</span>
+                            <span className={`kpi-pill ${rec.vo2MaxLatest.value >= 45 ? "is-sweet" : "is-caution"}`}>
+                              {rec.vo2MaxLatest.value >= 45 ? "心肺耐力优良" : "心肺基础指标"}
+                            </span>
+                          </div>
+                          <strong>{fmt(rec.vo2MaxLatest.value, 1)}</strong>
+                          <small>mL/kg·min · {shortDate(rec.vo2MaxLatest.date)}</small>
+                        </div>
+                      ) : null}
+
+                      {appleDaily?.activityReport?.hasData ? (
+                        <div className="apple-signal-card">
+                          <div className="apple-signal-top">
+                            <span>日常活动与步行</span>
+                            <span
+                              className={`kpi-pill ${
+                                appleDaily.activityReport.latestSteps != null && appleDaily.activityReport.latestSteps < 300
+                                  ? "is-caution"
+                                  : "is-sweet"
+                              }`}
+                            >
+                              {String(appleDaily.activityReport.activityTierLabel ?? "").replace(/\s*\([^)]*\)/, "")}
+                            </span>
+                          </div>
+                          <strong>
+                            {[
+                              appleDaily.activityReport.latestSteps != null ? `${fmt(appleDaily.activityReport.latestSteps, 0)} 步` : null,
+                              appleDaily.activityReport.latestDistanceKm != null
+                                ? `${fmt(appleDaily.activityReport.latestDistanceKm, 2)} km`
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") || `${fmt(appleDaily.activityReport.latestActiveEnergyKcal, 0)} kcal`}
+                          </strong>
+                          <small>
+                            {[
+                              appleDaily.activityReport.avgSteps != null ? `均值 ${fmt(appleDaily.activityReport.avgSteps, 0)} 步` : null,
+                              appleDaily.activityReport.avgDistanceKm != null ? `${fmt(appleDaily.activityReport.avgDistanceKm, 2)} km` : null,
+                              appleDaily.activityReport.strideCm != null ? `步幅 ${fmt(appleDaily.activityReport.strideCm, 0)} cm` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") || "日常活动基线"}
+                          </small>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    <div className="chart-wrap">
+                      <div className="apple-chart-subbar">
+                        <span>关键体征趋势</span>
+                        <div className="segments">
+                          {(Object.entries(RECOVERY_CHART_METRICS) as Array<[RecoveryChartKey, { label: string }]>).map(
+                            ([k, v]) => (
+                              <button
+                                key={k}
+                                type="button"
+                                aria-pressed={recMetricKey === k}
+                                onClick={() => setAppleRecoveryChart(k)}
+                              >
+                                {v.label}
+                              </button>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                      <SimpleTrendChart points={recPoints} label={recSpec.label} unit={recSpec.unit} digits={recSpec.digits} />
+                    </div>
+
+                    {(() => {
+                      const corrInsights = (appleDaily?.correlations ?? []).map(formatHumanCorrelation);
+                      const combined = [...(rec?.insights ?? []), ...corrInsights];
+                      if (!combined.length) return null;
+                      return (
+                        <div className="sci-insight-box">
+                          <div className="sci-insight-head">
+                            <Icon name="heart" size={15} /> <span>自主神经与训练载荷建议</span>
+                          </div>
+                          <ul className="sci-insight-list">
+                            {combined.slice(0, 2).map((line, i) => (
+                              <li key={i}>{line}</li>
+                            ))}
+                          </ul>
+                          {combined.length > 2 ? (
+                            <details className="sci-sub-drawer is-compact">
+                              <summary className="sci-sub-summary">
+                                <span>更多生理规律与关联解读（+{combined.length - 2} 条）</span>
+                                <small>展开</small>
+                              </summary>
+                              <div className="sci-sub-body">
+                                <ul className="sci-insight-list">
+                                  {combined.slice(2).map((line, i) => (
+                                    <li key={i}>{line}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            </details>
+                          ) : null}
+                        </div>
+                      );
+                    })()}
+                  </>
+                ) : (
+                  <div className="empty">
+                    <strong>暂未收到心肺恢复样本</strong>
+                    <p>通过快捷指令同步静息心率、HRV、血氧或呼吸频率后展示准备度与心肺分析。</p>
+                  </div>
+                )}
+              </section>
+            ) : null}
+          </>
+        ) : null}
+
+        {/* STRENGTH & MUSCLE SECTION */}
+        {activeSection === "strength" ? (
+          <>
             <section className="panel analytics-panel panel-muscle-dose" id="panel-muscle-dose">
               <header className="panel-head">
                 <div>
@@ -1652,7 +1942,12 @@ export function AnalyticsView() {
                 <div className="ipf-level"><span className="dot is-danger" /><b>精英</b>≥63 分</div>
               </div>
             </section>
+          </>
+        ) : null}
 
+        {/* BODY & NUTRITION SECTION */}
+        {activeSection === "body" ? (
+          <>
             <section className="panel analytics-panel panel-nutrition-physio" id="panel-nutrition-physio">
               <header className="panel-head">
                 <div>
@@ -1794,227 +2089,9 @@ export function AnalyticsView() {
                 ) : null}
               </div>
             </section>
-          </>
-        ) : null}
 
-        {/* HEALTH SECTION */}
-        {activeSection === "health" ? (
-          <>
-            <section className="panel analytics-panel" id="panel-apple-recovery">
-              <header className="panel-head">
-                <div>
-                  <h2>身体恢复与日常活力</h2>
-                  <p>
-                    {rec?.hasData || appleDaily?.activityReport?.hasData
-                      ? rec?.baselineMode === "personal_baseline"
-                        ? "自动对照你最近几天的个人平时水平，看今天疲不疲劳"
-                        : rec?.hasData
-                          ? "当前先按健康标准区间评估（同步满 3 天后会自动对照个人平时习惯）"
-                          : "记录日常步数与步行状态"
-                      : "同步静息心率、HRV、血氧、呼吸频率和睡眠后每天帮你看恢复状态"}
-                  </p>
-                </div>
-                {rec?.readinessScore != null ? (
-                  <span className={`kpi-pill ${toneClass(rec.readinessTone)}`}>
-                    准备度 {rec.readinessScore} 分 · {rec.readinessLabel.split(" · ")[0]}
-                  </span>
-                ) : (
-                  <button type="button" className="quiet" onClick={() => openDeviceSetupModal()}>
-                    <Icon name="plus" size={14} /> 生成快捷指令
-                  </button>
-                )}
-              </header>
-
-              {rec?.hasData || appleDaily?.activityReport?.hasData ? (
-                <>
-                  {rec?.readinessScore != null ? (
-                    <div className={`apple-readiness-banner ${toneClass(rec.readinessTone)}`}>
-                      <div className="apple-readiness-score">
-                        <div className="apple-readiness-matrix">
-                          <MatrixText value={String(rec.readinessScore)} />
-                        </div>
-                        <div>
-                          <small>今日身体准备度 / 100</small>
-                          <strong>{rec.readinessLabel}</strong>
-                        </div>
-                      </div>
-                      <div className="apple-readiness-meter">
-                        <DotMeter
-                          ratio={rec.readinessScore / 100}
-                          count={10}
-                          label={`准备度 ${rec.readinessScore} / 100`}
-                        />
-                        <small>{rec.readinessScore}% 综合状态</small>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  <div className="apple-signal-grid">
-                    {(rec?.signals ?? []).map((s) => {
-                      const band = s.rangeBand;
-                      const digits =
-                        s.key === "hrvMs" ||
-                        s.key === "respiratoryRate" ||
-                        s.key === "bloodOxygenPct" ||
-                        s.key === "sleepMinutes"
-                          ? 1
-                          : 0;
-                      const span = band ? band.max - band.min : 0;
-                      const pct = (v: number) => (span > 0 && band ? Math.min(100, Math.max(0, ((v - band.min) / span) * 100)) : 0);
-                      return (
-                        <div key={s.key} className="apple-signal-card">
-                          <div className="apple-signal-top">
-                            <span>{s.label}</span>
-                            <span className={`kpi-pill ${toneClass(s.tone)}`}>{s.statusLabel}</span>
-                          </div>
-                          <strong>
-                            {fmt(s.value, digits)} {s.unit}
-                          </strong>
-                          {band && span > 0 ? (
-                            <div className="apple-signal-gauge" aria-hidden="true">
-                              <div
-                                className="apple-gauge-opt"
-                                style={{
-                                  left: `${pct(band.optMin).toFixed(1)}%`,
-                                  width: `${Math.max(4, pct(band.optMax) - pct(band.optMin)).toFixed(1)}%`,
-                                }}
-                              />
-                              <i className={`apple-gauge-pin ${toneClass(s.tone)}`} style={{ left: `${pct(s.value).toFixed(1)}%` }} />
-                            </div>
-                          ) : null}
-                          <small>{s.detail}</small>
-                        </div>
-                      );
-                    })}
-
-                    {rec?.heartRateLatest ? (
-                      <div className="apple-signal-card">
-                        <div className="apple-signal-top">
-                          <span>即时心率</span>
-                          <span className="kpi-pill is-sweet">
-                            {rec.heartRateLatest.spreadFromRhr != null
-                              ? `高于静息 +${fmt(rec.heartRateLatest.spreadFromRhr, 0)} bpm`
-                              : shortDate(rec.heartRateLatest.date)}
-                          </span>
-                        </div>
-                        <strong>{fmt(rec.heartRateLatest.value, 0)} bpm</strong>
-                        <small>最近采样 {shortDate(rec.heartRateLatest.date)}</small>
-                      </div>
-                    ) : null}
-
-                    {rec?.vo2MaxLatest ? (
-                      <div className="apple-signal-card">
-                        <div className="apple-signal-top">
-                          <span>最大摄氧量</span>
-                          <span className={`kpi-pill ${rec.vo2MaxLatest.value >= 45 ? "is-sweet" : "is-caution"}`}>
-                            {rec.vo2MaxLatest.value >= 45 ? "心肺耐力优良" : "心肺基础指标"}
-                          </span>
-                        </div>
-                        <strong>{fmt(rec.vo2MaxLatest.value, 1)}</strong>
-                        <small>mL/kg·min · {shortDate(rec.vo2MaxLatest.date)}</small>
-                      </div>
-                    ) : null}
-
-                    {appleDaily?.activityReport?.hasData ? (
-                      <div className="apple-signal-card">
-                        <div className="apple-signal-top">
-                          <span>日常活动与步行</span>
-                          <span
-                            className={`kpi-pill ${
-                              appleDaily.activityReport.latestSteps != null && appleDaily.activityReport.latestSteps < 300
-                                ? "is-caution"
-                                : "is-sweet"
-                            }`}
-                          >
-                            {String(appleDaily.activityReport.activityTierLabel ?? "").replace(/\s*\([^)]*\)/, "")}
-                          </span>
-                        </div>
-                        <strong>
-                          {[
-                            appleDaily.activityReport.latestSteps != null ? `${fmt(appleDaily.activityReport.latestSteps, 0)} 步` : null,
-                            appleDaily.activityReport.latestDistanceKm != null
-                              ? `${fmt(appleDaily.activityReport.latestDistanceKm, 2)} km`
-                              : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ") || `${fmt(appleDaily.activityReport.latestActiveEnergyKcal, 0)} kcal`}
-                        </strong>
-                        <small>
-                          {[
-                            appleDaily.activityReport.avgSteps != null ? `均值 ${fmt(appleDaily.activityReport.avgSteps, 0)} 步` : null,
-                            appleDaily.activityReport.avgDistanceKm != null ? `${fmt(appleDaily.activityReport.avgDistanceKm, 2)} km` : null,
-                            appleDaily.activityReport.strideCm != null ? `步幅 ${fmt(appleDaily.activityReport.strideCm, 0)} cm` : null,
-                          ]
-                            .filter(Boolean)
-                            .join(" · ") || "日常活动基线"}
-                        </small>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="chart-wrap">
-                    <div className="apple-chart-subbar">
-                      <span>关键体征趋势</span>
-                      <div className="segments">
-                        {(Object.entries(RECOVERY_CHART_METRICS) as Array<[RecoveryChartKey, { label: string }]>).map(
-                          ([k, v]) => (
-                            <button
-                              key={k}
-                              type="button"
-                              aria-pressed={recMetricKey === k}
-                              onClick={() => setAppleRecoveryChart(k)}
-                            >
-                              {v.label}
-                            </button>
-                          ),
-                        )}
-                      </div>
-                    </div>
-                    <SimpleTrendChart points={recPoints} label={recSpec.label} unit={recSpec.unit} digits={recSpec.digits} />
-                  </div>
-
-                  {(() => {
-                    const corrInsights = (appleDaily?.correlations ?? []).map(formatHumanCorrelation);
-                    const combined = [...(rec?.insights ?? []), ...corrInsights];
-                    if (!combined.length) return null;
-                    return (
-                      <div className="sci-insight-box">
-                        <div className="sci-insight-head">
-                          <Icon name="heart" size={15} /> <span>自主神经与训练载荷建议</span>
-                        </div>
-                        <ul className="sci-insight-list">
-                          {combined.slice(0, 2).map((line, i) => (
-                            <li key={i}>{line}</li>
-                          ))}
-                        </ul>
-                        {combined.length > 2 ? (
-                          <details className="sci-sub-drawer is-compact">
-                            <summary className="sci-sub-summary">
-                              <span>更多生理规律与关联解读（+{combined.length - 2} 条）</span>
-                              <small>展开</small>
-                            </summary>
-                            <div className="sci-sub-body">
-                              <ul className="sci-insight-list">
-                                {combined.slice(2).map((line, i) => (
-                                  <li key={i}>{line}</li>
-                                ))}
-                              </ul>
-                            </div>
-                          </details>
-                        ) : null}
-                      </div>
-                    );
-                  })()}
-                </>
-              ) : (
-                <div className="empty">
-                  <strong>暂未收到心肺恢复样本</strong>
-                  <p>通过快捷指令同步静息心率、HRV、血氧或呼吸频率后展示准备度与心肺分析。</p>
-                </div>
-              )}
-            </section>
-
-            <section className="panel analytics-panel" id="panel-apple-body">
+            {hasApple ? (
+              <section className="panel analytics-panel panel-apple-body" id="panel-apple-body">
               <header className="panel-head">
                 <div>
                   <h2>身体成分与热量建议</h2>
@@ -2219,6 +2296,7 @@ export function AnalyticsView() {
                 </div>
               )}
             </section>
+            ) : null}
           </>
         ) : null}
 
@@ -2250,7 +2328,27 @@ export function AnalyticsView() {
                 </div>
               </header>
 
-              {data.periodComparison ? (
+              <div className="report-cat-bar" role="group" aria-label="报表子类别">
+                {(
+                  [
+                    ["all", "全部报表"],
+                    ["training", "周期周报"],
+                    ["progress", "动作进步"],
+                    ...(hasAppleReportData ? ([["apple", "Apple 明细"]] as const) : []),
+                  ] as ReadonlyArray<readonly [ReportCategory, string]>
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={activeReportCategory === k}
+                    onClick={() => setReportCategory(k)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {showTrainingReport && data.periodComparison ? (
                 <div className="apple-report-subblock">
                   <div className="apple-report-subhead">
                     <strong>周期对照报表（近 {data.period} 天 vs 上一 {data.period} 天）</strong>
@@ -2307,7 +2405,7 @@ export function AnalyticsView() {
                 </div>
               ) : null}
 
-              {data.weeklyBreakdown && data.weeklyBreakdown.length > 0 ? (
+              {showTrainingReport && data.weeklyBreakdown && data.weeklyBreakdown.length > 0 ? (
                 <div className="apple-report-subblock">
                   <div className="apple-report-subhead">
                     <strong>按周训练节奏与负荷分解（共 {data.weeklyBreakdown.length} 周）</strong>
@@ -2355,7 +2453,7 @@ export function AnalyticsView() {
                 </div>
               ) : null}
 
-              {data.exerciseProgress && data.exerciseProgress.length > 0 ? (
+              {showProgressReport && data.exerciseProgress && data.exerciseProgress.length > 0 ? (
                 <div className="apple-report-subblock">
                   <div className="apple-report-subhead">
                     <strong>核心动作进步追踪榜（Top {data.exerciseProgress.length}）</strong>
@@ -2410,7 +2508,7 @@ export function AnalyticsView() {
                 </div>
               ) : null}
 
-              {entriesDesc.length > 0 ? (
+              {showAppleReport && entriesDesc.length > 0 ? (
                 <div className="apple-report-subblock">
                   <div className="apple-report-subhead">
                     <strong>每日体征与体成分流水明细（共 {entriesDesc.length} 天）</strong>
@@ -2535,7 +2633,7 @@ export function AnalyticsView() {
                 </div>
               ) : null}
 
-              {hasApple && (appleWorkouts?.totalCount ?? 0) > 0 ? (
+              {showAppleReport && hasApple && (appleWorkouts?.totalCount ?? 0) > 0 ? (
                 <div className="apple-report-subblock">
                   <div className="apple-report-subhead">
                     <strong>Apple Watch 运动统计（{appleWorkoutFilter === "device" ? "仅真机" : `近 ${data.period} 天`}）</strong>
@@ -2753,7 +2851,7 @@ export function AnalyticsView() {
                 </div>
               ) : null}
 
-              {appleDaily?.weeklyComparison || appleDaily?.coverageSummary ? (
+              {showAppleReport && (appleDaily?.weeklyComparison || appleDaily?.coverageSummary) ? (
                 <details className="sci-sub-drawer">
                   <summary className="sci-sub-summary">
                     <span>
@@ -2836,6 +2934,13 @@ export function AnalyticsView() {
                     ) : null}
                   </div>
                 </details>
+              ) : null}
+
+              {!hasVisibleReportBlock ? (
+                <div className="empty">
+                  <strong>当前区间暂无该类别报表记录</strong>
+                  <p>可切换「全部报表」、调整上方周期范围，或先完成训练与体征同步。</p>
+                </div>
               ) : null}
             </section>
 

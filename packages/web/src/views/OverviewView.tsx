@@ -60,6 +60,7 @@ export function OverviewView() {
   const [metric, setMetric] = useState<LoadMetricKey>("volume");
   const [atlasMode, setAtlasMode] = useState<"volume" | "recovery" | "recency">("volume");
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleKey | "">("");
+  const [statsCategory, setStatsCategory] = useState<"all" | "load" | "muscle" | "weight">("all");
   const [weekDate, setWeekDate] = useState<string>("");
 
   interface OverviewSnapshot {
@@ -322,6 +323,15 @@ export function OverviewView() {
   const primaryPanels = visiblePanels
     ? visiblePanels.filter((p) => p === "load" || p === "muscle" || p === "weight")
     : ["load", "muscle", "weight"];
+  const activeStatsCategory =
+    statsCategory !== "all" && !primaryPanels.includes(statsCategory) ? "all" : statsCategory;
+  const renderedPanels =
+    activeStatsCategory === "all" ? primaryPanels : primaryPanels.filter((p) => p === activeStatsCategory);
+  const overviewPanelLabels: Record<string, string> = {
+    load: "训练趋势",
+    muscle: "肌群分布",
+    weight: "体重趋势",
+  };
 
   return (
     <>
@@ -472,7 +482,12 @@ export function OverviewView() {
 
       <div className="section-bar stats-header">
         <div>
-          <h2>训练表现</h2>
+          <div className="stats-header-title">
+            <h2>训练表现</h2>
+            <button type="button" className="quiet stats-analytics-link" onClick={() => navigate("analytics")}>
+              深度分析 <Icon name="chevron" size={14} />
+            </button>
+          </div>
           <p>
             {shortDate(stats.from)} – {shortDate(stats.through)}
           </p>
@@ -561,47 +576,70 @@ export function OverviewView() {
       </div>
 
       {primaryPanels.length ? (
-        <div className="dashboard">
-          {primaryPanels.map((panelId) => {
-            if (panelId === "load") {
-              return <LoadChart key="load" data={stats} metric={metric} onMetricChange={setMetric} />;
-            }
-            if (panelId === "muscle") {
+        <>
+          {primaryPanels.length > 1 ? (
+            <div className="overview-stats-cats" role="group" aria-label="统计图表类别筛选">
+              <button
+                type="button"
+                aria-pressed={activeStatsCategory === "all"}
+                onClick={() => setStatsCategory("all")}
+              >
+                全部统计
+              </button>
+              {primaryPanels.map((panelId) => (
+                <button
+                  key={panelId}
+                  type="button"
+                  aria-pressed={activeStatsCategory === panelId}
+                  onClick={() => setStatsCategory(panelId as "load" | "muscle" | "weight")}
+                >
+                  {overviewPanelLabels[panelId] ?? panelId}
+                </button>
+              ))}
+            </div>
+          ) : null}
+          <div className={`dashboard${renderedPanels.length === 1 ? " is-single-panel" : ""}`}>
+            {renderedPanels.map((panelId) => {
+              if (panelId === "load") {
+                return <LoadChart key="load" data={stats} metric={metric} onMetricChange={setMetric} />;
+              }
+              if (panelId === "muscle") {
+                return (
+                  <MuscleDistributionCard
+                    key="muscle"
+                    data={stats}
+                    mode={atlasMode}
+                    selectedMuscle={selectedMuscle}
+                    onModeChange={setAtlasMode}
+                    onSelectMuscle={setSelectedMuscle}
+                  />
+                );
+              }
               return (
-                <MuscleDistributionCard
-                  key="muscle"
-                  data={stats}
-                  mode={atlasMode}
-                  selectedMuscle={selectedMuscle}
-                  onModeChange={setAtlasMode}
-                  onSelectMuscle={setSelectedMuscle}
-                />
+                <section key="weight" className="panel panel-weight" id="panel-weight">
+                  <header className="panel-head">
+                    <div>
+                      <h2>体重趋势</h2>
+                      <p>
+                        {shortDate(stats.from ?? since30)} – {shortDate(stats.through ?? todayKey)}
+                      </p>
+                    </div>
+                    <button type="button" className="quiet" onClick={() => navigate("weight")}>
+                      体重档案 <Icon name="chevron" size={14} />
+                    </button>
+                  </header>
+                  <WeightChart
+                    rows={weightSeries}
+                    from={stats.from}
+                    to={stats.through}
+                    goal={stats.goals?.targetWeight ?? null}
+                    showAverage={weightSeries.length >= 2}
+                  />
+                </section>
               );
-            }
-            return (
-              <section key="weight" className="panel panel-weight" id="panel-weight">
-                <header className="panel-head">
-                  <div>
-                    <h2>体重趋势</h2>
-                    <p>
-                      {shortDate(stats.from ?? since30)} – {shortDate(stats.through ?? todayKey)}
-                    </p>
-                  </div>
-                  <button type="button" className="quiet" onClick={() => navigate("weight")}>
-                    体重档案 <Icon name="chevron" size={14} />
-                  </button>
-                </header>
-                <WeightChart
-                  rows={weightSeries}
-                  from={stats.from}
-                  to={stats.through}
-                  goal={stats.goals?.targetWeight ?? null}
-                  showAverage={weightSeries.length >= 2}
-                />
-              </section>
-            );
-          })}
-        </div>
+            })}
+          </div>
+        </>
       ) : (
         <section className="panel" style={{ marginBottom: 14 }}>
           <div className="empty">

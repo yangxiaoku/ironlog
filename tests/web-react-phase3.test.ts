@@ -404,3 +404,29 @@ test("packages/web/src/styles/ironlog.css defines cohesive Settings accordions, 
   assert.match(css, /\.workout-apple-chip\s*\{[\s\S]*?display:\s*inline-flex;/);
   assert.match(css, /\.analytics-subnav\s+\.segments\s*\{[\s\S]*?grid-auto-flow:\s*column;/);
 });
+
+test("AnalyticsView and OverviewView organize statistics into 4 clear categories with balanced grids", () => {
+  const analytics = readFileSync(resolve(process.cwd(), "packages/web/src/views/AnalyticsView.tsx"), "utf8");
+  const overview = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(analytics, /type AnalyticsSection = "load" \| "strength" \| "body" \| "reports";/);
+  assert.match(analytics, /type ReportCategory = "all" \| "training" \| "progress" \| "apple";/);
+  assert.match(analytics, /className=\{`kpi-card kpi-card-btn/);
+  for (const label of ["负荷恢复", "肌群力量", "体态饮食", "周期报表"]) {
+    assert.ok(analytics.includes(label), `expected analytics category ${label}`);
+  }
+  const bodyIdx = analytics.indexOf('{activeSection === "body" ? (');
+  const reportIdx = analytics.indexOf('{activeSection === "reports" ? (');
+  const physioIdx = analytics.indexOf('id="panel-nutrition-physio"');
+  assert.ok(bodyIdx > 0 && reportIdx > bodyIdx && physioIdx > bodyIdx && physioIdx < reportIdx);
+
+  assert.match(overview, /className="overview-stats-cats"/);
+  assert.match(overview, /is-single-panel/);
+  assert.match(overview, /navigate\("analytics"\)/);
+
+  assert.match(css, /\.kpi-card-btn\s*\{/);
+  assert.match(css, /\.report-cat-bar,\s*[\r\n]+\.overview-stats-cats\s*\{/);
+  assert.match(css, /\.analytics-deck > \.analytics-panel:only-child,/);
+  assert.match(css, /\.dashboard\.is-single-panel\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
+});

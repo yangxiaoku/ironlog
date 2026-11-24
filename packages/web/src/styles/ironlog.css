@@ -969,3 +969,115 @@ dialog.workout-dialog .workout-inline-add-btn {
     scroll-snap-align: start;
   }
 }
+
+/* Statistics category reorganization: KPI category jump buttons, orphan-free deck spans & category filter strips */
+.kpi-card-btn {
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+  position: relative;
+  transition: background-color 140ms ease;
+}
+
+.kpi-card-btn:hover {
+  background: var(--inset);
+}
+
+.kpi-card-btn:focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: -2px;
+}
+
+.kpi-card-btn.is-selected::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--red);
+}
+
+.analytics-deck > .analytics-panel:only-child,
+.analytics-deck > .panel-muscle-dose,
+.analytics-deck > .panel-apple-recovery,
+.analytics-deck > .panel-bibliography {
+  grid-column: 1 / -1;
+}
+
+.report-cat-bar,
+.overview-stats-cats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  padding-bottom: 2px;
+}
+
+.report-cat-bar::-webkit-scrollbar,
+.overview-stats-cats::-webkit-scrollbar {
+  display: none;
+}
+
+.report-cat-bar {
+  margin: 2px 0 14px;
+}
+
+.overview-stats-cats {
+  margin: -4px 0 12px;
+}
+
+.report-cat-bar button,
+.overview-stats-cats button {
+  flex: none;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+  scroll-snap-align: start;
+}
+
+.report-cat-bar button[aria-pressed="true"],
+.overview-stats-cats button[aria-pressed="true"] {
+  background: var(--white-button);
+  border-color: var(--white-button);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.report-cat-bar button:hover:not([aria-pressed="true"]),
+.overview-stats-cats button:hover:not([aria-pressed="true"]) {
+  color: var(--ink);
+  border-color: var(--soft);
+}
+
+.stats-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.stats-analytics-link {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 12px;
+  gap: 2px;
+}
+
+.dashboard.is-single-panel {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+@media (max-width: 630px) {
+  .analytics-subnav .segments button {
+    padding-inline: 4px;
+    font-size: 12px;
+  }
+}
