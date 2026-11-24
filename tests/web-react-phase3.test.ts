@@ -390,3 +390,12 @@ test("packages/web/src/styles/ironlog.css fixes mobile MoreSheet horizontal over
   );
   assert.match(css, /dialog\.mobile-sheet\s*\{[\s\S]*?max-height:\s*88dvh;[\s\S]*?overflow-x:\s*hidden;/);
 });
+
+test("packages/web/src/styles/ironlog.css defines cohesive Settings accordions, 2x2 grids, segments, and scoped mobile headers", () => {
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+  assert.match(css, /\.settings-content\s+\.segments\s*\{[\s\S]*?display:\s*grid;/);
+  assert.match(css, /\.settings-accordion\s*\{[\s\S]*?border-radius:\s*12px;/);
+  assert.match(css, /\.settings-quick-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(css, /\.settings-backup-grid\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\);/);
+  assert.match(css, /\.panel-head\s+\.heading-actions\s*\{[\s\S]*?width:\s*auto;[\s\S]*?display:\s*inline-flex;/);
+});

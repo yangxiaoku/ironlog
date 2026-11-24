@@ -20,7 +20,6 @@ import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   openAiWorkoutModal,
-  openCsvImportModal,
   openWorkoutEditor,
   openWorkoutReport,
   resumeLocalWorkoutDraft,
@@ -165,9 +164,6 @@ export function WorkoutView() {
         view="workout"
         controls={
           <div className="heading-actions">
-            <button type="button" className="secondary-button" onClick={() => openCsvImportModal()}>
-              <Icon name="upload" size={15} /> 导入 CSV
-            </button>
             <button type="button" className="secondary-button" onClick={() => openAiWorkoutModal()}>
               <Icon name="bolt" size={16} /> AI 记训练
             </button>

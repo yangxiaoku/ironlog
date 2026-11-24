@@ -647,3 +647,187 @@ dialog.workout-dialog .workout-inline-add-btn {
     gap: 4px;
   }
 }
+
+/* Unified Settings tabs, progressive disclosure accordions & mobile header polish */
+.settings-content .panel-head {
+  margin-bottom: 14px;
+}
+
+.settings-content .segments {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+  border-radius: 12px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.settings-content .segments button {
+  min-width: 0;
+  width: 100%;
+  min-height: 34px;
+  border-radius: 9px;
+  padding: 0 8px;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-accordion {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--inset);
+  overflow: hidden;
+}
+
+.settings-accordion > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 46px;
+  padding: 10px 14px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--ink);
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.settings-accordion > summary::-webkit-details-marker {
+  display: none;
+}
+
+.settings-accordion-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 58%;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.settings-accordion-meta > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-accordion-meta svg {
+  flex: none;
+  transition: transform 0.16s ease;
+}
+
+.settings-accordion[open] > summary .settings-accordion-meta svg {
+  transform: rotate(90deg);
+}
+
+.settings-accordion-body {
+  display: grid;
+  gap: 12px;
+  padding: 12px 14px 14px;
+  border-top: 1px solid var(--rule);
+}
+
+.settings-accordion-body :is(.input-unit, .input-group, input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  background-color: var(--surface);
+}
+
+.settings-accordion-body .input-group input {
+  background-color: transparent;
+}
+
+.settings-hero-cta {
+  width: 100%;
+  min-height: 44px;
+  justify-content: center;
+}
+
+.settings-quick-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-quick-grid button {
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 10px;
+  font-size: 13px;
+  justify-content: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.settings-account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  background: var(--inset);
+}
+
+.settings-backup-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.settings-backup-grid button {
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  justify-content: center;
+}
+
+@media (max-width: 630px) {
+  .panel-head .heading-actions {
+    width: auto;
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .panel-head .heading-actions button {
+    width: auto;
+    min-height: 32px;
+    padding: 0 8px;
+    font-size: 12px;
+  }
+
+  .top-actions {
+    gap: 6px;
+  }
+
+  .top-actions :is(.cmd-trigger-pill, .quick-record-pill, .live-resume-pill, .top-theme) {
+    min-height: 34px;
+  }
+
+  .settings-sections .segments {
+    padding: 4px 6px;
+    gap: 6px;
+  }
+
+  .settings-sections .segments button {
+    min-height: 34px;
+    padding-inline: 12px;
+  }
+
+  .settings-backup-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .settings-backup-grid > :last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
+}

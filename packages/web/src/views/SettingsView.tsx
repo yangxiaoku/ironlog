@@ -702,52 +702,63 @@ export function SettingsView() {
                   </div>
                 </section>
 
-                <section className="form-section">
-                  <h3 className="form-section-title">我的训练器械</h3>
-                  <p className="muted panel-order-hint">保存后，训练编辑器的「我的器械」筛选会自动优先展示匹配的动作。</p>
-                  <div className="equip-presets">
-                    <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.gym))}>
-                      商业健身房
-                    </button>
-                    <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.home))}>
-                      居家哑铃
-                    </button>
-                    <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.bodyweight))}>
-                      徒手街头
-                    </button>
+                <details className="settings-accordion">
+                  <summary>
+                    <span>我的训练器械</span>
+                    <span className="settings-accordion-meta">
+                      已选 {equipment.size} 项
+                      <Icon name="chevron" size={14} />
+                    </span>
+                  </summary>
+                  <div className="settings-accordion-body">
+                    <small className="muted">保存后，训练编辑器的「我的器械」筛选会优先展示匹配的动作。</small>
+                    <div className="equip-presets">
+                      <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.gym))}>
+                        商业健身房
+                      </button>
+                      <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.home))}>
+                        居家哑铃
+                      </button>
+                      <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.bodyweight))}>
+                        徒手街头
+                      </button>
+                    </div>
+                    <div className="equip-check-grid">
+                      {ALL_EQUIP_KEYS.map((eqKey) => (
+                        <label key={eqKey} className="equip-check-pill">
+                          <input
+                            type="checkbox"
+                            checked={equipment.has(eqKey)}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              setEquipment((prev) => {
+                                const next = new Set(prev);
+                                if (checked) next.add(eqKey);
+                                else next.delete(eqKey);
+                                return next;
+                              });
+                            }}
+                          />
+                          <span>{EQUIPMENT[eqKey] ?? eqKey}</span>
+                        </label>
+                      ))}
+                    </div>
                   </div>
-                  <div className="equip-check-grid">
-                    {ALL_EQUIP_KEYS.map((eqKey) => (
-                      <label key={eqKey} className="equip-check-pill">
-                        <input
-                          type="checkbox"
-                          checked={equipment.has(eqKey)}
-                          onChange={(e) => {
-                            const checked = e.target.checked;
-                            setEquipment((prev) => {
-                              const next = new Set(prev);
-                              if (checked) next.add(eqKey);
-                              else next.delete(eqKey);
-                              return next;
-                            });
-                          }}
-                        />
-                        <span>{EQUIPMENT[eqKey] ?? eqKey}</span>
-                      </label>
-                    ))}
-                  </div>
-                </section>
+                </details>
 
                 <details
-                  className="energy-details"
+                  className="settings-accordion"
                   open={energyDetailsOpen}
                   onToggle={(e) => setEnergyDetailsOpen(e.currentTarget.open)}
                 >
                   <summary>
                     <span>能量估算资料</span>
-                    <Icon name="chevron" size={14} />
+                    <span className="settings-accordion-meta">
+                      {energyEnabled ? "已开启" : "未开启"}
+                      <Icon name="chevron" size={14} />
+                    </span>
                   </summary>
-                  <div className="details-body">
+                  <div className="settings-accordion-body">
                     <label className="toggle-row">
                       <input
                         className="switch"
@@ -846,9 +857,9 @@ export function SettingsView() {
             <section className="panel settings-workout-prefs-panel">
               <header className="panel-head">
                 <div>
-                  <h2>训练体验与器械规格（OpenGym 风格）</h2>
+                  <h2>训练记录与器械偏好</h2>
                   <p className="muted panel-order-hint">
-                    所有改动即时生效并自动云端同步，跨设备登录后自动生效，也可在训练中随时调整。
+                    改动即时生效并云端同步，跨设备登录自动沿用，也可在训中随时修改。
                   </p>
                 </div>
               </header>
@@ -1014,143 +1025,132 @@ export function SettingsView() {
                       </div>
                     </div>
                   ) : null}
-                  <div className="fields">
-                    <div className="field">
-                      <span>热身组休息时长</span>
-                      <div className="segments">
-                        {WARMUP_REST_PRESETS.map((sec) => (
-                          <button
-                            key={sec}
-                            type="button"
-                            aria-pressed={workoutPrefs.warmupRestSeconds === sec}
-                            onClick={() => updateWorkoutPref("warmupRestSeconds", sec)}
-                          >
-                            {sec === 0 ? "免休" : `${sec}s`}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="field">
-                      <span>休息计时增减步长</span>
-                      <div className="segments">
-                        {REST_STEP_PRESETS.map((stepSec) => (
-                          <button
-                            key={stepSec}
-                            type="button"
-                            aria-pressed={workoutPrefs.restAdjustStep === stepSec}
-                            onClick={() => updateWorkoutPref("restAdjustStep", stepSec)}
-                          >
-                            ±{stepSec}s
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
                 </section>
 
-                <section className="form-section">
-                  <h3 className="form-section-title">递增步长、杠铃与热身坡度</h3>
-                  <div className="field">
-                    <span>重量递增步长</span>
-                    <div className="segments">
-                      {WEIGHT_STEP_PRESETS.map((step) => (
-                        <button
-                          key={step}
-                          type="button"
-                          aria-pressed={workoutPrefs.weightStepKg === step}
-                          onClick={() => updateWorkoutPref("weightStepKg", step, `默认递增步长已设为 ±${step}kg`)}
-                        >
-                          ±{step}kg
-                        </button>
-                      ))}
+                <details className="settings-accordion">
+                  <summary>
+                    <span>热身时长、递增步长与杠铃配片</span>
+                    <span className="settings-accordion-meta">
+                      {workoutPrefs.barWeight}kg杆 · ±{workoutPrefs.weightStepKg}kg ·{" "}
+                      {WARMUP_SCHEMES.find((s) => s.id === workoutPrefs.warmupScheme)?.label ?? ""}
+                      <Icon name="chevron" size={14} />
+                    </span>
+                  </summary>
+                  <div className="settings-accordion-body">
+                    <div className="fields">
+                      <div className="field">
+                        <span>热身组休息时长</span>
+                        <div className="segments">
+                          {WARMUP_REST_PRESETS.map((sec) => (
+                            <button
+                              key={sec}
+                              type="button"
+                              aria-pressed={workoutPrefs.warmupRestSeconds === sec}
+                              onClick={() => updateWorkoutPref("warmupRestSeconds", sec)}
+                            >
+                              {sec === 0 ? "免休" : `${sec}s`}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="field">
+                        <span>休息计时增减步长</span>
+                        <div className="segments">
+                          {REST_STEP_PRESETS.map((stepSec) => (
+                            <button
+                              key={stepSec}
+                              type="button"
+                              aria-pressed={workoutPrefs.restAdjustStep === stepSec}
+                              onClick={() => updateWorkoutPref("restAdjustStep", stepSec)}
+                            >
+                              ±{stepSec}s
+                            </button>
+                          ))}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="field">
-                    <span>杠铃空杆规格</span>
-                    <div className="segments">
-                      {BAR_PRESETS.map(([bw, lbl]) => (
-                        <button
-                          key={bw}
-                          type="button"
-                          aria-pressed={workoutPrefs.barWeight === bw}
-                          onClick={() => updateWorkoutPref("barWeight", bw, `杠铃空杆已设为 ${lbl}`)}
-                        >
-                          {lbl}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="field">
-                    <span>我的可用杠铃片（每侧自动配片）</span>
-                    <div className="plate-chip-grid">
-                      {ALL_PLATES.map((plate) => {
-                        const active = workoutPrefs.enabledPlates.includes(plate);
-                        return (
+                    <div className="field">
+                      <span>重量递增步长</span>
+                      <div className="segments">
+                        {WEIGHT_STEP_PRESETS.map((step) => (
                           <button
-                            key={plate}
+                            key={step}
                             type="button"
-                            className="plate-chip"
-                            aria-pressed={active}
-                            onClick={() => {
-                              if (active) {
-                                if (workoutPrefs.enabledPlates.length <= 1) {
-                                  notify("至少保留一种杠铃片规格");
-                                  return;
+                            aria-pressed={workoutPrefs.weightStepKg === step}
+                            onClick={() => updateWorkoutPref("weightStepKg", step, `默认递增步长已设为 ±${step}kg`)}
+                          >
+                            ±{step}kg
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>杠铃空杆规格</span>
+                      <div className="segments">
+                        {BAR_PRESETS.map(([bw, lbl]) => (
+                          <button
+                            key={bw}
+                            type="button"
+                            aria-pressed={workoutPrefs.barWeight === bw}
+                            onClick={() => updateWorkoutPref("barWeight", bw, `杠铃空杆已设为 ${lbl}`)}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>可用杠铃片（每侧自动配片）</span>
+                      <div className="plate-chip-grid">
+                        {ALL_PLATES.map((plate) => {
+                          const active = workoutPrefs.enabledPlates.includes(plate);
+                          return (
+                            <button
+                              key={plate}
+                              type="button"
+                              className="plate-chip"
+                              aria-pressed={active}
+                              onClick={() => {
+                                if (active) {
+                                  if (workoutPrefs.enabledPlates.length <= 1) {
+                                    notify("至少保留一种杠铃片规格");
+                                    return;
+                                  }
+                                  updateWorkoutPref(
+                                    "enabledPlates",
+                                    workoutPrefs.enabledPlates.filter((p) => p !== plate),
+                                  );
+                                } else {
+                                  updateWorkoutPref("enabledPlates", [...workoutPrefs.enabledPlates, plate]);
                                 }
-                                updateWorkoutPref(
-                                  "enabledPlates",
-                                  workoutPrefs.enabledPlates.filter((p) => p !== plate),
-                                );
-                              } else {
-                                updateWorkoutPref("enabledPlates", [...workoutPrefs.enabledPlates, plate]);
-                              }
-                            }}
+                              }}
+                            >
+                              {plate}kg
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>热身组坡度方案</span>
+                      <div className="segments">
+                        {WARMUP_SCHEMES.map((item) => (
+                          <button
+                            key={item.id}
+                            type="button"
+                            aria-pressed={workoutPrefs.warmupScheme === item.id}
+                            onClick={() => updateWorkoutPref("warmupScheme", item.id, `热身方案已切换为「${item.label}」`)}
                           >
-                            {plate}kg
+                            {item.label}
                           </button>
-                        );
-                      })}
+                        ))}
+                      </div>
+                      <small className="muted">
+                        当前梯度：{WARMUP_SCHEMES.find((s) => s.id === workoutPrefs.warmupScheme)?.desc ?? ""}
+                      </small>
                     </div>
                   </div>
-                  <div className="field">
-                    <span>热身组坡度方案</span>
-                    <div className="segments">
-                      {WARMUP_SCHEMES.map((item) => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          aria-pressed={workoutPrefs.warmupScheme === item.id}
-                          onClick={() => updateWorkoutPref("warmupScheme", item.id, `热身方案已切换为「${item.label}」`)}
-                        >
-                          {item.label}
-                        </button>
-                      ))}
-                    </div>
-                    <small className="muted">
-                      当前梯度：{WARMUP_SCHEMES.find((s) => s.id === workoutPrefs.warmupScheme)?.desc ?? ""}
-                    </small>
-                  </div>
-                </section>
-
-                <section className="form-section">
-                  <h3 className="form-section-title">Apple 健康与智能跳转</h3>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: 12,
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <small className="muted">
-                      已整合至「Apple 健康」标签页，一站配置全能快捷指令、力量/有氧智能跳转与每日健康上传。
-                    </small>
-                    <button type="button" className="secondary-button" onClick={() => setSettingsTab("devices")}>
-                      前往配置
-                    </button>
-                  </div>
-                </section>
+                </details>
               </div>
             </section>
             </>
@@ -1166,20 +1166,20 @@ export function SettingsView() {
                   <div className="apple-optin-banner">
                     <strong>暂未对接 Apple 健康</strong>
                     <small>
-                      没有 Apple Watch 也能完整使用铁记，首页、数据分析、日历与徽章中的苹果健康模块已自动为你隐藏。日后如需同步，在下方导入数据或生成快捷指令即可自动开启。
+                      没有 Apple Watch 也能完整使用铁记，首页、数据分析、日历与徽章中的苹果健康模块已自动为你隐藏。日后如需同步，在下方导出快捷指令或导入数据即可自动开启。
                     </small>
                   </div>
                 ) : null}
 
                 <section className="form-section">
-                  <h3>Apple 健康智能联动与快捷指令（全能合一）</h3>
+                  <h3 className="form-section-title">全能智能联动</h3>
                   <p className="muted">
-                    1 个全能快捷指令整合「开始打卡与跳转健身 → 完练自动回传心率热量 → 每日全量健康同步」；导入时弹窗填入地址和令牌，可用 <code>sign.shortcuty.app</code> 网页签名或 Mac 本地签名。
+                    1 个全能快捷指令整合开练打卡与跳转健身、完练回传心率热量与每日健康上传，可用网页在线签名免 Mac 导入。
                   </p>
-                  <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
-                    <button type="button" className="primary-button" onClick={() => openDeviceSetupModal()}>
-                      <Icon name="plus" /> 导出全能快捷指令（1 个文件）
-                    </button>
+                  <button type="button" className="primary-button settings-hero-cta" onClick={() => openDeviceSetupModal()}>
+                    <Icon name="plus" size={16} /> 导出全能快捷指令（1 个文件）
+                  </button>
+                  <div className="settings-quick-grid">
                     <button
                       type="button"
                       className="secondary-button"
@@ -1221,8 +1221,11 @@ export function SettingsView() {
                       <Icon name="refresh" size={14} /> 同步今日健康
                     </button>
                   </div>
+                </section>
 
-                  <div className="session-options" style={{ marginTop: 12 }}>
+                <section className="form-section">
+                  <h3 className="form-section-title">自动跳转行为</h3>
+                  <div className="session-options">
                     <label className="switch-chip">
                       <span>新建今日训练时自动跳转 Apple 健身</span>
                       <input
@@ -1237,48 +1240,12 @@ export function SettingsView() {
                     仅在 iPhone / iPad 上新建当日训练时生效，补录历史或恢复草稿不会触发。
                   </small>
 
-                  <div className="field" style={{ marginTop: 10 }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                      <span>全能快捷指令名称</span>
-                      <button
-                        type="button"
-                        className="quiet"
-                        onClick={() =>
-                          triggerAppleHubAction("daily", {
-                            prefs: {
-                              ...workoutPrefs,
-                              appleHubShortcutName: hubShortcutInput.trim() || DEFAULT_APPLE_HUB_SHORTCUT,
-                            },
-                            notify,
-                          })
-                        }
-                      >
-                        测试唤起同步
-                      </button>
-                    </div>
-                    <input
-                      value={hubShortcutInput}
-                      maxLength={80}
-                      placeholder={DEFAULT_APPLE_HUB_SHORTCUT}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setHubShortcutInput(val);
-                        if (val.trim()) updateWorkoutPref("appleHubShortcutName", val.trim().slice(0, 80));
-                      }}
-                      onBlur={() => {
-                        const normalized = hubShortcutInput.trim().slice(0, 80) || DEFAULT_APPLE_HUB_SHORTCUT;
-                        setHubShortcutInput(normalized);
-                        updateWorkoutPref("appleHubShortcutName", normalized);
-                      }}
-                    />
-                  </div>
-
                   <div className="field">
-                    <span>力量训练跳转方式</span>
+                    <span>力量训练</span>
                     <div className="segments">
                       {(
                         [
-                          ["hub", "全能联动(推荐)"],
+                          ["hub", "全能联动"],
                           ["shortcut", "独立快捷指令"],
                           ["fitness_app", "健身 App"],
                           ["off", "关闭"],
@@ -1334,7 +1301,7 @@ export function SettingsView() {
                   ) : null}
 
                   <div className="field">
-                    <span>有氧运动跳转方式</span>
+                    <span>有氧运动</span>
                     <div className="segments">
                       {(
                         [
@@ -1393,30 +1360,65 @@ export function SettingsView() {
                     </div>
                   ) : null}
 
-                  <details className="overview-more" style={{ marginTop: 8 }}>
+                  <details className="settings-accordion">
                     <summary>
-                      <span>
-                        <strong>全能快捷指令导入与 Watch 传统力量配置说明</strong>
-                        <small>支持 sign.shortcuty.app 网页在线签名（免 Mac），或改用独立 Watch 启动快捷指令</small>
+                      <span>快捷指令名称与导入说明</span>
+                      <span className="settings-accordion-meta">
+                        <span>{hubShortcutInput.trim() || DEFAULT_APPLE_HUB_SHORTCUT}</span>
+                        <Icon name="chevron" size={14} />
                       </span>
-                      <Icon name="chevron" size={16} />
                     </summary>
-                    <div className="overview-more-body" style={{ display: "grid", gap: 8 }}>
+                    <div className="settings-accordion-body">
+                      <div className="field">
+                        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                          <span>全能快捷指令名称</span>
+                          <button
+                            type="button"
+                            className="quiet"
+                            onClick={() =>
+                              triggerAppleHubAction("daily", {
+                                prefs: {
+                                  ...workoutPrefs,
+                                  appleHubShortcutName: hubShortcutInput.trim() || DEFAULT_APPLE_HUB_SHORTCUT,
+                                },
+                                notify,
+                              })
+                            }
+                          >
+                            测试唤起同步
+                          </button>
+                        </div>
+                        <input
+                          value={hubShortcutInput}
+                          maxLength={80}
+                          placeholder={DEFAULT_APPLE_HUB_SHORTCUT}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setHubShortcutInput(val);
+                            if (val.trim()) updateWorkoutPref("appleHubShortcutName", val.trim().slice(0, 80));
+                          }}
+                          onBlur={() => {
+                            const normalized = hubShortcutInput.trim().slice(0, 80) || DEFAULT_APPLE_HUB_SHORTCUT;
+                            setHubShortcutInput(normalized);
+                            updateWorkoutPref("appleHubShortcutName", normalized);
+                          }}
+                        />
+                      </div>
                       <ol style={{ margin: 0, paddingLeft: 18, display: "grid", gap: 4, fontSize: 13 }}>
                         <li>
-                          点击上方 <b>「导出全能快捷指令（1 个文件）」</b> → 选「通用安全模板」下载 `.shortcut` → 用{" "}
+                          点击上方 <b>「导出全能快捷指令（1 个文件）」</b> → 选「通用安全模板」下载 <code>.shortcut</code> → 用{" "}
                           <a href="https://sign.shortcuty.app" target="_blank" rel="noopener noreferrer">
                             sign.shortcuty.app
                           </a>{" "}
                           或 Mac 签名导入 iPhone，按弹窗粘贴地址与令牌即可完成绑定。
                         </li>
                         <li>
-                          如希望在点击力量训练时直接跳过菜单启动 Apple Watch「传统力量训练」：可在全能快捷指令 <code>strength</code> 分支末尾将「打开 URL」替换为{" "}
-                          <strong>「开始体能训练 → 传统力量训练」</strong>，或切到「独立快捷指令」并点下方自行新建一条名为{" "}
+                          如希望在点击力量训练时直接跳过「健身」App 启动 Apple Watch「传统力量训练」：可在全能快捷指令{" "}
+                          <code>strength</code> 分支末尾将「打开 URL」替换为 <strong>「开始体能训练 → 传统力量训练」</strong>，或切到「独立快捷指令」并点下方新建名为{" "}
                           <strong>{strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT}</strong> 的快捷指令。
                         </li>
                       </ol>
-                      <div className="heading-actions" style={{ justifyContent: "flex-start", flexWrap: "wrap" }}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                         <button type="button" className="secondary-button" onClick={() => openAppleShortcutCreator(notify)}>
                           去快捷指令新建
                         </button>
@@ -1439,10 +1441,10 @@ export function SettingsView() {
                 </section>
 
                 <section className="form-section">
-                  <h3>Health Data Export</h3>
+                  <h3 className="form-section-title">Health Data Export</h3>
                   <p className="muted">导入已有体能训练，或连接 iPhone 定时同步。</p>
                   <div className="health-import-actions">
-                    <button type="button" className="primary-button" onClick={() => openHealthDataImportModal()}>
+                    <button type="button" className="secondary-button" onClick={() => openHealthDataImportModal()}>
                       导入训练 JSON
                     </button>
                     <button type="button" className="secondary-button" onClick={() => openHealthDataWebhookModal()}>
@@ -1452,7 +1454,7 @@ export function SettingsView() {
                 </section>
 
                 <section className="form-section">
-                  <h3>已绑定上传设备与接口地址</h3>
+                  <h3 className="form-section-title">已绑定上传设备</h3>
                   {devices.length ? (
                     <ul className="device-list">
                       {devices.map((device) => (
@@ -1470,12 +1472,15 @@ export function SettingsView() {
                   ) : (
                     <p className="muted">暂未添加设备。</p>
                   )}
-                  <details className="training-details" style={{ marginTop: 8 }}>
+                  <details className="settings-accordion">
                     <summary>
-                      <span>查看接口地址（手动配置或调试用）</span>
-                      <Icon name="chevron" size={14} />
+                      <span>查看接口地址</span>
+                      <span className="settings-accordion-meta">
+                        3 个接口
+                        <Icon name="chevron" size={14} />
+                      </span>
                     </summary>
-                    <div className="details-body">
+                    <div className="settings-accordion-body">
                       <p className="device-endpoint">
                         <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/daily</code>
                       </p>
@@ -1499,139 +1504,163 @@ export function SettingsView() {
               <header className="panel-head">
                 <h2>账号与数据</h2>
               </header>
-              <p className="muted">
-                {demo ? "当前为演示模式，修改仅保留在本次会话。" : username ? `用户名 ${username}` : "已登录铁记"}
-              </p>
+              <div className="settings-form">
+                <div className="settings-account-bar">
+                  <div>
+                    <strong>{demo ? "演示账号" : username || "已登录铁记"}</strong>
+                    <small className="muted" style={{ display: "block" }}>
+                      {demo ? "当前为演示模式，修改仅保留在本次会话。" : "账号已同步云端"}
+                    </small>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      onClick={() => openOnboardingModal({ currentProfile: profileGoalObj, initialStep: 1 })}
+                    >
+                      <Icon name="book" size={14} /> 新手指南
+                    </button>
+                    <button type="button" className="quiet" onClick={handleLogout}>
+                      退出账号
+                    </button>
+                  </div>
+                </div>
 
-              {!demo && username ? (
-                <section className="form-section">
-                  <h3>登录安全 · 修改密码</h3>
-                  <p className="muted">密码需为 10–128 位英文字母或数字。修改后其他设备的旧登录会话将自动失效。</p>
-                  <form className="settings-form" onSubmit={(e) => void handleChangePassword(e)}>
-                    <div className="fields">
-                      <label className="field">
-                        <span>当前密码</span>
-                        <input
-                          type="password"
-                          autoComplete="current-password"
-                          minLength={1}
-                          maxLength={128}
-                          required
-                          placeholder="输入当前登录密码"
-                          value={currentPassword}
-                          onChange={(e) => setCurrentPassword(e.target.value)}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>新密码</span>
-                        <input
-                          type="password"
-                          autoComplete="new-password"
-                          minLength={10}
-                          maxLength={128}
-                          pattern="[A-Za-z0-9]{10,128}"
-                          required
-                          placeholder="至少 10 位字母或数字"
-                          value={newPassword}
-                          onChange={(e) => setNewPassword(e.target.value)}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>确认新密码</span>
-                        <input
-                          type="password"
-                          autoComplete="new-password"
-                          minLength={10}
-                          maxLength={128}
-                          pattern="[A-Za-z0-9]{10,128}"
-                          required
-                          placeholder="再次输入新密码"
-                          value={confirmPassword}
-                          onChange={(e) => setConfirmPassword(e.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <p className="form-error" role="alert" hidden={!pwdError}>
-                      {pwdError}
-                    </p>
-                    <footer className="form-foot">
-                      <button type="submit" className="secondary-button" disabled={pwdSaving}>
-                        {pwdSaving ? "更新中…" : "更新登录密码"}
-                      </button>
-                    </footer>
-                  </form>
+                <section className="form-section csv-export-section">
+                  <h3 className="form-section-title">数据备份与迁移</h3>
+                  <p className="muted">全量 JSON 支持跨实例完整备份恢复；CSV 可直接用 Excel / WPS 打开分析。</p>
+                  <div className="settings-backup-grid">
+                    <button type="button" className="secondary-button" onClick={() => void handleExportJson()}>
+                      <Icon name="download" size={14} /> 导出全量 JSON
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => openBackupRestoreModal()}>
+                      <Icon name="upload" size={14} /> 恢复全量 JSON
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => openCsvImportModal()}>
+                      <Icon name="upload" size={14} /> 导入历史 CSV
+                    </button>
+                  </div>
+                  <div className="csv-export-grid">
+                    <button type="button" className="secondary-button" onClick={() => void handleExportCsv("workouts")}>
+                      <Icon name="download" size={14} /> 训练记录 CSV
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void handleExportCsv("diet")}>
+                      <Icon name="download" size={14} /> 饮食记录 CSV
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void handleExportCsv("weight")}>
+                      <Icon name="download" size={14} /> 体重记录 CSV
+                    </button>
+                    <button type="button" className="secondary-button" onClick={() => void handleExportCsv("measurements")}>
+                      <Icon name="download" size={14} /> 身体围度 CSV
+                    </button>
+                  </div>
                 </section>
-              ) : null}
 
-              <section className="form-section api-tokens-section">
-                <h3>MCP 与 API 访问令牌</h3>
-                <p className="muted">
-                  用于连接 Claude Desktop / Cursor MCP 服务（<code>IRONLOG_TOKEN</code>）或脚本调用 REST API。令牌仅在生成时完整展示一次。
-                </p>
-                <div className="health-import-actions">
-                  <button type="button" className="secondary-button" onClick={() => openIssueApiTokenModal()}>
-                    <Icon name="plus" size={14} /> 生成 MCP / API 令牌
-                  </button>
-                </div>
-                {persistentTokens.length ? (
-                  <ul className="device-list">
-                    {persistentTokens.map((tok) => (
-                      <li key={tok.id}>
-                        <span>
-                          <strong>{tok.label}</strong>
-                          <small>创建于 {(tok.createdAt ?? "").slice(0, 10)} · 永久有效</small>
-                        </span>
-                        <button type="button" className="quiet" onClick={() => handleRevokeApiToken(tok)}>
-                          撤销
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="muted">暂未生成 MCP / API 访问令牌。</p>
-                )}
-              </section>
+                {!demo && username ? (
+                  <details className="settings-accordion">
+                    <summary>
+                      <span>修改登录密码</span>
+                      <span className="settings-accordion-meta">
+                        登录安全
+                        <Icon name="chevron" size={14} />
+                      </span>
+                    </summary>
+                    <div className="settings-accordion-body">
+                      <p className="muted">密码需为 10–128 位英文字母或数字。修改后其他设备的旧登录会话将自动失效。</p>
+                      <form className="settings-form" onSubmit={(e) => void handleChangePassword(e)}>
+                        <div className="fields">
+                          <label className="field">
+                            <span>当前密码</span>
+                            <input
+                              type="password"
+                              autoComplete="current-password"
+                              minLength={1}
+                              maxLength={128}
+                              required
+                              placeholder="输入当前登录密码"
+                              value={currentPassword}
+                              onChange={(e) => setCurrentPassword(e.target.value)}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>新密码</span>
+                            <input
+                              type="password"
+                              autoComplete="new-password"
+                              minLength={10}
+                              maxLength={128}
+                              pattern="[A-Za-z0-9]{10,128}"
+                              required
+                              placeholder="至少 10 位字母或数字"
+                              value={newPassword}
+                              onChange={(e) => setNewPassword(e.target.value)}
+                            />
+                          </label>
+                          <label className="field">
+                            <span>确认新密码</span>
+                            <input
+                              type="password"
+                              autoComplete="new-password"
+                              minLength={10}
+                              maxLength={128}
+                              pattern="[A-Za-z0-9]{10,128}"
+                              required
+                              placeholder="再次输入新密码"
+                              value={confirmPassword}
+                              onChange={(e) => setConfirmPassword(e.target.value)}
+                            />
+                          </label>
+                        </div>
+                        <p className="form-error" role="alert" hidden={!pwdError}>
+                          {pwdError}
+                        </p>
+                        <footer className="form-foot">
+                          <button type="submit" className="secondary-button" disabled={pwdSaving}>
+                            {pwdSaving ? "更新中…" : "更新登录密码"}
+                          </button>
+                        </footer>
+                      </form>
+                    </div>
+                  </details>
+                ) : null}
 
-              <section className="form-section csv-export-section">
-                <h3>表格导出（Excel UTF-8 CSV）</h3>
-                <p className="muted">直接用 Excel 或 WPS 打开不会乱码，也可作为原始分析数据留档。</p>
-                <div className="csv-export-grid">
-                  <button type="button" className="secondary-button" onClick={() => void handleExportCsv("workouts")}>
-                    <Icon name="download" size={14} /> 训练记录 CSV
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => void handleExportCsv("diet")}>
-                    <Icon name="download" size={14} /> 饮食记录 CSV
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => void handleExportCsv("weight")}>
-                    <Icon name="download" size={14} /> 体重记录 CSV
-                  </button>
-                  <button type="button" className="secondary-button" onClick={() => void handleExportCsv("measurements")}>
-                    <Icon name="download" size={14} /> 身体围度 CSV
-                  </button>
-                </div>
-              </section>
-
-              <footer className="form-foot">
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => openOnboardingModal({ currentProfile: profileGoalObj, initialStep: 1 })}
-                >
-                  <Icon name="book" size={14} /> 查看新手入门指南
-                </button>
-                <button type="button" className="secondary-button" onClick={() => openCsvImportModal()}>
-                  <Icon name="upload" size={14} /> 导入历史 CSV
-                </button>
-                <button type="button" className="secondary-button" onClick={() => void handleExportJson()}>
-                  <Icon name="download" size={14} /> 导出全量 JSON
-                </button>
-                <button type="button" className="secondary-button" onClick={() => openBackupRestoreModal()}>
-                  <Icon name="upload" size={14} /> 恢复全量 JSON
-                </button>
-                <button type="button" className="quiet" onClick={handleLogout}>
-                  退出账号
-                </button>
-              </footer>
+                <details className="settings-accordion api-tokens-section">
+                  <summary>
+                    <span>MCP 与 API 访问令牌</span>
+                    <span className="settings-accordion-meta">
+                      {persistentTokens.length} 个有效
+                      <Icon name="chevron" size={14} />
+                    </span>
+                  </summary>
+                  <div className="settings-accordion-body">
+                    <p className="muted">
+                      用于连接 Claude Desktop / Cursor MCP 服务（<code>IRONLOG_TOKEN</code>）或脚本调用 REST API。令牌仅在生成时完整展示一次。
+                    </p>
+                    <div className="health-import-actions">
+                      <button type="button" className="secondary-button" onClick={() => openIssueApiTokenModal()}>
+                        <Icon name="plus" size={14} /> 生成 MCP / API 令牌
+                      </button>
+                    </div>
+                    {persistentTokens.length ? (
+                      <ul className="device-list">
+                        {persistentTokens.map((tok) => (
+                          <li key={tok.id}>
+                            <span>
+                              <strong>{tok.label}</strong>
+                              <small>创建于 {(tok.createdAt ?? "").slice(0, 10)} · 永久有效</small>
+                            </span>
+                            <button type="button" className="quiet" onClick={() => handleRevokeApiToken(tok)}>
+                              撤销
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted">暂未生成 MCP / API 访问令牌。</p>
+                    )}
+                  </div>
+                </details>
+              </div>
             </section>
           ) : null}
         </div>
