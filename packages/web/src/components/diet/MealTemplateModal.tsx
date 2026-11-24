@@ -33,6 +33,7 @@ export function SaveMealTemplateModal({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     const clean = name.trim();
     if (!clean) return;
     setSaving(true);
@@ -142,6 +143,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     const cleanName = name.trim();
     const cleaned = foods
       .filter((f) => f.name.trim().length > 0)
@@ -228,7 +230,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 inputMode="decimal"
                 min={0}
                 max={50000}
-                step={1}
+                step="any"
                 required
                 value={f.calories}
                 onChange={(e) => updateFood(idx, { calories: Math.max(0, Number(e.target.value) || 0) })}
@@ -241,7 +243,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 inputMode="decimal"
                 min={0}
                 max={1000}
-                step={0.1}
+                step="any"
                 required
                 value={f.protein}
                 onChange={(e) => updateFood(idx, { protein: Math.max(0, Number(e.target.value) || 0) })}
@@ -254,7 +256,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 inputMode="decimal"
                 min={0}
                 max={1000}
-                step={0.1}
+                step="any"
                 required
                 value={f.carbs}
                 onChange={(e) => updateFood(idx, { carbs: Math.max(0, Number(e.target.value) || 0) })}
@@ -267,7 +269,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 inputMode="decimal"
                 min={0}
                 max={1000}
-                step={0.1}
+                step="any"
                 required
                 value={f.fat}
                 onChange={(e) => updateFood(idx, { fat: Math.max(0, Number(e.target.value) || 0) })}

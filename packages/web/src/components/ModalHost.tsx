@@ -82,6 +82,7 @@ export function ModalHost() {
     prevModalsLenRef.current = modals.length;
 
     if (isOpen) {
+      lastSilentSeqRef.current = silentCloseSeq;
       const wasOpen = dialog.open;
       if (!wasOpen) {
         try {
@@ -101,11 +102,11 @@ export function ModalHost() {
       } else if (modals.length < prevLen && !closingFromPopstateRef.current && depthRef.current > modals.length) {
         const drop = depthRef.current - Math.max(1, modals.length);
         depthRef.current = Math.max(1, depthRef.current - drop);
-        expectedPopsRef.current += drop;
+        expectedPopsRef.current += 1;
         try {
           history.go(-drop);
         } catch {
-          expectedPopsRef.current = Math.max(0, expectedPopsRef.current - drop);
+          expectedPopsRef.current = Math.max(0, expectedPopsRef.current - 1);
         }
       }
       dialog.scrollTop = 0;
@@ -223,7 +224,9 @@ export function ModalHost() {
     setConfirmError("");
     try {
       await confirm.onConfirm();
-      if (nestedConfirm) {
+      const ui = useUiStore.getState();
+      if (!ui.confirm) return;
+      if (ui.modals.length > 0 && overlayTokenRef.current != null) {
         dismissNestedConfirm();
       } else {
         closeConfirm();
@@ -333,7 +336,9 @@ export function ModalHost() {
         dialog.style.transition = "transform .18s ease";
         dialog.style.transform = "";
         if (wasDragging && dy >= 78) {
-          if (standaloneConfirm) closeConfirm();
+          if (confirmBusy) return;
+          if (nestedConfirm) dismissNestedConfirm();
+          else if (standaloneConfirm) closeConfirm();
           else if (modals.length > 1) closeTopModal();
           else closeAllModals();
         }
@@ -357,8 +362,11 @@ export function ModalHost() {
               className="icon-button"
               aria-label="关闭"
               autoFocus={layout === "workout"}
+              disabled={(standaloneConfirm || nestedConfirm) && confirmBusy}
               onClick={() => {
-                if (standaloneConfirm) closeConfirm();
+                if ((standaloneConfirm || nestedConfirm) && confirmBusy) return;
+                if (nestedConfirm) dismissNestedConfirm();
+                else if (standaloneConfirm) closeConfirm();
                 else if (modals.length > 1) closeTopModal();
                 else closeAllModals();
               }}

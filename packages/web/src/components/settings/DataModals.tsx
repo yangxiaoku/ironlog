@@ -111,6 +111,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
             const file = e.target.files?.[0];
             if (!file) return;
             if (file.size > 2_000_000) {
+              setPreview(null);
               setError("CSV 文件超过 2 MB，请分批导入。");
               return;
             }
@@ -130,7 +131,11 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
       <textarea
         rows={5}
         value={csvText}
-        onChange={(e) => setCsvText(e.target.value)}
+        onChange={(e) => {
+          setCsvText(e.target.value);
+          setPreview(null);
+          setError("");
+        }}
         placeholder={"例如：Date,Workout Name,Exercise Name,Weight,Reps\n2026-11-20,Push Day,Bench Press (Barbell),100,5"}
       />
 
@@ -313,6 +318,9 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
             const file = e.target.files?.[0];
             if (!file) return;
             if (file.size > 16_000_000) {
+              setPreview(null);
+              setParsedBackup(null);
+              setArmedReplace(false);
               setError("备份文件超过 16 MB");
               return;
             }
@@ -332,7 +340,13 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       <textarea
         rows={5}
         value={rawText}
-        onChange={(e) => setRawText(e.target.value)}
+        onChange={(e) => {
+          setRawText(e.target.value);
+          setPreview(null);
+          setParsedBackup(null);
+          setArmedReplace(false);
+          setError("");
+        }}
         placeholder='{"format":"ironlog","schemaVersion":1,"records":[...]}'
       />
 
@@ -438,15 +452,30 @@ export function IssueApiTokenModal({ onIssued }: { onIssued?: () => void }) {
         <footer>
           <button
             type="button"
+            className="quiet"
+            onClick={closeAllModals}
+          >
+            完成
+          </button>
+          <button
+            type="button"
             className="secondary-button"
-            onClick={() => void copyText(mcpConfig).then((ok) => ok && notify("MCP 配置 JSON 已复制"))}
+            onClick={() =>
+              void copyText(mcpConfig).then((ok) =>
+                notify(ok ? "MCP 配置 JSON 已复制" : "自动复制受限，请手动全选复制上方文本"),
+              )
+            }
           >
             复制 MCP 配置
           </button>
           <button
             type="button"
             className="primary-button"
-            onClick={() => void copyText(issuedToken).then((ok) => ok && notify("API 访问令牌已复制"))}
+            onClick={() =>
+              void copyText(issuedToken).then((ok) =>
+                notify(ok ? "API 访问令牌已复制" : "自动复制受限，请手动全选复制上方令牌"),
+              )
+            }
           >
             复制令牌
           </button>
@@ -596,6 +625,8 @@ export function PlanImportModal({
             const file = e.target.files?.[0];
             if (!file) return;
             if (file.size > 500_000) {
+              setPreview(null);
+              setArmedApply(false);
               setError("计划 JSON 文件超过 500 KB。");
               return;
             }
@@ -615,7 +646,12 @@ export function PlanImportModal({
       <textarea
         rows={5}
         value={jsonText}
-        onChange={(e) => setJsonText(e.target.value)}
+        onChange={(e) => {
+          setJsonText(e.target.value);
+          setPreview(null);
+          setArmedApply(false);
+          setError("");
+        }}
         placeholder='{"format":"ironlog-plan","version":1,"plan":{"name":"示例推拉计划","weeks":6,"schedule":"rotation","routines":[...]}}'
       />
 

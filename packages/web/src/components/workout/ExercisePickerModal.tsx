@@ -39,6 +39,7 @@ export function ExercisePickerModal({
   const [equip, setEquip] = useState<EquipmentKey | "" | "__fav__">("");
   const [loading, setLoading] = useState(true);
   const [selectingId, setSelectingId] = useState<string>("");
+  const [pendingFavIds, setPendingFavIds] = useState<Set<string>>(() => new Set());
   const [items, setItems] = useState<CatalogueExercise[]>([]);
   const [favRecords, setFavRecords] = useState<Array<RecordEnvelope<FavoriteData>>>([]);
   const [customExercises, setCustomExercises] = useState<CatalogueExercise[]>([]);
@@ -137,9 +138,10 @@ export function ExercisePickerModal({
   }, [query, muscle, equip, customExercises, favRecords]);
 
   const toggleFavorite = async (exId: string) => {
-    if (!userId) return;
+    if (!userId || pendingFavIds.has(exId)) return;
     triggerHaptic("light");
     const existing = favRecords.find((r) => r.data.exerciseId === exId);
+    setPendingFavIds((prev) => new Set(prev).add(exId));
     try {
       if (existing) {
         await apiFetch("/api/records", {
@@ -156,7 +158,7 @@ export function ExercisePickerModal({
         setFavRecords((prev) => prev.filter((r) => r.id !== existing.id));
         notify("已取消收藏");
       } else {
-        const id = `fav_${exId}`;
+        const id = `fav_${crypto.randomUUID().slice(0, 12)}`;
         const res = await apiFetch<{ record?: RecordEnvelope<FavoriteData> }>("/api/records", {
           method: "POST",
           body: {
@@ -181,6 +183,12 @@ export function ExercisePickerModal({
       }
     } catch (err) {
       notify((err as Error)?.message || "收藏操作失败");
+    } finally {
+      setPendingFavIds((prev) => {
+        const next = new Set(prev);
+        next.delete(exId);
+        return next;
+      });
     }
   };
 

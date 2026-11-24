@@ -16,7 +16,13 @@ import {
   type WorkoutData,
 } from "../lib/domain";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
-import { openAiWorkoutModal, openCsvImportModal, openWorkoutEditor, openWorkoutReport } from "../lib/record-openers";
+import {
+  openAiWorkoutModal,
+  openCsvImportModal,
+  openWorkoutEditor,
+  openWorkoutReport,
+  resumeLocalWorkoutDraft,
+} from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
@@ -29,12 +35,14 @@ interface WorkoutViewSnap {
 export function WorkoutView() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const cached = peekQuery<WorkoutViewSnap>("view:workout", userId)?.data;
 
   const [records, setRecords] = useState<Array<RecordEnvelope<WorkoutData>>>(() => cached?.records ?? []);
   const [trainedItems, setTrainedItems] = useState<TrainedExerciseSummary[]>(() => cached?.trainedItems ?? []);
   const [goals, setGoals] = useState<ProfileGoals | null>(() => cached?.goals ?? null);
   const [loading, setLoading] = useState(() => !cached);
+  const [error, setError] = useState("");
 
   const [query, setQuery] = useState("");
   const [muscle, setMuscle] = useState<MuscleKey | "">("");
@@ -43,6 +51,7 @@ export function WorkoutView() {
   useEffect(() => {
     let active = true;
     if (!peekQuery("view:workout", userId)) setLoading(true);
+    setError("");
     void Promise.all([
       cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
       cachedApiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises", { epoch: dataEpoch, userId }).catch(() => ({ items: [] })),
@@ -59,6 +68,9 @@ export function WorkoutView() {
         setRecords(nextSnap.records);
         setTrainedItems(nextSnap.trainedItems);
         setGoals(nextSnap.goals);
+      })
+      .catch((err) => {
+        if (active) setError((err as Error)?.message || "加载训练记录失败");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -163,6 +175,16 @@ export function WorkoutView() {
         }
       />
 
+      {error && records.length === 0 ? (
+        <div className="empty">
+          <strong>训练记录加载失败</strong>
+          <p>{error}</p>
+          <button type="button" className="primary-button" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : null}
+
       {activeWorkouts.map((draft) => (
         <section key={draft.id} className="panel" style={{ marginBottom: 14, borderColor: "var(--red)" }}>
           <header className="panel-head">
@@ -188,7 +210,7 @@ export function WorkoutView() {
               <h2>检测到本机未保存训练草稿</h2>
               <p>可随时恢复继续记录已完成组数与休息计时</p>
             </div>
-            <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
+            <button type="button" className="primary-button" onClick={() => void resumeLocalWorkoutDraft(userId, goals)}>
               恢复草稿
             </button>
           </header>

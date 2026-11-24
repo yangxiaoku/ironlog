@@ -26,17 +26,21 @@ interface WeightViewSnap {
 export function WeightView() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const cached = peekQuery<WeightViewSnap>("view:weight", userId)?.data;
 
   const [records, setRecords] = useState<Array<RecordEnvelope<WeightData>>>(() => cached?.records ?? []);
   const [measurements, setMeasurements] = useState<MeasurementEntry[]>(() => cached?.measurements ?? []);
   const [goals, setGoals] = useState<ProfileGoals | null>(() => cached?.goals ?? null);
   const [shownWeights, setShownWeights] = useState(12);
+  const [shownMeasures, setShownMeasures] = useState(8);
   const [loading, setLoading] = useState(() => !cached);
+  const [error, setError] = useState("");
 
   useEffect(() => {
     let active = true;
     if (!peekQuery("view:weight", userId)) setLoading(true);
+    setError("");
     void Promise.all([
       cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }),
       cachedApiFetch<MeasurementEntry[]>("/api/web/measurements", { epoch: dataEpoch, userId }).catch(() => []),
@@ -56,6 +60,9 @@ export function WeightView() {
         setRecords(nextSnap.records);
         setMeasurements(nextSnap.measurements);
         setGoals(nextSnap.goals);
+      })
+      .catch((err) => {
+        if (active) setError((err as Error)?.message || "加载体重数据失败");
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -206,7 +213,7 @@ export function WeightView() {
           </div>
 
           <div className="measure-history-list">
-            {measurements.slice(0, 8).map((m) => {
+            {measurements.slice(0, shownMeasures).map((m) => {
               const parts = MEASUREMENT_SPECS.filter(([k]) => m[k] != null).map(([k, lbl]) => `${lbl} ${fmt(m[k], 1)}`);
               return (
                 <button
@@ -224,6 +231,16 @@ export function WeightView() {
                 </button>
               );
             })}
+            {measurements.length > shownMeasures ? (
+              <button
+                type="button"
+                className="quiet"
+                style={{ justifySelf: "start" }}
+                onClick={() => setShownMeasures((c) => c + 10)}
+              >
+                查看更多围度（剩余 {measurements.length - shownMeasures} 条）
+              </button>
+            ) : null}
           </div>
         </>
       ) : null}
@@ -258,7 +275,15 @@ export function WeightView() {
         }
       />
 
-      {loading && records.length === 0 ? (
+      {error && records.length === 0 ? (
+        <div className="empty">
+          <strong>体重数据加载失败</strong>
+          <p>{error}</p>
+          <button type="button" className="primary-button" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : loading && records.length === 0 ? (
         <div className="skeleton-list">
           <div className="skeleton-block skeleton-row" />
         </div>

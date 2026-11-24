@@ -177,13 +177,13 @@ export function CalendarView() {
       const monthEnd = `${targetMonth}-${String(mDays).padStart(2, "0")}`;
       const appleThrough = monthEnd > todayKey ? todayKey : monthEnd;
       const [appleActs, dailyRes, schedRes] = await Promise.all([
-        from <= todayKey
+        appleHealthConnected && from <= todayKey
           ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
               `/api/integrations/apple-health/agenda?from=${from}&through=${appleThrough}`,
               { epoch: dataEpoch, userId },
             ).catch(() => [])
           : Promise.resolve([]),
-        from <= todayKey
+        appleHealthConnected && from <= todayKey
           ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
               `/api/integrations/apple-health/daily?from=${from}&through=${appleThrough}`,
               { epoch: dataEpoch, userId },
@@ -246,7 +246,7 @@ export function CalendarView() {
       active = false;
       if (prefetchTimer !== undefined) window.clearTimeout(prefetchTimer);
     };
-  }, [userId, month, dataEpoch, todayKey, maxMonth]);
+  }, [userId, month, dataEpoch, todayKey, maxMonth, appleHealthConnected]);
 
   // 3. Incrementally resolve exercise dictionary entries for exercises appearing in visible month
   useEffect(() => {
@@ -281,7 +281,7 @@ export function CalendarView() {
     return () => {
       active = false;
     };
-  }, [selectedDate, todayKey, dataEpoch]);
+  }, [selectedDate, todayKey, dataEpoch, userId]);
 
   if (baseLoading && !workouts.length && !diets.length && !schedDays.length) {
     return (
@@ -364,9 +364,8 @@ export function CalendarView() {
     if (typeof window !== "undefined" && matchMedia("(max-width: 850px)").matches) {
       openCalendarDayModal(cellDate, (d) => {
         setSelectedDate(d);
-        if (d.slice(0, 7) !== month && d.slice(0, 7) <= maxMonth) {
-          setMonth(d.slice(0, 7));
-        }
+        const nextM = d.slice(0, 7);
+        setMonth((prev) => (nextM !== prev && nextM <= maxMonth ? nextM : prev));
       });
     }
   };

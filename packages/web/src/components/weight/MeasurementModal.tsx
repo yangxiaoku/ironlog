@@ -26,18 +26,27 @@ export function MeasurementModal({ existing = null }: { existing?: MeasurementEn
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     const parseNum = (k: keyof MeasurementValues): number | null => {
       const raw = values[k].trim();
       return raw === "" ? null : Number(raw);
     };
 
-    const payload = {
-      date,
+    const parsedVals = {
       waistCm: parseNum("waistCm"),
       chestCm: parseNum("chestCm"),
       armCm: parseNum("armCm"),
       thighCm: parseNum("thighCm"),
       hipCm: parseNum("hipCm"),
+    };
+    if (!Object.values(parsedVals).some((v) => v != null && Number.isFinite(v))) {
+      setError("请至少填写一项围度数据");
+      return;
+    }
+
+    const payload = {
+      date,
+      ...parsedVals,
       notes: notes.trim(),
     };
 
@@ -125,7 +134,11 @@ export function MeasurementModal({ existing = null }: { existing?: MeasurementEn
           <button type="button" className="danger" onClick={handleDelete}>
             删除记录
           </button>
-        ) : null}
+        ) : (
+          <button type="button" className="quiet" onClick={closeAllModals}>
+            取消
+          </button>
+        )}
         <button type="submit" className="primary-button" disabled={saving}>
           {saving ? "保存中…" : "保存围度"}
         </button>

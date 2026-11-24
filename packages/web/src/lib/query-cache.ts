@@ -15,6 +15,7 @@ const DEFAULT_TTL_MS = 5 * 60_000;
 const MAX_ENTRIES_PER_USER = 120;
 
 let hooks: QueryCacheHooks = {};
+let cacheGeneration = 0;
 const store = new Map<string, Map<string, CachedEntry>>();
 const inFlight = new Map<string, Promise<unknown>>();
 
@@ -63,6 +64,10 @@ export function writeQueryCache<T>(
   const uid = resolveUser(userId);
   const ep = resolveEpoch(epoch);
   const bucket = userBucket(uid);
+  const existing = bucket.get(cacheKey) as CachedEntry<T> | undefined;
+  if (existing && existing.epoch > ep) {
+    return existing;
+  }
   if (bucket.has(cacheKey)) bucket.delete(cacheKey);
   const entry: CachedEntry<T> = { data, epoch: ep, fetchedAt: Date.now() };
   bucket.set(cacheKey, entry);
@@ -100,11 +105,14 @@ export async function cachedQuery<T>(
   const pending = inFlight.get(flightKey);
   if (pending) return pending as Promise<T>;
 
+  const gen = cacheGeneration;
   const req = (async () => {
     try {
       const data = await fetcher();
-      // Record under the fetched epoch so earlier snapshot doesn't masquerade as newer epoch
-      writeQueryCache(cacheKey, data, { userId: uid, epoch: ep });
+      // Record under the fetched epoch only if cache was not invalidated while in flight
+      if (gen === cacheGeneration) {
+        writeQueryCache(cacheKey, data, { userId: uid, epoch: ep });
+      }
       return data;
     } finally {
       inFlight.delete(flightKey);
@@ -130,6 +138,7 @@ export function cachedApiFetch<T = unknown>(
 }
 
 export function invalidateQueryCache(userId?: string, keyPrefix?: string): void {
+  cacheGeneration++;
   if (userId === undefined) {
     store.clear();
     inFlight.clear();

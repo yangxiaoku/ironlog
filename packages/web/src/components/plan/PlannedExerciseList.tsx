@@ -426,10 +426,10 @@ export function PlannedExerciseList({
                         inputMode="numeric"
                         min={1}
                         max={3600}
-                        step={5}
-                        value={row.seconds || 45}
+                        step={1}
+                        value={row.seconds === 0 ? "" : row.seconds}
                         onKeyDown={stopEnter}
-                        onChange={(e) => updateRow(index, { seconds: Number(e.target.value) })}
+                        onChange={(e) => updateRow(index, { seconds: e.target.value === "" ? 0 : Number(e.target.value) })}
                       />
                     </label>
                   ) : (
@@ -467,7 +467,7 @@ export function PlannedExerciseList({
                           inputMode="decimal"
                           min={0}
                           max={1000}
-                          step={0.5}
+                          step="any"
                           placeholder="自动"
                           value={row.weight ?? ""}
                           onKeyDown={stopEnter}
@@ -483,7 +483,7 @@ export function PlannedExerciseList({
                       inputMode="numeric"
                       min={0}
                       max={600}
-                      step={15}
+                      step={1}
                       value={row.restSeconds}
                       onKeyDown={stopEnter}
                       onChange={(e) => updateRow(index, { restSeconds: Number(e.target.value) })}

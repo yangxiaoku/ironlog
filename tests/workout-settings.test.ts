@@ -9,8 +9,15 @@ import {
   buildWarmupSetsPlan,
   configureWorkoutPrefsSync,
   readWorkoutPreferences,
+  resetLocalWorkoutPreferences,
   writeWorkoutPreference,
 } from "../packages/web/src/lib/workout-helpers.ts";
+import {
+  cachedQuery,
+  invalidateQueryCache,
+  peekQuery,
+  writeQueryCache,
+} from "../packages/web/src/lib/query-cache.ts";
 import { resolveSetRestSeconds } from "../packages/web/src/lib/haptics-audio.ts";
 
 test("applySetFieldUpdate cascades working set changes to subsequent incomplete working sets by default", () => {
@@ -252,6 +259,132 @@ test("PUT /api/web/profile/workout-prefs merges partial preferences, preserves g
       profile: { workoutPrefs?: unknown };
     };
     assert.equal(otherBody.profile.workoutPrefs, undefined);
+  } finally {
+    db.close();
+  }
+});
+
+test("query-cache blocks older-epoch overwrites and skips caching responses invalidated while in flight", async () => {
+  invalidateQueryCache();
+  try {
+    writeQueryCache("k", { v: 2 }, { userId: "u1", epoch: 2 });
+    const rejected = writeQueryCache("k", { v: 1 }, { userId: "u1", epoch: 1 });
+    assert.deepEqual(rejected.data, { v: 2 });
+    assert.deepEqual(peekQuery<{ v: number }>("k", "u1")?.data, { v: 2 });
+
+    let resolveFetch!: (val: { fresh: boolean }) => void;
+    const inflight = cachedQuery(
+      "k2",
+      () =>
+        new Promise<{ fresh: boolean }>((resolve) => {
+          resolveFetch = resolve;
+        }),
+      { userId: "u1", epoch: 1 },
+    );
+
+    invalidateQueryCache();
+    resolveFetch({ fresh: true });
+    const result = await inflight;
+    assert.deepEqual(result, { fresh: true });
+    assert.equal(peekQuery("k2", "u1"), undefined, "response invalidated mid-flight must not repopulate cache");
+  } finally {
+    invalidateQueryCache();
+  }
+});
+
+test("resetLocalWorkoutPreferences clears saved keys, resets defaults, and cancels pending cloud sync", async () => {
+  const backing = new Map<string, string>();
+  const prevStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (k: string) => backing.get(k) ?? null,
+      setItem: (k: string, v: string) => backing.set(k, v),
+      removeItem: (k: string) => backing.delete(k),
+    },
+  });
+
+  try {
+    let pushedCount = 0;
+    configureWorkoutPrefsSync(() => {
+      pushedCount++;
+    });
+
+    writeWorkoutPreference("autoSyncSubsequent", false);
+    writeWorkoutPreference("weightStepKg", 1.25);
+    writeWorkoutPreference("enabledPlates", [20, 10]);
+    writeWorkoutPreference("warmupScheme", "heavy");
+    assert.ok(backing.size > 0);
+
+    resetLocalWorkoutPreferences();
+    assert.equal(backing.size, 0, "all saved workout preference keys removed");
+    assert.deepEqual(readWorkoutPreferences(), DEFAULT_WORKOUT_PREFERENCES);
+
+    await new Promise((resolve) => setTimeout(resolve, 450));
+    assert.equal(pushedCount, 0, "resetting preferences cancels pending debounced cloud sync");
+  } finally {
+    configureWorkoutPrefsSync(null);
+    if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("PUT/DELETE /api/web/schedule/:date allows recreating deleted tombstones while rejecting genuine stale conflicts", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const { app, auth } = createApp(db);
+    const owner = auth.login("sched-owner");
+    const call = (url: string, options: { method?: string; body?: unknown } = {}) =>
+      app.request(url, {
+        method: options.method ?? "GET",
+        headers: {
+          Authorization: "Bearer " + owner.token,
+          "Content-Type": "application/json",
+        },
+        body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      });
+
+    // Initial schedule creation
+    const createRes = await call("/api/web/schedule/2026-06-15", {
+      method: "PUT",
+      body: { mode: "workout", title: "推胸日", exercises: [], opId: "sched-op-1", baseVersion: 0 },
+    });
+    assert.equal(createRes.status, 200);
+    const created = (await createRes.json()) as { record: { version: number } };
+    assert.equal(created.record.version, 1);
+
+    // Genuine stale baseVersion against active version-1 override returns 409
+    const staleRes = await call("/api/web/schedule/2026-06-15", {
+      method: "PUT",
+      body: { mode: "rest", title: "休息", exercises: [], opId: "sched-op-stale", baseVersion: 0 },
+    });
+    assert.equal(staleRes.status, 409);
+
+    // Delete override -> version 2 tombstone
+    const delRes1 = await call("/api/web/schedule/2026-06-15?opId=sched-del-1", { method: "DELETE" });
+    assert.equal(delRes1.status, 200);
+
+    // Recreate with baseVersion: 0 succeeds on tombstone -> version 3
+    const recreateWithZero = await call("/api/web/schedule/2026-06-15", {
+      method: "PUT",
+      body: { mode: "workout", title: "拉背日", exercises: [], opId: "sched-op-2", baseVersion: 0 },
+    });
+    assert.equal(recreateWithZero.status, 200);
+    const recreated1 = (await recreateWithZero.json()) as { record: { version: number } };
+    assert.equal(recreated1.record.version, 3);
+
+    // Delete again -> version 4 tombstone, then recreate with omitted baseVersion -> version 5
+    const delRes2 = await call("/api/web/schedule/2026-06-15?opId=sched-del-2", { method: "DELETE" });
+    assert.equal(delRes2.status, 200);
+
+    const recreateOmitted = await call("/api/web/schedule/2026-06-15", {
+      method: "PUT",
+      body: { mode: "workout", title: "练腿日", exercises: [], opId: "sched-op-3" },
+    });
+    assert.equal(recreateOmitted.status, 200);
+    const recreated2 = (await recreateOmitted.json()) as { record: { version: number; data: { title: string } } };
+    assert.equal(recreated2.record.version, 5);
+    assert.equal(recreated2.record.data.title, "练腿日");
   } finally {
     db.close();
   }

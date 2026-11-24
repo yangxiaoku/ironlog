@@ -73,6 +73,7 @@ export function DietEditorModal({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     const cleanName = name.trim();
     if (!cleanName) {
       setError("请输入食物名称");

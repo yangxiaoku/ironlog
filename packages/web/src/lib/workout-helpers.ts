@@ -375,6 +375,46 @@ export function applyRemoteWorkoutPreferences(
   return readWorkoutPreferences();
 }
 
+const ALL_WORKOUT_PREF_KEYS = [
+  soundPreference,
+  screenPreference,
+  rirPreference,
+  dialPreference,
+  notifyPreference,
+  barPreference,
+  platesPreference,
+  autoSyncPreference,
+  autoPrefillPreference,
+  autoStartRestPreference,
+  autoAdvancePreference,
+  warmupRestPreference,
+  restStepPreference,
+  weightStepPreference,
+  hapticsPreference,
+  plateMathPreference,
+  warmupSchemePreference,
+] as const;
+
+/**
+ * Clears all persisted local workout preferences and cancels pending cloud syncs (e.g. on logout).
+ */
+export function resetLocalWorkoutPreferences(): void {
+  if (syncDebounceTimer != null) {
+    clearTimeout(syncDebounceTimer);
+    syncDebounceTimer = null;
+  }
+  if (typeof localStorage !== "undefined") {
+    for (const key of ALL_WORKOUT_PREF_KEYS) {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+    }
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
+  }
+}
+
 export interface SetFieldPatch {
   weight?: number;
   reps?: number;

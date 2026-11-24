@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
-import { today } from "../../lib/date";
+import { guessMeal, today } from "../../lib/date";
 import { MEALS, type DietData, type MealKey, type RecordEnvelope, type WorkoutData } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -218,7 +218,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
   const notify = useUiStore((s) => s.notify);
 
   const [date, setDate] = useState(initialDate || today());
-  const [meal, setMeal] = useState<MealKey>("lunch");
+  const [meal, setMeal] = useState<MealKey>(() => guessMeal());
   const [promptText, setPromptText] = useState("");
   const [foods, setFoods] = useState<ParsedDietItem[] | null>(null);
   const [error, setError] = useState("");
@@ -281,7 +281,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
     setSaving(true);
     setError("");
     try {
-      for (const item of selected) {
+      const mutations = selected.map((item) => {
         const bodyData: DietData = {
           ...(item.raw as Partial<DietData>),
           date,
@@ -292,18 +292,19 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
           carbs: Math.max(0, Number(item.carbs) || 0),
           fat: Math.max(0, Number(item.fat) || 0),
         };
-        await apiFetch("/api/records", {
-          method: "POST",
-          body: {
-            opId: item._opId,
-            id: item._recordId,
-            kind: "diet",
-            baseVersion: 0,
-            deleted: false,
-            data: bodyData,
-          },
-        });
-      }
+        return {
+          opId: crypto.randomUUID(),
+          id: item._recordId,
+          kind: "diet" as const,
+          baseVersion: 0,
+          deleted: false,
+          data: bodyData,
+        };
+      });
+      await apiFetch("/api/sync", {
+        method: "POST",
+        body: { cursor: 0, mutations },
+      });
       if (!mountedRef.current) return;
       bumpDataEpoch();
       closeAllModals();
@@ -404,7 +405,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
                       type="number"
                       min={0}
                       max={maxVal}
-                      step={0.1}
+                      step="any"
                       value={item[field]}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.nativeEvent.isComposing) e.preventDefault();
@@ -765,8 +766,8 @@ export function AiAdaptWorkoutModal({
   ensureSavedWorkout: () => Promise<RecordEnvelope<WorkoutData>>;
   onApplied: (updated: RecordEnvelope<WorkoutData>) => void;
 }) {
+  const { status, loading } = useAiStatus();
   const closeTopModal = useUiStore((s) => s.closeTopModal);
-  const notify = useUiStore((s) => s.notify);
 
   const [promptText, setPromptText] = useState("");
   const [proposal, setProposal] = useState<WorkoutAdaptationProposal | null>(null);
@@ -774,6 +775,21 @@ export function AiAdaptWorkoutModal({
   const [asking, setAsking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
+
+  if (loading) {
+    return (
+      <div className="dialog-form ai-modal">
+        <p className="muted">正在检查 AI 服务状态…</p>
+      </div>
+    );
+  }
+  if (!status?.ready) {
+    return (
+      <div className="dialog-form ai-modal">
+        <AiUnconfiguredBox />
+      </div>
+    );
+  }
 
   const handleAsk = async () => {
     const text = promptText.trim();
@@ -815,7 +831,6 @@ export function AiAdaptWorkoutModal({
       });
       onApplied(record);
       closeTopModal();
-      notify("已应用 AI 训中调整");
     } catch (err) {
       setError((err as Error)?.message || "应用 AI 调整失败");
     } finally {
@@ -826,7 +841,7 @@ export function AiAdaptWorkoutModal({
   return (
     <div className="dialog-form ai-modal">
       <div className="ai-head-meta">
-        <span className="ai-pill is-ready">AI 训中实时调整</span>
+        <AiModePill status={status} />
         <small className="muted">自动保留已完成组，仅对你确认勾选的剩余动作与组数生效</small>
       </div>
       <div className="ai-presets">

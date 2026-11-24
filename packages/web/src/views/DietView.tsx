@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotMeter, ThinMeter } from "../components/Meters";
@@ -29,9 +29,13 @@ import { useUiStore } from "../store/useUiStore";
 const WATER_GOAL_KEY = "ironlog-web-water-goal";
 const WATER_GOALS = [2000, 2500, 3000, 3500];
 
-function getWaterGoalMl(): number {
+function waterGoalKey(userId: string): string {
+  return userId ? `${WATER_GOAL_KEY}:${userId}` : WATER_GOAL_KEY;
+}
+
+function getWaterGoalMl(userId: string): number {
   if (typeof localStorage === "undefined") return 2000;
-  const v = Number(localStorage.getItem(WATER_GOAL_KEY));
+  const v = Number(localStorage.getItem(waterGoalKey(userId)) ?? localStorage.getItem(WATER_GOAL_KEY));
   return WATER_GOALS.includes(v) ? v : 2000;
 }
 
@@ -53,30 +57,60 @@ export function DietView() {
   const [records, setRecords] = useState<Array<RecordEnvelope<DietData>>>(() => cachedDiet?.records ?? []);
   const [templates, setTemplates] = useState<Array<RecordEnvelope<MealTemplateData>>>(() => cachedDiet?.templates ?? []);
   const [goals, setGoals] = useState<ProfileGoals | null>(() => cachedDiet?.goals ?? null);
+  const [loading, setLoading] = useState(() => !cachedDiet);
+  const [error, setError] = useState("");
+  const [copying, setCopying] = useState(false);
   const [dietDone, setDietDone] = useState(false);
   const [waterMl, setWaterMl] = useState(0);
-  const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl());
+  const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl(userId));
   const [busyWater, setBusyWater] = useState(false);
   const [markingDone, setMarkingDone] = useState(false);
+  const dateRef = useRef(date);
+  dateRef.current = date;
+  const lastHydrationKeyRef = useRef(`${userId}:${date}`);
+
+  useEffect(() => {
+    setWaterGoal(getWaterGoalMl(userId));
+  }, [userId]);
 
   useEffect(() => {
     let active = true;
+    const staleHit = peekQuery<DietViewSnap>("view:diet", userId)?.data;
+    if (staleHit) {
+      setRecords(staleHit.records);
+      setTemplates(staleHit.templates);
+      setGoals(staleHit.goals);
+      setLoading(false);
+    } else {
+      setRecords([]);
+      setTemplates([]);
+      setGoals(null);
+      setLoading(true);
+    }
+    setError("");
     void Promise.all([
       cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
       cachedApiFetch<Array<RecordEnvelope<MealTemplateData>>>("/api/records/mealTemplate", { epoch: dataEpoch, userId }).catch(() => []),
       cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
-    ]).then(([dietRows, tplRows, profRes]) => {
-      if (!active) return;
-      const snap: DietViewSnap = {
-        records: dietRows.filter((r) => !r.deleted),
-        templates: tplRows.filter((r) => !r.deleted),
-        goals: profRes?.profile ?? null,
-      };
-      writeQueryCache("view:diet", snap, { userId, epoch: dataEpoch });
-      setRecords(snap.records);
-      setTemplates(snap.templates);
-      setGoals(snap.goals);
-    });
+    ])
+      .then(([dietRows, tplRows, profRes]) => {
+        if (!active) return;
+        const snap: DietViewSnap = {
+          records: dietRows.filter((r) => !r.deleted),
+          templates: tplRows.filter((r) => !r.deleted),
+          goals: profRes?.profile ?? null,
+        };
+        writeQueryCache("view:diet", snap, { userId, epoch: dataEpoch });
+        setRecords(snap.records);
+        setTemplates(snap.templates);
+        setGoals(snap.goals);
+      })
+      .catch((err) => {
+        if (active) setError((err as Error)?.message || "加载饮食数据失败");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
@@ -84,6 +118,12 @@ export function DietView() {
 
   useEffect(() => {
     let active = true;
+    const hydrationKey = `${userId}:${date}`;
+    if (lastHydrationKeyRef.current !== hydrationKey) {
+      lastHydrationKeyRef.current = hydrationKey;
+      setDietDone(false);
+      setWaterMl(0);
+    }
     void Promise.all([
       cachedApiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId }).catch(() => null),
       cachedApiFetch<{ entries?: Array<{ waterMl?: number }> }>(
@@ -141,40 +181,52 @@ export function DietView() {
     targetMeal?: MealKey,
     label?: string,
   ) => {
-    if (!foods.length) return;
-    const mutations = foods.slice(0, 100).map((f) => ({
-      opId: crypto.randomUUID(),
-      id: crypto.randomUUID(),
-      kind: "diet",
-      baseVersion: 0,
-      deleted: false,
-      data: {
-        date,
-        meal: targetMeal ?? f.meal ?? "lunch",
-        name: f.name,
-        calories: f.calories,
-        protein: f.protein,
-        carbs: f.carbs,
-        fat: f.fat,
-        source: "copy",
-        rawPrompt: "",
-      },
-    }));
-    await apiFetch("/api/sync", { method: "POST", body: { cursor: 0, mutations } });
-    triggerHaptic("success");
-    bumpDataEpoch();
-    notify(label || `已添加 ${mutations.length} 项饮食至 ${shortDate(date)}`);
+    if (!foods.length || copying) return;
+    const targetDate = date;
+    setCopying(true);
+    try {
+      const mutations = foods.slice(0, 100).map((f) => ({
+        opId: crypto.randomUUID(),
+        id: crypto.randomUUID(),
+        kind: "diet",
+        baseVersion: 0,
+        deleted: false,
+        data: {
+          date: targetDate,
+          meal: targetMeal ?? f.meal ?? "lunch",
+          name: f.name,
+          calories: f.calories,
+          protein: f.protein,
+          carbs: f.carbs,
+          fat: f.fat,
+          source: "copy",
+          rawPrompt: "",
+        },
+      }));
+      await apiFetch("/api/sync", { method: "POST", body: { cursor: 0, mutations } });
+      triggerHaptic("success");
+      bumpDataEpoch();
+      notify(label || `已添加 ${mutations.length} 项饮食至 ${shortDate(targetDate)}`);
+    } catch (err) {
+      notify((err as Error)?.message || "复制饮食失败");
+    } finally {
+      setCopying(false);
+    }
   };
 
   const updateWater = async (deltaMl?: number, setMl?: number) => {
+    if (busyWater) return;
+    const reqDate = date;
     setBusyWater(true);
     triggerHaptic("light");
     try {
       const res = await apiFetch<{ waterMl: number }>("/api/web/water", {
         method: "POST",
-        body: setMl != null ? { date, setMl } : { date, deltaMl: deltaMl ?? 250 },
+        body: setMl != null ? { date: reqDate, setMl } : { date: reqDate, deltaMl: deltaMl ?? 250 },
       });
-      setWaterMl(res.waterMl);
+      if (dateRef.current === reqDate) {
+        setWaterMl(res.waterMl);
+      }
       notify(setMl === 0 ? "已重置今日饮水记录" : `今日饮水 ${fmt(res.waterMl, 0)} ml`);
     } catch (err) {
       notify((err as Error)?.message || "更新饮水失败");
@@ -184,14 +236,18 @@ export function DietView() {
   };
 
   const handleMarkDone = async () => {
+    if (markingDone) return;
+    const reqDate = date;
     setMarkingDone(true);
     try {
       await apiFetch("/api/web/nutrition-day", {
         method: "PUT",
-        body: { date, opId: crypto.randomUUID() },
+        body: { date: reqDate, opId: crypto.randomUUID() },
       });
       triggerHaptic("success");
-      setDietDone(true);
+      if (dateRef.current === reqDate) {
+        setDietDone(true);
+      }
       notify("已标记全天饮食记录完成");
     } catch (err) {
       notify((err as Error)?.message || "操作失败");
@@ -203,10 +259,50 @@ export function DietView() {
   const waterCups = Math.floor(waterMl / 250);
   const waterPct = Math.min(100, Math.round((waterMl / Math.max(250, waterGoal)) * 100));
 
+  if (loading && !records.length && !templates.length && !goals) {
+    return (
+      <>
+        <WorkspaceTabs />
+        <PageHeading title="饮食记录" view="diet" />
+        <div className="empty loading" role="status">
+          正在加载饮食记录…
+        </div>
+      </>
+    );
+  }
+
+  if (error && !records.length && !templates.length && !goals) {
+    return (
+      <>
+        <WorkspaceTabs />
+        <PageHeading title="饮食记录" view="diet" />
+        <div className="empty">
+          <strong>饮食数据加载失败</strong>
+          <p>{error}</p>
+          <button type="button" className="primary-button" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <WorkspaceTabs />
       <PageHeading title="饮食记录" view="diet" />
+      {error ? (
+        <div
+          className="panel"
+          role="alert"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}
+        >
+          <span>饮食数据刷新失败：{error}</span>
+          <button type="button" className="secondary-button" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : null}
 
       <div className="diet-toolbar">
         <div className="toolbar">
@@ -250,6 +346,7 @@ export function DietView() {
             <button
               type="button"
               className="secondary-button"
+              disabled={copying}
               onClick={() =>
                 void copyFoodsToDate(
                   prevDayRows.map((r) => r.data),
@@ -344,7 +441,7 @@ export function DietView() {
                   const next = WATER_GOALS[(WATER_GOALS.indexOf(waterGoal) + 1) % WATER_GOALS.length]!;
                   setWaterGoal(next);
                   try {
-                    localStorage.setItem(WATER_GOAL_KEY, String(next));
+                    localStorage.setItem(waterGoalKey(userId), String(next));
                   } catch {}
                   notify(`每日饮水目标已设为 ${fmt(next, 0)} ml`);
                 }}
@@ -404,6 +501,7 @@ export function DietView() {
                       <button
                         type="button"
                         className="quiet"
+                        disabled={copying}
                         onClick={() =>
                           void copyFoodsToDate(
                             prevMealEntries.map((r) => r.data),
@@ -532,6 +630,7 @@ export function DietView() {
                         key={mKey}
                         type="button"
                         className="micro-chip"
+                        disabled={copying}
                         onClick={() =>
                           void copyFoodsToDate(
                             foods,

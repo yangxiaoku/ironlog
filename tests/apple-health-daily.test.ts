@@ -430,6 +430,9 @@ test("Apple 健康体成分 FFMI/WHtR 评估、心肺准备度基线切换与运
     assert.equal(analytics.appleWorkouts.byActivity[0].title, "户外跑步");
     assert.equal(analytics.appleWorkouts.recent[0].isDemo, false);
     assert.equal(analytics.appleWorkouts.recent[0].captureMethod, "workout");
+    assert.equal(Date.parse(analytics.appleWorkouts.recent[0].startedAt), Date.parse(`${d1}T07:00:00+08:00`));
+    assert.equal(Date.parse(analytics.appleWorkouts.recent[0].endedAt), Date.parse(`${d1}T07:30:00+08:00`));
+    assert.equal(analytics.appleWorkouts.recent[0].durationKind, "workout_active");
     assert.equal(analytics.appleWorkouts.hrZones.hrMaxSource, "default_190");
     assert.equal(analytics.appleWorkouts.hrZones.zones.find((z: any) => z.key === "z3").count, 1);
 

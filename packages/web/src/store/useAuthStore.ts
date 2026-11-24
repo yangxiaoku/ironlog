@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { apiFetch } from "../lib/api";
-import { clearQueue } from "../lib/offline-queue";
 import { invalidateQueryCache } from "../lib/query-cache";
+import { resetLocalWorkoutPreferences } from "../lib/workout-helpers";
 import { useUiStore } from "./useUiStore";
 
 export type AuthMode = "login" | "register";
@@ -124,9 +124,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   clearUser() {
     const prevUserId = get().userId;
     invalidateQueryCache();
+    resetLocalWorkoutPreferences();
     useUiStore.getState().closeModalSilent();
     if (prevUserId && typeof localStorage !== "undefined") {
-      clearQueue(localStorage, prevUserId);
       const prefix = `ironlog-web-draft:${prevUserId}:`;
       for (const storage of [localStorage, sessionStorage]) {
         for (const key of Object.keys(storage)) {

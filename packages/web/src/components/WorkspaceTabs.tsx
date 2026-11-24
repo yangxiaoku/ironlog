@@ -1,3 +1,4 @@
+import { prefetchWorkspace } from "../lib/prefetch";
 import { HALFTONE_VIEWS, VIEW_WORKSPACE, WORKSPACES, type ViewId } from "../lib/routes";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -18,6 +19,8 @@ export function WorkspaceTabs() {
           key={tab.id}
           href={`#${tab.id}`}
           aria-current={tab.id === view ? "page" : undefined}
+          onPointerEnter={() => prefetchWorkspace(tab.id, userId)}
+          onFocus={() => prefetchWorkspace(tab.id, userId)}
           onClick={(e) => {
             e.preventDefault();
             navigate(tab.id);

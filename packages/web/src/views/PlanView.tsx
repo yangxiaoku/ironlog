@@ -20,6 +20,7 @@ import {
   type PlannedExercise,
   type RecordEnvelope,
   type TodayResponse,
+  type WorkoutData,
 } from "../lib/domain";
 import {
   openAiPlanModal,
@@ -29,7 +30,8 @@ import {
   openPlanImportModal,
   openRoutinePreview,
   openTemplateEditorModal,
-  openWorkoutReport,
+  openWorkoutEditor,
+  resumeLocalWorkoutDraft,
 } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore, type PlanTab } from "../store/useUiStore";
@@ -197,7 +199,13 @@ export function PlanView() {
         label: "进行中的训练",
         name: currentDay.active.title,
         note: `${currentDay.active.done}/${currentDay.active.total} 组`,
-        action: () => openWorkoutReport(currentDay.active!.id),
+        action: () => {
+          void apiFetch<RecordEnvelope<WorkoutData>>(
+            `/api/web/records/workout/${encodeURIComponent(currentDay.active!.id)}`,
+          )
+            .then((rec) => openWorkoutEditor({ record: rec }))
+            .catch(() => resumeLocalWorkoutDraft(userId));
+        },
         button: "继续训练",
       }
     : next
@@ -535,7 +543,14 @@ export function PlanView() {
                       </p>
                     </div>
                     <span className="status-pill">
-                      {upcomingDays.filter((d) => d.status === "scheduled" || d.status === "projected").length} 场待练
+                      {
+                        upcomingDays.filter(
+                          (d) =>
+                            d.date <= schedule.weekForecast!.weekEnd &&
+                            (d.status === "scheduled" || d.status === "projected"),
+                        ).length
+                      }{" "}
+                      场待练
                     </span>
                   </header>
                   <div className="forecast-grid">

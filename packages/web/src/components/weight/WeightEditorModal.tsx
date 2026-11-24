@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import { fmt, today } from "../../lib/date";
 import { shiftDateStr, type RecordEnvelope, type WeightData } from "../../lib/domain";
@@ -36,9 +36,35 @@ export function WeightEditorModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const resolvedVersionsRef = useRef<Map<string, number>>(new Map());
+  const dirtyRef = useRef(false);
+
+  useEffect(() => {
+    if (record) return;
+    let active = true;
+    const weightId = `weight_${date}`;
+    void apiFetch<RecordEnvelope<WeightData>>(
+      `/api/web/records/weight/${encodeURIComponent(weightId)}?includeDeleted=1`,
+    )
+      .then((existing) => {
+        if (!active) return;
+        resolvedVersionsRef.current.set(date, existing.version);
+        if (!dirtyRef.current && !existing.deleted && existing.data) {
+          setWeight(String(existing.data.weight));
+          setBodyFat(existing.data.bodyFat != null ? String(existing.data.bodyFat) : "");
+        }
+      })
+      .catch(() => {
+        if (active) resolvedVersionsRef.current.set(date, 0);
+      });
+    return () => {
+      active = false;
+    };
+  }, [record, date]);
 
   const stepWeight = (delta: number) => {
     triggerHaptic("light");
+    dirtyRef.current = true;
     const cur = Number(weight) || defaultWeight || 65;
     const next = Math.max(1, Math.min(500, Math.round((cur + delta) * 100) / 100));
     setWeight(next.toFixed(1));
@@ -46,6 +72,7 @@ export function WeightEditorModal({
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     const wNum = Number(weight);
     if (!Number.isFinite(wNum) || wNum < 1 || wNum > 500) {
       setError("请输入有效体重（1–500 kg）");
@@ -61,11 +88,24 @@ export function WeightEditorModal({
     setSaving(true);
     setError("");
 
+    let baseVersion = record?.version ?? resolvedVersionsRef.current.get(date);
+    if (!record && baseVersion === undefined) {
+      try {
+        const existing = await apiFetch<RecordEnvelope<WeightData>>(
+          `/api/web/records/weight/${encodeURIComponent(`weight_${date}`)}?includeDeleted=1`,
+        );
+        baseVersion = existing.version;
+        resolvedVersionsRef.current.set(date, baseVersion);
+      } catch {
+        baseVersion = 0;
+      }
+    }
+
     const payload = {
       opId: crypto.randomUUID(),
       id: record?.id ?? `weight_${date}`,
       kind: "weight" as const,
-      baseVersion: record?.version ?? 0,
+      baseVersion: baseVersion ?? 0,
       deleted: false,
       data: {
         date,
@@ -181,7 +221,10 @@ export function WeightEditorModal({
             required
             autoFocus={!record}
             value={weight}
-            onChange={(e) => setWeight(e.target.value)}
+            onChange={(e) => {
+              dirtyRef.current = true;
+              setWeight(e.target.value);
+            }}
             placeholder="0.0"
           />
           <span className="scale-unit">kg</span>
@@ -208,9 +251,12 @@ export function WeightEditorModal({
             inputMode="decimal"
             min={1}
             max={75}
-            step="0.1"
+            step="any"
             value={bodyFat}
-            onChange={(e) => setBodyFat(e.target.value)}
+            onChange={(e) => {
+              dirtyRef.current = true;
+              setBodyFat(e.target.value);
+            }}
             placeholder="—"
           />
           <div className="bodyfat-steppers">

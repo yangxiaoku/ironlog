@@ -38,7 +38,7 @@ export function ShareCardModal({ date, singleReport = null, singleHealth = null,
   const [error, setError] = useState("");
   const renderSeqRef = useRef(0);
 
-  const targetDate = date || singleReport?.date || today();
+  const targetDate = date || singleReport?.date || singleHealth?.date || today();
 
   useEffect(() => {
     let active = true;

@@ -62,8 +62,15 @@ export function useMobileGuards(): void {
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
 
+    let lastHiddenAt = 0;
     const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        lastHiddenAt = Date.now();
+        return;
+      }
       if (document.visibilityState !== "visible") return;
+      if (!lastHiddenAt || Date.now() - lastHiddenAt < 45_000) return;
+      lastHiddenAt = 0;
       const userId = useAuthStore.getState().userId;
       const ui = useUiStore.getState();
       if (userId && ui.modals.length === 0 && !ui.confirm && REFRESH_VIEWS.has(ui.view)) {

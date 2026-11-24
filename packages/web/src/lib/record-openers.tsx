@@ -43,21 +43,23 @@ const MeasurementModal = lazy(() => import("../components/weight/MeasurementModa
 const WeightEditorModal = lazy(() => import("../components/weight/WeightEditorModal").then((m) => ({ default: m.WeightEditorModal })));
 const WorkoutEditorModal = lazy(() => import("../components/workout/WorkoutEditorModal").then((m) => ({ default: m.WorkoutEditorModal })));
 const WorkoutReportModal = lazy(() => import("../components/workout/WorkoutReportModal").then((m) => ({ default: m.WorkoutReportModal })));
+import { apiFetch } from "./api";
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
 import { shortDate, today } from "./date";
-import type {
-  CatalogueExercise,
-  DietData,
-  MealKey,
-  MealTemplateData,
-  MeasurementEntry,
-  PlanData,
-  PlannedExercise,
-  ProfileGoals,
-  RecordEnvelope,
-  WeightData,
-  WorkoutData,
+import {
+  findLocalWorkoutDraft,
+  type CatalogueExercise,
+  type DietData,
+  type MealKey,
+  type MealTemplateData,
+  type MeasurementEntry,
+  type PlanData,
+  type PlannedExercise,
+  type ProfileGoals,
+  type RecordEnvelope,
+  type WeightData,
+  type WorkoutData,
 } from "./domain";
 import { useUiStore } from "../store/useUiStore";
 
@@ -104,6 +106,67 @@ export function openWorkoutEditor(
       />
     ),
   });
+}
+
+export async function resumeLocalWorkoutDraft(
+  userId: string,
+  goals?: ProfileGoals | null,
+): Promise<void> {
+  if (!userId) {
+    openWorkoutEditor({ goals });
+    return;
+  }
+  const found = findLocalWorkoutDraft(userId);
+  if (!found) {
+    openWorkoutEditor({ goals });
+    return;
+  }
+  const prefix = `ironlog-web-draft:${userId}:`;
+  const suffix = found.key.startsWith(prefix) ? found.key.slice(prefix.length) : "new";
+  const recordId = suffix && suffix !== "new" ? suffix : undefined;
+  if (!recordId) {
+    openWorkoutEditor({ goals });
+    return;
+  }
+  try {
+    const rec = await apiFetch<RecordEnvelope<WorkoutData>>(
+      `/api/web/records/workout/${encodeURIComponent(recordId)}`,
+    );
+    openWorkoutEditor({ record: rec, goals });
+  } catch {
+    try {
+      const parsed = JSON.parse(found.raw) as Partial<WorkoutData> & {
+        timing?: WorkoutData["timing"];
+      };
+      const fallbackRecord: RecordEnvelope<WorkoutData> = {
+        id: recordId,
+        kind: "workout",
+        version: 0,
+        deleted: false,
+        updatedAt: new Date().toISOString(),
+        data: {
+          date: parsed.date || today(),
+          title: parsed.title?.trim() || "自由训练",
+          startedAt: parsed.timing?.runningSince ?? new Date().toISOString(),
+          endedAt: null,
+          status: "active",
+          notes: parsed.notes ?? "",
+          feeling: parsed.feeling ?? null,
+          source: parsed.source ?? "manual",
+          rawPrompt: parsed.rawPrompt,
+          planId: parsed.planId ?? null,
+          planVersion: parsed.planVersion ?? null,
+          routineId: parsed.routineId ?? null,
+          targetSnapshot: parsed.targetSnapshot,
+          exercises: Array.isArray(parsed.exercises) ? parsed.exercises : [],
+          timing: parsed.timing ?? null,
+        },
+      };
+      openWorkoutEditor({ record: fallbackRecord, goals });
+    } catch {
+      openWorkoutEditor({ goals });
+    }
+  }
 }
 
 export interface WorkoutReportOptions {
@@ -408,10 +471,12 @@ export function openAppleWorkoutDetailsModal(
         back={Boolean(opts.back)}
         onOpenWorkout={
           opts.onOpenWorkout ??
-          ((workoutId) => {
-            ui.closeTopModal();
-            openWorkoutReport({ workoutId });
-          })
+          (opts.back
+            ? () => opts.back!()
+            : (workoutId) => {
+                ui.closeTopModal();
+                openWorkoutReport({ workoutId });
+              })
         }
       />
     ),
@@ -568,6 +633,7 @@ export function openExerciseDetailModal(
         customRecord={customRecord}
         onResolvedTitle={(resolved) => {
           titleRef.current = resolved;
+          ui.updateTopModalTitle(resolved);
         }}
         onEditCustom={(rec) => {
           ui.closeTopModal();

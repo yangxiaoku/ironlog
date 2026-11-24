@@ -1,10 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { apiFetch } from "../lib/api";
 import { formatWeekdayZh } from "../lib/date";
 import {
   findLocalWorkoutDraft,
-  type RecordEnvelope,
-  type WorkoutData,
   type WorkoutExercise,
 } from "../lib/domain";
 import {
@@ -18,7 +15,7 @@ import {
   type RestTimerState,
   type WorkoutTiming,
 } from "../lib/haptics-audio";
-import { openWorkoutEditor } from "../lib/record-openers";
+import { resumeLocalWorkoutDraft } from "../lib/record-openers";
 import {
   WORKOUT_PREFS_EVENT,
   readWorkoutPreferences,
@@ -145,18 +142,9 @@ export function LiveWorkoutBar() {
   const handleResume = async () => {
     if (resuming) return;
     triggerHaptic("light");
-    if (!draft.recordId) {
-      openWorkoutEditor();
-      return;
-    }
     setResuming(true);
     try {
-      const rec = await apiFetch<RecordEnvelope<WorkoutData>>(
-        `/api/web/records/workout/${encodeURIComponent(draft.recordId)}`,
-      );
-      openWorkoutEditor({ record: rec });
-    } catch {
-      openWorkoutEditor();
+      await resumeLocalWorkoutDraft(userId);
     } finally {
       setResuming(false);
     }

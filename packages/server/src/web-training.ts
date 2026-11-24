@@ -450,7 +450,11 @@ export const scheduleDayPutInput = z.object({
 export function saveWebScheduleDay(store: Store, userId: string, date: string, input: z.infer<typeof scheduleDayPutInput>) {
   const existing = store.get(userId, "scheduledDay", "schedule_" + date);
   const currentVersion = existing?.version ?? 0;
-  if (input.baseVersion !== undefined && input.baseVersion !== currentVersion) {
+  if (
+    input.baseVersion !== undefined &&
+    input.baseVersion !== currentVersion &&
+    !(existing?.deleted && input.baseVersion === 0)
+  ) {
     throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
   }
   const { opId, baseVersion: _ignored, ...rest } = input;

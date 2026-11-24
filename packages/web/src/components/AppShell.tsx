@@ -3,7 +3,7 @@ import { today } from "../lib/date";
 import { findLocalWorkoutDraft } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { prefetchWorkspace } from "../lib/prefetch";
-import { openCommandPalette, openWorkoutEditor } from "../lib/record-openers";
+import { openCommandPalette, resumeLocalWorkoutDraft } from "../lib/record-openers";
 import {
   DESTINATIONS,
   MOBILE_TABS,
@@ -231,7 +231,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 aria-label="恢复未保存的训练草稿"
                 onClick={() => {
                   triggerHaptic("light");
-                  openWorkoutEditor();
+                  void resumeLocalWorkoutDraft(userId);
                 }}
               >
                 <i className="training-led" aria-hidden="true" />

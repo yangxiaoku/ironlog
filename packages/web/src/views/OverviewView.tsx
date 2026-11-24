@@ -30,6 +30,7 @@ import {
   openAiReviewModal,
   openAppleDailyDetailsModal,
   openAppleWorkoutDetailsModal,
+  openCalendarDayModal,
   openDailyShareModal,
   openDietEditor,
   openOnboardingModal,
@@ -37,6 +38,7 @@ import {
   openWeightEditor,
   openWorkoutEditor,
   openWorkoutReport,
+  resumeLocalWorkoutDraft,
 } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -220,7 +222,7 @@ export function OverviewView() {
       return;
     }
     if (localDraft) {
-      openWorkoutEditor({ goals: stats.goals });
+      void resumeLocalWorkoutDraft(userId, stats.goals);
       return;
     }
     if (day?.planned?.date === todayKey) {
@@ -317,8 +319,24 @@ export function OverviewView() {
     );
   };
 
+  const primaryPanels = visiblePanels
+    ? visiblePanels.filter((p) => p === "load" || p === "muscle" || p === "weight")
+    : ["load", "muscle", "weight"];
+
   return (
     <>
+      {error ? (
+        <div
+          className="panel"
+          role="alert"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}
+        >
+          <span>首页数据刷新失败：{error}</span>
+          <button type="button" className="secondary-button" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : null}
       <div className={`overview-lead${day ? "" : " single-lead"}`}>
         <section className="hero">
           <span className="vf-c tl" aria-hidden="true" />
@@ -367,7 +385,10 @@ export function OverviewView() {
               activity={stats.activity}
               todayKey={todayKey}
               selectedDate={weekDate}
-              onSelectDate={setWeekDate}
+              onSelectDate={(iso) => {
+                setWeekDate(iso);
+                openCalendarDayModal(iso, (d) => setWeekDate(d));
+              }}
             />
           </div>
         </section>
@@ -536,9 +557,9 @@ export function OverviewView() {
         </article>
       </div>
 
-      <div className="dashboard">
-        {(visiblePanels ? visiblePanels.filter((p) => p === "load" || p === "muscle" || p === "weight") : ["load", "muscle", "weight"]).map(
-          (panelId) => {
+      {primaryPanels.length ? (
+        <div className="dashboard">
+          {primaryPanels.map((panelId) => {
             if (panelId === "load") {
               return <LoadChart key="load" data={stats} metric={metric} onMetricChange={setMetric} />;
             }
@@ -560,7 +581,7 @@ export function OverviewView() {
                   <div>
                     <h2>体重趋势</h2>
                     <p>
-                      {shortDate(since30)} – {shortDate(todayKey)}
+                      {shortDate(stats.from ?? since30)} – {shortDate(stats.through ?? todayKey)}
                     </p>
                   </div>
                   <button type="button" className="quiet" onClick={() => navigate("weight")}>
@@ -576,9 +597,19 @@ export function OverviewView() {
                 />
               </section>
             );
-          },
-        )}
-      </div>
+          })}
+        </div>
+      ) : (
+        <section className="panel" style={{ marginBottom: 14 }}>
+          <div className="empty">
+            <strong>首页核心图表已全部隐藏</strong>
+            <p>可在设置中重新勾选需要展示的数据面板。</p>
+            <button type="button" className="secondary-button" onClick={() => navigate("settings")}>
+              前往设置
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="panel recent">
         <header className="panel-head">
@@ -629,7 +660,7 @@ export function OverviewView() {
 
       <BadgesOverviewStrip rawSummary={badges} />
 
-      {appleHealthConnected && (appleDaily || appleAgenda.length > 0) ? (
+      {appleHealthConnected && (!visiblePanels || visiblePanels.includes("apple")) && (appleDaily || appleAgenda.length > 0) ? (
         <details className="overview-more">
           <summary>
             <span>

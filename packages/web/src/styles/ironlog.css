@@ -570,3 +570,11 @@ dialog.workout-dialog .workout-inline-add-btn {
   padding-inline: 10px;
   text-align: center;
 }
+
+.workout-form.show-rir .exercise-editor.timed-exercise {
+  --workout-columns: 30px minmax(0, 1fr) 38px 36px;
+}
+
+.workout-form.show-rir .exercise-editor.timed-exercise.has-delete-cols {
+  --workout-columns: 26px minmax(0, 1fr) 36px 32px 26px;
+}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { duration, fmt } from "../../lib/date";
@@ -22,7 +22,6 @@ import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
 const CLOCK_FMT = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Hong_Kong",
   hour: "2-digit",
   minute: "2-digit",
   hourCycle: "h23",
@@ -355,6 +354,11 @@ export function AppleWorkoutDetailsModal({
   back?: boolean;
   onOpenWorkout?: (workoutId: string) => void;
 }) {
+  const startDate = item.startedAt ? new Date(item.startedAt) : null;
+  const endDate = item.endedAt ? new Date(item.endedAt) : null;
+  const hasTimeWindow = Boolean(
+    startDate && !Number.isNaN(startDate.getTime()) && endDate && !Number.isNaN(endDate.getTime()),
+  );
   const measures: Array<[string, string]> = [
     [item.durationKind === "event_elapsed" ? "开始至结束间隔" : "训练时长", duration(item.durationSeconds)],
     [
@@ -368,8 +372,9 @@ export function AppleWorkoutDetailsModal({
   return (
     <div className="dialog-form apple-workout">
       <div className="report-meta">
-        <time dateTime={item.startedAt}>
-          {item.date} · {CLOCK_FMT.format(new Date(item.startedAt))}–{CLOCK_FMT.format(new Date(item.endedAt))}
+        <time dateTime={item.startedAt || item.date}>
+          {item.date}
+          {hasTimeWindow ? ` · ${CLOCK_FMT.format(startDate!)}–${CLOCK_FMT.format(endDate!)}` : ""}
         </time>
         <span>
           运动类型 <strong>{item.title}</strong>
@@ -406,6 +411,7 @@ export function AppleWorkoutDetailsModal({
 export function HealthDataImportModal({ onImported }: { onImported?: () => void }) {
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -413,6 +419,7 @@ export function HealthDataImportModal({ onImported }: { onImported?: () => void 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (busy) return;
     if (!file || !file.size) {
       setError("请选择有内容的训练 JSON 文件。");
       return;
@@ -437,6 +444,7 @@ export function HealthDataImportModal({ onImported }: { onImported?: () => void 
       });
       setResultText(`新增 ${res.imported} 条 · 补全 ${res.updated} 条 · 跳过重复 ${res.duplicate} 条`);
       setFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = "";
       bumpDataEpoch();
       onImported?.();
     } catch (err) {
@@ -453,6 +461,7 @@ export function HealthDataImportModal({ onImported }: { onImported?: () => void 
       <label className="field">
         <span>训练 JSON 文件</span>
         <input
+          ref={fileInputRef}
           type="file"
           accept=".json,application/json"
           required
@@ -649,6 +658,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
   if (step === "device") {
     const handleIssue = async (e: React.FormEvent) => {
       e.preventDefault();
+      if (issuing) return;
       const check = assessServerOrigin(originInput);
       if (!check.valid) {
         setError(check.warning);

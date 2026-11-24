@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { apiFetch } from "../../lib/api";
 import { resolveCatalogueMap } from "../../lib/catalogue";
 import { fmt, formatWeekdayZh, shortDate, today } from "../../lib/date";
@@ -26,6 +26,32 @@ import {
 } from "./PlannedExerciseList";
 
 const WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+
+async function fetchMissingPrs(
+  ids: string[],
+  current: Map<string, ExercisePrInfo>,
+  setPrMap: Dispatch<SetStateAction<Map<string, ExercisePrInfo>>>,
+  dateRef = "2099-12-31",
+): Promise<void> {
+  const missing = [...new Set(ids)].filter((id) => id && !current.has(id));
+  if (!missing.length) return;
+  try {
+    const prs = await apiFetch<ExercisePrInfo[]>("/api/web/exercise-prs", {
+      method: "POST",
+      body: {
+        date: dateRef,
+        startedAt: `${dateRef}T23:59:59Z`,
+        exercises: missing.map((id) => ({ id })),
+      },
+    });
+    if (!prs.length) return;
+    setPrMap((prev) => {
+      const next = new Map(prev);
+      for (const p of prs) next.set(p.exerciseId, p);
+      return next;
+    });
+  } catch {}
+}
 
 export interface ScheduleDayEntry {
   date: string;
@@ -205,7 +231,9 @@ export function DaySchedulerModal({
 
   const applyPlanPreset = async (r: PlanRoutine) => {
     setError("");
-    await mergeCatalogue(r.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""]));
+    const ids = r.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""].filter(Boolean));
+    await mergeCatalogue(ids);
+    void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
     setTitle(r.name);
     setPlanId(schedule?.activePlan?.id ?? null);
     setRoutineId(r.id);
@@ -215,7 +243,9 @@ export function DaySchedulerModal({
 
   const applyTemplatePreset = async (t: { id: string; name: string; exercises: PlannedExercise[] }) => {
     setError("");
-    await mergeCatalogue(t.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""]));
+    const ids = t.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""].filter(Boolean));
+    await mergeCatalogue(ids);
+    void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
     setTitle(t.name);
     setPlanId(null);
     setRoutineId(null);
@@ -225,7 +255,9 @@ export function DaySchedulerModal({
 
   const applyHistoryPreset = async (w: RecordEnvelope<WorkoutData>) => {
     setError("");
-    const map = await mergeCatalogue(w.data.exercises.map((e) => e.exerciseId));
+    const ids = w.data.exercises.map((e) => e.exerciseId);
+    const map = await mergeCatalogue(ids);
+    void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
     setTitle(w.data.title);
     setPlanId(w.data.planId ?? null);
     setRoutineId(w.data.routineId ?? null);
@@ -256,13 +288,20 @@ export function DaySchedulerModal({
   };
 
   const handleQuickOp = async (op: "rest" | "shift" | "clear") => {
+    if (saving) return;
     setError("");
     setSaving(true);
     try {
       if (op === "rest") {
         await apiFetch(`/api/web/schedule/${encodeURIComponent(date)}`, {
           method: "PUT",
-          body: { mode: "rest", title: "休息日", notes: notes.trim(), exercises: [], baseVersion },
+          body: {
+            mode: "rest",
+            title: "休息日",
+            notes: notes.trim(),
+            exercises: [],
+            ...(detail.override ? { baseVersion } : {}),
+          },
         });
         bumpDataEpoch();
         closeAllModals();
@@ -290,6 +329,7 @@ export function DaySchedulerModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     setError("");
     const sanitized = sanitizePlannedExercises(exercises, catalogueMap);
     if (!sanitized.length) {
@@ -308,7 +348,7 @@ export function DaySchedulerModal({
           templateId,
           notes: notes.trim(),
           exercises: sanitized,
-          baseVersion,
+          ...(detail.override ? { baseVersion } : {}),
         },
       });
       bumpDataEpoch();
@@ -436,6 +476,7 @@ export function DaySchedulerModal({
               next.set(ex.id, ex);
               return next;
             });
+            void fetchMissingPrs([ex.id], prMap, setPrMap, shiftDateStr(today(), 1));
           }}
         />
       </section>
@@ -484,6 +525,7 @@ export function PlanBuilderModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const createdDraftRef = useRef<{ id: string; version: number; fingerprint: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -603,6 +645,7 @@ export function PlanBuilderModal({
   };
 
   const handleSave = async (mode: "draft" | "apply") => {
+    if (saving) return;
     setError("");
     const cleanedRoutines = routines.map((r, i) => ({
       ...r,
@@ -621,26 +664,35 @@ export function PlanBuilderModal({
 
     setSaving(true);
     try {
-      const draftRes = await apiFetch<{ record?: { id: string; version: number } }>("/api/plans/drafts", {
-        method: "POST",
-        body: {
-          name: name.trim(),
-          weeks: Number(weeks),
-          schedule,
-          weekdays: schedule === "weekdays" ? weekdays.slice(0, cleanedRoutines.length) : [],
-          routines: cleanedRoutines,
-          rationale: rationale.trim() || "手动规划训练分化与渐进参数。",
-          source: "manual",
-          parentId: existingPlan?.id ?? null,
-        },
-      });
-      if (mode === "apply" && draftRes?.record) {
+      const draftBody = {
+        name: name.trim(),
+        weeks: Number(weeks),
+        schedule,
+        weekdays: schedule === "weekdays" ? weekdays.slice(0, cleanedRoutines.length) : [],
+        routines: cleanedRoutines,
+        rationale: rationale.trim() || "手动规划训练分化与渐进参数。",
+        source: "manual",
+        parentId: existingPlan?.id ?? null,
+      };
+      const fingerprint = JSON.stringify(draftBody);
+      let targetDraft = createdDraftRef.current?.fingerprint === fingerprint ? createdDraftRef.current : null;
+      if (!targetDraft) {
+        const draftRes = await apiFetch<{ record?: { id: string; version: number } }>("/api/plans/drafts", {
+          method: "POST",
+          body: draftBody,
+        });
+        if (draftRes?.record) {
+          targetDraft = { id: draftRes.record.id, version: draftRes.record.version, fingerprint };
+          createdDraftRef.current = targetDraft;
+        }
+      }
+      if (mode === "apply" && targetDraft) {
         const active = await apiFetch<{ revision?: number } | null>("/api/plans/active").catch(() => null);
         await apiFetch("/api/plans/apply", {
           method: "POST",
           body: {
-            id: draftRes.record.id,
-            version: draftRes.record.version,
+            id: targetDraft.id,
+            version: targetDraft.version,
             expectedRevision: active?.revision ?? 0,
           },
         });
@@ -785,6 +837,7 @@ export function PlanBuilderModal({
               next.set(ex.id, ex);
               return next;
             });
+            void fetchMissingPrs([ex.id], prMap, setPrMap, shiftDateStr(today(), 1));
           }}
         />
       </section>
@@ -826,6 +879,7 @@ export function TemplateEditorModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const createdDraftRef = useRef<{ id: string; version: number; fingerprint: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -868,6 +922,7 @@ export function TemplateEditorModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (saving) return;
     setError("");
     const cleanName = name.trim();
     if (!cleanName) {
@@ -935,6 +990,7 @@ export function TemplateEditorModal({
               next.set(ex.id, ex);
               return next;
             });
+            void fetchMissingPrs([ex.id], prMap, setPrMap, shiftDateStr(today(), 1));
           }}
         />
       </section>
@@ -1172,6 +1228,7 @@ export function RoutinePreviewModal({
         planId: result.planId ?? null,
         planVersion: result.planVersion ?? null,
         routineId: result.routineId,
+        targetSnapshot: result.targetSnapshot,
       },
       goals,
     );

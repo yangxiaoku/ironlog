@@ -805,6 +805,8 @@ function computeAppleWorkoutBucket(
     .map((item) => ({
       id: item.id,
       date: item.date,
+      startedAt: item.startedAt,
+      endedAt: item.endedAt,
       title: item.activity.title,
       activityType: item.activityType,
       captureMethod: item.captureMethod,

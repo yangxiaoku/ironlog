@@ -92,6 +92,13 @@ interface WorkoutDraftSnapshot {
   exercises: WorkoutExercise[];
   timing: WorkoutTiming;
   rest: RestTimerState | null;
+  source?: string;
+  rawPrompt?: string;
+  planId?: string | null;
+  planVersion?: number | null;
+  routineId?: string | null;
+  targetSnapshot?: unknown;
+  adjustments?: unknown[];
 }
 
 export function WorkoutEditorModal({
@@ -132,6 +139,13 @@ export function WorkoutEditorModal({
               exercises: parsed.exercises,
               timing: parsed.timing ?? baseData?.timing ?? { elapsedSeconds: 0, runningSince: new Date().toISOString() },
               rest: normalizeRestTimer(parsed.rest ?? null),
+              source: parsed.source ?? baseData?.source ?? "manual",
+              rawPrompt: parsed.rawPrompt ?? baseData?.rawPrompt,
+              planId: parsed.planId ?? baseData?.planId ?? null,
+              planVersion: parsed.planVersion ?? baseData?.planVersion ?? null,
+              routineId: parsed.routineId ?? baseData?.routineId ?? null,
+              targetSnapshot: parsed.targetSnapshot ?? baseData?.targetSnapshot,
+              adjustments: parsed.adjustments ?? baseData?.adjustments,
             };
           }
         }
@@ -160,6 +174,13 @@ export function WorkoutEditorModal({
           ? { elapsedSeconds: 0, runningSince: null }
           : { elapsedSeconds: 0, runningSince: new Date().toISOString() }),
       rest: baseRest,
+      source: seed?.source ?? baseData?.source ?? (seed?.planId || seed?.routineId ? "plan" : "manual"),
+      rawPrompt: seed?.rawPrompt ?? baseData?.rawPrompt,
+      planId: seed?.planId ?? baseData?.planId ?? null,
+      planVersion: seed?.planVersion ?? baseData?.planVersion ?? null,
+      routineId: seed?.routineId ?? baseData?.routineId ?? null,
+      targetSnapshot: seed?.targetSnapshot ?? baseData?.targetSnapshot,
+      adjustments: seed?.adjustments ?? baseData?.adjustments,
     };
   }, [record, seed, draftStorageKey, todayStr]);
 
@@ -168,8 +189,18 @@ export function WorkoutEditorModal({
   savedRecordRef.current = savedRecord;
 
   const isHistoricalEdit = (savedRecord ?? record)?.data.status === "completed";
+  const hadTiming = Boolean(seed || record?.data?.timing || record?.data.status !== "completed");
   const [workoutId] = useState<string>(() => record?.id ?? newId());
   const [sessionStart] = useState<string>(() => record?.data.startedAt ?? new Date().toISOString());
+  const sessionMetaRef = useRef({
+    source: initialSnapshot.source ?? "manual",
+    rawPrompt: initialSnapshot.rawPrompt,
+    planId: initialSnapshot.planId ?? null,
+    planVersion: initialSnapshot.planVersion ?? null,
+    routineId: initialSnapshot.routineId ?? null,
+    targetSnapshot: initialSnapshot.targetSnapshot,
+    adjustments: initialSnapshot.adjustments,
+  });
 
   const [title, setTitle] = useState(initialSnapshot.title);
   const [date, setDate] = useState(initialSnapshot.date);
@@ -228,6 +259,7 @@ export function WorkoutEditorModal({
   const restAlarmFiredForRef = useRef<number | null>(null);
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const workoutScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     return () => {
@@ -255,7 +287,7 @@ export function WorkoutEditorModal({
       try {
         localStorage.setItem(
           draftStorageKey,
-          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest }),
+          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest, ...sessionMetaRef.current }),
         );
       } catch {}
     }
@@ -271,7 +303,7 @@ export function WorkoutEditorModal({
       try {
         localStorage.setItem(
           draftStorageKey,
-          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest }),
+          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest, ...sessionMetaRef.current }),
         );
       } catch {}
     }, 200);
@@ -407,12 +439,13 @@ export function WorkoutEditorModal({
               return [...prev, newEx];
             });
             if (autoPrefillLast && !cachedRef) {
-              void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-refs", {
+              const activeId = savedRecordRef.current?.id ?? record?.id;
+              void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-references", {
                 method: "POST",
                 body: {
                   date,
-                  excludeWorkoutId: savedRecordRef.current?.id ?? record?.id ?? null,
-                  excludeStartedAt: sessionStart,
+                  startedAt: sessionStart,
+                  ...(activeId ? { workoutId: activeId } : {}),
                   exercises: [{ id: ex.id, mode: ex.mode ?? "reps" }],
                 },
               })
@@ -628,6 +661,7 @@ export function WorkoutEditorModal({
       })),
     }));
 
+    const curMeta = sessionMetaRef.current;
     const workoutData: WorkoutData = {
       title: cleanTitle,
       date,
@@ -637,12 +671,15 @@ export function WorkoutEditorModal({
       durationUnknown: curRec?.data.durationUnknown,
       notes: notes.trim(),
       feeling,
-      source: curRec?.data.source ?? "manual",
-      planId: curRec?.data.planId ?? null,
-      planVersion: curRec?.data.planVersion ?? null,
-      routineId: curRec?.data.routineId ?? null,
+      source: curRec?.data.source ?? curMeta.source ?? "manual",
+      rawPrompt: curRec?.data.rawPrompt ?? curMeta.rawPrompt,
+      planId: curRec?.data.planId ?? curMeta.planId ?? null,
+      planVersion: curRec?.data.planVersion ?? curMeta.planVersion ?? null,
+      routineId: curRec?.data.routineId ?? curMeta.routineId ?? null,
+      targetSnapshot: curRec?.data.targetSnapshot ?? curMeta.targetSnapshot,
+      adjustments: curRec?.data.adjustments ?? curMeta.adjustments,
       exercises: sanitizedExercises,
-      timing: pausedTiming,
+      ...(isHistoricalEdit && !hadTiming ? {} : { timing: pausedTiming }),
       restEndsAt: resting && rest ? Math.round(rest.end) : null,
       restStartedAt: resting && rest ? Math.max(0, Math.round(rest.start)) : null,
     };
@@ -834,7 +871,13 @@ export function WorkoutEditorModal({
                 disabled={saving}
                 onClick={() => {
                   triggerHaptic("light");
-                  setFinishPanelOpen((v) => !v);
+                  setFinishPanelOpen((v) => {
+                    const next = !v;
+                    if (next) {
+                      workoutScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                    }
+                    return next;
+                  });
                 }}
               >
                 结束
@@ -1177,7 +1220,7 @@ export function WorkoutEditorModal({
       </div>
 
       {/* Main Exercise Scroll Stack */}
-      <div className="workout-scroll">
+      <div className="workout-scroll" ref={workoutScrollRef}>
         {finishPanelOpen ? (
           <div className="finish-panel">
             {isHistoricalEdit ? (
@@ -1229,6 +1272,9 @@ export function WorkoutEditorModal({
               />
             </label>
 
+            <p className="form-error" role="alert" hidden={!error}>
+              {error}
+            </p>
             <div className="dialog-foot">
               {!isHistoricalEdit ? (
                 <button type="button" className="quiet" onClick={() => setFinishPanelOpen(false)}>

@@ -7,7 +7,7 @@ import { useMobileGuards } from "./hooks/useMobileGuards";
 import { apiFetch, configureApi } from "./lib/api";
 import type { ProfileGoals } from "./lib/domain";
 import { prefetchViewChunk, viewLoaders } from "./lib/prefetch";
-import { cachedApiFetch, configureQueryCache } from "./lib/query-cache";
+import { cachedApiFetch, configureQueryCache, invalidateQueryCache } from "./lib/query-cache";
 import { openCommandPalette } from "./lib/record-openers";
 import {
   PROFILE_VERSION_EVENT,
@@ -49,6 +49,8 @@ configureWorkoutPrefsSync(async (prefs) => {
     body: prefs,
     skipMutateHook: true,
   });
+  invalidateQueryCache(uid, "/api/web/profile");
+  invalidateQueryCache(uid, "view:settings");
   if (typeof res?.version === "number" && typeof window !== "undefined") {
     window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
   }

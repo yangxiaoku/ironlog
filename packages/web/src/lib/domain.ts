@@ -134,9 +134,12 @@ export interface WorkoutData {
   notes?: string;
   feeling?: FeelingKey | null;
   source?: string;
+  rawPrompt?: string;
   planId?: string | null;
   planVersion?: number | null;
   routineId?: string | null;
+  targetSnapshot?: unknown;
+  adjustments?: unknown[];
   exercises: WorkoutExercise[];
   timing?: { elapsedSeconds: number; runningSince: string | null } | null;
   restEndsAt?: number | null;

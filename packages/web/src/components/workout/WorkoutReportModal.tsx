@@ -307,7 +307,7 @@ export function WorkoutReportModal({
     openWorkoutShareModal({
       singleReport: report,
       singleHealth: appleItem,
-      onBack: () => openWorkoutReport({ workoutId: report.id, record, goals }),
+      onBack: () => useUiStore.getState().closeTopModal(),
     });
   };
 
@@ -323,7 +323,15 @@ export function WorkoutReportModal({
 
       {appleItem ? (
         <div style={{ marginBottom: 12 }}>
-          <AppleLine item={appleItem} onClick={() => openAppleWorkoutDetailsModal(appleItem)} />
+          <AppleLine
+            item={appleItem}
+            onClick={() =>
+              openAppleWorkoutDetailsModal({
+                item: appleItem,
+                back: () => useUiStore.getState().closeTopModal(),
+              })
+            }
+          />
         </div>
       ) : null}
 

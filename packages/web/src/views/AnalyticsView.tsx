@@ -302,6 +302,10 @@ interface AppleWorkoutsBucket {
     activityType: string;
     isDemo?: boolean;
     captureMethod?: string;
+    startedAt?: string;
+    endedAt?: string;
+    manualWorkoutId?: string | null;
+    durationKind?: string;
     durationSeconds: number;
     activeEnergyKcal?: number | null;
     distanceMeters?: number | null;
@@ -690,8 +694,9 @@ export function AnalyticsView() {
     const targetDate = appleDaily?.latestBody?.weightKg?.date ?? data.through ?? today();
     setBusyAction("adoptWeight");
     try {
-      const weights = await apiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight").catch(() => []);
-      const existing = weights.find((r) => !r.deleted && r.id === `weight_${targetDate}`);
+      const existing = await apiFetch<RecordEnvelope<WeightData>>(
+        `/api/web/records/weight/${encodeURIComponent(`weight_${targetDate}`)}?includeDeleted=1`,
+      ).catch(() => null);
       await apiFetch("/api/records", {
         method: "POST",
         body: {
@@ -703,7 +708,10 @@ export function AnalyticsView() {
           data: {
             date: targetDate,
             weight: userProfile.appleWeightKg,
-            bodyFat: appleDaily?.latestBody?.bodyFatPct?.value ?? existing?.data?.bodyFat ?? null,
+            bodyFat:
+              appleDaily?.latestBody?.bodyFatPct?.value ??
+              (!existing?.deleted ? existing?.data?.bodyFat : null) ??
+              null,
           },
         },
       });
@@ -1045,7 +1053,7 @@ export function AnalyticsView() {
               max={data.today}
               value={through}
               onChange={(e) => {
-                if (e.target.value) setThrough(e.target.value);
+                if (e.target.validity.valid && e.target.value) setThrough(e.target.value);
               }}
             />
           </label>
@@ -1058,6 +1066,19 @@ export function AnalyticsView() {
           </div>
         </div>
       </div>
+
+      {error ? (
+        <div
+          className="panel"
+          role="alert"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}
+        >
+          <span>数据分析刷新失败：{error}</span>
+          <button type="button" className="secondary-button" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : null}
 
       <div className="section-bar stats-header analytics-meta-bar">
         <div>
@@ -2695,8 +2716,10 @@ export function AnalyticsView() {
                                         id: row.id,
                                         title: row.title,
                                         date: row.date,
-                                        startedAt: `${row.date}T00:00:00Z`,
-                                        endedAt: `${row.date}T00:00:00Z`,
+                                        ...(row.startedAt ? { startedAt: row.startedAt } : {}),
+                                        ...(row.endedAt ? { endedAt: row.endedAt } : {}),
+                                        manualWorkoutId: row.manualWorkoutId,
+                                        durationKind: row.durationKind,
                                         durationSeconds: row.durationSeconds,
                                         activeEnergyKcal: row.activeEnergyKcal,
                                         distanceMeters: row.distanceMeters,

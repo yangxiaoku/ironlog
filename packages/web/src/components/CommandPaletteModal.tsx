@@ -271,11 +271,18 @@ export function CommandPaletteModal() {
     return [...exItems, ...matchedStatic].slice(0, 18);
   }, [query, staticItems, exResults, closeAllModals]);
 
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
   useEffect(() => {
     setActiveIdx(0);
   }, [query, allItems.length]);
 
+  useEffect(() => {
+    optionRefs.current[activeIdx]?.scrollIntoView({ block: "nearest" });
+  }, [activeIdx]);
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (!allItems.length) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -316,6 +323,9 @@ export function CommandPaletteModal() {
           allItems.map((item, idx) => (
             <button
               key={item.id}
+              ref={(el) => {
+                optionRefs.current[idx] = el;
+              }}
               type="button"
               role="option"
               aria-selected={idx === activeIdx}

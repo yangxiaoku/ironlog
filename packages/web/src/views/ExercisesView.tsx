@@ -90,6 +90,8 @@ export function ExercisesView() {
   const [pendingFavIds, setPendingFavIds] = useState<Set<string>>(() => new Set());
   const composingRef = useRef(false);
   const seqRef = useRef(0);
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   // Debounce search text cleanly (IME safe)
   useEffect(() => {
@@ -235,23 +237,21 @@ export function ExercisesView() {
 
         const equipMatch = (ex: DisplayExerciseItem) => !mineSet || !mineSet.size || mineSet.has(ex.equipment);
         const filteredApi = data.items.filter(equipMatch);
-        const customMatches = append
-          ? []
-          : customList.filter((ex) => matchesExerciseLocal(ex, debouncedQuery, muscle, equipmentFilter, mineSet));
+        const customMatches = customList.filter((ex) =>
+          matchesExerciseLocal(ex, debouncedQuery, muscle, equipmentFilter, mineSet),
+        );
 
-        setItems((prev) => {
-          const combined = append
-            ? [...prev, ...filteredApi]
-            : prioritizeExact([...customMatches, ...filteredApi.filter((ex) => !customIds.has(ex.id))], debouncedQuery);
-          const totalCount = equipmentFilter === "__mine__" ? combined.length : data.total + customMatches.length;
-          setTotal(totalCount);
-          setStatusText(
-            equipmentFilter === "__mine__"
-              ? `匹配我的器械 ${fmt(combined.length)} 个动作${data.nextCursor ? "（可继续加载）" : ""}`
-              : `已显示 ${fmt(combined.length)} / ${fmt(totalCount)} 个动作`,
-          );
-          return combined;
-        });
+        const nextItems = append
+          ? [...itemsRef.current, ...filteredApi.filter((ex) => !customIds.has(ex.id))]
+          : prioritizeExact([...customMatches, ...filteredApi.filter((ex) => !customIds.has(ex.id))], debouncedQuery);
+        const totalCount = equipmentFilter === "__mine__" ? nextItems.length : data.total + customMatches.length;
+        setItems(nextItems);
+        setTotal(totalCount);
+        setStatusText(
+          equipmentFilter === "__mine__"
+            ? `匹配我的器械 ${fmt(nextItems.length)} 个动作${data.nextCursor ? "（可继续加载）" : ""}`
+            : `已显示 ${fmt(nextItems.length)} / ${fmt(totalCount)} 个动作`,
+        );
         setNextCursor(data.nextCursor);
       } catch (err) {
         if (seq !== seqRef.current) return;
@@ -270,12 +270,12 @@ export function ExercisesView() {
         }
       }
     },
-    [userId, scope, muscle, equipmentFilter, trainedSort, debouncedQuery],
+    [userId, scope, muscle, equipmentFilter, trainedSort, debouncedQuery, dataEpoch],
   );
 
   useEffect(() => {
     void fetchCatalogue(false, null);
-  }, [fetchCatalogue, dataEpoch]);
+  }, [fetchCatalogue]);
 
   const favMap = new Map(favRecords.map((r) => [r.data.exerciseId, r]));
   const customMap = new Map(customRecords.map((r) => [r.data.id, r]));
@@ -284,6 +284,7 @@ export function ExercisesView() {
     if (!userId || pendingFavIds.has(exerciseId)) return;
     triggerHaptic("light");
     const existing = favMap.get(exerciseId);
+    const removedItem = existing && scope === "favorites" ? items.find((ex) => ex.id === exerciseId) : undefined;
     setPendingFavIds((prev) => new Set(prev).add(exerciseId));
 
     // Optimistic update
@@ -321,8 +322,14 @@ export function ExercisesView() {
       }
       bumpDataEpoch();
     } catch (err) {
-      if (existing) setFavRecords((prev) => [...prev, existing]);
-      else setFavRecords((prev) => prev.filter((r) => r.data.exerciseId !== exerciseId));
+      if (existing) {
+        setFavRecords((prev) => [...prev, existing]);
+        if (removedItem && scope === "favorites") {
+          setItems((prev) => [removedItem, ...prev]);
+        }
+      } else {
+        setFavRecords((prev) => prev.filter((r) => r.data.exerciseId !== exerciseId));
+      }
       notify((err as Error)?.message || "收藏操作失败");
     } finally {
       setPendingFavIds((prev) => {

@@ -145,6 +145,7 @@ export function SettingsView() {
   const [targetWeight, setTargetWeight] = useState("");
   const [equipment, setEquipment] = useState<Set<EquipmentKey>>(() => new Set(["barbell", "dumbbell", "machine"]));
   const [energyEnabled, setEnergyEnabled] = useState(false);
+  const [energyDetailsOpen, setEnergyDetailsOpen] = useState(false);
   const [heightCm, setHeightCm] = useState("175");
   const [energyWeightKg, setEnergyWeightKg] = useState("70");
   const [weightDate, setWeightDate] = useState(() => today());
@@ -197,10 +198,11 @@ export function SettingsView() {
       setEquipment(new Set((g.equipment ?? ["barbell", "dumbbell", "machine"]) as EquipmentKey[]));
       const ep = g.energyProfile;
       setEnergyEnabled(Boolean(ep));
+      setEnergyDetailsOpen(Boolean(ep));
       if (ep) {
         setHeightCm(String(ep.heightCm));
         setEnergyWeightKg(String(ep.weightKg));
-        setWeightDate(ep.weightDate);
+        setWeightDate(ep.weightDate ?? today());
         setBirthDate(ep.birthDate);
         setSex(ep.sex);
         setActivityFactor(String(ep.activityFactor));
@@ -708,7 +710,11 @@ export function SettingsView() {
                   </div>
                 </section>
 
-                <details className="energy-details" open={energyEnabled}>
+                <details
+                  className="energy-details"
+                  open={energyDetailsOpen}
+                  onToggle={(e) => setEnergyDetailsOpen(e.currentTarget.open)}
+                >
                   <summary>
                     <span>能量估算资料</span>
                     <Icon name="chevron" size={14} />
