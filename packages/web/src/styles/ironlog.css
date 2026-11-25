@@ -2691,28 +2691,7 @@ dialog.workout-dialog .workout-inline-add-btn {
 /* ==== Cardio Modality Picker & Direct Launch ==== */
 .cardio-launcher {
   display: grid;
-  gap: 14px;
-}
-
-.cardio-mode-note {
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--inset) 70%, transparent);
-}
-
-.cardio-mode-note p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.cardio-mode-warn {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  gap: 12px;
 }
 
 .cardio-preset-grid {
@@ -2822,10 +2801,10 @@ dialog.workout-dialog .workout-inline-add-btn {
   align-items: center;
   justify-content: space-between;
   gap: 10px 12px;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
-  background: color-mix(in srgb, var(--red-wash) 52%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--edge));
+  background: var(--inset);
 }
 
 .cardio-active-banner-copy {
@@ -2847,347 +2826,331 @@ dialog.workout-dialog .workout-inline-add-btn {
   color: var(--muted);
 }
 
-.cardio-session {
-  display: grid;
-  gap: 14px;
+dialog.cardio-dialog {
+  background: var(--bg);
 }
 
-.cardio-session-hero {
-  display: grid;
-  gap: 14px;
-  padding: 16px;
-  border-radius: 16px;
-  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--edge));
-  background:
-    radial-gradient(circle at 85% 10%, color-mix(in srgb, var(--red) 14%, transparent), transparent 56%),
-    var(--surface);
-}
-
-.cardio-session-status-row {
+dialog.cardio-dialog[open] {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  height: min(86dvh, 760px);
+  max-height: min(86dvh, 760px);
+  overflow: hidden;
+  padding: 0;
 }
 
-.cardio-live-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 650;
-  color: var(--red-ink);
-  background: color-mix(in srgb, var(--red) 14%, var(--inset));
-  border: 1px solid color-mix(in srgb, var(--red) 42%, var(--edge));
+dialog.cardio-dialog .dialog-head {
+  display: none;
 }
 
-.cardio-live-badge.is-paused {
-  color: var(--muted);
-  background: var(--inset);
-  border-color: var(--edge);
+@media (max-width: 630px) {
+  dialog.cardio-dialog {
+    width: 100%;
+    max-width: none;
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+  }
+  dialog.cardio-dialog[open] {
+    height: 100dvh;
+    max-height: 100dvh;
+  }
 }
 
-.cardio-live-badge.is-paused .training-led {
-  animation: none;
-  opacity: 0.4;
+.cardio-stage {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
 }
 
-.cardio-env-tag,
-.cardio-bg-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 9px;
-  border-radius: 999px;
-  font-size: 11.5px;
-  color: var(--muted);
-  background: var(--inset);
-  border: 1px solid var(--rule);
-}
-
-.cardio-bg-pill {
-  margin-left: auto;
-}
-
-.cardio-clock-stage {
+.cardio-topbar {
+  flex: none;
   display: grid;
-  gap: 6px;
-  text-align: center;
-  padding: 8px 4px 4px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: max(12px, env(safe-area-inset-top, 0px)) 16px 12px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
 }
 
-.cardio-clock-sport {
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
+:root[data-theme="light"] .cardio-topbar {
+  background: var(--surface);
+}
+
+.cardio-topbar-title {
+  pointer-events: none;
+}
+
+.cardio-body {
+  flex: 1 1 0%;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  align-content: space-between;
+  gap: 20px;
+  padding: 20px 18px 18px;
+}
+
+.cardio-chrono {
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 10px;
+  padding: 12px 0 4px;
+}
+
+.cardio-digits {
+  font-family: var(--mono);
+  font-size: clamp(3.1rem, 15vw, 4.75rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  transition: opacity 0.16s ease;
+}
+
+.cardio-digits.is-paused {
+  opacity: 0.56;
+}
+
+.cardio-chrono-meta {
+  font: 600 12px/1.3 var(--mono);
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
 }
 
-.cardio-clock-digits {
-  font-family: var(--mono);
-  font-size: clamp(2.6rem, 11vw, 3.85rem);
-  font-weight: 800;
-  line-height: 1.04;
-  letter-spacing: -0.02em;
-  font-variant-numeric: tabular-nums;
+.cardio-dot-meter {
+  width: min(320px, 100%);
+  margin-top: 6px;
+}
+
+.cardio-targets {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  margin-top: 8px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.cardio-targets button {
+  min-height: 36px;
+  padding: 0 11px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: transparent;
+  color: var(--muted);
+  font: 600 12.5px/1 var(--mono);
+  cursor: pointer;
+  transition: color 0.14s ease, border-color 0.14s ease;
+}
+
+.cardio-targets button:hover {
   color: var(--ink);
 }
 
-.cardio-clock-sub {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 6px 14px;
-  font: 600 12px/1.4 var(--mono);
+.cardio-targets button.is-active {
+  color: var(--ink);
+  border-bottom-color: var(--red);
+}
+
+.cardio-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 12px 0;
+  border-block: 1px solid var(--edge);
+}
+
+.cardio-metrics > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 0 10px;
+}
+
+.cardio-metrics > div + div {
+  border-left: 1px dotted var(--edge);
+}
+
+.cardio-metrics > div > span {
+  font-size: 11.5px;
   color: var(--muted);
 }
 
-.cardio-target-bar {
-  height: 6px;
-  margin-top: 6px;
-  border-radius: 999px;
-  background: var(--inset);
+.cardio-metrics > div > strong {
+  font: 700 clamp(14.5px, 3.2vw, 18px)/1.25 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  white-space: nowrap;
   overflow: hidden;
-  border: 1px solid var(--rule);
+  text-overflow: ellipsis;
 }
 
-.cardio-target-bar > i {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--red);
-  transition: width 0.25s ease;
-}
-
-.cardio-target-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+.cardio-splits {
+  display: grid;
   gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--rule);
 }
 
-.cardio-target-label {
+.cardio-splits header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font: 600 11.5px/1.2 var(--mono);
+  color: var(--muted);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+
+.cardio-splits ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  max-height: 156px;
+  overflow-y: auto;
+}
+
+.cardio-splits li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 2px;
+  border-bottom: 1px dotted var(--rule);
+  font: 550 12.5px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cardio-splits li:last-child {
+  border-bottom: 0;
+}
+
+.cardio-splits li > span {
+  color: var(--muted);
+}
+
+.cardio-splits li > strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.cardio-splits li > small {
+  color: var(--muted);
   font-size: 12px;
-  color: var(--muted);
-  margin-right: 2px;
 }
 
-.cardio-target-chip {
-  min-height: 30px;
-  padding: 0 11px;
-  border-radius: 999px;
-  border: 1px solid var(--edge);
-  background: var(--inset);
-  color: var(--muted);
-  font: 600 12px/1 var(--mono);
-  cursor: pointer;
+.cardio-dock {
+  flex: none;
+  display: grid;
+  gap: 10px;
+  padding: 12px 16px max(16px, env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--edge);
+  background: var(--bg);
 }
 
-.cardio-target-chip.is-active {
-  border-color: var(--red);
-  background: color-mix(in srgb, var(--red) 14%, var(--surface));
-  color: var(--red-ink);
+:root[data-theme="light"] .cardio-dock {
+  background: var(--surface);
 }
 
-.cardio-telemetry-grid {
+.cardio-dock-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-@media (min-width: 560px) {
-  .cardio-telemetry-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-}
-
-.cardio-telemetry-cell {
-  display: grid;
-  gap: 3px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-}
-
-.cardio-telemetry-cell span {
-  font-size: 11.5px;
-  color: var(--muted);
-}
-
-.cardio-telemetry-cell strong {
-  font: 700 15.5px/1.2 var(--mono);
-  font-variant-numeric: tabular-nums;
-  color: var(--ink);
-}
-
-.cardio-telemetry-cell small {
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.cardio-control-row {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.cardio-ctrl-btn {
+.cardio-dock-btn {
   min-height: 46px;
-  padding: 8px 10px;
-  border-radius: 12px;
+  padding: 0 14px;
+  border-radius: 999px;
   border: 1px solid var(--edge);
   background: var(--surface);
   color: var(--ink);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 7px;
   cursor: pointer;
   transition: border-color 0.14s ease, background-color 0.14s ease, transform 0.12s ease;
 }
 
-.cardio-ctrl-btn:hover {
-  border-color: var(--ink);
+.cardio-dock-btn:hover {
+  border-color: var(--soft);
   background: var(--inset);
 }
 
-.cardio-ctrl-btn:active {
-  transform: scale(0.98);
+.cardio-dock-btn:active {
+  transform: scale(0.97);
 }
 
-.cardio-ctrl-btn.is-resume {
-  border-color: var(--red);
-  background: color-mix(in srgb, var(--red) 12%, var(--surface));
-  color: var(--red-ink);
+.cardio-dock-btn.is-resume {
+  border-color: var(--white-button);
+  background: var(--white-button);
+  color: var(--bg);
 }
 
-.cardio-laps-panel {
-  display: grid;
-  gap: 8px;
-  padding: 12px;
-  border-radius: 12px;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-}
-
-.cardio-laps-panel header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 12.5px;
-}
-
-.cardio-laps-panel header small {
-  color: var(--muted);
-  font-family: var(--mono);
-}
-
-.cardio-laps-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: 6px;
-  max-height: 150px;
-  overflow-y: auto;
-}
-
-.cardio-laps-list li {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: var(--inset);
-  font-size: 12.5px;
-}
-
-.cardio-laps-list li strong {
-  font-family: var(--mono);
-  font-variant-numeric: tabular-nums;
-}
-
-.cardio-laps-list li small {
-  font-family: var(--mono);
-  color: var(--muted);
-}
-
-.cardio-shortcut-strip {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px 12px;
-  padding: 11px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--rule);
-  background: color-mix(in srgb, var(--inset) 70%, transparent);
-}
-
-.cardio-shortcut-copy {
-  display: grid;
-  gap: 2px;
-  flex: 1 1 200px;
-  min-width: 0;
-}
-
-.cardio-shortcut-copy strong {
-  font-size: 13px;
-}
-
-.cardio-shortcut-copy small {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--muted);
-}
-
-.cardio-relaunch-link {
-  min-height: 36px;
-  padding: 0 12px;
-  font-size: 12.5px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-
-.cardio-extra-body {
-  display: grid;
-  gap: 12px;
-}
-
-.cardio-session-footer {
-  display: grid;
-  gap: 10px;
-  padding-top: 4px;
-}
-
-.cardio-finish-primary {
-  width: 100%;
-  min-height: 48px;
+.cardio-dock-finish {
+  min-height: 50px;
+  padding: 0 18px;
+  border-radius: 999px;
+  border: 1px solid var(--red);
+  background: var(--red);
+  color: #ffffff;
   font-size: 15px;
   font-weight: 700;
+  text-decoration: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  cursor: pointer;
+  transition: opacity 0.14s ease, transform 0.12s ease;
 }
 
-.cardio-finish-secondary-row {
+.cardio-dock-finish:hover {
+  opacity: 0.92;
+}
+
+.cardio-dock-finish:active {
+  transform: scale(0.98);
+}
+
+.cardio-menu-meta {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  padding: 10px 0;
+  border-top: 1px dotted var(--edge);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.cardio-menu-meta code {
+  font-family: var(--mono);
+  color: var(--ink);
+}
+
+.cardio-menu-foot {
+  flex: none;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--edge);
+}
+
+.cardio-menu-foot button {
+  min-height: 44px;
 }
 
 .live-workout-bar-stack {

@@ -242,6 +242,7 @@ export function ModalHost() {
     activeModal?.wide ? "wide-dialog" : "",
     layout === "menu" ? "mobile-sheet" : "",
     layout === "workout" ? "workout-dialog" : "",
+    layout === "cardio" ? "cardio-dialog" : "",
     layout === "report" ? "report-dialog" : "",
     layout === "badge" ? "badge-dialog" : "",
     layout === "exercise" ? "exercise-dialog" : "",
@@ -274,7 +275,7 @@ export function ModalHost() {
       onClick={(e) => {
         const dialog = dialogRef.current;
         if (!dialog || e.target !== dialog) return;
-        if (layout === "workout" || layout === "onboarding") return;
+        if (layout === "workout" || layout === "cardio" || layout === "onboarding") return;
         const isSheet = dialog.classList.contains("mobile-sheet");
         const hasForm = Boolean(dialog.querySelector("form"));
         if (!isSheet && hasForm) return;
@@ -293,7 +294,7 @@ export function ModalHost() {
       }}
       onTouchStart={(e) => {
         const dialog = dialogRef.current;
-        if (!dialog || e.touches.length !== 1 || layout === "workout") return;
+        if (!dialog || e.touches.length !== 1 || layout === "workout" || layout === "cardio") return;
         if (!matchMedia("(max-width: 630px)").matches) return;
         const target = e.target as Element | null;
         const inHead = Boolean(target?.closest(".dialog-head"));

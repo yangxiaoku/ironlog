@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import {
   buildAppleCardioLaunchUrl,
@@ -22,11 +22,19 @@ import {
 } from "../../lib/cardio-session";
 import { today } from "../../lib/date";
 import { FEELINGS, type FeelingKey, type RecordEnvelope, type WorkoutData } from "../../lib/domain";
-import { elapsedAt, formatClock, pauseAt, triggerHaptic } from "../../lib/haptics-audio";
+import {
+  elapsedAt,
+  formatClock,
+  keepWorkoutScreenAwake,
+  pauseAt,
+  triggerHaptic,
+} from "../../lib/haptics-audio";
 import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../../lib/workout-helpers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
+
+const DOT_SEGMENTS = 24;
 
 export function CardioSessionModal({
   onFinishedLocal,
@@ -45,6 +53,10 @@ export function CardioSessionModal({
   const [prefs, setPrefs] = useState(() => readWorkoutPreferences());
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingLocal, setSavingLocal] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  const isRunningRef = useRef(Boolean(session?.timing.runningSince));
+  isRunningRef.current = Boolean(session?.timing.runningSince);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -52,6 +64,13 @@ export function CardioSessionModal({
     window.addEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
   }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof navigator === "undefined" || !("wakeLock" in navigator)) return;
+    const wake = keepWorkoutScreenAwake(() => isRunningRef.current, () => {});
+    wake.update();
+    return () => wake.stop();
+  }, [Boolean(session?.timing.runningSince)]);
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") return;
@@ -113,6 +132,12 @@ export function CardioSessionModal({
   const targetDelta = targetSeconds ? targetSeconds - elapsedSeconds : null;
   const lastLap = session.laps.at(-1) ?? null;
   const currentSplitSeconds = Math.max(0, elapsedSeconds - (lastLap?.cumulativeSeconds ?? 0));
+
+  const litSegments = targetProgress != null
+    ? Math.max(elapsedSeconds > 0 ? 1 : 0, Math.round(targetProgress * DOT_SEGMENTS))
+    : elapsedSeconds > 0
+      ? Math.max(1, Math.round(((elapsedSeconds % 60 || 60) / 60) * DOT_SEGMENTS))
+      : 0;
 
   const endShortcutUrl = buildAppleHubActionUrl("end", prefs);
   const relaunchUrl = onIos ? buildAppleCardioLaunchUrl(session.presetId, prefs) : null;
@@ -274,99 +299,13 @@ export function CardioSessionModal({
   };
 
   return (
-    <div className="dialog-form cardio-session">
-      <div className="cardio-session-hero">
-        <div className="cardio-session-status-row">
-          <span className={`cardio-live-badge${isRunning ? " is-running" : " is-paused"}`}>
-            <span className="training-led" aria-hidden="true" />
-            {isRunning ? "计时进行中" : "已暂停"}
-          </span>
-          <span className="cardio-env-tag">{session.environment === "outdoor" ? "室外" : "室内"}</span>
-          <span className="cardio-bg-pill">
-            <Icon name="clock" size={12} /> 切后台 / 锁屏持续计时
-          </span>
-        </div>
-
-        <div className="cardio-clock-stage" aria-live="off">
-          <div className="cardio-clock-sport">{session.label}</div>
-          <div className="cardio-clock-digits">{formatClock(elapsedSeconds)}</div>
-          <div className="cardio-clock-sub">
-            <span>开始于 {formatStartClock(session.startedAt)}</span>
-            {targetDelta != null ? (
-              <span>
-                {targetDelta >= 0
-                  ? `距 ${session.targetMinutes} 分钟目标还剩 ${formatClock(targetDelta)}`
-                  : `已超出 ${session.targetMinutes} 分钟目标 +${formatClock(Math.abs(targetDelta))}`}
-              </span>
-            ) : (
-              <span>开放目标 · 当前段 {formatClock(currentSplitSeconds)}</span>
-            )}
-          </div>
-          {targetProgress != null ? (
-            <div className="cardio-target-bar" role="progressbar" aria-valuenow={Math.round(targetProgress * 100)} aria-valuemin={0} aria-valuemax={100}>
-              <i style={{ width: `${Math.round(targetProgress * 100)}%` }} />
-            </div>
-          ) : null}
-        </div>
-
-        <div className="cardio-target-row" role="group" aria-label="设定有氧目标时长">
-          <span className="cardio-target-label">目标</span>
-          {CARDIO_TARGET_MINUTES_OPTIONS.map((mins) => {
-            const active = session.targetMinutes === mins;
-            return (
-              <button
-                key={mins ?? "open"}
-                type="button"
-                className={`cardio-target-chip${active ? " is-active" : ""}`}
-                aria-pressed={active}
-                onClick={() => handleTargetChange(mins)}
-              >
-                {mins == null ? "开放" : `${mins}m`}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="cardio-telemetry-grid">
-        <div className="cardio-telemetry-cell">
-          <span>开始时间</span>
-          <strong>{formatStartClock(session.startedAt)}</strong>
-          <small>{session.appleWorkoutLabel}</small>
-        </div>
-        <div className="cardio-telemetry-cell">
-          <span>参考消耗</span>
-          <strong>~{estKcal} kcal</strong>
-          <small>完练同步 Watch 实测</small>
-        </div>
-        <div className="cardio-telemetry-cell">
-          <span>分段计圈</span>
-          <strong>{session.laps.length > 0 ? `${session.laps.length} 段` : "—"}</strong>
-          <small>{lastLap ? `上段 ${formatClock(lastLap.splitSeconds)}` : "点击下方记分段"}</small>
-        </div>
-        <div className="cardio-telemetry-cell">
-          <span>{paceOrSpeed ? paceOrSpeed.label : "监测联动"}</span>
-          <strong>{paceOrSpeed ? paceOrSpeed.value : "Watch 联动"}</strong>
-          <small>{session.distanceKm.trim() ? `${session.distanceKm.trim()} km` : "可展开补充距离"}</small>
-        </div>
-      </div>
-
-      <div className="cardio-control-row">
+    <div className="cardio-stage">
+      <header className="cardio-topbar">
         <button
           type="button"
-          className={`cardio-ctrl-btn${isRunning ? "" : " is-resume"}`}
-          onClick={handleTogglePause}
-        >
-          <Icon name={isRunning ? "pause" : "play"} size={16} />
-          <span>{isRunning ? "暂停计时" : "继续计时"}</span>
-        </button>
-        <button type="button" className="cardio-ctrl-btn" onClick={handleLap}>
-          <Icon name="dial" size={16} />
-          <span>记分段</span>
-        </button>
-        <button
-          type="button"
-          className="cardio-ctrl-btn"
+          className="workout-circle-btn"
+          aria-label="后台计时"
+          title="后台计时"
           onClick={() => {
             triggerHaptic("light");
             notify("有氧计时已转入顶部状态栏，切后台也会继续走表");
@@ -374,69 +313,197 @@ export function CardioSessionModal({
           }}
         >
           <Icon name="arrowDown" size={16} />
-          <span>后台计时</span>
         </button>
+
+        <div className={`workout-topbar-center cardio-topbar-title${isRunning ? "" : " is-paused"}`}>
+          <strong>{session.label}</strong>
+          <span className="workout-topbar-sub">
+            <i className="live-led" aria-hidden="true" />
+            <span>{isRunning ? "计时中" : "已暂停"}</span>
+            <span aria-hidden="true">·</span>
+            <span>{session.environment === "outdoor" ? "室外" : "室内"}</span>
+            <span aria-hidden="true">·</span>
+            <span>{formatStartClock(session.startedAt)}</span>
+          </span>
+        </div>
+
+        <div className="workout-topbar-actions">
+          {relaunchUrl ? (
+            <a
+              href={relaunchUrl}
+              className="workout-circle-btn"
+              aria-label="打开健身 App"
+              title="打开健身 App"
+              onClick={() => triggerHaptic("light")}
+            >
+              <Icon name="heart" size={15} />
+            </a>
+          ) : (
+            <button
+              type="button"
+              className="workout-circle-btn"
+              aria-label="打开健身 App"
+              title="打开健身 App"
+              onClick={() => {
+                triggerHaptic("light");
+                triggerAppleCardioLaunch(session.presetId, { prefs, notify });
+              }}
+            >
+              <Icon name="heart" size={15} />
+            </button>
+          )}
+          <button
+            type="button"
+            className="workout-circle-btn"
+            aria-label="更多选项"
+            title="记录距离与更多操作"
+            aria-expanded={menuOpen}
+            onClick={() => {
+              triggerHaptic("light");
+              setMenuOpen(true);
+            }}
+          >
+            <Icon name="more" size={16} />
+          </button>
+        </div>
+      </header>
+
+      <div className="cardio-body">
+        <section className="cardio-chrono" aria-label="有氧秒表">
+          <div className={`cardio-digits${isRunning ? "" : " is-paused"}`} aria-live="off">
+            {formatClock(elapsedSeconds)}
+          </div>
+          <div className="cardio-chrono-meta">
+            {targetDelta != null
+              ? targetDelta >= 0
+                ? `距 ${session.targetMinutes} 分目标还剩 ${formatClock(targetDelta)}`
+                : `已超出 ${session.targetMinutes} 分目标 +${formatClock(Math.abs(targetDelta))}`
+              : session.laps.length > 0
+                ? `第 ${session.laps.length + 1} 段 · ${formatClock(currentSplitSeconds)}`
+                : `${session.appleWorkoutLabel} · 后台持续走表`}
+          </div>
+
+          <div
+            className="dot-meter cardio-dot-meter"
+            role={targetProgress != null ? "progressbar" : "img"}
+            aria-label={targetProgress != null ? "目标时长进度" : "分钟秒表刻度"}
+            aria-valuenow={targetProgress != null ? Math.round(targetProgress * 100) : undefined}
+            aria-valuemin={targetProgress != null ? 0 : undefined}
+            aria-valuemax={targetProgress != null ? 100 : undefined}
+          >
+            {Array.from({ length: DOT_SEGMENTS }, (_, idx) => (
+              <i key={idx} className={idx < litSegments ? "lit" : undefined} />
+            ))}
+          </div>
+
+          <div className="cardio-targets" role="group" aria-label="设定有氧目标时长">
+            {CARDIO_TARGET_MINUTES_OPTIONS.map((mins) => {
+              const active = session.targetMinutes === mins;
+              return (
+                <button
+                  key={mins ?? "open"}
+                  type="button"
+                  className={active ? "is-active" : undefined}
+                  aria-pressed={active}
+                  onClick={() => handleTargetChange(mins)}
+                >
+                  {mins == null ? "开放目标" : `${mins} 分`}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="cardio-metrics" aria-label="实时数据">
+          <div>
+            <span>{session.laps.length > 0 ? `当前第 ${session.laps.length + 1} 段` : "当前分段"}</span>
+            <strong>{formatClock(currentSplitSeconds)}</strong>
+          </div>
+          <div>
+            <span>参考消耗</span>
+            <strong>~{estKcal} kcal</strong>
+          </div>
+          <div>
+            <span>{paceOrSpeed ? paceOrSpeed.label : "开始时间"}</span>
+            <strong>{paceOrSpeed ? paceOrSpeed.value : formatStartClock(session.startedAt)}</strong>
+          </div>
+        </section>
+
+        {session.laps.length > 0 ? (
+          <section className="cardio-splits" aria-label="分段计圈">
+            <header>
+              <span>分段计圈</span>
+              <span>{session.laps.length} 段</span>
+            </header>
+            <ol>
+              {[...session.laps].reverse().map((lap) => (
+                <li key={lap.id}>
+                  <span>第 {String(lap.index).padStart(2, "0")} 段</span>
+                  <strong>+{formatClock(lap.splitSeconds)}</strong>
+                  <small>{formatClock(lap.cumulativeSeconds)}</small>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
       </div>
 
-      {session.laps.length > 0 ? (
-        <section className="cardio-laps-panel" aria-label="有氧分段记录">
-          <header>
-            <strong>分段计圈</strong>
-            <small>共 {session.laps.length} 段</small>
-          </header>
-          <ol className="cardio-laps-list">
-            {[...session.laps].reverse().map((lap) => (
-              <li key={lap.id}>
-                <span>第 {lap.index} 段</span>
-                <strong>{formatClock(lap.splitSeconds)}</strong>
-                <small>累计 {formatClock(lap.cumulativeSeconds)}</small>
-              </li>
-            ))}
-          </ol>
-        </section>
-      ) : null}
-
-      <div className="cardio-shortcut-strip">
-        <div className="cardio-shortcut-copy">
-          <strong>Apple Watch / 快捷指令联动</strong>
-          <small>
-            结束时将触发 <code>{prefs.appleHubShortcutName}</code>（入参 <code>end</code>）自动回传心率、热量与距离。
-          </small>
-        </div>
-        {relaunchUrl ? (
-          <a
-            href={relaunchUrl}
-            className="secondary-button cardio-relaunch-link"
-            style={{ textDecoration: "none" }}
-            onClick={() => triggerHaptic("light")}
+      <footer className="cardio-dock">
+        <div className="cardio-dock-controls">
+          <button
+            type="button"
+            className={`cardio-dock-btn${isRunning ? "" : " is-resume"}`}
+            onClick={handleTogglePause}
           >
-            <Icon name="heart" size={14} /> 重开健身 App
+            <Icon name={isRunning ? "pause" : "play"} size={16} />
+            <span>{isRunning ? "暂停计时" : "继续计时"}</span>
+          </button>
+          <button type="button" className="cardio-dock-btn" onClick={handleLap}>
+            <Icon name="dial" size={16} />
+            <span>记分段</span>
+          </button>
+        </div>
+
+        {onIos ? (
+          <a
+            href={endShortcutUrl}
+            className="cardio-dock-finish"
+            onClick={() => handleFinishWithShortcut(true)}
+          >
+            <Icon name="upload" size={16} />
+            <span>结束有氧并同步 Apple Watch</span>
           </a>
         ) : (
           <button
             type="button"
-            className="secondary-button cardio-relaunch-link"
-            onClick={() => {
-              triggerHaptic("light");
-              triggerAppleCardioLaunch(session.presetId, { prefs, notify });
-            }}
+            className="cardio-dock-finish"
+            onClick={() => handleFinishWithShortcut(false)}
           >
-            <Icon name="heart" size={14} /> 唤起健身 App
+            <Icon name="upload" size={16} />
+            <span>结束有氧并同步 Apple Watch</span>
           </button>
         )}
-      </div>
+      </footer>
 
-      <details className="settings-accordion cardio-extra-drawer">
-        <summary>
-          <span>补充距离、体感与备注（可选）</span>
-          <span className="settings-accordion-meta">
-            <span>{session.distanceKm.trim() ? `${session.distanceKm.trim()} km` : "选填"}</span>
-            <Icon name="chevron" size={14} />
-          </span>
-        </summary>
-        <div className="settings-accordion-body cardio-extra-body">
+      <div className="session-menu-overlay" hidden={!menuOpen} aria-label="有氧附加选项">
+        <header className="dialog-head" style={{ marginBottom: 4 }}>
+          <h2>记录与联动选项</h2>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="收起选项"
+            onClick={() => {
+              triggerHaptic("light");
+              setMenuOpen(false);
+            }}
+          >
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <div className="session-menu-body">
           <label className="field">
-            <span>距离（km，跑步机 / 室内单车可手动填写以实时算配速）</span>
+            <span>距离（km · 跑步机或室内单车可补填计算配速）</span>
             <input
               type="text"
               inputMode="decimal"
@@ -445,6 +512,7 @@ export function CardioSessionModal({
               onChange={(e) => commitSession({ ...session, distanceKm: e.target.value })}
             />
           </label>
+
           <div className="field">
             <span>主观体感</span>
             <div className="segments" role="group" aria-label="选择体感强度">
@@ -463,38 +531,24 @@ export function CardioSessionModal({
               ))}
             </div>
           </div>
+
           <label className="field">
-            <span>备注</span>
+            <span>训练备注</span>
             <input
               type="text"
-              placeholder="坡度、配速策略、心率区间等"
+              placeholder="坡度、配速节奏、心率区间等"
               value={session.notes}
               onChange={(e) => commitSession({ ...session, notes: e.target.value })}
             />
           </label>
-        </div>
-      </details>
 
-      <footer className="cardio-session-footer">
-        {onIos ? (
-          <a
-            href={endShortcutUrl}
-            className="primary-button cardio-finish-primary"
-            style={{ textDecoration: "none" }}
-            onClick={() => handleFinishWithShortcut(true)}
-          >
-            <Icon name="upload" size={16} /> 结束有氧并同步 Apple Watch
-          </a>
-        ) : (
-          <button
-            type="button"
-            className="primary-button cardio-finish-primary"
-            onClick={() => handleFinishWithShortcut(false)}
-          >
-            <Icon name="upload" size={16} /> 结束有氧并触发快捷指令同步
-          </button>
-        )}
-        <div className="cardio-finish-secondary-row">
+          <div className="cardio-menu-meta">
+            <span>结束联动快捷指令</span>
+            <code>{prefs.appleHubShortcutName}</code>
+          </div>
+        </div>
+
+        <footer className="cardio-menu-foot">
           <button
             type="button"
             className="secondary-button"
@@ -503,11 +557,11 @@ export function CardioSessionModal({
           >
             <Icon name="check" size={15} /> {savingLocal ? "保存中..." : "仅结束并保存记录"}
           </button>
-          <button type="button" className="quiet" onClick={handleDiscard}>
-            放弃本次
+          <button type="button" className="danger" onClick={handleDiscard}>
+            放弃本次计时
           </button>
-        </div>
-      </footer>
+        </footer>
+      </div>
     </div>
   );
 }

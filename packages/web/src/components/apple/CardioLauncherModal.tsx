@@ -238,34 +238,6 @@ export function CardioLauncherModal({
         </div>
       </div>
 
-      <div className="cardio-mode-note">
-        {mode === "shortcut" ? (
-          <p className="muted">
-            点击下方项目，直接运行对应快捷指令（如 <code>{shortcutName}</code>）跳过健身首页立即开练。
-          </p>
-        ) : mode === "hub" ? (
-          <p className="muted">
-            点击下方项目，调用全能快捷指令 <code>{prefs.appleHubShortcutName}</code> 上报 <code>{selected.label}</code> 开练事件并拉起健身 App（请确认手机「快捷指令」里同名，重复导入请选「替换」）。
-          </p>
-        ) : (
-          <div className="cardio-mode-warn">
-            <p className="muted">
-              受 iOS 限制，直接跳健身 App 只能打开首页。切换到「按项目直开」或「全能联动」配好快捷指令后，点选即可直接开练。
-            </p>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                handleModeChange("shortcut");
-                setSetupOpen(true);
-              }}
-            >
-              切到按项目直开
-            </button>
-          </div>
-        )}
-      </div>
-
       {isStrength ? (
         <div className="cardio-preset-grid" role="group" aria-label="选择力量训练方式">
           {APPLE_STRENGTH_PRESETS.map((preset) => {
@@ -384,6 +356,28 @@ export function CardioLauncherModal({
                     <Icon name="download" size={15} /> 导出新版全能快捷指令
                   </button>
                 ) : null}
+              </div>
+            </>
+          ) : mode === "fitness_app" ? (
+            <>
+              <p className="muted" style={{ margin: 0, fontSize: 13 }}>
+                受 iOS 限制，直接跳健身 App 只能打开首页；切回「全能联动」或「按项目直开」即可点选直接开练。
+              </p>
+              <div className="cardio-setup-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => handleModeChange("hub")}
+                >
+                  切到全能联动
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => handleModeChange("shortcut")}
+                >
+                  切到按项目直开
+                </button>
               </div>
             </>
           ) : (
