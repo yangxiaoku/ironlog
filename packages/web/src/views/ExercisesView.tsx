@@ -349,7 +349,6 @@ export function ExercisesView() {
       <header className="page-heading masthead-exercises">
         <div>
           <h1>动作库</h1>
-          <p>支持中英文检索，按肌群与器械快速筛选</p>
         </div>
         <div className="heading-actions">
           <button type="button" className="secondary-button" onClick={() => openStrengthCalcModal()}>

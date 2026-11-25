@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   entityKindSchema,
+  exerciseSchema,
   planSchema,
   schemas,
   validatePlanExercises,
@@ -213,7 +214,7 @@ export class Store {
     );
     this.stmtExportAppleDaily = db.prepare("SELECT date, updated_at AS updatedAt, data FROM apple_health_daily WHERE user_id=? ORDER BY date DESC");
     this.stmtExportAppleWorkouts = db.prepare(
-      "SELECT id, received_at AS receivedAt, ended_at AS endedAt, data FROM apple_health_workouts WHERE user_id=? ORDER BY ended_at DESC, id",
+      "SELECT id, identity_key AS identityKey, received_at AS receivedAt, ended_at AS endedAt, data FROM apple_health_workouts WHERE user_id=? ORDER BY ended_at DESC, id",
     );
   }
 
@@ -243,14 +244,17 @@ export class Store {
   }
 
   catalogue(userId: string, includeDeleted = false): Exercise[] {
-    return [
-      ...serverCatalogue,
-      ...this.list(userId, "exercise", includeDeleted).map((record) => ({
-        ...(record.data as Exercise),
+    const custom: Exercise[] = [];
+    for (const record of this.list(userId, "exercise", includeDeleted)) {
+      const parsed = exerciseSchema.safeParse(record.data);
+      if (!parsed.success) continue;
+      custom.push({
+        ...parsed.data,
         custom: true,
         source: undefined,
-      })),
-    ];
+      });
+    }
+    return [...serverCatalogue, ...custom];
   }
 
   catalogueMap(userId: string, includeDeleted = false): ReadonlyMap<string, Exercise> {
@@ -258,8 +262,10 @@ export class Store {
     if (!custom.length) return serverCatalogueMap;
     const overlay = new Map<string, Exercise>();
     for (const record of custom) {
+      const parsed = exerciseSchema.safeParse(record.data);
+      if (!parsed.success) continue;
       const exercise: Exercise = {
-        ...(record.data as Exercise),
+        ...parsed.data,
         custom: true,
         source: undefined,
       };
@@ -524,12 +530,14 @@ export class Store {
     });
     const appleWorkoutRows = this.stmtExportAppleWorkouts.all(userId) as {
       id: string;
+      identityKey: string;
       receivedAt: string;
       endedAt: string;
       data: string;
     }[];
     const appleHealthWorkouts = appleWorkoutRows.map((row) => ({
       id: row.id,
+      identityKey: row.identityKey,
       receivedAt: row.receivedAt,
       ...(JSON.parse(row.data) as Record<string, unknown>),
     }));
@@ -676,7 +684,8 @@ export class Store {
       }
 
       if (!deleted && mode === "preview") {
-        const previewCat = new LayeredExerciseMap(this.catalogueMap(userId), previewCustomOverlay);
+        const baseCat = strategy === "replace" ? serverCatalogueMap : this.catalogueMap(userId);
+        const previewCat = new LayeredExerciseMap(baseCat, previewCustomOverlay);
         if (kind === "plan" || kind === "template") {
           this.validatePlan(data as Plan, previewCat);
         } else if (kind === "scheduledDay" && (data as ScheduledDay).mode === "workout") {
@@ -911,11 +920,37 @@ export class Store {
           startedAt,
           endedAt,
         };
-        const identityKey = appleWorkoutIdentity(identity);
+        const rawIdentityKey = typeof w.identityKey === "string" ? w.identityKey.trim() : "";
+        const identityKey = rawIdentityKey || appleWorkoutIdentity(identity);
+        const { id: _id, receivedAt: _rec, identityKey: _ikey, ...rawPayload } = w;
+        const sanitizeNonneg = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null);
+        const rawHr = rawPayload.heartRate as Record<string, unknown> | null | undefined;
+        const cleanHr = rawHr && typeof rawHr === "object"
+          ? {
+              ...(sanitizeNonneg(rawHr.avgBpm) != null ? { avgBpm: sanitizeNonneg(rawHr.avgBpm) } : {}),
+              ...(sanitizeNonneg(rawHr.minBpm) != null ? { minBpm: sanitizeNonneg(rawHr.minBpm) } : {}),
+              ...(sanitizeNonneg(rawHr.maxBpm) != null ? { maxBpm: sanitizeNonneg(rawHr.maxBpm) } : {}),
+              ...(rawHr.sampleCount != null && Number.isInteger(rawHr.sampleCount) && Number(rawHr.sampleCount) > 0
+                ? { sampleCount: Number(rawHr.sampleCount) }
+                : {}),
+              ...(rawHr.method === "workout_statistics" || rawHr.method === "window_samples"
+                ? { method: rawHr.method }
+                : {}),
+            }
+          : null;
+        const cleanDuration = sanitizeNonneg(rawPayload.durationSeconds);
+        const cleanEnergy = sanitizeNonneg(rawPayload.activeEnergyKcal);
+        const cleanDistance = sanitizeNonneg(rawPayload.distanceMeters);
+        const workoutPayload = {
+          ...rawPayload,
+          ...(cleanDuration != null ? { durationSeconds: Math.round(cleanDuration) } : { durationSeconds: undefined }),
+          ...(cleanEnergy != null ? { activeEnergyKcal: cleanEnergy } : { activeEnergyKcal: undefined }),
+          ...(cleanDistance != null ? { distanceMeters: cleanDistance } : { distanceMeters: undefined }),
+          ...(cleanHr && Object.keys(cleanHr).length > 0 ? { heartRate: cleanHr } : { heartRate: undefined }),
+        };
         const existing = (stmtAppleByIdentity.get(userId, identityKey) ?? (
           inputId ? stmtAppleById.get(userId, inputId) : undefined
         )) as { id: string; received_at: string } | undefined;
-        const { id: _id, receivedAt: _rec, ...workoutPayload } = w;
         const data = JSON.stringify({ ...workoutPayload, ...identity });
         if (existing) {
           if (newerBackupRecord(receivedAt, existing.received_at))

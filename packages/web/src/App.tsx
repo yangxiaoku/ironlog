@@ -11,6 +11,7 @@ import { cachedApiFetch, configureQueryCache, invalidateQueryCache } from "./lib
 import { openCommandPalette } from "./lib/record-openers";
 import {
   PROFILE_VERSION_EVENT,
+  WORKOUT_PREFS_EVENT,
   applyRemoteWorkoutPreferences,
   configureWorkoutPrefsSync,
 } from "./lib/workout-helpers";
@@ -76,15 +77,25 @@ export function App() {
   useEffect(() => {
     if (!userId) return;
     let active = true;
+    let editedLocally = false;
+    const onLocalEdit = () => {
+      editedLocally = true;
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener(WORKOUT_PREFS_EVENT, onLocalEdit);
+    }
     void cachedApiFetch<{ profile?: ProfileGoals }>("/api/web/profile", { userId })
       .then((res) => {
-        if (active && res?.profile?.workoutPrefs) {
+        if (active && !editedLocally && res?.profile?.workoutPrefs) {
           applyRemoteWorkoutPreferences(res.profile.workoutPrefs);
         }
       })
       .catch(() => {});
     return () => {
       active = false;
+      if (typeof window !== "undefined") {
+        window.removeEventListener(WORKOUT_PREFS_EVENT, onLocalEdit);
+      }
     };
   }, [userId]);
 

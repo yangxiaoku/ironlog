@@ -109,7 +109,7 @@ export function BadgesView() {
       <header className="page-heading masthead-badges">
         <div>
           <h1>成就徽章</h1>
-          <p>力量、连续打卡与累计容量里程碑</p>
+          <p>{earnedCount} / {totalCount}</p>
         </div>
       </header>
 

@@ -865,7 +865,13 @@ export function applyDeloadToTarget(
   }
   const step = weightStepKg > 0 ? weightStepKg : 2.5;
   const ratio = Math.max(50, Math.min(95, weightPct)) / 100;
+  if (mode === "assisted") {
+    const rawAssist = weight / ratio;
+    const snappedAssist = Math.max(weight, Math.round(rawAssist / step) * step);
+    return { sets: scaledSets, weight: round2(snappedAssist) };
+  }
   const rawWeight = weight * ratio;
-  const snapped = Math.max(0, Math.round(rawWeight / step) * step);
+  const floorWeight = Math.min(weight, step);
+  const snapped = Math.max(floorWeight, Math.round(rawWeight / step) * step);
   return { sets: scaledSets, weight: round2(snapped) };
 }

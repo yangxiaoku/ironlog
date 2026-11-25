@@ -1777,3 +1777,126 @@ test("Pre-launch: full JSON backup restore, web password change, and MCP/API tok
     db.close();
   }
 });
+
+test("覆盖恢复自定义动作墓碑不崩溃 CSV/计划导入，且备份保留 Apple 训练 identityKey", async () => {
+  const { db, store, auth, call, owner } = fixture();
+  try {
+    // 1. Export clean baseline backup (empty custom exercise)
+    const emptyExportRes = await call("/api/export");
+    assert.equal(emptyExportRes.status, 200);
+    const baselineBackup = await emptyExportRes.json();
+
+    // 2. Create custom exercise, then replace-restore older backup (creating stripped {id} tombstone)
+    await call("/api/records", {
+      method: "POST",
+      body: {
+        opId: "custom-ex-create",
+        id: "custom-fly-1",
+        kind: "exercise",
+        baseVersion: 0,
+        deleted: false,
+        data: {
+          id: "custom-fly-1",
+          name: "单臂龙门夹胸",
+          englishName: "Single Arm Cable Fly",
+          aliases: ["夹胸"],
+          muscle: "chest",
+          secondaryMuscles: ["shoulders"],
+          equipment: "cable",
+          mode: "reps",
+          volumeMultiplier: 1,
+          instructions: ["收紧胸肌中缝。"],
+          mistakes: [],
+          custom: true,
+        },
+      },
+    });
+    const replaceRes = await call("/api/web/restore-backup", {
+      method: "POST",
+      body: { backup: baselineBackup, mode: "commit", strategy: "replace" },
+    });
+    assert.equal(replaceRes.status, 200);
+
+    // 3. Subsequent CSV import preview & JSON plan import must NOT crash with 500
+    assert.equal(store.catalogueMap(owner.userId, true).has("custom-fly-1"), false);
+    const csvRes = await call("/api/web/import-csv/preview", {
+      method: "POST",
+      body: { csv: "Date,Workout Name,Duration,Exercise Name,Set Order,Weight,Weight Unit,Reps,RPE\n2026-11-20 09:00:00,Push Power,50m,Bench Press (Barbell),1,80,kg,5,8" },
+    });
+    assert.equal(csvRes.status, 200);
+    const planRes = await call("/api/web/plans/import-json", {
+      method: "POST",
+      body: {
+        mode: "preview",
+        json: JSON.stringify({
+          name: "导入计划",
+          schedule: "weekdays",
+          weeks: 4,
+          weekdays: [1, 3, 5],
+          routines: [{ id: "r1", name: "推力日", exercises: [{ exerciseId: "bench-press", sets: 3, repsMin: 5, repsMax: 8, restSeconds: 90 }] }],
+        }),
+      },
+    });
+    assert.equal(planRes.status, 200);
+
+    // 4. Apple Health trigger & workout with identical timestamps keep distinct identityKey across export/restore
+    const dev = (await (await call("/api/integrations/apple-health/tokens", {
+      method: "POST",
+      body: { label: "Watch" },
+    })).json()) as { token: string };
+    const trigRes = await call("/api/integrations/apple-health/workouts", {
+      method: "POST",
+      token: dev.token,
+      body: {
+        schemaVersion: 1,
+        captureMethod: "trigger",
+        activityType: "running",
+        environment: "outdoor",
+        startedAt: "2026-11-21T07:00:00+08:00",
+        endedAt: "2026-11-21T07:30:00+08:00",
+        durationSeconds: 1800,
+        durationKind: "event_elapsed",
+      },
+    });
+    assert.ok(trigRes.status === 200 || trigRes.status === 201);
+    const fullWoRes = await call("/api/integrations/apple-health/workouts", {
+      method: "POST",
+      token: dev.token,
+      body: {
+        schemaVersion: 1,
+        captureMethod: "workout",
+        clientSessionId: "sess-1",
+        activityType: "running",
+        environment: "outdoor",
+        startedAt: "2026-11-21T07:00:00+08:00",
+        endedAt: "2026-11-21T07:30:00+08:00",
+        durationSeconds: 1800,
+        durationKind: "workout_active",
+        activeEnergyKcal: 340,
+        heartRate: { avgBpm: 158, maxBpm: 175 },
+      },
+    });
+    assert.ok(fullWoRes.status === 200 || fullWoRes.status === 201);
+
+    const exported = (await (await call("/api/export")).json()) as {
+      appleHealthWorkouts: Array<{ identityKey?: string; activeEnergyKcal?: number }>;
+    };
+    assert.equal(exported.appleHealthWorkouts.length, 2);
+    assert.ok(exported.appleHealthWorkouts.every((w) => typeof w.identityKey === "string" && w.identityKey.length > 0));
+
+    const freshUser = auth.login("restore-target-user");
+    const restoreNewRes = await call("/api/web/restore-backup", {
+      token: freshUser.token,
+      method: "POST",
+      body: { backup: exported, mode: "commit", strategy: "replace" },
+    });
+    assert.equal(restoreNewRes.status, 200);
+    const rows = db
+      .prepare("SELECT identity_key, data FROM apple_health_workouts WHERE user_id = ?")
+      .all(freshUser.userId) as Array<{ identity_key: string; data: string }>;
+    assert.equal(rows.length, 2);
+    assert.ok(rows.some((r) => JSON.parse(r.data).activeEnergyKcal === 340));
+  } finally {
+    db.close();
+  }
+});

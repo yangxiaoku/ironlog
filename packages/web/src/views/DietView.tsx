@@ -18,7 +18,6 @@ import {
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
-  openAiDietModal,
   openDietEditor,
   openEditMealTemplateModal,
   openSaveMealTemplateModal,
@@ -41,7 +40,6 @@ function getWaterGoalMl(userId: string): number {
 
 export function DietView() {
   const userId = useAuthStore((s) => s.userId);
-  const aiReady = useAuthStore((s) => s.aiReady);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const openConfirm = useUiStore((s) => s.openConfirm);
@@ -359,15 +357,6 @@ export function DietView() {
               <Icon name="copy" size={15} /> 复刻昨日 ({prevDayRows.length})
             </button>
           ) : null}
-          {aiReady ? (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => openAiDietModal({ initialDate: date })}
-            >
-              <Icon name="bolt" size={16} /> 文本记餐
-            </button>
-          ) : null}
           <button
             type="button"
             className="primary-button"
@@ -595,7 +584,7 @@ export function DietView() {
             <h2>常用餐单模板</h2>
             <p>
               {templates.length
-                ? `已存 ${templates.length} 套搭配 · 1 键填入任一餐次`
+                ? `已存 ${templates.length} 套搭配`
                 : "在上方任意一餐点击「存餐单」，日后可整餐复刻"}
             </p>
           </div>

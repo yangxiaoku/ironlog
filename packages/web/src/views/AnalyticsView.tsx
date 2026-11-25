@@ -47,10 +47,10 @@ function toneClass(tone?: string): string {
 }
 
 function plainAcwrStatus(zone: string): string {
-  if (zone === "deload") return "偏轻松";
-  if (zone === "sweet_spot") return "刚刚好";
-  if (zone === "caution") return "有点累";
-  return "练太猛了";
+  if (zone === "deload") return "偏低";
+  if (zone === "sweet_spot") return "正常";
+  if (zone === "caution") return "偏高";
+  return "过高";
 }
 
 function formatHumanCorrelation(c: { label: string; r: number; sampleDays: number }): string {
@@ -65,12 +65,15 @@ function pickAvailableChartMetric<K extends string>(
   fallbackKey: K,
 ): K {
   if (requestedKey && metricsMap[requestedKey]) {
-    if (series.filter((e) => typeof e[requestedKey as keyof AppleDailyEntry] === "number").length >= 2) {
+    if (series.filter((e) => typeof e[requestedKey as keyof AppleDailyEntry] === "number").length >= 1) {
       return requestedKey;
     }
   }
   for (const key of Object.keys(metricsMap) as K[]) {
     if (series.filter((e) => typeof e[key as keyof AppleDailyEntry] === "number").length >= 2) return key;
+  }
+  for (const key of Object.keys(metricsMap) as K[]) {
+    if (series.filter((e) => typeof e[key as keyof AppleDailyEntry] === "number").length >= 1) return key;
   }
   return requestedKey && metricsMap[requestedKey] ? requestedKey : fallbackKey;
 }
@@ -174,7 +177,7 @@ function SimpleTrendChart({
           const cy = Number(getY(p.value).toFixed(1));
           const tip = `${shortDate(p.date)} · ${label} ${fmt(p.value, digits)} ${unit}`;
           return (
-            <g key={p.date}>
+            <g key={`${p.date}-${i}`}>
               <circle cx={cx} cy={cy} r={4} fill="var(--red)" />
               <circle
                 cx={cx}
@@ -270,7 +273,6 @@ export function AnalyticsView() {
       <div className="page-heading masthead-analytics">
         <div>
           <h1>数据分析</h1>
-          <p>训练、睡眠、饮食与体重趋势</p>
         </div>
         <div className="period-controls">
           <label aria-label="数据分析截止日期">
@@ -355,61 +357,27 @@ export function AnalyticsView() {
   const tierRaw = ipfGl.total?.tierLabel ?? ipfGl.bench?.tierLabel ?? "暂无数据";
   const tierShort = tierRaw.replace(/\s*\([^)]*\)/, "");
 
-  // Coach summary bullets
-  let loadTip = "最近还没有连贯训练，按计划正常开练就好。";
+  // Factual out-of-range summary lines (shown only when metrics fall outside target bounds)
+  const factAlerts: string[] = [];
   if (currAcwr.acwr > 0) {
-    if (currAcwr.zone === "danger" || (currAcwr.ewmaZone === "danger" && readinessScore != null && readinessScore < 70)) {
-      loadTip = "这阵子训练量冲得太猛了，建议接下来 1–2 天减载或休息恢复，避免练伤。";
-    } else if (currAcwr.ewmaZone === "danger") {
-      loadTip = "近两天训练量加得有点急，虽然周平均还没超线，明天别硬上极限重量。";
-    } else if (readinessScore != null && readinessScore < 60) {
-      loadTip = `今天身体恢复状态一般（${readinessScore} 分），练的时候少冲力竭组、动作稳一点。`;
-    } else if (currAcwr.zone === "sweet_spot") {
-      loadTip = "最近训练量和身体恢复配合得刚刚好，按计划稳步加重量或次数就行。";
+    if (currAcwr.zone === "danger") {
+      factAlerts.push(`近 7 天容量为 28 天周均的 ${fmt(currAcwr.acwr, 2)} 倍，高于 1.5。`);
     } else if (currAcwr.zone === "caution") {
-      loadTip = "近期训练量比平时略高一点，注意晚上睡足，别连着猛练同一个部位。";
-    } else {
-      loadTip = "最近训练量比较轻松，适合当作调整恢复周；想冲进度的话这周可以慢慢加点量。";
+      factAlerts.push(`近 7 天容量为 28 天周均的 ${fmt(currAcwr.acwr, 2)} 倍（1.3–1.5）。`);
+    } else if (currAcwr.zone === "deload") {
+      factAlerts.push(`近 7 天容量为 28 天周均的 ${Math.round(currAcwr.acwr * 100)}%，低于 80%。`);
+    }
+    if (currAcwr.ewmaZone === "danger" && currAcwr.zone !== "danger") {
+      factAlerts.push("近 2 天增幅已超过阈值。");
     }
   }
-
-  let bodyTip = "多记几顿饮食和早起称重，系统就能自动过滤喝水波动，帮你盯住蛋白质和体重走向。";
-  const bodyParts: string[] = [];
-  if (nutrition.protein.totalDaysLogged > 0) {
-    bodyParts.push(
-      nutrition.protein.complianceRatePct == null
-        ? `日均蛋白 ${fmt(nutrition.protein.averageGramsPerDay)} g · 待补体重`
-        : nutrition.protein.status === "suboptimal"
-        ? `每日蛋白偏低（均 ${fmt(nutrition.protein.averageGramsPerDay)} g），多吃点瘦肉蛋奶`
-        : `蛋白质吃得很够（均 ${fmt(nutrition.protein.averageGramsPerDay)} g · 达标率 ${nutrition.protein.complianceRatePct}%）`,
-    );
-  }
-  if (bodyweight.report) {
-    const bw = bodyweight.report;
-    const slopeAbs = fmt(Math.abs(bw.weeklySlopeKg ?? 0), 2);
-    if (bw.category === "optimal_cut") bodyParts.push(`近期体重每周稳降约 ${slopeAbs} kg，减脂不掉肌节奏很好`);
-    else if (bw.category === "rapid_loss") bodyParts.push(`近期每周降重约 ${slopeAbs} kg 有点太快，小心跟着掉力气`);
-    else if (bw.category === "lean_bulk") bodyParts.push(`近期体重每周稳涨约 ${slopeAbs} kg，干净增肌节奏不错`);
-    else if (bw.category === "rapid_gain") bodyParts.push(`近期每周涨重约 ${slopeAbs} kg 偏快，注意控制多余热量`);
-    else bodyParts.push("近期体重过滤单日波动后整体平稳");
-  }
-  if (nutrition.energy?.estimatedTdeeKcal) {
-    bodyParts.push(`自适应代谢反推维持热量约 ${fmt(nutrition.energy.estimatedTdeeKcal, 0)} kcal/天`);
-  }
-  if (bodyParts.length) bodyTip = `${bodyParts.join("；")}。`;
-
-  let muscleTip = `本周有 ${optMuscles} / 6 个大肌群练够了推荐组数，分布很均衡。`;
   if (optMuscles < 4) {
     const lacking = muscles.audits
       .filter((m) => m.category === "maintenance")
-      .slice(0, 2)
-      .map((m) => m.muscleName)
-      .join("、");
-    muscleTip = lacking
-      ? `${lacking}这周练的组数偏少（不足 10 组），下周可以适当多给它们补一两个动作。`
-      : "个别部位这周总组数偏高，记得留够肌肉恢复时间。";
-  } else if (muscles.symmetry?.pushPullStatus === "push_dominant") {
-    muscleTip += ` 但推力组（胸肩 ${muscles.symmetry.pushSets} 组）明显多于背部拉力组（${muscles.symmetry.pullSets} 组），建议适当增加划船/下拉平衡肩胛。`;
+      .map((m) => m.muscleName);
+    if (lacking.length) {
+      factAlerts.push(`${lacking.join("、")}本周低于 10 组。`);
+    }
   }
 
   const handleAdoptAppleWeight = async () => {
@@ -692,9 +660,9 @@ export function AnalyticsView() {
     downloadClientFile(
       JSON.stringify(payload, null, 2),
       "application/json;charset=utf-8;",
-      `铁记-健康训练体检报告-${data.through || today()}.json`,
+      `铁记-健康训练数据导出-${data.through || today()}.json`,
     );
-    notify("已导出健康与训练 JSON 体检报告");
+    notify("已导出 JSON 数据");
   };
 
   // ACWR chart geometry
@@ -712,7 +680,7 @@ export function AnalyticsView() {
   const getAcwrX = (idx: number) => acwrPadL + (idx / Math.max(1, acwrSeries.length - 1)) * acwrChartW;
   const acwrTipText =
     acwrActiveIdx != null && acwrSeries[acwrActiveIdx]
-      ? `${shortDate(acwrSeries[acwrActiveIdx]!.date)} · 负荷比 ${fmt(acwrSeries[acwrActiveIdx]!.acwr, 2)}（${plainAcwrStatus(acwrSeries[acwrActiveIdx]!.zone)}）`
+      ? `${shortDate(acwrSeries[acwrActiveIdx]!.date)} · ACWR ${fmt(acwrSeries[acwrActiveIdx]!.acwr, 2)}（${plainAcwrStatus(acwrSeries[acwrActiveIdx]!.zone)}）`
       : "";
 
   // Health recovery & body chart slices
@@ -764,19 +732,6 @@ export function AnalyticsView() {
     (showProgressReport && hasProgressReportBlock) ||
     showAppleReport;
 
-  const ewmaAlert =
-    currAcwr.ewmaZone === "danger" && currAcwr.zone !== "danger"
-      ? " 提醒：这最近两天训练量突然冲得有点猛，即使周平均还没超标，明天也建议放缓一点。"
-      : "";
-  const acwrAdviceText =
-    (currAcwr.zone === "sweet_spot"
-      ? "当前训练节奏非常合适，刺激足够又不容易练伤，照常推进即可。"
-      : currAcwr.zone === "danger"
-        ? "警告：近期训练量突然上涨太多，关节和体能容易吃不消，强烈建议安排 2–3 天休息或大幅减轻重量！"
-        : currAcwr.zone === "caution"
-          ? "最近训练量比平时略高，如果感觉累了记得多睡会儿、吃好碳水，别连续加码。"
-          : "最近训练量比平时轻一些，如果是主动减载休整正好；想冲力量的话可以慢慢多练几组。") + ewmaAlert;
-
   return (
     <>
       {controls}
@@ -825,10 +780,9 @@ export function AnalyticsView() {
           aria-pressed={activeSection === "load"}
           onClick={() => jumpToSection("load")}
         >
-          <span className="kpi-label">训练节奏（负荷比）</span>
+          <span className="kpi-label">ACWR</span>
           <div className="kpi-val-row">
             <strong className="kpi-value">{fmt(currAcwr.acwr, 2)}</strong>
-            <span className={`kpi-pill ${acwrBadgeClass}`}>{plainAcwrStatus(currAcwr.zone)}</span>
           </div>
           <span className="kpi-sub">
             近7天 {fmt(currAcwr.acuteLoad)} kg · 平时每周 {fmt(currAcwr.chronicLoad)} kg
@@ -847,7 +801,6 @@ export function AnalyticsView() {
               <strong className="kpi-value">
                 {readinessScore} <small>分</small>
               </strong>
-              <span className={`kpi-pill ${readinessToneClass}`}>{rec.readinessLabel.split(" · ")[0]}</span>
             </div>
             <span className="kpi-sub">
               {[
@@ -858,7 +811,7 @@ export function AnalyticsView() {
                   : null,
               ]
                 .filter(Boolean)
-                .join(" · ") || "综合心率与睡眠恢复"}
+                .join(" · ") || "心率与睡眠汇总"}
             </span>
           </button>
         ) : (
@@ -874,7 +827,7 @@ export function AnalyticsView() {
             aria-pressed={activeSection === "body"}
             onClick={() => jumpToSection("body")}
           >
-            <span className="kpi-label">体态与代谢</span>
+            <span className="kpi-label">体重与蛋白</span>
             <div className="kpi-val-row">
               <strong className="kpi-value">
                 {bodyweight.report ? (
@@ -892,25 +845,11 @@ export function AnalyticsView() {
                   "—"
                 )}
               </strong>
-              <span
-                className={`kpi-pill ${
-                  bodyweight.report?.category === "optimal_cut" || bodyweight.report?.category === "lean_bulk"
-                    ? "is-sweet"
-                    : nutrition.protein.status === "optimal" || nutrition.protein.status === "high"
-                      ? "is-sweet"
-                      : ""
-                }`}
-              >
-                {(
-                  bodyweight.report?.categoryLabel ??
-                  (nutrition.protein.totalDaysLogged > 0 ? nutrition.protein.statusLabel : "待记录")
-                ).replace(/\s*\([^)]*\)/, "")}
-              </span>
             </div>
             <span className="kpi-sub">
               {nutrition.protein.totalDaysLogged > 0
                 ? `日均蛋白 ${fmt(nutrition.protein.averageGramsPerDay)} g${nutrition.protein.complianceRatePct != null ? ` · 达标 ${nutrition.protein.complianceRatePct}%` : ""}`
-                : "记饮食与称重后追踪代谢走势"}
+                : "记饮食与称重后显示"}
             </span>
           </button>
         )}
@@ -921,14 +860,13 @@ export function AnalyticsView() {
           aria-pressed={activeSection === "strength"}
           onClick={() => jumpToSection("strength")}
         >
-          <span className="kpi-label">肌群练到位</span>
+          <span className="kpi-label">达标肌群</span>
           <div className="kpi-val-row">
             <strong className="kpi-value">
               {optMuscles} <small>/ 6 部位</small>
             </strong>
-            <span className="kpi-pill is-sweet">{optMuscles >= 4 ? "分布均衡" : "部分偏少"}</span>
           </div>
-          <span className="kpi-sub">建议每个部位每周 10–20 组</span>
+          <span className="kpi-sub">每周 10–20 组</span>
         </button>
 
         <button
@@ -937,36 +875,30 @@ export function AnalyticsView() {
           aria-pressed={activeSection === "strength"}
           onClick={() => jumpToSection("strength")}
         >
-          <span className="kpi-label">同体重力量</span>
+          <span className="kpi-label">IPF GL</span>
           <div className="kpi-val-row">
             <strong className="kpi-value">
               {ipfGl.total ? fmt(ipfGl.total.score, 1) : ipfGl.bench ? fmt(ipfGl.bench.score, 1) : "—"}{" "}
               <small>分</small>
             </strong>
-            <span className="kpi-pill">{tierShort}</span>
           </div>
           <span className="kpi-sub">
             {ipfGl.total
-              ? "三大项同体型排名分"
+              ? "三大项合计"
               : ipfGl.bench
-                ? "卧推同体型排名分"
+                ? "卧推单项"
                 : needsStrengthProfile
-                  ? "按体重和性别资料计算"
-                  : "完成深蹲/卧推/硬拉后评估"}
+                  ? "按体重和性别计算"
+                  : "需深蹲/卧推/硬拉"}
           </span>
         </button>
       </div>
 
-      <section className="coach-summary-strip" aria-label="本周核心建议">
-        <div className="coach-summary-head">
-          <Icon name="bolt" size={15} /> <strong>一句话结论</strong>
+      {factAlerts.length > 0 ? (
+        <div className="analytics-fact-bar" role="status">
+          {factAlerts.join(" ")}
         </div>
-        <ul className="sci-insight-list">
-          <li>{loadTip}</li>
-          <li>{bodyTip}</li>
-          <li>{muscleTip}</li>
-        </ul>
-      </section>
+      ) : null}
       </> : null}
 
       <div className="analytics-deck">
@@ -1025,8 +957,8 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-acwr" id="panel-acwr">
               <header className="panel-head">
                 <div>
-                  <h2>最近训练量是否过载</h2>
-                  <p>把近 7 天训练量和平时 1 个月对比，预防练太猛受伤</p>
+                  <h2>急慢性负荷比 ACWR</h2>
+                  <p>近 7 天 ÷ 28 天周均</p>
                 </div>
                 <div className="acwr-head-actions">
                   {(currAcwr.zone === "danger" || currAcwr.zone === "caution" || deloadMode) ? (
@@ -1040,21 +972,21 @@ export function AnalyticsView() {
                         notify(next ? "已开启减载周模式，开练将自动缩放重量与组数" : "已关闭减载周模式");
                       }}
                     >
-                      {deloadMode ? "减载周已开启 · 关闭" : "一键开启减载周"}
+                      {deloadMode ? "减载周已开启 · 关闭" : "开启减载周"}
                     </button>
                   ) : null}
                   <span className="atlas-pill">
-                    {plainAcwrStatus(currAcwr.zone)} ({fmt(currAcwr.acwr, 2)})
+                    {fmt(currAcwr.acwr, 2)} · {plainAcwrStatus(currAcwr.zone)}
                   </span>
                 </div>
               </header>
 
               <div className="acwr-gauge-strip">
                 <div className="acwr-zone-meter">
-                  <div className="zone-bar deload" title="偏轻 (<0.8)" />
-                  <div className="zone-bar sweet" title="刚刚好 (0.8–1.3)" />
-                  <div className="zone-bar caution" title="偏累 (1.3–1.5)" />
-                  <div className="zone-bar danger" title="过载 (≥1.5)" />
+                  <div className="zone-bar deload" title="偏低 (<0.8)" />
+                  <div className="zone-bar sweet" title="正常 (0.8–1.3)" />
+                  <div className="zone-bar caution" title="偏高 (1.3–1.5)" />
+                  <div className="zone-bar danger" title="过高 (≥1.5)" />
                   <div
                     className="acwr-pointer"
                     style={{ left: `${Math.min(100, Math.max(0, (currAcwr.acwr / 2.0) * 100))}%` }}
@@ -1064,17 +996,17 @@ export function AnalyticsView() {
                   </div>
                 </div>
                 <div className="acwr-zone-legend" aria-hidden="true">
-                  <span>&lt;0.8 偏轻</span>
-                  <span>0.8–1.3 刚刚好</span>
-                  <span>1.3–1.5 偏累</span>
-                  <span>≥1.5 过载</span>
+                  <span>&lt;0.8 偏低</span>
+                  <span>0.8–1.3 正常</span>
+                  <span>1.3–1.5 偏高</span>
+                  <span>≥1.5 过高</span>
                 </div>
               </div>
 
               <div className="chart-wrap">
                 <div className="chart-info">
                   <strong>{fmt(currAcwr.acwr, 2)}</strong>
-                  <span>负荷比 · {plainAcwrStatus(currAcwr.zone)}</span>
+                  <span>ACWR</span>
                   <small>
                     近7天总量 {fmt(currAcwr.acuteLoad)} kg · 平时每周 {fmt(currAcwr.chronicLoad)} kg
                   </small>
@@ -1128,7 +1060,7 @@ export function AnalyticsView() {
                     {acwrSeries.map((s, idx) => {
                       const cx = Number(getAcwrX(idx).toFixed(1));
                       const cy = Number(getAcwrY(s.acwr).toFixed(1));
-                      const tip = `${shortDate(s.date)} · 负荷比 ${fmt(s.acwr, 2)}（${plainAcwrStatus(s.zone)}）`;
+                      const tip = `${shortDate(s.date)} · ACWR ${fmt(s.acwr, 2)}（${plainAcwrStatus(s.zone)}）`;
                       return (
                         <g key={s.date}>
                           <circle cx={cx} cy={cy} r={3} fill="var(--bg)" stroke={s.zone === "danger" ? "var(--red)" : "var(--ink)"} strokeWidth={1.8} />
@@ -1167,42 +1099,35 @@ export function AnalyticsView() {
                 )}
               </div>
 
-              <div className="sci-insight-box">
-                <div className="sci-insight-head">
-                  <Icon name="bolt" size={15} /> <span>节奏建议</span>
-                </div>
-                <p>{acwrAdviceText}</p>
-                {acwr.referenceWeightKg != null ? (
-                  <p>缺少体重记录，徒手或辅助动作的负荷按 {acwr.referenceWeightKg} kg 参考体重估算。</p>
-                ) : null}
-              </div>
+              {acwr.referenceWeightKg != null ? (
+                <p className="muted chart-footnote">
+                  无体重记录，徒手或辅助动作按 {acwr.referenceWeightKg} kg 估算。
+                </p>
+              ) : null}
             </section>
 
             <section className="panel analytics-panel panel-monotony" id="panel-monotony">
               <header className="panel-head">
                 <div>
-                  <h2>练休起伏 · 次数与力竭强度谱</h2>
-                  <p>轻重交替安排恢复日，并监测 1–5 / 6–12 / 13+ 次数分布与 RIR 逼近力竭质量</p>
+                  <h2>单调度与次数分布</h2>
                 </div>
-                <span className="atlas-pill">
-                  {monotony.current.monotony < 1.5 ? "有张有弛" : monotony.current.monotony < 2.0 ? "起伏偏平" : "太过单调"}
-                </span>
+                <span className="atlas-pill">&lt; 1.5</span>
               </header>
               <div className="health-metrics monotony-metrics">
                 <div>
-                  <span>平均每天练多少</span>
+                  <span>日均容量</span>
                   <strong>
                     {fmt(monotony.current.meanDailyLoad)} <small>kg/天</small>
                   </strong>
-                  <small>起伏幅度 ±{fmt(monotony.current.standardDeviation)}</small>
+                  <small>标准差 ±{fmt(monotony.current.standardDeviation)}</small>
                 </div>
                 <div>
-                  <span>训练重复度</span>
+                  <span>单调度</span>
                   <strong>{fmt(monotony.current.monotony, 2)}</strong>
-                  <small>{monotony.current.monotony >= 2.0 ? "≥2.0 太相似易疲劳" : "<1.5 轻重交替好"}</small>
+                  <small>{monotony.current.monotony >= 2.0 ? "≥2.0 偏高" : "<1.5 正常"}</small>
                 </div>
                 <div>
-                  <span>本周总疲劳压</span>
+                  <span>训练负荷（Strain）</span>
                   <strong>{fmt(monotony.current.trainingStrain)}</strong>
                   <small>
                     较上周 {monotony.current.trainingStrain >= monotony.previous.trainingStrain ? "+" : ""}
@@ -1259,12 +1184,6 @@ export function AnalyticsView() {
                   <p className="muscle-dose-advice">{data.effortSpectrum.advice}</p>
                 </div>
               ) : null}
-              <div className="sci-insight-box">
-                <div className="sci-insight-head">
-                  <Icon name="rest" size={15} /> <span>恢复节奏提醒</span>
-                </div>
-                <p>{monotony.current.monotonyAdvice} 高效练法要有重训日、轻练日和休息日，不要每天练到差不多的疲劳度。</p>
-              </div>
             </section>
 
             {hasApple ? (
@@ -1279,7 +1198,7 @@ export function AnalyticsView() {
                           : rec?.hasData
                             ? "当前先按健康标准区间评估（同步满 3 天后会自动对照个人平时习惯）"
                             : "记录日常步数与步行状态"
-                        : "同步静息心率、HRV、血氧、呼吸频率和睡眠后每天帮你看恢复状态"}
+                        : "同步静息心率、HRV、血氧、呼吸频率与睡眠后展示恢复数据"}
                     </p>
                   </div>
                   {rec?.readinessScore != null ? (
@@ -1613,10 +1532,9 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-muscle-dose" id="panel-muscle-dose">
               <header className="panel-head">
                 <div>
-                  <h2>各部位练到位了吗 · 频次与推拉比</h2>
-                  <p>每周 10–20 组、频次 ≥2 次/周最易增肌，推拉比 0.7–1.35 更护肩</p>
+                  <h2>肌群周组数与推拉比</h2>
+                  <p>参考范围：每周 10–20 组 · 推拉比 0.7–1.35</p>
                 </div>
-                <span className="atlas-pill">10–20 组/周最佳</span>
               </header>
               {muscles.symmetry && (muscles.symmetry.pushSets > 0 || muscles.symmetry.pullSets > 0) ? (
                 <div className="sci-symmetry-strip">
@@ -1686,10 +1604,9 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-inol" id="panel-inol">
               <header className="panel-head">
                 <div>
-                  <h2>核心大重量动作疲劳度</h2>
-                  <p>评估卧推、深蹲、硬拉单次和一周累计压力，防止过度疲劳</p>
+                  <h2>主项 INOL</h2>
+                  <p>单次参考 0.4–1.0</p>
                 </div>
-                <span className="atlas-pill">单次建议 0.4–1.0</span>
               </header>
               {inol.lifts.length ? (
                 <div className="inol-grid">
@@ -1746,7 +1663,7 @@ export function AnalyticsView() {
               <header className="panel-head">
                 <div>
                   <h2>相对力量参考分</h2>
-                  <p>标准平板杠铃卧推、深蹲和硬拉的估算 1RM，按 IPF GL 公式换算参考分。</p>
+                  <p>按 IPF GL 公式换算</p>
                 </div>
                 <span className="atlas-pill">{tierShort}</span>
               </header>
@@ -1803,11 +1720,11 @@ export function AnalyticsView() {
               <section className="panel analytics-panel panel-plateaus" id="panel-plateaus">
                 <header className="panel-head">
                   <div>
-                    <h2>动作平台期与退步预警</h2>
-                    <p>追踪近 3 次推算 1RM 停滞或回落的动作，及时介入微调组数/次数</p>
+                    <h2>1RM 平台期</h2>
+                    <p>近 3 次估算 1RM 停滞或回落的动作</p>
                   </div>
                   <span className={`atlas-pill${data.plateaus.length === 0 ? " is-sweet" : ""}`}>
-                    {data.plateaus.length ? `${data.plateaus.length} 项提醒` : "全线推进中"}
+                    {data.plateaus.length ? `${data.plateaus.length} 项` : "无异常"}
                   </span>
                 </header>
                 {data.plateaus.length > 0 ? (
@@ -1843,10 +1760,10 @@ export function AnalyticsView() {
               <section className="panel analytics-panel panel-rep-max" id="panel-rep-max">
                 <header className="panel-head">
                   <div>
-                    <h2>Rep-Max 个人纪录矩阵 (1 / 3 / 5 / 8 / 10RM)</h2>
-                    <p>按真实完成过的最高重量统计，不依赖公式反推（含负重引体/双杠自重叠加）</p>
+                    <h2>RM 纪录</h2>
+                    <p>按实际完成重量统计（含负重自重叠加）</p>
                   </div>
-                  <span className="atlas-pill">{data.repMaxBoard.length} 个主打动作</span>
+                  <span className="atlas-pill">{data.repMaxBoard.length} 个动作</span>
                 </header>
                 <div className="apple-table-scroll">
                   <table className="apple-ledger-table rep-max-table">
@@ -1903,7 +1820,7 @@ export function AnalyticsView() {
               <div className="physio-deck">
                 <div className="physio-block">
                   <div className="physio-top">
-                    <strong>每天蛋白质吃够没</strong>
+                    <strong>蛋白质摄入</strong>
                     <span className={`kpi-pill ${nutrition.protein.status === "optimal" || nutrition.protein.status === "high" ? "is-sweet" : "is-caution"}`}>
                       {nutrition.protein.statusLabel}
                     </span>
@@ -1939,7 +1856,7 @@ export function AnalyticsView() {
 
                 <div className="physio-block">
                   <div className="physio-top">
-                    <strong>每周真实体重变化节奏</strong>
+                    <strong>体重周变化</strong>
                     <span
                       className={`kpi-pill ${
                         bodyweight.report?.category === "optimal_cut" || bodyweight.report?.category === "lean_bulk"
@@ -2046,8 +1963,7 @@ export function AnalyticsView() {
               <section className="panel analytics-panel panel-nutrition-daily" id="panel-nutrition-daily">
                 <header className="panel-head">
                   <div>
-                    <h2>逐日饮食摄入与饮水走势</h2>
-                    <p>随当前统计窗口（{data.period} 天）联动展示每日热量、蛋白与饮水完成度</p>
+                    <h2>每日摄入与饮水</h2>
                   </div>
                   <div className="segments">
                     {(
@@ -2122,12 +2038,10 @@ export function AnalyticsView() {
               <section className="panel analytics-panel panel-body-measurements" id="panel-body-measurements">
                 <header className="panel-head">
                   <div>
-                    <h2>自建围度档案与减脂保肌信号</h2>
-                    <p>
-                      {data.bodyMeasurements.latestDate
-                        ? `最近围度更新：${shortDate(data.bodyMeasurements.latestDate)} · 对照体重与推算力量判断身体重塑走向`
-                        : "结合体重走势与主项力量变化判断减脂保肌或干净增肌状态"}
-                    </p>
+                    <h2>围度</h2>
+                    {data.bodyMeasurements.latestDate ? (
+                      <p>最近更新：{shortDate(data.bodyMeasurements.latestDate)}</p>
+                    ) : null}
                   </div>
                   {data.bodyMeasurements.recompSignal ? (
                     <span
@@ -2188,16 +2102,12 @@ export function AnalyticsView() {
               <section className="panel analytics-panel panel-apple-body" id="panel-apple-body">
               <header className="panel-head">
                 <div>
-                  <h2>身体成分与热量建议</h2>
-                  <p>
-                    {body?.hasData
-                      ? `${
-                          body.heightCm
-                            ? `${body.heightSource === "bmi_inferred" ? "按估算身高" : "档案身高"} ${fmt(body.heightCm, 1)} cm · `
-                            : ""
-                        }看懂你的肌肉量、体脂和每日热量目标`
-                      : "同步体重、体脂率、瘦体重、BMI 或腰围后自动算出"}
-                  </p>
+                  <h2>身体成分</h2>
+                  {body?.hasData && body.heightCm ? (
+                    <p>
+                      {body.heightSource === "bmi_inferred" ? "估算身高" : "身高"} {fmt(body.heightCm, 1)} cm
+                    </p>
+                  ) : null}
                 </div>
                 {body?.hasData ? (
                   <div className="segments">
@@ -2321,7 +2231,7 @@ export function AnalyticsView() {
                         disabled={busyAction === "applyTargets"}
                         onClick={() => void handleApplyAppleTargets()}
                       >
-                        <Icon name="check" size={14} /> 一键同步推荐热量与蛋白到饮食目标
+                        <Icon name="check" size={14} /> 同步热量与蛋白到饮食目标
                       </button>
                     </div>
                   ) : null}
@@ -2334,7 +2244,7 @@ export function AnalyticsView() {
                     <details className="sci-sub-drawer">
                       <summary className="sci-sub-summary">
                         <span>
-                          <Icon name="bolt" size={14} /> <strong>体成分详细解读与减脂阶段预估</strong>
+                          <strong>体成分明细与预估</strong>
                         </span>
                         <small>展开查看</small>
                       </summary>
@@ -2370,7 +2280,7 @@ export function AnalyticsView() {
                         {body.insights?.length ? (
                           <div className="sci-insight-box">
                             <div className="sci-insight-head">
-                              <Icon name="bolt" size={15} /> <span>体成分科学洞察</span>
+                              <span>体成分数据说明</span>
                             </div>
                             <ul className="sci-insight-list">
                               {body.insights.map((line, i) => (
@@ -2400,13 +2310,13 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-apple-report" id="panel-apple-report">
               <header className="panel-head">
                 <div>
-                  <h2>{hasApple ? "Apple 健康 · 运动汇总与每日明细报表" : "训练汇总报表与数据导出"}</h2>
+                  <h2>{hasApple ? "Apple 健康明细" : "训练汇总与数据导出"}</h2>
                   <p>
                     {entriesDesc.length || (appleWorkouts?.totalCount ?? 0) > 0 || (data.trainingSummary?.sessions ?? 0) > 0
-                      ? `近 ${data.period} 天结构化明细报表 · 支持一键导出 CSV、完整 JSON 档案与打印/存 PDF`
+                      ? `近 ${data.period} 天明细，支持导出 CSV / JSON 或打印`
                       : hasApple
-                        ? "通过快捷指令同步后自动生成每日体征流水账与运动统计报表"
-                        : `近 ${data.period} 天力量训练汇总 · 支持导出 CSV、JSON 与打印/存 PDF`}
+                        ? "通过快捷指令同步后生成每日明细"
+                        : `近 ${data.period} 天训练汇总，支持导出 CSV / JSON 或打印`}
                   </p>
                 </div>
                 <div className="apple-report-actions">

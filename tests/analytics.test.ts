@@ -1095,6 +1095,82 @@ test("全套升级：个人单品/减载偏好接口、180/365天窗口、平台
     assert.ok(data180.appleWorkouts.whoCardio.equivalentMinutes >= 60);
     assert.equal(data180.appleWorkouts.paceTrend.length, 1);
     assert.equal(data180.appleWorkouts.paceTrend[0].paceMinPerKm, 6);
+
+    // Verify quick-foods atomic upsert & removeId preserve existing entries
+    const qfUpsertRes = await call("/api/web/profile/quick-foods", {
+      method: "PUT",
+      body: {
+        upsert: { id: "qf2", name: "牛肉", baseGrams: 100, unit: "g", calories: 200, protein: 26, carbs: 0, fat: 10 },
+      },
+    });
+    assert.equal(qfUpsertRes.status, 200);
+    const qfUpsertJson = (await qfUpsertRes.json()) as { quickFoods: Array<{ id: string; name: string }> };
+    assert.equal(qfUpsertJson.quickFoods.length, 2);
+    assert.ok(qfUpsertJson.quickFoods.some((q) => q.id === "qf1"));
+    assert.ok(qfUpsertJson.quickFoods.some((q) => q.id === "qf2"));
+
+    const qfRemoveRes = await call("/api/web/profile/quick-foods", {
+      method: "PUT",
+      body: { removeId: "qf1" },
+    });
+    assert.equal(qfRemoveRes.status, 200);
+    const qfRemoveJson = (await qfRemoveRes.json()) as { quickFoods: Array<{ id: string }> };
+    assert.equal(qfRemoveJson.quickFoods.length, 1);
+    assert.equal(qfRemoveJson.quickFoods[0]?.id, "qf2");
+
+    // Verify P1/P2 math safeguards: INOL cap near 100%, zero-macro calorie day, and non-hypertrophy cardio exclusion
+    const single110vs3x100 = calculateSetInol(1, 110, estimatedOneRepMax(100, 3));
+    assert.equal(single110vs3x100, 1);
+    const calOnlyEnergy = evaluateNutritionEnergyBalance({
+      dailyMacros: [
+        { date: "2026-11-01", calories: 500, protein: 0, carbs: 0, fat: 0, isTrainingDay: true },
+      ],
+      targetCalories: 2000,
+    });
+    assert.deepEqual(calOnlyEnergy.macroPct, { protein: 0, carbs: 0, fat: 0 });
+
+    save("exercise", "custom-zone2-cardio", {
+      id: "custom-zone2-cardio",
+      name: "室内慢跑",
+      englishName: "Indoor Jog",
+      aliases: ["慢跑"],
+      muscle: "cardio",
+      secondaryMuscles: [],
+      equipment: "bodyweight",
+      mode: "timed",
+      volumeMultiplier: 1,
+      instructions: ["保持稳定步频。"],
+      mistakes: [],
+      custom: true,
+    } as any);
+    save("workout", "w-cardio-audit", {
+      title: "有氧",
+      date: today,
+      startedAt: `${today}T08:00:00.000Z`,
+      endedAt: `${today}T08:30:00.000Z`,
+      status: "completed",
+      notes: "",
+      feeling: "balanced",
+      source: "manual",
+      rawPrompt: "",
+      planId: null,
+      planVersion: null,
+      routineId: null,
+      targetSnapshot: null,
+      restEndsAt: null,
+      adjustments: [],
+      exercises: [
+        {
+          id: "row-cardio",
+          exerciseId: "custom-zone2-cardio",
+          restSeconds: 0,
+          snapshot: null,
+          sets: [{ id: "sc-1", type: "normal", weight: 0, reps: 0, seconds: 1800, completed: true, rir: null }],
+        },
+      ],
+    });
+    const afterCardio = (await (await call(`/api/web/analytics?days=30&through=${today}`)).json()) as any;
+    assert.equal(afterCardio.muscles.audits.length, 6);
   } finally {
     db.close();
   }

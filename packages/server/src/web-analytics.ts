@@ -296,7 +296,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
           prevWorkSets++;
         }
 
-        if (exercise?.muscle) {
+        if (exercise?.muscle && exercise.muscle in muscleSetsPast7Days) {
           if (isPast7) {
             muscleSetsPast7Days[exercise.muscle] = (muscleSetsPast7Days[exercise.muscle] ?? 0) + 1;
           }
@@ -440,9 +440,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
               prev.firstDate = workout.date;
               prev.first1RM = rounded1RM;
             }
-            if (workout.date >= prev.lastDate) {
+            if (workout.date > prev.lastDate) {
               prev.lastDate = workout.date;
               prev.last1RM = rounded1RM;
+            } else if (workout.date === prev.lastDate) {
+              prev.last1RM = Math.max(prev.last1RM, rounded1RM);
             }
             prev.best1RM = Math.max(prev.best1RM, rounded1RM);
           }

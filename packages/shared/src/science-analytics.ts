@@ -356,7 +356,7 @@ export function evaluateWeeklyMuscleDose(
 export function calculateSetInol(reps: number, weight: number, oneRepMax: number): number {
   if (reps <= 0 || weight <= 0 || oneRepMax <= 0) return 0;
   const intensityPct = (weight / oneRepMax) * 100;
-  if (intensityPct >= 100) return Math.round((reps / 1) * 100) / 100; // Cap to 99% intensity math
+  if (intensityPct >= 99) return Math.round((reps / 1) * 100) / 100; // Cap to 99% intensity math
   const inol = reps / (100 - intensityPct);
   return Math.round(inol * 100) / 100;
 }
@@ -1057,10 +1057,10 @@ export function evaluateNutritionEnergyBalance({
   const pKcal = avgProtein * 4;
   const cKcal = avgCarbs * 4;
   const fKcal = avgFat * 9;
-  const macroTotal = Math.max(1, pKcal + cKcal + fKcal);
-  const proteinPct = Math.round((pKcal / macroTotal) * 100);
-  const carbsPct = Math.round((cKcal / macroTotal) * 100);
-  const fatPct = Math.max(0, 100 - proteinPct - carbsPct);
+  const macroKcalSum = pKcal + cKcal + fKcal;
+  const proteinPct = macroKcalSum > 0 ? Math.round((pKcal / macroKcalSum) * 100) : 0;
+  const carbsPct = macroKcalSum > 0 ? Math.round((cKcal / macroKcalSum) * 100) : 0;
+  const fatPct = macroKcalSum > 0 ? Math.max(0, 100 - proteinPct - carbsPct) : 0;
 
   const trainDays = valid.filter((d) => d.isTrainingDay);
   const restDays = valid.filter((d) => !d.isTrainingDay);

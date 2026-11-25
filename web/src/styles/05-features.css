@@ -432,7 +432,7 @@
 }
 .measure-diff {
   font: 550 11px var(--mono);
-  color: var(--soft);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 .measure-diff.is-down { color: var(--red-ink); }
@@ -841,8 +841,8 @@
   font-size: 11px;
 }
 .live-muscles-tag {
-  color: var(--soft);
-  font-size: 10.5px;
+  color: var(--muted);
+  font-size: 11px;
   white-space: nowrap;
 }
 .session-live-muscles span:not(.live-muscles-tag) {

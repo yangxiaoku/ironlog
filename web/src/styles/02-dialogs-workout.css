@@ -629,7 +629,7 @@ dialog.workout-dialog.is-live-workout .dialog-head { display: none; }
 .plan-routine-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding-top: 4px; border-top: 1px dotted var(--edge); }
 .plan-routine-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
 .routine-tab { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid var(--edge); border-radius: 999px; background: var(--surface); color: var(--muted); font-size: 13px; }
-.routine-tab small { font: 11px var(--mono); color: var(--soft); }
+.routine-tab small { font: 11px var(--mono); color: var(--muted); }
 .routine-tab[aria-selected="true"] { background: var(--white-button); border-color: var(--white-button); color: var(--bg); font-weight: 680; }
 .routine-tab[aria-selected="true"] small { color: var(--bg); opacity: .75; }
 .plan-routine-meta { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: end; gap: 10px; }

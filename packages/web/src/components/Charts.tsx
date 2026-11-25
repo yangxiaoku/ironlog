@@ -2,7 +2,6 @@ import { useEffect, useId, useMemo, useState } from "react";
 import { duration, fmt, shortDate } from "../lib/date";
 import { MUSCLES, type LoadMetricKey, type MuscleKey, type OverviewStatsResponse } from "../lib/domain";
 import { Icon } from "./Icon";
-import { MatrixText } from "./MatrixText";
 import { ThinMeter } from "./Meters";
 
 const WEEK_LABELS = ["一", "二", "三", "四", "五", "六", "日"] as const;
@@ -274,16 +273,13 @@ export function LoadChart({
       </header>
 
       <div className="chart-wrap">
-        <div className="chart-info">
-          <strong>
-            {metric === "seconds"
-              ? duration(data.totals.timedWorkouts ? data.totals.seconds : null)
-              : <MatrixText value={fmt(totalValue)} />}
-          </strong>
-          {metric === "seconds" ? null : (
-            <span>{metric === "volume" ? "kg" : metric === "sets" ? "组" : "次"}</span>
-          )}
-          <span className="chart-readout">{readout}</span>
+        <div className="chart-readout-line">
+          <span className="chart-readout is-summary">
+            {readout ||
+              (metric === "seconds"
+                ? `日均 ${duration(Math.round(data.totals.seconds / Math.max(1, data.period)))}`
+                : `日均 ${fmt(totalValue / Math.max(1, data.period), metric === "volume" ? 0 : 1)} ${loadUnit}`)}
+          </span>
         </div>
 
         {hasAny && scale ? (

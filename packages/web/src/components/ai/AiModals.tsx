@@ -928,3 +928,39 @@ export function AiAdaptWorkoutModal({
     </div>
   );
 }
+
+export function TextLogModal({
+  initialTab = "workout",
+  initialDate,
+  onEditParsed,
+  onSavedReport,
+}: {
+  initialTab?: "workout" | "diet";
+  initialDate?: string;
+  onEditParsed: (seed: Partial<WorkoutData>) => void;
+  onSavedReport: (record: RecordEnvelope<WorkoutData>) => void;
+}) {
+  const [tab, setTab] = useState<"workout" | "diet">(initialTab);
+
+  return (
+    <div className="dialog-form">
+      <div className="segments" role="tablist" aria-label="记录类型" style={{ marginBottom: 12 }}>
+        <button type="button" role="tab" aria-selected={tab === "workout"} aria-pressed={tab === "workout"} onClick={() => setTab("workout")}>
+          训练
+        </button>
+        <button type="button" role="tab" aria-selected={tab === "diet"} aria-pressed={tab === "diet"} onClick={() => setTab("diet")}>
+          饮食
+        </button>
+      </div>
+      {tab === "workout" ? (
+        <AiWorkoutModal
+          initialDate={initialDate}
+          onEditParsed={onEditParsed}
+          onSavedReport={onSavedReport}
+        />
+      ) : (
+        <AiDietModal initialDate={initialDate} />
+      )}
+    </div>
+  );
+}

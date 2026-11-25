@@ -106,11 +106,13 @@ export async function flushQueue(
     stoppedOffline: false, authRequired: false, storageError: false, ...flags,
   });
   try {
-    queue = loadQueue(storage, userId);
-    for (const head of queue.filter((item) => !item.failure)) {
-      const sameItem = (item: OfflineMutation) => item.opId === head.opId && JSON.stringify(item) === JSON.stringify(head);
+    const attemptedOpIds = new Set<string>();
+    while (true) {
       queue = loadQueue(storage, userId);
-      if (!queue.some(sameItem)) continue;
+      const head = queue.find((item) => !item.failure && !attemptedOpIds.has(item.opId));
+      if (!head) break;
+      attemptedOpIds.add(head.opId);
+      const sameItem = (item: OfflineMutation) => item.opId === head.opId && JSON.stringify(item) === JSON.stringify(head);
       let failure: OfflineMutation["failure"];
       try {
         await sendFn(head.path, { method: head.method ?? "POST", body: head.body });
@@ -128,6 +130,7 @@ export async function flushQueue(
       queue = next;
       if (!failure) synced++;
     }
+    queue = loadQueue(storage, userId);
     return result();
   } catch {
     return result({ storageError: true });

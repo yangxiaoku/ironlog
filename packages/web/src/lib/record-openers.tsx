@@ -9,6 +9,7 @@ const AiDietModal = lazy(() => import("../components/ai/AiModals").then((m) => (
 const AiPlanModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiPlanModal })));
 const AiReviewModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiReviewModal })));
 const AiWorkoutModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.AiWorkoutModal })));
+const TextLogModal = lazy(() => import("../components/ai/AiModals").then((m) => ({ default: m.TextLogModal })));
 
 const AppleDailyDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleDailyDetailsModal })));
 const AppleWorkoutDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleWorkoutDetailsModal })));
@@ -62,6 +63,7 @@ import {
   type WeightData,
   type WorkoutData,
 } from "./domain";
+import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { readWorkoutPreferences } from "./workout-helpers";
 
@@ -70,6 +72,7 @@ export interface WorkoutEditorOptions {
   goals?: ProfileGoals | null;
   seed?: Partial<WorkoutData>;
   skipAppleAutoLaunch?: boolean;
+  forceReplaceDraft?: boolean;
 }
 
 function isWorkoutEnvelope(val: unknown): val is RecordEnvelope<WorkoutData> {
@@ -93,6 +96,28 @@ export function openWorkoutEditor(
       : (arg1 ?? {});
   const { record, goals, seed } = opts;
   const ui = useUiStore.getState();
+  const uid = useAuthStore.getState().userId;
+  if (!record && seed && !opts.forceReplaceDraft && uid) {
+    const existingDraft = findLocalWorkoutDraft(uid);
+    if (existingDraft) {
+      let hasLoggedWork = false;
+      try {
+        const parsed = JSON.parse(existingDraft.raw) as { exercises?: unknown[] };
+        hasLoggedWork = Array.isArray(parsed.exercises) && parsed.exercises.length > 0;
+      } catch {}
+      if (hasLoggedWork) {
+        ui.openConfirm({
+          title: "替换进行中的训练草稿？",
+          message: "检测到当前已有未提交的训练草稿，开始新训练将覆盖原有草稿内容。确认继续吗？",
+          confirmLabel: "覆盖并开始",
+          onConfirm: () => {
+            openWorkoutEditor({ ...opts, forceReplaceDraft: true });
+          },
+        });
+        return;
+      }
+    }
+  }
   ui.openModal({
     title: record ? `编辑：${record.data.title}` : seed?.title ? `开始：${seed.title}` : "记录训练",
     wide: true,
@@ -145,16 +170,30 @@ export async function resumeLocalWorkoutDraft(
     const rec = await apiFetch<RecordEnvelope<WorkoutData>>(
       `/api/web/records/workout/${encodeURIComponent(recordId)}`,
     );
+    if (useAuthStore.getState().userId !== userId || !findLocalWorkoutDraft(userId)) {
+      return;
+    }
+    if (rec.data.status === "completed") {
+      try {
+        localStorage.removeItem(found.key);
+      } catch {}
+      openWorkoutReport({ workoutId: rec.id, record: rec, goals });
+      return;
+    }
     openWorkoutEditor({ record: rec, goals });
   } catch {
+    if (useAuthStore.getState().userId !== userId || !findLocalWorkoutDraft(userId)) {
+      return;
+    }
     try {
       const parsed = JSON.parse(found.raw) as Partial<WorkoutData> & {
         timing?: WorkoutData["timing"];
+        baseVersion?: number;
       };
       const fallbackRecord: RecordEnvelope<WorkoutData> = {
         id: recordId,
         kind: "workout",
-        version: 0,
+        version: typeof parsed.baseVersion === "number" && parsed.baseVersion >= 0 ? parsed.baseVersion : 0,
         deleted: false,
         updatedAt: new Date().toISOString(),
         data: {
@@ -331,7 +370,7 @@ export function openWorkoutShareModal({
 
 export function openAiReviewModal(): void {
   useUiStore.getState().openModal({
-    title: "AI 训练与营养周报",
+    title: "训练复盘分析",
     wide: true,
     content: <AiReviewModal />,
   });
@@ -339,7 +378,7 @@ export function openAiReviewModal(): void {
 
 export function openAiDietModal({ initialDate }: { initialDate?: string } = {}): void {
   useUiStore.getState().openModal({
-    title: "AI 一句话记饮食",
+    title: "文字记录饮食",
     wide: true,
     content: <AiDietModal initialDate={initialDate} />,
   });
@@ -348,7 +387,7 @@ export function openAiDietModal({ initialDate }: { initialDate?: string } = {}):
 export function openAiWorkoutModal({ initialDate }: { initialDate?: string } = {}): void {
   const ui = useUiStore.getState();
   ui.openModal({
-    title: "AI 文本记录训练",
+    title: "文字记录训练",
     wide: true,
     content: (
       <AiWorkoutModal
@@ -366,9 +405,37 @@ export function openAiWorkoutModal({ initialDate }: { initialDate?: string } = {
   });
 }
 
+export function openTextLogModal({
+  initialTab = "workout",
+  initialDate,
+}: {
+  initialTab?: "workout" | "diet";
+  initialDate?: string;
+} = {}): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: "用文字记录",
+    wide: true,
+    content: (
+      <TextLogModal
+        initialTab={initialTab}
+        initialDate={initialDate}
+        onEditParsed={(seed) => {
+          ui.closeAllModals();
+          openWorkoutEditor({ seed });
+        }}
+        onSavedReport={(saved) => {
+          ui.closeAllModals();
+          openWorkoutReport({ workoutId: saved.id, record: saved });
+        }}
+      />
+    ),
+  });
+}
+
 export function openAiPlanModal(activePlanId?: string | null): void {
   useUiStore.getState().openModal({
-    title: "AI 智能生成周期计划",
+    title: "生成周期计划",
     wide: true,
     content: <AiPlanModal activePlanId={activePlanId} />,
   });
@@ -539,7 +606,7 @@ export function openPlanDraftModal(
   expectedRevision: number,
 ): void {
   useUiStore.getState().openModal({
-    title: `AI 计划草稿：${record.data.name}`,
+    title: `计划草稿：${record.data.name}`,
     wide: true,
     content: <PlanDraftModal record={record} catalogueMap={catalogueMap} expectedRevision={expectedRevision} />,
   });

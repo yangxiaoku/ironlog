@@ -301,12 +301,18 @@ export function SettingsView() {
   }
 
   const visiblePanelOrder = appleHealthConnected ? panelOrder : panelOrder.filter((id) => id !== "apple");
+  const primaryPanelOrder = visiblePanelOrder.filter((id) => PRIMARY_OVERVIEW_PANELS.has(id));
+  const morePanelOrder = visiblePanelOrder.filter((id) => !PRIMARY_OVERVIEW_PANELS.has(id));
   const persistentTokens = apiTokens.filter((t) => !t.expiresAt);
 
   const reorderPanel = (panelId: string, dir: -1 | 1) => {
+    const groupList = PRIMARY_OVERVIEW_PANELS.has(panelId) ? primaryPanelOrder : morePanelOrder;
+    const gIdx = groupList.indexOf(panelId);
+    const targetId = groupList[gIdx + dir];
+    if (gIdx < 0 || !targetId) return;
     const idx = visiblePanelOrder.indexOf(panelId);
-    const nextIdx = idx + dir;
-    if (idx < 0 || nextIdx < 0 || nextIdx >= visiblePanelOrder.length) return;
+    const nextIdx = visiblePanelOrder.indexOf(targetId);
+    if (idx < 0 || nextIdx < 0) return;
     const nextVisible = [...visiblePanelOrder];
     [nextVisible[idx], nextVisible[nextIdx]] = [nextVisible[nextIdx]!, nextVisible[idx]!];
     const nextFull = appleHealthConnected
@@ -538,65 +544,74 @@ export function SettingsView() {
                 </label>
 
                 <label className="toggle-row">
+                  <span>
+                    热身组计入完成组数与容量
+                    <small className="muted">最高重量与估算 1RM 仍只统计工作组</small>
+                  </span>
                   <input
                     className="switch"
                     type="checkbox"
                     checked={includeWarmups}
                     onChange={(e) => setIncludeWarmups(e.target.checked)}
                   />
-                  <span>
-                    热身组计入完成组数与容量
-                    <small className="muted">最高重量与估算 1RM 仍只统计工作组</small>
-                  </span>
                 </label>
 
                 <section className="form-section">
                   <h3 className="form-section-title">显示卡片与顺序</h3>
-                  <p className="muted panel-order-hint">主区 4 张核心图卡常驻首页，其余已启用卡片收进首页底部「更多数据」折叠区。</p>
-                  <div className="panel-options">
-                    {visiblePanelOrder.map((id, position) => (
-                      <div key={id} className="panel-option-row">
-                        <label className="toggle-inline">
-                          <input
-                            className="switch"
-                            type="checkbox"
-                            checked={selectedPanels.has(id)}
-                            onChange={(e) => {
-                              const checked = e.target.checked;
-                              setSelectedPanels((prev) => {
-                                const next = new Set(prev);
-                                if (checked) next.add(id);
-                                else next.delete(id);
-                                return next;
-                              });
-                            }}
-                          />
-                          <span>{PANEL_NAMES[id]}</span>
-                          <em className="panel-slot-tag">{PRIMARY_OVERVIEW_PANELS.has(id) ? "首页主区" : "更多数据"}</em>
-                        </label>
-                        <div className="panel-option-order">
-                          <button
-                            type="button"
-                            className="icon-button"
-                            aria-label={`上移${PANEL_NAMES[id]}`}
-                            disabled={position === 0}
-                            onClick={() => reorderPanel(id, -1)}
-                          >
-                            <Icon name="arrowUp" size={16} />
-                          </button>
-                          <button
-                            type="button"
-                            className="icon-button"
-                            aria-label={`下移${PANEL_NAMES[id]}`}
-                            disabled={position === visiblePanelOrder.length - 1}
-                            onClick={() => reorderPanel(id, 1)}
-                          >
-                            <Icon name="arrowDown" size={16} />
-                          </button>
-                        </div>
+                  {(
+                    [
+                      ["首页主区", primaryPanelOrder],
+                      ["更多数据", morePanelOrder],
+                    ] as const
+                  ).map(([groupTitle, groupIds]) => (
+                    <div key={groupTitle} className="panel-group-block">
+                      <h4 className="panel-group-heading">{groupTitle}</h4>
+                      <div className="panel-options">
+                        {groupIds.map((id, position) => (
+                          <div key={id} className="panel-option-row">
+                            <span className="panel-option-label">{PANEL_NAMES[id]}</span>
+                            <div className="panel-option-controls">
+                              <div className="panel-option-order">
+                                <button
+                                  type="button"
+                                  className="icon-button"
+                                  aria-label={`上移${PANEL_NAMES[id]}`}
+                                  disabled={position === 0}
+                                  onClick={() => reorderPanel(id, -1)}
+                                >
+                                  <Icon name="arrowUp" size={16} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="icon-button"
+                                  aria-label={`下移${PANEL_NAMES[id]}`}
+                                  disabled={position === groupIds.length - 1}
+                                  onClick={() => reorderPanel(id, 1)}
+                                >
+                                  <Icon name="arrowDown" size={16} />
+                                </button>
+                              </div>
+                              <input
+                                className="switch"
+                                type="checkbox"
+                                aria-label={PANEL_NAMES[id]}
+                                checked={selectedPanels.has(id)}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setSelectedPanels((prev) => {
+                                    const next = new Set(prev);
+                                    if (checked) next.add(id);
+                                    else next.delete(id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </section>
 
                 <p className="form-error" role="alert" hidden={!prefError}>
@@ -760,13 +775,13 @@ export function SettingsView() {
                   </summary>
                   <div className="settings-accordion-body">
                     <label className="toggle-row">
+                      <span>启用能量估算</span>
                       <input
                         className="switch"
                         type="checkbox"
                         checked={energyEnabled}
                         onChange={(e) => setEnergyEnabled(e.target.checked)}
                       />
-                      <span>启用能量估算</span>
                     </label>
                     <fieldset className="form-fieldset" disabled={!energyEnabled}>
                       <div className="fields">

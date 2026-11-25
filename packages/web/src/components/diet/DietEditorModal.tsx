@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import { fmt, guessMeal, today } from "../../lib/date";
 import {
@@ -45,7 +45,7 @@ function quickFoodsStorageKey(userId: string): string {
   return userId ? `ironlog-web-quick-foods:${userId}` : "ironlog-web-quick-foods";
 }
 
-function parseBaselineFromName(rawName: string): { baseName: string; baseGrams: number; unit: string } {
+function parseBaselineFromName(rawName: string): { baseName: string; baseGrams: number; unit: string; hasUnit: boolean } {
   const m = rawName.trim().match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)\s*$/i);
   if (m) {
     const grams = Number(m[2]);
@@ -55,10 +55,11 @@ function parseBaselineFromName(rawName: string): { baseName: string; baseGrams: 
         baseName: m[1]!.trim(),
         baseGrams: grams,
         unit: unitRaw === "ml" || unitRaw === "毫升" ? "ml" : "g",
+        hasUnit: true,
       };
     }
   }
-  return { baseName: rawName.trim(), baseGrams: 100, unit: "g" };
+  return { baseName: rawName.trim(), baseGrams: 100, unit: "g", hasUnit: false };
 }
 
 function readLocalQuickFoods(userId: string): QuickFoodItem[] {
@@ -110,14 +111,16 @@ export function DietEditorModal({
   const [scaleBase, setScaleBase] = useState<ScaleBaseline | null>(null);
   const [gramsInput, setGramsInput] = useState<string>("");
   const [savingQuickFood, setSavingQuickFood] = useState(false);
+  const quickFoodSeqRef = useRef(0);
 
   useEffect(() => {
     setQuickFoods(readLocalQuickFoods(userId));
     if (!userId) return;
     let active = true;
+    const seqAtFetch = quickFoodSeqRef.current;
     void apiFetch<{ profile?: ProfileGoals }>("/api/web/profile")
       .then((res) => {
-        if (!active || !res?.profile) return;
+        if (!active || !res?.profile || quickFoodSeqRef.current !== seqAtFetch) return;
         const remote = res.profile.quickFoods ?? [];
         setQuickFoods(remote);
         writeLocalQuickFoods(userId, remote);
@@ -128,10 +131,15 @@ export function DietEditorModal({
     };
   }, [userId]);
 
-  const applyScaledGrams = (baseline: ScaleBaseline, nextGrams: number) => {
-    const g = Math.max(1, Math.round(nextGrams * 10) / 10);
-    const ratio = g / Math.max(1, baseline.baseGrams);
-    setGramsInput(String(g));
+  const clearScale = () => {
+    setScaleBase(null);
+    setGramsInput("");
+  };
+
+  const applyScaledGrams = (baseline: ScaleBaseline, nextGrams: number, syncInput = true) => {
+    const g = Math.max(0.1, Math.min(10000, Math.round(nextGrams * 10) / 10));
+    const ratio = g / Math.max(0.1, baseline.baseGrams);
+    if (syncInput) setGramsInput(String(g));
     setName(`${baseline.baseName} ${g}${baseline.unit}`);
     setCalories(String(Math.round(baseline.calories * ratio)));
     setProtein(String(Math.round(baseline.protein * ratio * 10) / 10));
@@ -139,23 +147,35 @@ export function DietEditorModal({
     setFat(String(Math.round(baseline.fat * ratio * 10) / 10));
   };
 
-  const saveQuickFoodsRemote = async (nextList: QuickFoodItem[], toastMsg: string) => {
-    setQuickFoods(nextList);
-    writeLocalQuickFoods(userId, nextList);
+  const mutateQuickFoodsRemote = async (
+    optimisticList: QuickFoodItem[],
+    body: { upsert: QuickFoodItem } | { removeId: string },
+    toastMsg: string,
+  ) => {
+    const prevList = quickFoods;
+    quickFoodSeqRef.current++;
+    setQuickFoods(optimisticList);
+    writeLocalQuickFoods(userId, optimisticList);
     if (!userId) {
       notify(toastMsg);
       return;
     }
     setSavingQuickFood(true);
     try {
-      await apiFetch("/api/web/profile/quick-foods", {
+      const res = await apiFetch<{ quickFoods?: QuickFoodItem[] }>("/api/web/profile/quick-foods", {
         method: "PUT",
-        body: { quickFoods: nextList },
+        body,
       });
+      if (Array.isArray(res?.quickFoods)) {
+        setQuickFoods(res.quickFoods);
+        writeLocalQuickFoods(userId, res.quickFoods);
+      }
       bumpDataEpoch();
       notify(toastMsg);
     } catch (err) {
-      notify((err as Error)?.message || "保存个人单品失败，已暂存本地");
+      setQuickFoods(prevList);
+      writeLocalQuickFoods(userId, prevList);
+      notify((err as Error)?.message || "保存个人单品失败，已恢复原列表");
     } finally {
       setSavingQuickFood(false);
     }
@@ -168,9 +188,13 @@ export function DietEditorModal({
       return;
     }
     const parsed = parseBaselineFromName(cleanName);
-    const typedGrams = Number(gramsInput);
-    const baseGrams =
-      Number.isFinite(typedGrams) && typedGrams > 0 ? Math.round(typedGrams * 10) / 10 : parsed.baseGrams;
+    const typedGrams = scaleBase ? Number(gramsInput) : NaN;
+    const rawGrams = parsed.hasUnit
+      ? parsed.baseGrams
+      : Number.isFinite(typedGrams) && typedGrams >= 0.1
+        ? typedGrams
+        : parsed.baseGrams;
+    const baseGrams = Math.max(0.1, Math.min(10000, Math.round(rawGrams * 10) / 10));
     const item: QuickFoodItem = {
       id: `qf_${Date.now().toString(36)}`,
       name: parsed.baseName || cleanName,
@@ -181,7 +205,7 @@ export function DietEditorModal({
       carbs: Math.max(0, Number(carbs) || 0),
       fat: Math.max(0, Number(fat) || 0),
     };
-    const nextList = [item, ...quickFoods.filter((q) => q.name !== item.name)].slice(0, 40);
+    const nextList = [item, ...quickFoods.filter((q) => q.id !== item.id && q.name !== item.name)].slice(0, 60);
     setScaleBase({
       baseName: item.name,
       unit: item.unit,
@@ -192,7 +216,7 @@ export function DietEditorModal({
       fat: item.fat,
     });
     setGramsInput(String(item.baseGrams));
-    void saveQuickFoodsRemote(nextList, `已收藏「${item.name}」(${item.baseGrams}${item.unit})`);
+    void mutateQuickFoodsRemote(nextList, { upsert: item }, `已收藏「${item.name}」(${item.baseGrams}${item.unit})`);
   };
 
   const pNum = Math.max(0, Number(protein) || 0);
@@ -204,6 +228,7 @@ export function DietEditorModal({
 
   const stepMacro = (cur: string, setter: (val: string) => void, delta: number, decimals = 0) => {
     triggerHaptic("light");
+    clearScale();
     const next = Math.max(0, (Number(cur) || 0) + delta);
     setter(decimals ? String(Math.round(next * 10) / 10) : String(Math.round(next)));
   };
@@ -356,7 +381,10 @@ export function DietEditorModal({
           <input
             name="name"
             value={name}
-            onChange={(e) => setName(e.target.value)}
+            onChange={(e) => {
+              clearScale();
+              setName(e.target.value);
+            }}
             maxLength={120}
             required
             autoFocus={!record}
@@ -394,10 +422,12 @@ export function DietEditorModal({
                 <button
                   type="button"
                   className="diet-quick-food-del"
+                  disabled={savingQuickFood}
                   aria-label={`移除常用单品 ${q.name}`}
                   onClick={() => {
                     const nextList = quickFoods.filter((x) => x.id !== q.id);
-                    void saveQuickFoodsRemote(nextList, `已移除「${q.name}」`);
+                    if (scaleBase?.baseName === q.name) clearScale();
+                    void mutateQuickFoodsRemote(nextList, { removeId: q.id }, `已移除「${q.name}」`);
                   }}
                 >
                   ×
@@ -420,22 +450,30 @@ export function DietEditorModal({
                 onClick={() => {
                   triggerHaptic("light");
                   const parsed = parseBaselineFromName(p.name);
-                  const baseline: ScaleBaseline = {
-                    baseName: parsed.baseName,
-                    unit: parsed.unit,
-                    baseGrams: parsed.baseGrams,
-                    calories: Math.round(p.calories),
-                    protein: Math.round(p.protein * 10) / 10,
-                    carbs: Math.round(p.carbs * 10) / 10,
-                    fat: Math.round(p.fat * 10) / 10,
-                  };
-                  setScaleBase(baseline);
-                  setGramsInput(String(parsed.baseGrams));
+                  const calRounded = Math.round(p.calories);
+                  const proRounded = Math.round(p.protein * 10) / 10;
+                  const carbRounded = Math.round(p.carbs * 10) / 10;
+                  const fatRounded = Math.round(p.fat * 10) / 10;
+                  if (parsed.hasUnit) {
+                    const baseline: ScaleBaseline = {
+                      baseName: parsed.baseName,
+                      unit: parsed.unit,
+                      baseGrams: parsed.baseGrams,
+                      calories: calRounded,
+                      protein: proRounded,
+                      carbs: carbRounded,
+                      fat: fatRounded,
+                    };
+                    setScaleBase(baseline);
+                    setGramsInput(String(parsed.baseGrams));
+                  } else {
+                    clearScale();
+                  }
                   setName(p.name);
-                  setCalories(String(baseline.calories));
-                  setProtein(String(baseline.protein));
-                  setCarbs(String(baseline.carbs));
-                  setFat(String(baseline.fat));
+                  setCalories(String(calRounded));
+                  setProtein(String(proRounded));
+                  setCarbs(String(carbRounded));
+                  setFat(String(fatRounded));
                 }}
               >
                 {p.name} <small>{fmt(p.calories, 0)} kcal</small>
@@ -452,7 +490,7 @@ export function DietEditorModal({
             <input
               type="number"
               inputMode="decimal"
-              min={1}
+              min={0}
               max={10000}
               step="any"
               aria-label="食物克数换算"
@@ -462,8 +500,8 @@ export function DietEditorModal({
                 const raw = e.target.value;
                 setGramsInput(raw);
                 const val = Number(raw);
-                if (Number.isFinite(val) && val > 0) {
-                  applyScaledGrams(scaleBase, val);
+                if (Number.isFinite(val) && val >= 0.1 && val <= 10000) {
+                  applyScaledGrams(scaleBase, val, false);
                 }
               }}
             />
@@ -504,7 +542,10 @@ export function DietEditorModal({
               step="any"
               required
               value={calories}
-              onChange={(e) => setCalories(e.target.value)}
+              onChange={(e) => {
+                clearScale();
+                setCalories(e.target.value);
+              }}
               placeholder="0"
             />
           </div>
@@ -533,7 +574,10 @@ export function DietEditorModal({
               step="any"
               required
               value={protein}
-              onChange={(e) => setProtein(e.target.value)}
+              onChange={(e) => {
+                clearScale();
+                setProtein(e.target.value);
+              }}
             />
           </div>
           <div className="macro-steppers">
@@ -561,7 +605,10 @@ export function DietEditorModal({
               step="any"
               required
               value={carbs}
-              onChange={(e) => setCarbs(e.target.value)}
+              onChange={(e) => {
+                clearScale();
+                setCarbs(e.target.value);
+              }}
             />
           </div>
           <div className="macro-steppers">
@@ -589,7 +636,10 @@ export function DietEditorModal({
               step="any"
               required
               value={fat}
-              onChange={(e) => setFat(e.target.value)}
+              onChange={(e) => {
+                clearScale();
+                setFat(e.target.value);
+              }}
             />
           </div>
           <div className="macro-steppers">

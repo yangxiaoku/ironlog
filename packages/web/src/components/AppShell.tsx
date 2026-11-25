@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
+import { clearQueue, getOfflineStorage, readQueue } from "../lib/offline-queue";
 import { prefetchWorkspace } from "../lib/prefetch";
 import { openCommandPalette } from "../lib/record-openers";
 import {
@@ -35,6 +35,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   const navigate = useUiStore((s) => s.navigate);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const openModal = useUiStore((s) => s.openModal);
+  const openConfirm = useUiStore((s) => s.openConfirm);
+  const notify = useUiStore((s) => s.notify);
+  const refreshPendingCount = useUiStore((s) => s.refreshPendingCount);
   const syncOfflineQueue = useUiStore((s) => s.syncOfflineQueue);
 
   const activeWs = VIEW_WORKSPACE[view] ?? "overview";
@@ -42,7 +45,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const themeIcon = theme === "dark" ? "sun" : "moon";
   const activeTabLabel = activeGroup.tabs?.find((tab) => tab.id === view)?.label ?? DESTINATIONS[view];
   const moreMenuOpen = modals.at(-1)?.layout === "menu" && modals.at(-1)?.title === "更多";
-  const todayStr = today();
   const isGuestAuth = !userId && view !== "exercises";
 
   if (isGuestAuth) {
@@ -133,18 +135,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button
             type="button"
             className="primary-button sidebar-quick-cta"
-            aria-label="快捷速记（训练、饮食、体重或计算器）"
+            aria-label="速记"
             onClick={() => {
               triggerHaptic("light");
               openModal({
-                title: "快捷速记",
+                title: "速记",
                 layout: "menu",
                 content: <QuickRecordSheetBody />,
               });
             }}
           >
             <Icon name="plus" size={16} />
-            <span>快捷速记</span>
+            <span>速记</span>
           </button>
         ) : null}
 
@@ -260,7 +262,23 @@ export function AppShell({ children }: { children: ReactNode }) {
                 type="button"
                 className="sync-pending-pill"
                 aria-label="同步离线待上传记录"
-                onClick={() => void syncOfflineQueue(userId, { silent: false })}
+                onClick={() => {
+                  void syncOfflineQueue(userId, { silent: false }).then(() => {
+                    const blocked = readQueue(getOfflineStorage(), userId).filter((item) => item.failure);
+                    if (!blocked.length) return;
+                    const firstMsg = blocked[0]?.failure?.message || "数据版本冲突";
+                    openConfirm({
+                      title: `${blocked.length} 条离线记录冲突或被拒绝`,
+                      message: `错误详情：${firstMsg}。可保留并在服务端手动补录后清理这些冲突项。`,
+                      confirmLabel: "清空冲突条目",
+                      onConfirm: () => {
+                        clearQueue(getOfflineStorage(), userId);
+                        refreshPendingCount(userId);
+                        notify("已清理冲突的离线记录");
+                      },
+                    });
+                  });
+                }}
               >
                 待同步 {pendingSyncCount}
               </button>
@@ -279,22 +297,16 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span>搜索</span>
               <kbd>⌘K</kbd>
             </button>
-            <span className="local-date">
-              <Icon name="calendar" size={16} />
-              <time dateTime={todayStr}>
-                {todayStr.slice(0, 4)} / {todayStr.slice(5).replace("-", ".")}
-              </time>
-            </span>
             {userId ? (
               <>
                 <button
                   type="button"
                   className="quick-record-pill"
-                  aria-label="快捷速记"
+                  aria-label="速记"
                   onClick={() => {
                     triggerHaptic("light");
                     openModal({
-                      title: "快捷速记",
+                      title: "速记",
                       layout: "menu",
                       content: <QuickRecordSheetBody />,
                     });

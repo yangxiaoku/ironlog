@@ -195,6 +195,8 @@ interface WorkoutDraftSnapshot {
   exercises: WorkoutExercise[];
   timing: WorkoutTiming;
   rest: RestTimerState | null;
+  baseVersion?: number;
+  workoutId?: string;
   source?: string;
   rawPrompt?: string;
   planId?: string | null;
@@ -225,13 +227,13 @@ export function WorkoutEditorModal({
   const notify = useUiStore((s) => s.notify);
 
   const todayStr = today();
-  const draftStorageKey = userId ? workoutDraftKey(userId, record?.id) : "";
+  const initialDraftKey = userId ? workoutDraftKey(userId, record?.id) : "";
 
   const initialSnapshot = useMemo<WorkoutDraftSnapshot>(() => {
     const baseData = record?.data;
-    if (!seed && draftStorageKey && typeof localStorage !== "undefined") {
+    if (!seed && record?.data.status !== "completed" && initialDraftKey && typeof localStorage !== "undefined") {
       try {
-        const raw = localStorage.getItem(draftStorageKey);
+        const raw = localStorage.getItem(initialDraftKey);
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<WorkoutDraftSnapshot>;
           if (Array.isArray(parsed.exercises)) {
@@ -243,6 +245,8 @@ export function WorkoutEditorModal({
               exercises: parsed.exercises,
               timing: parsed.timing ?? baseData?.timing ?? { elapsedSeconds: 0, runningSince: new Date().toISOString() },
               rest: normalizeRestTimer(parsed.rest ?? null),
+              baseVersion: typeof parsed.baseVersion === "number" ? parsed.baseVersion : record?.version ?? 0,
+              workoutId: parsed.workoutId ?? record?.id,
               source: normalizeWorkoutSource(parsed.source ?? baseData?.source),
               rawPrompt: parsed.rawPrompt ?? baseData?.rawPrompt,
               planId: parsed.planId ?? baseData?.planId ?? null,
@@ -278,6 +282,8 @@ export function WorkoutEditorModal({
           ? { elapsedSeconds: 0, runningSince: null }
           : { elapsedSeconds: 0, runningSince: new Date().toISOString() }),
       rest: baseRest,
+      baseVersion: record?.version ?? 0,
+      workoutId: record?.id,
       source: normalizeWorkoutSource(seed?.source ?? baseData?.source),
       rawPrompt: seed?.rawPrompt ?? baseData?.rawPrompt,
       planId: seed?.planId ?? baseData?.planId ?? null,
@@ -286,7 +292,7 @@ export function WorkoutEditorModal({
       targetSnapshot: seed?.targetSnapshot ?? baseData?.targetSnapshot,
       adjustments: seed?.adjustments ?? baseData?.adjustments,
     };
-  }, [record, seed, draftStorageKey, todayStr]);
+  }, [record, seed, initialDraftKey, todayStr]);
 
   const [savedRecord, setSavedRecord] = useState<RecordEnvelope<WorkoutData> | undefined>(record);
   const savedRecordRef = useRef<RecordEnvelope<WorkoutData> | undefined>(record);
@@ -294,7 +300,8 @@ export function WorkoutEditorModal({
 
   const isHistoricalEdit = (savedRecord ?? record)?.data.status === "completed";
   const hadTiming = Boolean(seed || record?.data?.timing || record?.data.status !== "completed");
-  const [workoutId] = useState<string>(() => record?.id ?? newId());
+  const [workoutId] = useState<string>(() => initialSnapshot.workoutId ?? record?.id ?? newId());
+  const draftStorageKey = userId ? workoutDraftKey(userId, savedRecord?.id ?? record?.id) : "";
   const [sessionStart] = useState<string>(() => record?.data.startedAt ?? new Date().toISOString());
   const sessionMetaRef = useRef({
     source: normalizeWorkoutSource(initialSnapshot.source),
@@ -524,17 +531,48 @@ export function WorkoutEditorModal({
   const persistDraft = useCallback(() => {
     if (!draftStorageKey || isHistoricalEdit || draftFinalized.current) return;
     try {
-      getOfflineStorage()?.setItem(
+      const storage = getOfflineStorage();
+      if (!storage) return;
+      if (initialDraftKey && initialDraftKey !== draftStorageKey) {
+        storage.removeItem(initialDraftKey);
+      }
+      storage.setItem(
         draftStorageKey,
-        JSON.stringify({ title, date, notes, feeling, exercises, timing, rest, ...sessionMetaRef.current }),
+        JSON.stringify({
+          title,
+          date,
+          notes,
+          feeling,
+          exercises,
+          timing,
+          rest,
+          workoutId,
+          baseVersion: savedRecordRef.current?.version ?? record?.version ?? initialSnapshot.baseVersion ?? 0,
+          ...sessionMetaRef.current,
+        }),
       );
     } catch {}
-  }, [draftStorageKey, isHistoricalEdit, title, date, notes, feeling, exercises, timing, rest]);
+  }, [draftStorageKey, initialDraftKey, isHistoricalEdit, title, date, notes, feeling, exercises, timing, rest, workoutId, record?.version, initialSnapshot.baseVersion]);
+
+  const persistDraftRef = useRef(persistDraft);
+  persistDraftRef.current = persistDraft;
 
   const clearDraft = () => {
     draftFinalized.current = true;
-    try { if (draftStorageKey) getOfflineStorage()?.removeItem(draftStorageKey); } catch {}
+    try {
+      const storage = getOfflineStorage();
+      if (draftStorageKey) storage?.removeItem(draftStorageKey);
+      if (initialDraftKey && initialDraftKey !== draftStorageKey) storage?.removeItem(initialDraftKey);
+    } catch {}
   };
+
+  useEffect(() => {
+    if (isHistoricalEdit && initialDraftKey) {
+      try {
+        getOfflineStorage()?.removeItem(initialDraftKey);
+      } catch {}
+    }
+  }, [isHistoricalEdit, initialDraftKey]);
 
   const handleMinimize = () => {
     persistDraft();
@@ -557,6 +595,12 @@ export function WorkoutEditorModal({
       window.removeEventListener("pagehide", persistDraft);
     };
   }, [draftStorageKey, isHistoricalEdit, persistDraft]);
+
+  useEffect(() => {
+    return () => {
+      persistDraftRef.current();
+    };
+  }, []);
 
   // Timestamp-anchored clock tick & visibility recalibration
   useEffect(() => {
@@ -626,6 +670,10 @@ export function WorkoutEditorModal({
 
   // Fetch persistent per-exercise training cues/notes
   useEffect(() => {
+    setNotesByExId({});
+    setEditingNoteExId(null);
+    setNoteDraft("");
+    if (!userId) return;
     let active = true;
     void apiFetch<Record<string, { note: string }>>("/api/web/exercise-notes")
       .then((map) => {
@@ -637,7 +685,7 @@ export function WorkoutEditorModal({
     };
   }, [userId]);
 
-  const handleSaveInlineNote = async (exerciseId: string) => {
+  const handleSaveInlineNote = async (rowId: string, exerciseId: string) => {
     if (savingNote) return;
     setSavingNote(true);
     try {
@@ -651,7 +699,7 @@ export function WorkoutEditorModal({
         else delete next[exerciseId];
         return next;
       });
-      setEditingNoteExId(null);
+      setEditingNoteExId((cur) => (cur === rowId ? null : cur));
       notify(res.note ? "动作要点已保存" : "动作要点已清除");
     } catch (err) {
       notify((err as Error)?.message || "保存动作要点失败");
@@ -693,9 +741,10 @@ export function WorkoutEditorModal({
             const isTimedEx = ex.mode === "timed";
             const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
             const buildInitialSets = (refList?: ExerciseReferenceEntry["sets"]) => {
-              const targetCount = Math.max(3, refList?.length ?? 0);
+              const validList = refList?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
+              const targetCount = Math.max(3, validList.length);
               return Array.from({ length: Math.min(6, targetCount) }, (_, idx) => {
-                const ref = refList?.[idx];
+                const ref = validList[idx] ?? validList.at(-1);
                 if (ref && autoPrefillLast) {
                   return defaultSet(
                     isTimedEx ? 0 : ref.weight ?? 0,
@@ -1276,19 +1325,19 @@ export function WorkoutEditorModal({
                   title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
                   onClick={() => triggerHaptic("light")}
                 >
-                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "传统力量"}
+                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "力量训练"}
                 </a>
               ) : (
                 <button
                   type="button"
                   className="micro-chip workout-apple-chip"
-                  title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
+                  title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始力量训练"}
                   onClick={() => {
                     triggerHaptic("light");
                     triggerAppleFitnessLaunch(fitnessKind, { prefs, notify });
                   }}
                 >
-                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "传统力量"}
+                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "力量训练"}
                 </button>
               )
             ) : null}
@@ -1930,8 +1979,7 @@ export function WorkoutEditorModal({
 
         {exercises.length === 0 ? (
           <div className="workout-empty-state">
-            <strong>还没有添加训练动作</strong>
-            <p className="muted">从 5,650+ 中英文动作库或个人收藏挑选动作开始记录。</p>
+            <strong>还没有动作</strong>
             <button type="button" className="primary-button" onClick={openAddExercisePicker}>
               <Icon name="plus" size={16} /> 添加动作
             </button>
@@ -1958,6 +2006,7 @@ export function WorkoutEditorModal({
               const snap = row.snapshot;
               const mode: ExerciseMode = snap?.mode ?? "reps";
               const isTimed = mode === "timed";
+              const isAssisted = mode === "assisted";
               const isBarbell = snap?.equipment === "barbell";
               const exDoneCount = row.sets.filter((s) => s.completed).length;
               const exVolume = summarizeWorkoutRecord({
@@ -1974,14 +2023,14 @@ export function WorkoutEditorModal({
               const validRefs = refSets.filter((r): r is NonNullable<typeof r> => Boolean(r));
               const refText = validRefs
                 .slice(0, 4)
-                .map((r) => (isTimed ? `${r.seconds}s` : `${r.weight}×${r.reps}`))
+                .map((r) => (isTimed ? `${r.seconds}s` : isAssisted ? `辅助${r.weight}×${r.reps}` : `${r.weight}×${r.reps}`))
                 .join(", ");
 
-              const prevBestE1rm = !isTimed
+              const prevBestE1rm = !isTimed && !isAssisted
                 ? Math.max(0, ...validRefs.map((r) => estimated1RM(r.weight, r.reps)))
                 : 0;
-              const prevTopWeight = !isTimed ? Math.max(0, ...validRefs.map((r) => r.weight)) : 0;
-              const todayBestE1rm = !isTimed
+              const prevTopWeight = !isTimed && !isAssisted ? Math.max(0, ...validRefs.map((r) => r.weight)) : 0;
+              const todayBestE1rm = !isTimed && !isAssisted
                 ? Math.max(
                     0,
                     ...row.sets
@@ -2077,7 +2126,7 @@ export function WorkoutEditorModal({
                   </div>
 
                   <div className="ex-cue-row" data-no-swipe="true">
-                    {editingNoteExId === row.exerciseId ? (
+                    {editingNoteExId === row.id ? (
                       <div className="ex-cue-editor">
                         <input
                           type="text"
@@ -2088,8 +2137,10 @@ export function WorkoutEditorModal({
                           onKeyDown={(e) => {
                             if (e.key === "Enter") {
                               e.preventDefault();
-                              void handleSaveInlineNote(row.exerciseId);
+                              void handleSaveInlineNote(row.id, row.exerciseId);
                             } else if (e.key === "Escape") {
+                              e.preventDefault();
+                              e.stopPropagation();
                               setEditingNoteExId(null);
                             }
                           }}
@@ -2098,7 +2149,7 @@ export function WorkoutEditorModal({
                           type="button"
                           className="secondary-button"
                           disabled={savingNote}
-                          onClick={() => void handleSaveInlineNote(row.exerciseId)}
+                          onClick={() => void handleSaveInlineNote(row.id, row.exerciseId)}
                         >
                           {savingNote ? "保存中" : "保存"}
                         </button>
@@ -2111,7 +2162,7 @@ export function WorkoutEditorModal({
                         type="button"
                         className={`ex-cue-btn${notesByExId[row.exerciseId]?.note ? " has-note" : ""}`}
                         onClick={() => {
-                          setEditingNoteExId(row.exerciseId);
+                          setEditingNoteExId(row.id);
                           setNoteDraft(notesByExId[row.exerciseId]?.note ?? "");
                         }}
                       >
@@ -2136,21 +2187,25 @@ export function WorkoutEditorModal({
                             className="ex-apply-ref"
                             onClick={() => {
                               triggerHaptic("light");
+                              let updatedCount = 0;
                               setExercises((prev) =>
-                                prev.map((ex, i) =>
-                                  i === exIdx
-                                    ? {
-                                        ...ex,
-                                        sets: ex.sets.map((s, j) => {
-                                          const ref = refSets[j];
-                                          if (!ref || s.completed) return s;
-                                          return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
-                                        }),
-                                      }
-                                    : ex,
-                                ),
+                                prev.map((ex, i) => {
+                                  if (i !== exIdx) return ex;
+                                  let workIdx = 0;
+                                  return {
+                                    ...ex,
+                                    sets: ex.sets.map((s) => {
+                                      if (s.type === "warmup") return s;
+                                      const ref = validRefs[workIdx] ?? validRefs.at(-1);
+                                      workIdx++;
+                                      if (!ref || s.completed) return s;
+                                      updatedCount++;
+                                      return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
+                                    }),
+                                  };
+                                }),
                               );
-                              notify("已填入上次重量与次数");
+                              notify(updatedCount > 0 ? "已填入上次工作组重量与次数" : "没有可填入的未完成工作组");
                             }}
                           >
                             沿用上次
@@ -2160,27 +2215,40 @@ export function WorkoutEditorModal({
                             className="ex-apply-prog"
                             onClick={() => {
                               triggerHaptic("light");
+                              let updatedCount = 0;
                               setExercises((prev) =>
-                                prev.map((ex, i) =>
-                                  i === exIdx
-                                    ? {
-                                        ...ex,
-                                        sets: ex.sets.map((s, j) => {
-                                          const ref = refSets[j];
-                                          if (!ref || s.completed) return s;
-                                          return ref.weight > 0
-                                            ? {
-                                                ...s,
-                                                weight: round2(ref.weight + weightStepKg),
-                                                reps: ref.reps || s.reps,
-                                              }
-                                            : { ...s, reps: (ref.reps || s.reps) + 1 };
-                                        }),
+                                prev.map((ex, i) => {
+                                  if (i !== exIdx) return ex;
+                                  let workIdx = 0;
+                                  return {
+                                    ...ex,
+                                    sets: ex.sets.map((s) => {
+                                      if (s.type === "warmup") return s;
+                                      const ref = validRefs[workIdx] ?? validRefs.at(-1);
+                                      workIdx++;
+                                      if (!ref || s.completed) return s;
+                                      updatedCount++;
+                                      if (isAssisted) {
+                                        return ref.weight > 0
+                                          ? {
+                                              ...s,
+                                              weight: Math.max(0, round2(ref.weight - weightStepKg)),
+                                              reps: ref.reps || s.reps,
+                                            }
+                                          : { ...s, reps: (ref.reps || s.reps) + 1 };
                                       }
-                                    : ex,
-                                ),
+                                      return ref.weight > 0
+                                        ? {
+                                            ...s,
+                                            weight: round2(ref.weight + weightStepKg),
+                                            reps: ref.reps || s.reps,
+                                          }
+                                        : { ...s, reps: (ref.reps || s.reps) + 1 };
+                                    }),
+                                  };
+                                }),
                               );
-                              notify("已按渐进目标预填未完成组");
+                              notify(updatedCount > 0 ? "已按渐进目标预填未完成工作组" : "没有可预填的未完成工作组");
                             }}
                           >
                             渐进填入
@@ -2303,7 +2371,11 @@ export function WorkoutEditorModal({
 
                   {row.sets.map((s, setIdx) => {
                     const prevSet = setIdx > 0 ? row.sets[setIdx - 1] : null;
-                    const setRef = refSets[setIdx];
+                    let workSetIdx = 0;
+                    for (let k = 0; k < setIdx; k++) {
+                      if (row.sets[k]?.type !== "warmup") workSetIdx++;
+                    }
+                    const setRef = s.type === "warmup" ? null : (validRefs[workSetIdx] ?? validRefs.at(-1) ?? null);
                     const deltaHint =
                       showPlateMath && isBarbell && prevSet && s.weight > barWeight
                         ? plateDeltaLabel(prevSet.weight, s.weight, barWeight, enabledPlates)
@@ -2531,16 +2603,15 @@ export function WorkoutEditorModal({
                                   className="set-ref-chip"
                                   onClick={() => {
                                     triggerHaptic("light");
-                                    updateSetAndCascade(
-                                      exIdx,
-                                      setIdx,
-                                      isTimed
+                                    updateSet(exIdx, setIdx, (cur) => ({
+                                      ...cur,
+                                      ...(isTimed
                                         ? { seconds: setRef.seconds }
-                                        : { weight: setRef.weight, reps: setRef.reps || s.reps },
-                                    );
+                                        : { weight: setRef.weight, reps: setRef.reps || cur.reps }),
+                                    }));
                                   }}
                                 >
-                                  上次 {isTimed ? `${setRef.seconds}s` : `${setRef.weight}×${setRef.reps}`} · 填入
+                                  上次 {isTimed ? `${setRef.seconds}s` : isAssisted ? `辅助${setRef.weight}×${setRef.reps}` : `${setRef.weight}×${setRef.reps}`} · 填入
                                 </button>
                               </div>
                             ) : null}

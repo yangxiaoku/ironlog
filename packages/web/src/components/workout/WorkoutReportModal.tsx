@@ -14,7 +14,8 @@ import {
 } from "../../lib/domain";
 import { triggerAppleHubAction } from "../../lib/apple-fitness";
 import { triggerHaptic } from "../../lib/haptics-audio";
-import { openAppleWorkoutDetailsModal, openWorkoutReport, openWorkoutShareModal } from "../../lib/record-openers";
+import { openAiReviewModal, openAppleWorkoutDetailsModal, openWorkoutReport, openWorkoutShareModal } from "../../lib/record-openers";
+import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { AppleLine, type AppleWorkoutAgendaItem } from "../apple/AppleHealthModals";
 import { Icon } from "../Icon";
@@ -50,6 +51,7 @@ export function WorkoutReportModal({
   const openConfirm = useUiStore((s) => s.openConfirm);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
+  const aiReady = useAuthStore((s) => s.aiReady);
 
   const [report, setReport] = useState<WorkoutReportResponse | null>(null);
   const [appleItem, setAppleItem] = useState<AppleWorkoutAgendaItem | null>(null);
@@ -336,7 +338,7 @@ export function WorkoutReportModal({
         </div>
       ) : report.date === today() ? (
         <div className="report-comparison-bar" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <span>刚练完？一键回传 Apple Watch 心率与消耗</span>
+          <span>回传 Apple Watch 心率与消耗</span>
           <button
             type="button"
             className="secondary-button"
@@ -497,6 +499,16 @@ export function WorkoutReportModal({
           >
             <Icon name="download" size={15} /> 分享记录
           </button>
+          {aiReady ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busyAction !== ""}
+              onClick={() => openAiReviewModal()}
+            >
+              AI 复盘
+            </button>
+          ) : null}
           <button type="button" className="quiet" onClick={() => void handleCopy()}>
             <Icon name="copy" size={15} /> {copied ? "已复制训练摘要" : "复制摘要"}
           </button>

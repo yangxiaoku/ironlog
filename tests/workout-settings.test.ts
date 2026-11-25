@@ -802,6 +802,8 @@ test("applyDeloadToTarget scales sets and weight cleanly and deload prefs round-
   try {
     assert.deepEqual(applyDeloadToTarget(4, 100, "reps", 2.5, 80, 50), { sets: 2, weight: 80 });
     assert.deepEqual(applyDeloadToTarget(3, 65, "reps", 2.5, 75, 50), { sets: 2, weight: 50 });
+    assert.deepEqual(applyDeloadToTarget(3, 1.5, "reps", 2.5, 75, 50), { sets: 2, weight: 1.5 });
+    assert.deepEqual(applyDeloadToTarget(4, 40, "assisted", 2.5, 80, 50), { sets: 2, weight: 50 });
     assert.deepEqual(applyDeloadToTarget(4, 0, "timed", 2.5, 75, 50), { sets: 2, weight: 0 });
 
     resetLocalWorkoutPreferences();

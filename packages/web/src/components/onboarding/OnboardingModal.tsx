@@ -191,34 +191,34 @@ export function OnboardingModal({
         {step === 1 ? (
           <section className="onboarding-panel">
             <div className="onboarding-hero">
-              <span className="atlas-pill">{demo ? "演示体验" : username ? `欢迎你，${username}` : "欢迎加入铁记"}</span>
-              <h3>从开练、吃够蛋白到恢复分析，3 分钟掌握核心用法</h3>
-              <p className="muted">铁记将训练计划、实时组间计时、营养摄入与负荷科学收拢到一个清爽工作台，桌面与手机端实时同步。</p>
+              <span className="atlas-pill">{demo ? "演示体验" : username ? `欢迎你，${username}` : "欢迎使用铁记"}</span>
+              <h3>开始使用铁记</h3>
+              <p className="muted">记录训练、饮食和体重，手机和电脑同步。</p>
             </div>
             <div className="onboarding-feature-grid">
               <article className="onboarding-card">
                 <strong><Icon name="workout" size={16} /> 训练计划与实时开练</strong>
-                <small>支持 PPL/上下肢经典方案一键启用；训练中自带组间休息表盘、杠铃配片计算与动作动图要领。</small>
+                <small>支持 PPL/上下肢经典方案直接启用；训练中自带组间休息表盘、杠铃配片计算与动作动图要领。</small>
               </article>
               <article className="onboarding-card">
                 <strong><Icon name="diet" size={16} /> 饮食热量与每日饮水</strong>
-                <small>常用健身餐 1 键填入、多食物连续录入、常用餐单整餐复刻，实时跟踪蛋白与热量缺口。</small>
+                <small>常用健身餐快速填入、多食物连续录入、常用餐单整餐复刻，实时跟踪蛋白与热量缺口。</small>
               </article>
               <article className="onboarding-card">
                 <strong><Icon name="weight" size={16} /> 体重趋势与围度比例</strong>
                 <small>记录每日体重、体脂与胸腰臀臂围，自动绘制 7 日滚动均值线，平滑掉单日水分波动。</small>
               </article>
               <article className="onboarding-card">
-                <strong><Icon name="analytics" size={16} /> 科学负荷与成就系统</strong>
-                <small>自动计算 ACWR 急慢负荷比、肌群周有效组数与估算 1RM，点亮里程碑成就徽章。</small>
+                <strong><Icon name="analytics" size={16} /> 训练负荷与成就</strong>
+                <small>计算 ACWR 急慢负荷比、肌群周有效组数与估算 1RM。</small>
               </article>
             </div>
             <div className="onboarding-note-box">
-              <strong><Icon name="heart" size={15} /> 没有 Apple Watch / 智能手表？完全不影响！</strong>
+              <strong><Icon name="heart" size={15} /> 不连手表也能用</strong>
               <small>
                 {appleHealthConnected
-                  ? "当前账号已连接 Apple 健康数据，首页与分析页将自动结合心率、睡眠与日常体征展示恢复建议。"
-                  : "系统已自动隐藏未对接的 Apple 健康模块，界面更干净纯粹；日后如需配合 iPhone 捷径或手表同步，可随时到「设置 → Apple 健康」手动开启。"}
+                  ? "当前账号已连接 Apple 健康数据，首页与分析页将结合心率、睡眠与日常体征展示恢复数据。"
+                  : "未对接 Apple 健康时相关模块会自动隐藏，需要时可在「设置 → Apple 健康」开启。"}
               </small>
             </div>
           </section>
@@ -227,12 +227,12 @@ export function OnboardingModal({
         {step === 2 ? (
           <section className="onboarding-panel">
             <div className="onboarding-subhead">
-              <h3>10 秒设定基础目标与常用器械</h3>
-              <p className="muted">选好后「动作库」与「训练编辑器」会自动优先推荐你能用到的动作；所有数值日后都可在设置里微调。</p>
+              <h3>设定基础目标与常用器械</h3>
+              <p className="muted">选好后「动作库」与「训练编辑器」会优先展示匹配器械的动作，日后可在设置里修改。</p>
             </div>
             <div className="onboarding-setup-form">
               <div className="onboarding-field-block">
-                <span className="onboarding-field-label">快捷训练场景（点击一键勾选器械）</span>
+                <span className="onboarding-field-label">常用场景预设</span>
                 <div className="onboarding-pill-row">
                   <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESETS.gym))}>
                     商业健身房

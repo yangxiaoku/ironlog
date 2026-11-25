@@ -46,19 +46,15 @@ export function compactWorkoutTag(title: string): string {
   if (!title) return "";
   let clean = title.replace(/\s*等\s*\d+\s*项$/, "").trim();
   const parts = clean.split(/\s*[·\-/]\s*/);
-  if (parts.length >= 2 && parts[0]!.length <= 2 && parts[1]!.length >= 2) {
-    const sub = parts[1]!.replace(/[与和及]/g, "").slice(0, 2);
-    return `${parts[0]}·${sub}`;
+  if (parts.length >= 2 && parts[0]!.length <= 2) {
+    return parts[0]!;
   }
   clean = clean.replace(/\s*·\s*/g, "·");
-  if (clean.length > 4) {
-    clean = clean
-      .replace(/传统力量训练/, "力量")
-      .replace(/混合有氧/, "有氧")
-      .replace(/高强度间歇/, "HIIT")
-      .replace(/功能性力量/, "功能");
-  }
-  return clean;
+  if (clean.includes("传统力量训练") || clean.includes("力量训练")) return "力";
+  if (clean.includes("混合有氧") || clean.includes("有氧")) return "氧";
+  if (clean.includes("高强度间歇")) return "HIIT";
+  if (clean.includes("功能性力量")) return "功能";
+  return clean.length > 2 ? clean.slice(0, 2) : clean;
 }
 
 const APPLE_DAILY_TELEMETRY_KEYS: ReadonlyArray<keyof AppleDailyEntry> = [

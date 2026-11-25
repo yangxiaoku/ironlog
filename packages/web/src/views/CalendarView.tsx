@@ -387,7 +387,7 @@ export function CalendarView() {
         <div className="segments" role="group" aria-label="日历视图过滤">
           {(
             [
-              ["all", "全天双显"],
+              ["all", "全部"],
               ["training", "训练"],
               ["diet", "热量"],
             ] as ReadonlyArray<readonly [CalendarLens, string]>
@@ -580,7 +580,6 @@ export function CalendarView() {
                     {kcalLabel ? (
                       <span className={`cal-cell-kcal${dietDone ? " is-full" : ""}`}>
                         {kcalLabel}
-                        <small>卡</small>
                       </span>
                     ) : (
                       <span className="cal-cell-kcal is-empty" aria-hidden="true" />

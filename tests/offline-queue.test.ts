@@ -131,4 +131,18 @@ test("离线队列写满时报告失败，服务器限流和本地移除失败�
   assert.equal(after.storageError, true);
   assert.equal(after.remaining, 1);
   assert.equal(readQueue(storage, "owner")[0]?.opId, item.opId);
+
+  // 同步进行中追加的新记录也会在同一次 flushQueue 中被排空
+  clearQueue(storage, "owner");
+  enqueueMutation(storage, "owner", { opId: "mid-1", path: "/api/records", body: { id: "first" } });
+  const sentOrder = [];
+  const midRes = await flushQueue(storage, "owner", async (_path, opts) => {
+    sentOrder.push(opts.body.id);
+    if (opts.body.id === "first") {
+      enqueueMutation(storage, "owner", { opId: "mid-2", path: "/api/records", body: { id: "second" } });
+    }
+  });
+  assert.equal(midRes.synced, 2);
+  assert.equal(midRes.remaining, 0);
+  assert.deepEqual(sentOrder, ["first", "second"]);
 });

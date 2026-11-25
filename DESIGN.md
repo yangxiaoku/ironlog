@@ -395,3 +395,10 @@ Accessible gym-floor controls sized for thumb precision (`38px`–`45px` height)
 - **Don't** place fixed or sticky bottom footers over scrollable set rows or shrink mobile workout touch targets below `40px`.
 - **Don't** introduce external CDN fonts, third-party icon packs, Unicode emoji icons, or generic progress rings in place of Ironlog's dot-matrix numerals, LED dot meters, and radial-tick dial primitives.
 - **Don't** invent ungrounded decorative kickers above headings or scatter motion beyond `0.15s ease` interactive transitions and the `140ms ease-out` guided-exercise transition (both honoring `prefers-reduced-motion`).
+
+## Writing Rules（文案口径）
+
+1. **标题用名词，不用问句**（例如「肌群周组数与推拉比」，不用「各部位练到位了吗」）。
+2. **副标题只写口径或定义，不写用途和好处**（例如「近 7 天 ÷ 28 天周均」，不写「预防练太猛受伤」）。
+3. **禁用词**：智能、一键、轻松、科学、清爽、帮你、助你、建议你、记得、感叹号（`！`）。
+4. **数值表达**：数字之间用「·」分隔，最多 3 段；数据卡片不配形容词评语药丸，指标越界时只给一行事实陈述。

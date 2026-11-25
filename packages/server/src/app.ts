@@ -623,15 +623,31 @@ export function createApp(
     }).immediate());
   });
   app.put("/api/web/profile/quick-foods", async (c) => {
-    const input = z.object({ quickFoods: z.array(quickFoodSchema).max(60) }).parse(await c.req.json());
+    const input = z.union([
+      z.object({ upsert: quickFoodSchema }),
+      z.object({ removeId: z.string().trim().min(1).max(100) }),
+      z.object({ quickFoods: z.array(quickFoodSchema).max(60) }),
+    ]).parse(await c.req.json());
     const userId = c.get("userId");
     return c.json(db.transaction(() => {
       const existing = store.get(userId, "profile", "settings");
       const baseVersion = existing?.version ?? 0;
       const previous = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
+      const curList = previous.quickFoods ?? [];
+      let nextQuickFoods = curList;
+      if ("upsert" in input) {
+        nextQuickFoods = [
+          input.upsert,
+          ...curList.filter((q) => q.id !== input.upsert.id && q.name !== input.upsert.name),
+        ].slice(0, 60);
+      } else if ("removeId" in input) {
+        nextQuickFoods = curList.filter((q) => q.id !== input.removeId);
+      } else {
+        nextQuickFoods = input.quickFoods;
+      }
       const nextProfile = {
         ...previous,
-        quickFoods: input.quickFoods,
+        quickFoods: nextQuickFoods,
       };
       const result = store.mutate(userId, {
         id: "settings",
@@ -642,7 +658,7 @@ export function createApp(
         deleted: false,
       });
       if (result.status === "conflict") throw new DomainError("个人食物库已在其他设备更新，请重新加载", 409);
-      return { quickFoods: input.quickFoods, version: result.record!.version };
+      return { quickFoods: nextQuickFoods, version: result.record!.version };
     }).immediate());
   });
   app.get(`${apple}/tokens`, (c) => c.json(health.devices(c.get("userId"))));

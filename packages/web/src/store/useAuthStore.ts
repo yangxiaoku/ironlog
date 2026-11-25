@@ -75,16 +75,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       set({ demo: false, demoToken: "" });
       get().applyAccountMeta(account);
     } catch (error) {
-      if (error instanceof ApiError && error.status === 401
-        && typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)) {
-        try {
-          const { token } = await apiFetch<{ token?: string }>("/auth/web-demo", browserSession);
-          if (token) {
-            const account = await apiFetch<MeResponse>("/api/me", { ...browserSession, token });
-            set({ demo: true, demoToken: token });
-            get().applyAccountMeta(account);
-          }
-        } catch { /* Show the sign-in screen when there is no demo session. */ }
+      if (error instanceof ApiError && error.status === 401) {
+        let loggedDemo = false;
+        if (typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)) {
+          try {
+            const { token } = await apiFetch<{ token?: string }>("/auth/web-demo", browserSession);
+            if (token) {
+              const account = await apiFetch<MeResponse>("/api/me", { ...browserSession, token });
+              set({ demo: true, demoToken: token });
+              get().applyAccountMeta(account);
+              loggedDemo = true;
+            }
+          } catch { /* Show the sign-in screen when there is no demo session. */ }
+        }
+        if (!loggedDemo) {
+          resetLocalWorkoutPreferences();
+        }
       }
     } finally {
       set({ booted: true });
@@ -93,6 +99,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   async authenticate(mode, username, password) {
     set({ authenticating: true });
+    const prevUserId = get().userId;
     try {
       await apiFetch("/auth/web/" + mode, {
         ...browserSession,
@@ -105,6 +112,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         }
         throw err;
       });
+      if (account.userId !== prevUserId) {
+        resetLocalWorkoutPreferences();
+      }
       set({ demo: false, demoToken: "", authMode: "login" });
       get().applyAccountMeta(account);
       try {
@@ -131,12 +141,19 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     invalidateQueryCache();
     resetLocalWorkoutPreferences();
     useUiStore.getState().closeModalSilent();
-    if (prevUserId && typeof localStorage !== "undefined") {
+    if (prevUserId) {
       const prefix = `ironlog-web-draft:${prevUserId}:`;
-      for (const storage of [localStorage, sessionStorage]) {
-        for (const key of Object.keys(storage)) {
-          if (key.startsWith(prefix)) storage.removeItem(key);
-        }
+      for (const getter of [
+        () => (typeof localStorage !== "undefined" ? localStorage : null),
+        () => (typeof sessionStorage !== "undefined" ? sessionStorage : null),
+      ]) {
+        try {
+          const storage = getter();
+          if (!storage) continue;
+          for (const key of Object.keys(storage)) {
+            if (key.startsWith(prefix)) storage.removeItem(key);
+          }
+        } catch {}
       }
     }
     set({

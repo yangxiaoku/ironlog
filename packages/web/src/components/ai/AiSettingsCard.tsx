@@ -15,8 +15,8 @@ export function AiSettingsCard({ status }: { status: AiStatus | null }) {
     <section className="panel">
       <div className="panel-head">
         <div>
-          <h2>AI 训练与营养助手</h2>
-          <p className="muted panel-order-hint">大模型密钥安全保存在后端环境变量中，前端仅传递必要脱敏摘要。</p>
+          <h2>AI</h2>
+          <p className="muted panel-order-hint">API 密钥只存在服务器 .env 中。</p>
         </div>
         <AiModePill status={status} />
       </div>

@@ -84,7 +84,7 @@
   .hero h1 { font-size: clamp(30px, 8vw, 40px); }
   .hero-status { font-size: 11px; padding: 4px 9px; }
   .hero-date strong { font-size: 26px; }
-  .hero-date > span { font-size: 10px; }
+  .hero-date > span { font-size: 11px; }
   .hero-week { padding: 8px 10px; }
   .week-pill { min-height: 44px; }
   .hero::before { background-size: auto 420px; background-position: right 38%; mask-image: linear-gradient(90deg, transparent 28%, #000 88%); }
@@ -139,11 +139,11 @@
   .calendar-grid { gap: 3px; }
   .calendar-grid .cal-cell { min-height: 66px; padding: 4px 3px; border-radius: 8px; gap: 3px; overflow: hidden; }
   .cal-day-num { font-size: 11px; }
-  .calendar-grid .cal-cell.is-today .cal-day-num { min-width: 18px; height: 18px; padding: 0 3px; font-size: 10px; }
+  .calendar-grid .cal-cell.is-today .cal-day-num { min-width: 18px; height: 18px; padding: 0 3px; font-size: 11px; }
   .cal-cell-leds { gap: 2px; }
   .cal-cell-leds i { width: 4px; height: 4px; }
-  .cal-cell-work { font-size: 9.5px; padding: 1px 2px; min-height: 15px; line-height: 1.25; text-overflow: clip; letter-spacing: -.03em; text-align: center; }
-  .cal-cell-kcal { font-size: 9px; min-height: 12px; text-align: center; }
+  .cal-cell-work { font-size: 11px; padding: 2px 3px; min-height: 16px; line-height: 1.25; text-overflow: ellipsis; letter-spacing: -.03em; text-align: center; }
+  .cal-cell-kcal { font-size: 11px; min-height: 14px; text-align: center; }
   .cal-legend-hint { display: none; }
   .calendar-header button { min-height: 44px; min-width: 44px; }
   .calendar-detail .panel-head { gap: 5px; }
@@ -224,7 +224,7 @@
 .kpi-pill.is-sweet { color: var(--red-ink); border-color: color-mix(in srgb, var(--red) 38%, var(--edge)); background: var(--red-wash); }
 .kpi-pill.is-danger { color: #fff; background: var(--red); border-color: var(--red); }
 .kpi-pill.is-caution { color: var(--ink); border-color: var(--soft); background: var(--raised); }
-.kpi-pill.is-deload { color: var(--soft); }
+.kpi-pill.is-deload { color: var(--muted); }
 
 .analytics-deck { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(520px, 100%), 1fr)); }
 .panel-acwr, .panel-muscle-dose, .panel-monotony, .panel-inol, .panel-ipf-gl, .panel-nutrition-physio, .panel-bibliography {
@@ -237,7 +237,7 @@
 .acwr-gauge-strip { margin: 12px 0 16px; }
 .acwr-zone-meter { display: grid; grid-template-columns: 0.8fr 0.5fr 0.2fr 0.5fr; gap: 4px; position: relative; height: 32px; border-radius: 5px; padding-top: 10px; }
 .zone-bar { height: 8px; border-radius: 4px; position: relative; }
-.zone-bar span { position: absolute; top: -16px; left: 2px; font: 11px var(--mono); color: var(--soft); white-space: nowrap; }
+.zone-bar span { position: absolute; top: -16px; left: 2px; font: 11px var(--mono); color: var(--muted); white-space: nowrap; }
 .zone-bar.deload { background: var(--edge); }
 .zone-bar.sweet { background: color-mix(in srgb, var(--red) 48%, transparent); }
 .zone-bar.caution { background: var(--muted); }
@@ -279,7 +279,7 @@
 .inol-scores { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 6px 0; border-top: 1px dotted var(--edge); border-bottom: 1px dotted var(--edge); }
 .inol-scores span { font-size: 11px; color: var(--muted); display: block; }
 .inol-scores strong { font: 600 16px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.inol-scores small { font-size: 11px; color: var(--soft); display: block; }
+.inol-scores small { font-size: 11px; color: var(--muted); display: block; }
 .inol-advice { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.5; text-wrap: pretty; }
 
 /* IPF GL */
@@ -290,7 +290,7 @@
 .ipf-score-val { display: flex; align-items: baseline; gap: 4px; }
 .ipf-score-val strong { font: 700 28px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
 .ipf-score-val span { font-size: 13px; color: var(--muted); }
-.ipf-score-box small { font-size: 11px; color: var(--soft); }
+.ipf-score-box small { font-size: 11px; color: var(--muted); }
 .ipf-standards-strip { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; font-size: 11px; color: var(--muted); }
 .ipf-level { display: flex; align-items: center; gap: 5px; }
 .ipf-level .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--edge); }
@@ -304,7 +304,7 @@
 .physio-nums { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; padding: 6px 0; border-top: 1px dotted var(--edge); border-bottom: 1px dotted var(--edge); }
 .physio-nums span { font-size: 11px; color: var(--muted); display: block; }
 .physio-nums strong { font: 600 15px var(--mono); font-variant-numeric: tabular-nums; }
-.physio-nums small { font-size: 11px; color: var(--soft); }
+.physio-nums small { font-size: 11px; color: var(--muted); }
 .physio-advice { font-size: 12px; color: var(--muted); margin: 0; line-height: 1.5; text-wrap: pretty; }
 
 /* Bibliography / Collapsible Science Internals */
@@ -319,7 +319,7 @@
 .sci-tech-cell { padding: 10px 12px; border: 1px solid var(--rule); border-radius: 10px; background: var(--bg); display: grid; gap: 2px; }
 .sci-tech-cell span { font-size: 11px; color: var(--muted); }
 .sci-tech-cell strong { font: 600 13px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.sci-tech-cell small { font-size: 11px; color: var(--soft); }
+.sci-tech-cell small { font-size: 11px; color: var(--muted); }
 .sci-corr-raw { padding: 10px 12px; border-radius: 9px; background: var(--inset); font-size: 12px; color: var(--muted); line-height: 1.5; }
 .sci-corr-raw strong { color: var(--ink); }
 .panel-apple-report { grid-column: 1 / -1; }
@@ -341,7 +341,7 @@
 .apple-readiness-score small { display: block; font: 11px var(--mono); color: var(--muted); margin-bottom: 2px; }
 .apple-readiness-score strong { font-size: 14px; font-weight: 600; color: var(--ink); }
 .apple-readiness-meter { min-width: 140px; display: grid; gap: 4px; justify-items: end; }
-.apple-readiness-meter small { font: 11px var(--mono); color: var(--soft); }
+.apple-readiness-meter small { font: 11px var(--mono); color: var(--muted); }
 .apple-signal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 10px; border: 1px solid var(--edge); border-radius: 12px; background: var(--bg); overflow: hidden; }
 .apple-signal-card { padding: 12px 14px; display: grid; gap: 4px; min-width: 0; border-right: 1px dotted var(--edge); border-bottom: 1px dotted var(--edge); }
 .apple-signal-top { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); }
@@ -396,7 +396,7 @@
 .apple-recomp-list > div { padding: 8px 10px; border: 1px solid var(--rule); border-radius: 8px; background: var(--surface); display: grid; gap: 2px; }
 .apple-recomp-list span { font-size: 11px; color: var(--muted); }
 .apple-recomp-list strong { font: 650 14px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.apple-recomp-list small { font-size: 11px; color: var(--soft); }
+.apple-recomp-list small { font-size: 11px; color: var(--muted); }
 .apple-hr-zones { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--bg); }
 .apple-hr-zone-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; flex-wrap: wrap; }
 .apple-hr-zone-head small { color: var(--muted); font: 11px var(--mono); }
@@ -414,7 +414,7 @@
 .apple-cov-cat:last-child { border-right: 0; }
 .apple-cov-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; font-size: 12px; color: var(--muted); }
 .apple-cov-head strong { font: 650 13px var(--mono); font-variant-numeric: tabular-nums; color: var(--ink); }
-.apple-cov-head small { color: var(--soft); font-weight: 500; }
+.apple-cov-head small { color: var(--muted); font-weight: 500; }
 .apple-coverage-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
 .apple-apply-btn { width: 100%; justify-content: center; margin-top: 4px; font-size: 12px; min-height: 36px; }
 .apple-weekly-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border: 1px solid var(--edge); border-radius: 11px; background: var(--bg); overflow: hidden; }

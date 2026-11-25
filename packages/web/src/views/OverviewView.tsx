@@ -27,7 +27,6 @@ import {
   type TodayResponse,
 } from "../lib/domain";
 import {
-  openAiReviewModal,
   openAppleDailyDetailsModal,
   openAppleWorkoutDetailsModal,
   openCalendarDayModal,
@@ -49,7 +48,6 @@ export function OverviewView() {
   const username = useAuthStore((s) => s.username);
   const isNewUser = useAuthStore((s) => s.isNewUser);
   const appleHealthConnected = useAuthStore((s) => s.appleHealthConnected);
-  const aiReady = useAuthStore((s) => s.aiReady);
 
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -437,22 +435,16 @@ export function OverviewView() {
                 <Icon name="plus" size={14} />
               </span>
               <strong>
-                {day.nutrition.count ? <MatrixText value={fmt(day.nutrition.calories, 0)} /> : "记饮食"}
+                <MatrixText value={day.nutrition.count ? fmt(day.nutrition.calories, 0) : "0"} />
               </strong>
-              {day.nutrition.count ? (
-                <>
-                  <small>
-                    / {fmt(day.nutrition.target, 0)} kcal
-                    {day.nutrition.protein > 0 ? ` · 蛋 ${fmt(day.nutrition.protein, 0)}g` : ""}
-                  </small>
-                  <ThinMeter
-                    ratio={day.nutrition.target ? day.nutrition.calories / day.nutrition.target : 0}
-                    label="热量进度"
-                  />
-                </>
-              ) : (
-                <small>快速记录</small>
-              )}
+              <small>
+                {day.nutrition.target ? `/ ${fmt(day.nutrition.target, 0)} kcal` : "kcal"}
+                {day.nutrition.count && day.nutrition.protein > 0 ? ` · 蛋 ${fmt(day.nutrition.protein, 0)}g` : ""}
+              </small>
+              <ThinMeter
+                ratio={day.nutrition.count && day.nutrition.target ? day.nutrition.calories / day.nutrition.target : 0}
+                label="热量进度"
+              />
             </button>
 
             <button
@@ -487,7 +479,7 @@ export function OverviewView() {
           <div className="stats-header-title">
             <h2>训练表现</h2>
             <button type="button" className="quiet stats-analytics-link" onClick={() => navigate("analytics")}>
-              深度分析 <Icon name="chevron" size={14} />
+              数据分析 <Icon name="chevron" size={14} />
             </button>
           </div>
           <p>
@@ -498,6 +490,7 @@ export function OverviewView() {
           <label aria-label="统计截止日期">
             <input
               type="date"
+              className={stats.through !== stats.today ? "is-custom-date" : undefined}
               min="1902-01-01"
               max={stats.today}
               value={stats.through}
@@ -666,11 +659,6 @@ export function OverviewView() {
         <header className="panel-head">
           <h2>近期训练</h2>
           <div className="heading-actions">
-            {aiReady ? (
-              <button type="button" className="quiet ai-inline-btn" onClick={() => openAiReviewModal()}>
-                <Icon name="bolt" size={15} /> 智能复盘
-              </button>
-            ) : null}
             <button type="button" className="quiet" onClick={() => navigate("workout")}>
               全部训练 <Icon name="chevron" size={16} />
             </button>
@@ -681,12 +669,9 @@ export function OverviewView() {
             <button
               key={row.id}
               type="button"
-              className="record-line"
+              className="record-line no-icon"
               onClick={() => openWorkoutReport({ workoutId: row.id, goals: stats.goals })}
             >
-              <span className="record-icon">
-                <Icon name="workout" />
-              </span>
               <span>
                 <strong>{row.title}</strong>
                 <small>

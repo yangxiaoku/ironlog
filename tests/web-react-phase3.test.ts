@@ -705,6 +705,8 @@ test("De-AI refinement removes viewfinder brackets & OpenGym label, isolates gue
   const calendar = readFileSync(resolve(process.cwd(), "packages/web/src/views/CalendarView.tsx"), "utf8");
   const exercises = readFileSync(resolve(process.cwd(), "packages/web/src/views/ExercisesView.tsx"), "utf8");
   const tabs = readFileSync(resolve(process.cwd(), "packages/web/src/components/WorkspaceTabs.tsx"), "utf8");
+  const quickSheet = readFileSync(resolve(process.cwd(), "packages/web/src/components/QuickRecordSheet.tsx"), "utf8");
+  const reportModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutReportModal.tsx"), "utf8");
 
   assert.match(css, /--bg:\s*#09090b/);
   assert.match(css, /--surface:\s*#111216/);
@@ -728,8 +730,10 @@ test("De-AI refinement removes viewfinder brackets & OpenGym label, isolates gue
   }
 
   assert.ok(!overview.includes("hero-sublink"), "Overview hero must not duplicate today workout sublink");
-  assert.match(workout, /aiReady \?/);
-  assert.match(diet, /aiReady \?/);
+  assert.ok(!workout.includes("openAiWorkoutModal"), "WorkoutView hero should not expose standalone AI button");
+  assert.ok(!diet.includes("openAiDietModal"), "DietView toolbar should not expose standalone AI button");
+  assert.match(quickSheet, /aiReady/);
+  assert.match(reportModal, /aiReady \?/);
   assert.match(overview, /MatrixText/);
   assert.match(diet, /MatrixText/);
 });
@@ -783,4 +787,28 @@ test("Complete feature & analytics pack connects 180/365d views, diet scaler, in
   assert.match(analyticsView, /panel-rep-max/);
   assert.match(analyticsView, /panel-nutrition-daily/);
   assert.match(analyticsView, /panel-body-measurements/);
+  assert.match(analyticsView, /key=\{`\$\{p\.date\}-\$\{i\}`\}/);
+});
+
+test("Audit fixes harden diet upsert rollback, assisted ref/prog math, draft conflict guard, and logout reset", () => {
+  const dietModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/diet/DietEditorModal.tsx"), "utf8");
+  const workoutModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const openers = readFileSync(resolve(process.cwd(), "packages/web/src/lib/record-openers.tsx"), "utf8");
+  const authStore = readFileSync(resolve(process.cwd(), "packages/web/src/store/useAuthStore.ts"), "utf8");
+  const appShell = readFileSync(resolve(process.cwd(), "packages/web/src/components/AppShell.tsx"), "utf8");
+
+  assert.match(dietModal, /\{\s*upsert:\s*item\s*\}/);
+  assert.match(dietModal, /\{\s*removeId:\s*q\.id\s*\}/);
+  assert.match(dietModal, /hasUnit:\s*boolean/);
+
+  assert.match(workoutModal, /const isAssisted = mode === "assisted"/);
+  assert.match(workoutModal, /s\.type === "warmup"/);
+  assert.match(workoutModal, /updateSet\(\s*exIdx,/);
+  assert.match(workoutModal, /persistDraftRef\.current\(\)/);
+  assert.match(workoutModal, /baseVersion:/);
+
+  assert.match(openers, /替换进行中的训练草稿/);
+  assert.match(openers, /parsed\.baseVersion/);
+  assert.match(authStore, /resetLocalWorkoutPreferences\(\)/);
+  assert.match(appShell, /清空冲突条目/);
 });

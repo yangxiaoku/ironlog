@@ -429,7 +429,7 @@ export function PlanView() {
       <header className="page-heading masthead-plan">
         <div>
           <h1>训练计划</h1>
-          <p>{planData ? `${planData.name} · ${planData.weeks} 周` : "周期编排、渐进负荷与排期"}</p>
+          {planData ? <p>{planData.name} · {planData.weeks} 周</p> : null}
         </div>
         <div className="heading-actions">
           <button
@@ -444,18 +444,18 @@ export function PlanView() {
           >
             <Icon name="upload" size={15} /> 导入计划
           </button>
+          {aiReady ? (
+            <button type="button" className="secondary-button" onClick={() => openAiPlanModal(activePlan?.id)}>
+              生成 AI 计划
+            </button>
+          ) : null}
           <button
             type="button"
-            className={aiReady ? "secondary-button" : "primary-button"}
+            className="primary-button"
             onClick={() => openPlanBuilderModal()}
           >
             <Icon name="plus" size={16} /> 新建计划
           </button>
-          {aiReady ? (
-            <button type="button" className="primary-button" onClick={() => openAiPlanModal(activePlan?.id)}>
-              <Icon name="bolt" size={16} /> 智能排课
-            </button>
-          ) : null}
         </div>
       </header>
 
@@ -499,7 +499,7 @@ export function PlanView() {
             <div className="deload-card-head">
               <div>
                 <strong>减载周模式（Deload Week）</strong>
-                <small>开启后，从计划开练时自动按比例下调目标重量与组数，帮助消除累积疲劳</small>
+                <small>开启后，从计划开练时按比例下调目标重量与组数</small>
               </div>
               <input
                 type="checkbox"
@@ -596,7 +596,7 @@ export function PlanView() {
           ) : (
             <div className="empty">
               <strong>暂无生效计划</strong>
-              <p>{aiReady ? "可直接选用「经典方案」，或点击右上角「新建计划」「智能排课」。" : "可直接选用「经典方案」，或点击右上角「新建计划」开始排课。"}</p>
+              <p>{aiReady ? "可选用「经典方案」，或点击右上角「新建计划」「生成 AI 计划」。" : "可选用「经典方案」，或点击右上角「新建计划」。"}</p>
               <button type="button" className="secondary-button" onClick={() => setPlanTab("starters")}>
                 <Icon name="plan" size={16} /> 浏览经典方案
               </button>
@@ -645,7 +645,7 @@ export function PlanView() {
                   </div>
                   {schedule.weekForecast.conflicts?.length ? (
                     <p className="forecast-conflict">
-                      <Icon name="bolt" size={14} /> {schedule.weekForecast.conflicts.join("；")}
+                      {schedule.weekForecast.conflicts.join("；")}
                     </p>
                   ) : null}
                 </section>
@@ -655,7 +655,6 @@ export function PlanView() {
                 <header className="panel-head">
                   <div>
                     <h2>未来 14 天排期日程</h2>
-                    <p>点击任意日期可直接调整训练日、设为休息或顺延安排</p>
                   </div>
                 </header>
                 <div className="horizon-list">

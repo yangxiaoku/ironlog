@@ -48,8 +48,8 @@ export function AuthScreen() {
           <p>记训练，记饮食，记体重。</p>
           <ul className="login-hero-list">
             <li>训练计划 · 实时计时与杠铃配片</li>
-            <li>饮食热量 · 体重均线与负荷科学</li>
-            <li>5,650+ 动作库 · 无需手环即开即用</li>
+            <li>饮食热量与体重均线</li>
+            <li>5,650 个动作，中英文检索</li>
           </ul>
         </div>
       </div>

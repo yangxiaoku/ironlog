@@ -19,7 +19,6 @@ import {
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
-  openAiWorkoutModal,
   openWorkoutEditor,
   openWorkoutReport,
   resumeLocalWorkoutDraft,
@@ -35,7 +34,6 @@ interface WorkoutViewSnap {
 
 export function WorkoutView() {
   const userId = useAuthStore((s) => s.userId);
-  const aiReady = useAuthStore((s) => s.aiReady);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
@@ -165,11 +163,6 @@ export function WorkoutView() {
         view="workout"
         controls={
           <div className="heading-actions">
-            {aiReady ? (
-              <button type="button" className="secondary-button" onClick={() => openAiWorkoutModal()}>
-                <Icon name="bolt" size={16} /> 文本速记
-              </button>
-            ) : null}
             <button
               type="button"
               className="secondary-button"
@@ -219,12 +212,26 @@ export function WorkoutView() {
         <section className="panel" style={{ marginBottom: 14, borderColor: "var(--red)" }}>
           <header className="panel-head">
             <div>
-              <h2>检测到本机未保存训练草稿</h2>
-              <p>可随时恢复继续记录已完成组数与休息计时</p>
+              <h2>有一次训练没保存</h2>
             </div>
-            <button type="button" className="primary-button" onClick={() => void resumeLocalWorkoutDraft(userId, goals)}>
-              恢复草稿
-            </button>
+            <div className="heading-actions">
+              <button
+                type="button"
+                className="quiet"
+                onClick={() => {
+                  try {
+                    localStorage.removeItem(localDraft.key);
+                  } catch {}
+                  bumpDataEpoch();
+                  notify("已丢弃未保存训练草稿");
+                }}
+              >
+                丢弃
+              </button>
+              <button type="button" className="primary-button" onClick={() => void resumeLocalWorkoutDraft(userId, goals)}>
+                继续
+              </button>
+            </div>
           </header>
         </section>
       ) : null}
@@ -233,10 +240,11 @@ export function WorkoutView() {
         <section className="panel pr-wall-panel" style={{ marginBottom: 14 }}>
           <header className="panel-head">
             <div>
-              <h2>力量基准榜</h2>
+              <h2>主项 1RM</h2>
               <p>
-                已累计 {trainedItems.length} 个训练动作
-                {sbdTotal != null ? ` · 三大项估算总和 ${fmt(sbdTotal, 1)} kg` : ""} · 点击卡片筛选记录
+                {sbdTotal != null
+                  ? `三大项合计 ${fmt(sbdTotal, 1)} kg`
+                  : `已记录 ${trainedItems.length} 个动作`}
               </p>
             </div>
             {prPicks.some((ex) => ex.name === query) ? (
