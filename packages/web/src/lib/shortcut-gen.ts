@@ -656,6 +656,22 @@ function startWorkoutActionXml({
   ].join("\n"));
 }
 
+/**
+ * Native Apple Watch "End Workout" action (`is.workflow.actions.workout.end`)
+ * targeting `com.apple.SessionTrackerApp` (verified against iOS ToolKit v78 schema).
+ */
+function endWorkoutActionXml({ uuid }: { uuid: string }): string {
+  return actionBlockXml("is.workflow.actions.workout.end", [
+    "\t\t\t\t<key>IntentAppDefinition</key>",
+    "\t\t\t\t<dict>",
+    "\t\t\t\t\t<key>BundleIdentifier</key>",
+    "\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>",
+    "\t\t\t\t</dict>",
+    "\t\t\t\t<key>UUID</key>",
+    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
+  ].join("\n"));
+}
+
 function resolveAppleWorkoutName(
   activityType: string,
   environment: ShortcutEnvironment,
@@ -2020,12 +2036,10 @@ export function buildIronlogUnifiedAppleHubShortcut({
   const prelude = useImportQuestions ? buildUniversalConfigPrelude(uuidFactory) : null;
   const eventsPath = "/api/integrations/apple-health/events";
   const activePath = `/api/integrations/apple-health/events/active?activityType=${encodeURIComponent(activityType)}`;
-  const workoutsPath = "/api/integrations/apple-health/workouts";
   const dailyPath = "/api/integrations/apple-health/daily";
   const prefix = prelude ? "<导入时填写>" : base;
   const eventsEndpoint = `${prefix}${eventsPath}`;
   const activeEndpoint = `${prefix}${activePath}`;
-  const workoutsEndpoint = `${prefix}${workoutsPath}`;
   const dailyEndpoint = `${prefix}${dailyPath}`;
   const filename = useImportQuestions
     ? `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut`
@@ -2033,11 +2047,11 @@ export function buildIronlogUnifiedAppleHubShortcut({
 
   const commentText = [
     `铁记（Ironlog）Apple 健康全能智能联动（1 个快捷指令覆盖全流程）`,
-    `默认运动：${sportLabel}（${resolvedEnv}），兜底窗口 ${resolvedMinutes} 分钟；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
+    `默认运动：${sportLabel}（${resolvedEnv}）；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
     `  • strength / strength:functional / strength:core：上报对应力量开始事件，自动开始对应体能训练并打开 Apple「健身」App`,
     `  • cardio / cardio:<方式>：按所选有氧方式上报开始事件，自动开始对应体能训练并打开 Apple「健身」App`,
-    `  • end：等待 5 秒并回传活动能量、心率与对应距离（自动匹配网页或手表刚开启的训练，并可绑定 Apple Watch「体能训练结束时 → 文本 end → 运行本快捷指令」实现免动手全自动闭环）`,
+    `  • end：先自动结束当前 Apple Watch 体能训练，等待 5 秒后匹配进行中会话并回传真实活动能量、心率与对应距离；若未检测到有效运动或时长不足则直接跳过不写入假记录`,
     `  • daily：同步今日选定 Apple 健康指标`,
     `在手机上直接点击运行（无入参）时，会自动弹出 4 合 1 菜单。`,
   ].join("\n");
@@ -2257,7 +2271,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     },
     distanceSpec,
   });
-  const activeAnyPath = "/api/integrations/apple-health/events/active?activityType=any";
+  const activeAnyPath = "/api/integrations/apple-health/events/active?activityType=any&closeShort=1";
   const activeAnyEndpoint = `${prefix}${activeAnyPath}`;
   const activeAnyReqUuid = uuidFactory();
   const anyElapsedValUuid = uuidFactory();
@@ -2328,25 +2342,14 @@ export function buildIronlogUnifiedAppleHubShortcut({
       ],
     });
   });
-  const fallbackStartUuid = uuidFactory();
-  const fallbackMetrics = buildWorkoutWindowMetricsActions({
-    uuidFactory,
-    dateFilter: {
-      kind: "betweenDates",
-      startDateUuid: fallbackStartUuid,
-      startDateOutputName: "Adjusted Date",
-      endDateUuid: endDateUuid,
-      endDateOutputName: "Date",
-    },
-    distanceSpec,
-  });
-
   const endBranch = conditionalBlock({
     groupUuid: uuidFactory(),
     input: { kind: "variable", variableName: "v_mode" },
     condition: 4,
     equalsText: "end",
     bodyActions: [
+      commentActionXml("先自动停止当前 Apple Watch 体能训练，等待 5 秒让健康数据落盘，再按真实起止时间回传（无有效会话时直接跳过，不生成假记录）"),
+      endWorkoutActionXml({ uuid: uuidFactory() }),
       delayActionXml(5),
       currentDateActionXml({ uuid: endDateUuid }),
       downloadJsonActionXml({
@@ -2458,35 +2461,6 @@ export function buildIronlogUnifiedAppleHubShortcut({
                   ...anyPairedMetrics.bodyItems,
                   { key: "distanceKm", varAttachment: "v_anyDistKm" },
                   { key: "distanceMeters", varAttachment: "v_anyDistMeters" },
-                ],
-              }),
-            ],
-            otherwiseActions: [
-              adjustDateSubtractMinutesActionXml({
-                uuid: fallbackStartUuid,
-                minutes: resolvedMinutes,
-                inputUuid: endDateUuid,
-                inputName: "Date",
-              }),
-              ...fallbackMetrics.actions,
-              downloadJsonActionXml({
-                uuid: uuidFactory(),
-                endpoint: workoutsEndpoint,
-                endpointPath: prelude ? workoutsPath : undefined,
-                token: cleanToken,
-                originUuid: prelude?.originUuid,
-                tokenUuid: prelude?.tokenUuid,
-                bodyItems: [
-                  { key: "schemaVersion", value: "1", itemType: 3 },
-                  { key: "source", value: "shortcut" },
-                  { key: "captureMethod", value: "trigger" },
-                  { key: "durationKind", value: "event_elapsed" },
-                  { key: "activityType", value: activityType },
-                  { key: "environment", value: resolvedEnv },
-                  { key: "startedAt", outputAttachment: { name: "Adjusted Date", uuid: fallbackStartUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-                  { key: "endedAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-                  { key: "durationMinutes", value: String(resolvedMinutes), itemType: 3 },
-                  ...fallbackMetrics.bodyItems,
                 ],
               }),
             ],

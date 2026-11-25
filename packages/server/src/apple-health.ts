@@ -367,7 +367,7 @@ export class AppleHealth {
     }).immediate();
   }
 
-  activeEvent(device: Device, rawActivityType?: string) {
+  activeEvent(device: Device, rawActivityType?: string, options?: { closeShort?: boolean }) {
     const parsed = activityType.safeParse(String(rawActivityType ?? "").trim());
     if (!parsed.success) throw new DomainError("运动类型标识不合法", 400);
     const type = parsed.data.toLowerCase();
@@ -383,10 +383,14 @@ export class AppleHealth {
         return { ok: true as const, found: false as const, expired: true as const, activityType: row.activityType };
       }
       if (elapsedSeconds < MIN_TRIGGER_WORKOUT_SECONDS) {
+        if (options?.closeShort) {
+          this.stmtCloseEventNull.run(new Date().toISOString(), device.id, row.activityType.toLowerCase());
+        }
         return {
           ok: true as const,
           found: false as const,
           tooShort: true as const,
+          ...(options?.closeShort ? { closed: true as const } : {}),
           durationSeconds: elapsedSeconds,
           activityType: row.activityType,
         };

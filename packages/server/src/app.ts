@@ -271,7 +271,7 @@ export function createApp(
   app.get(`${apple}/events/active`, (c) => {
     c.header("Cache-Control", "no-store");
     const device = health.identify(c.req.header("Authorization")?.match(/^Bearer (.+)$/i)?.[1]);
-    return c.json(health.activeEvent(device, c.req.query("activityType")));
+    return c.json(health.activeEvent(device, c.req.query("activityType"), { closeShort: c.req.query("closeShort") === "1" }));
   });
   app.post(`${apple}/daily`, async (c) => {
     c.header("Cache-Control", "no-store");

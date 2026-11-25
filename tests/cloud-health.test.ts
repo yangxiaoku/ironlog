@@ -766,6 +766,19 @@ test("训练事件防御机制：拦截短于3分钟的误触、自动过期超6
     assert.equal(shortEndBody.reason, "too_short");
     assert.equal((await (await call(apple + "/workouts", owner.token)).json() as any[]).length, 0);
 
+    // 1b. closeShort=1 immediately closes dangling too-short start event without creating a workout
+    const shortStart2 = new Date(Date.now() - 35_000).toISOString();
+    assert.equal((await call(apple + "/events", token, "POST", {
+      schemaVersion: 1, event: "start", activityType: "running", environment: "indoor", occurredAt: shortStart2,
+    })).status, 200);
+    const closedShort = await (await call(apple + "/events/active?activityType=any&closeShort=1", token)).json() as any;
+    assert.equal(closedShort.found, false);
+    assert.equal(closedShort.tooShort, true);
+    assert.equal(closedShort.closed, true);
+    const afterClose = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
+    assert.equal(afterClose.found, false);
+    assert.equal(afterClose.tooShort, undefined);
+
     // 2. Forgotten start (> 6 hours) auto-expires in activeEvent and end without saving a ghost workout
     const staleStart = new Date(Date.now() - 8 * 3600_000).toISOString();
     assert.equal((await call(apple + "/events", token, "POST", {

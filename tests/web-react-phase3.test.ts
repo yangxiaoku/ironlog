@@ -271,19 +271,21 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.ok(hubUniversal.xml.includes("<key>WFAppIdentifier</key>\n\t\t\t\t<string>com.apple.Fitness</string>"));
   assert.ok(!hubUniversal.xml.includes("fitnessapp://"));
   assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
-  assert.ok(hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>45</string>"));
+  const endWorkoutCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.workout\.end<\/string>/g) ?? []).length;
+  assert.equal(endWorkoutCount, 1, `expected 1 End Workout action in hub end branch, got ${endWorkoutCount}`);
+  assert.ok(!hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>45</string>"), "hub end branch must not fabricate 45-min fallback workout");
 
   // Magic variable endpoints & headers
   assert.ok(hubUniversal.xml.includes("<string>Bearer &#xFFFC;</string>"));
   for (const p of [
     "/api/integrations/apple-health/events",
     "/api/integrations/apple-health/events/active?activityType=traditionalStrengthTraining",
-    "/api/integrations/apple-health/events/active?activityType=any",
-    "/api/integrations/apple-health/workouts",
+    "/api/integrations/apple-health/events/active?activityType=any&amp;closeShort=1",
     "/api/integrations/apple-health/daily",
   ]) {
     assert.ok(hubUniversal.xml.includes(`<string>&#xFFFC;${p}</string>`), `contains magic path ${p}`);
   }
+  assert.ok(!hubUniversal.xml.includes("/api/integrations/apple-health/workouts"), "hub shortcut must not upload synthetic fallback workouts");
   assert.ok(hubUniversal.xml.includes("<string>distanceMode</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Walking + Running Distance</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Cycling Distance</string>"));
@@ -305,7 +307,7 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.ok(hubPrefilled.xml.includes("<key>WFWorkflowImportQuestions</key>\n\t<array/>"));
   assert.ok(hubPrefilled.xml.includes(`Bearer ${secretToken}`));
   assert.ok(hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/events`));
-  assert.ok(hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/workouts`));
+  assert.ok(!hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/workouts`));
   assert.ok(hubPrefilled.xml.includes(`${secretOrigin}/api/integrations/apple-health/daily`));
   assert.equal(Buffer.from(hubPrefilled.base64, "base64").toString("utf8"), hubPrefilled.xml);
 });
