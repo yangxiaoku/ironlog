@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import {
   buildAppleFitnessLaunchUrl,
@@ -313,6 +313,7 @@ export function WorkoutEditorModal({
   const [exercises, setExercises] = useState<WorkoutExercise[]>(initialSnapshot.exercises);
   const [timing, setTiming] = useState<WorkoutTiming>(initialSnapshot.timing);
   const [rest, setRest] = useState<RestTimerState | null>(initialSnapshot.rest);
+  const draftFinalized = useRef(false);
 
   const [prefs, setPrefs] = useState<WorkoutPreferences>(() => readWorkoutPreferences());
   const {
@@ -520,33 +521,42 @@ export function WorkoutEditorModal({
     };
   }, [isHistoricalEdit, isWorkoutTop]);
 
+  const persistDraft = useCallback(() => {
+    if (!draftStorageKey || isHistoricalEdit || draftFinalized.current) return;
+    try {
+      getOfflineStorage()?.setItem(
+        draftStorageKey,
+        JSON.stringify({ title, date, notes, feeling, exercises, timing, rest, ...sessionMetaRef.current }),
+      );
+    } catch {}
+  }, [draftStorageKey, isHistoricalEdit, title, date, notes, feeling, exercises, timing, rest]);
+
+  const clearDraft = () => {
+    draftFinalized.current = true;
+    try { if (draftStorageKey) getOfflineStorage()?.removeItem(draftStorageKey); } catch {}
+  };
+
   const handleMinimize = () => {
-    if (draftStorageKey && !isHistoricalEdit && typeof localStorage !== "undefined") {
-      try {
-        localStorage.setItem(
-          draftStorageKey,
-          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest, ...sessionMetaRef.current }),
-        );
-      } catch {}
-    }
+    persistDraft();
     triggerHaptic("light");
     closeAllModals();
     notify("训练已收起至底部悬浮条 · 计时与休息继续中");
   };
 
-  // Auto-save local draft so accidental browser close never loses sets
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!draftStorageKey || isHistoricalEdit) return;
-    const timer = window.setTimeout(() => {
-      try {
-        localStorage.setItem(
-          draftStorageKey,
-          JSON.stringify({ title, date, notes, feeling, exercises, timing, rest, ...sessionMetaRef.current }),
-        );
-      } catch {}
-    }, 200);
-    return () => window.clearTimeout(timer);
-  }, [draftStorageKey, isHistoricalEdit, title, date, notes, feeling, exercises, timing, rest]);
+    const timer = window.setTimeout(persistDraft, 200);
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") persistDraft();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", persistDraft);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", persistDraft);
+    };
+  }, [draftStorageKey, isHistoricalEdit, persistDraft]);
 
   // Timestamp-anchored clock tick & visibility recalibration
   useEffect(() => {
@@ -1111,7 +1121,7 @@ export function WorkoutEditorModal({
         method: "POST",
         body: payloadPack.body,
       });
-      try { if (draftStorageKey) getOfflineStorage()?.removeItem(draftStorageKey); } catch {}
+      clearDraft();
       triggerHaptic("success");
       bumpDataEpoch();
       const saved: RecordEnvelope<WorkoutData> = res.record ?? {
@@ -1145,7 +1155,7 @@ export function WorkoutEditorModal({
           return;
         }
         refreshPendingCount(userId);
-        try { if (draftStorageKey) storage?.removeItem(draftStorageKey); } catch {}
+        clearDraft();
         closeAllModals();
         notify("离线状态：训练已暂存，联网后自动同步");
         return;
@@ -1178,9 +1188,7 @@ export function WorkoutEditorModal({
             data: curRec.data,
           },
         });
-        if (draftStorageKey && typeof localStorage !== "undefined") {
-          localStorage.removeItem(draftStorageKey);
-        }
+        clearDraft();
         bumpDataEpoch();
         closeAllModals();
         notify("已删除训练记录");
@@ -1662,9 +1670,7 @@ export function WorkoutEditorModal({
                   type="button"
                   className="quiet"
                   onClick={() => {
-                    if (draftStorageKey && typeof localStorage !== "undefined") {
-                      localStorage.removeItem(draftStorageKey);
-                    }
+                    clearDraft();
                     closeAllModals();
                   }}
                 >

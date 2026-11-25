@@ -991,6 +991,7 @@ export interface NutritionEnergyBalanceReport {
   restDayAvgProtein: number | null;
   estimatedTdeeKcal: number | null;
   tdeeConfidence: "high" | "moderate" | "insufficient";
+  tdeeBasis: { from: string; through: string; completeDays: number; weightSamples: number } | null;
   energyAdvice: string;
 }
 
@@ -1001,9 +1002,7 @@ export interface NutritionEnergyBalanceReport {
 export function evaluateNutritionEnergyBalance({
   dailyMacros,
   targetCalories,
-  weightSlopeKgPerWeek,
-  weightSampleCount,
-  weightRSquared,
+  tdeeObservation,
 }: {
   dailyMacros: ReadonlyArray<{
     date: string;
@@ -1014,10 +1013,17 @@ export function evaluateNutritionEnergyBalance({
     isTrainingDay: boolean;
   }>;
   targetCalories: number;
-  weightSlopeKgPerWeek: number | null;
-  weightSampleCount: number;
-  weightRSquared: number | null;
+  tdeeObservation?: {
+    from: string;
+    through: string;
+    completeDays: number;
+    averageIntakeKcal: number | null;
+    weightSlopeKgPerWeek: number | null;
+    weightSamples: number;
+    weightRSquared: number | null;
+  };
 }): NutritionEnergyBalanceReport {
+  const missingTdee = "维持热量估算需要同一时间段内至少 14 天的趋势、3 次称重，以及至少 70% 日期的完整饮食记录。";
   const valid = dailyMacros.filter((d) => d.calories > 0 || d.protein > 0);
   const daysLogged = valid.length;
   if (!daysLogged) {
@@ -1038,7 +1044,8 @@ export function evaluateNutritionEnergyBalance({
       restDayAvgProtein: null,
       estimatedTdeeKcal: null,
       tdeeConfidence: "insufficient",
-      energyAdvice: "累计 5 天以上饮食与 3 次以上称重后，系统会自动反推你的真实日均代谢消耗（自适应 TDEE）。",
+      tdeeBasis: null,
+      energyAdvice: missingTdee,
     };
   }
 
@@ -1070,17 +1077,27 @@ export function evaluateNutritionEnergyBalance({
 
   let estimatedTdeeKcal: number | null = null;
   let tdeeConfidence: NutritionEnergyBalanceReport["tdeeConfidence"] = "insufficient";
-  if (daysLogged >= 5 && weightSampleCount >= 3 && weightSlopeKgPerWeek != null && avgCalories >= 800) {
-    const dailyImbalance = (weightSlopeKgPerWeek * 7700) / 7;
-    estimatedTdeeKcal = Math.max(900, Math.min(6500, Math.round(avgCalories - dailyImbalance)));
-    tdeeConfidence = daysLogged >= 10 && weightSampleCount >= 5 && (weightRSquared ?? 0) >= 0.35 ? "high" : "moderate";
+  let tdeeBasis: NutritionEnergyBalanceReport["tdeeBasis"] = null;
+  if (tdeeObservation) {
+    const { from, through, completeDays, averageIntakeKcal, weightSlopeKgPerWeek, weightSamples, weightRSquared } = tdeeObservation;
+    const intervalDays = 1 + Math.round((Date.parse(through) - Date.parse(from)) / 86_400_000);
+    if (intervalDays >= 14 && completeDays / intervalDays >= 0.7 && weightSamples >= 3 &&
+        weightSlopeKgPerWeek != null && averageIntakeKcal != null && averageIntakeKcal >= 800) {
+      const estimate = Math.round(averageIntakeKcal - (weightSlopeKgPerWeek * 7700) / 7);
+      if (estimate >= 900 && estimate <= 6500) {
+        estimatedTdeeKcal = estimate;
+        tdeeConfidence = intervalDays >= 21 && completeDays / intervalDays >= 0.85 &&
+          weightSamples >= 5 && (weightRSquared ?? 0) >= 0.35 ? "high" : "moderate";
+        tdeeBasis = { from, through, completeDays, weightSamples };
+      }
+    }
   }
 
-  let energyAdvice = `近 ${daysLogged} 天日均摄入 ${avgCalories} kcal（碳水 ${carbsPct}% · 蛋白 ${proteinPct}% · 脂肪 ${fatPct}%）。`;
+  let energyAdvice = `有记录的 ${daysLogged} 天，日均记录 ${avgCalories} kcal（碳水 ${carbsPct}% · 蛋白 ${proteinPct}% · 脂肪 ${fatPct}%）。`;
   if (estimatedTdeeKcal != null) {
-    energyAdvice += ` 结合体重趋势反推你的真实日均总消耗（自适应 TDEE）约 ${estimatedTdeeKcal} kcal（温和减脂参考 ~${Math.max(1100, estimatedTdeeKcal - 400)} kcal，干净增肌参考 ~${estimatedTdeeKcal + 250} kcal）。`;
+    energyAdvice += ` 根据完整饮食记录和同期体重趋势，估算日均总消耗约 ${estimatedTdeeKcal} kcal。`;
   } else {
-    energyAdvice += " 继续记录满 5 天饮食与 3 次体重后，可由代谢斜率反推真实维持热量。";
+    energyAdvice += ` ${missingTdee}`;
   }
 
   return {
@@ -1100,6 +1117,7 @@ export function evaluateNutritionEnergyBalance({
     restDayAvgProtein,
     estimatedTdeeKcal,
     tdeeConfidence,
+    tdeeBasis,
     energyAdvice,
   };
 }

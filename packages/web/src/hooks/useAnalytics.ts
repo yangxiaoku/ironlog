@@ -133,7 +133,6 @@ interface AnalyticsResponse {
       bench1RM: number;
       squat1RM: number;
       deadlift1RM: number;
-      deadliftSourceName?: string;
       total3Lift: number;
     };
   };
@@ -166,6 +165,7 @@ interface AnalyticsResponse {
       restDayAvgProtein: number | null;
       estimatedTdeeKcal: number | null;
       tdeeConfidence: "high" | "moderate" | "insufficient";
+      tdeeBasis?: { from: string; through: string; completeDays: number; weightSamples: number } | null;
       energyAdvice: string;
     };
     dailySeries?: Array<{
@@ -195,14 +195,16 @@ interface AnalyticsResponse {
     through: string;
     scheduledSessions: number;
     completedSessions: number;
+    pendingSessions?: number;
     missedSessions: number;
     adherencePct: number | null;
     byRoutine: Array<{
+      key?: string;
       name: string;
       scheduled: number;
       completed: number;
       missed: number;
-      adherencePct: number;
+      adherencePct: number | null;
     }>;
   };
   plateaus?: Array<{

@@ -20,6 +20,7 @@ import { createApp } from "../packages/server/src/app.js";
 import { openDatabase } from "../packages/server/src/db.js";
 import { getWebAnalytics } from "../packages/server/src/web-analytics.js";
 import { shiftDay } from "../packages/server/src/web-statistics.js";
+import { getWebToday } from "../packages/server/src/web-training.js";
 
 function fixture() {
   const db = openDatabase(":memory:");
@@ -40,6 +41,102 @@ function fixture() {
     store.mutate(owner.userId, { id, kind, opId: "analytics-op-" + seq++, data, baseVersion, deleted: false });
   return { db, app, store, call, save, owner, other };
 }
+
+test("维持热量使用同期完整饮食，修改食物会使确认失效", async () => {
+  const { db, call, save, store, owner } = fixture();
+  try {
+    const through = shiftDay(localDate(), -1);
+    const from = shiftDay(through, -13);
+    const read = () => getWebAnalytics(store, owner.userId, { days: 30, through }).nutrition.energy;
+    for (const offset of [0, 7, 13]) {
+      const date = shiftDay(from, offset);
+      save("weight", `weight_${date}`, { date, weight: 75 });
+    }
+    const meal = (date: string, calories: number) => ({
+      date, name: "当日饮食", meal: "lunch", calories, protein: 45, carbs: 110, fat: 25,
+    });
+    for (let offset = 0; offset < 14; offset++) {
+      const date = shiftDay(from, offset);
+      save("diet", `meal-${offset}`, meal(date, offset < 10 ? 2100 : 900));
+    }
+    assert.equal(read().estimatedTdeeKcal, null);
+    for (let offset = 0; offset < 10; offset++) {
+      const res = await call("/api/web/nutrition-day", {
+        method: "PUT", body: { date: shiftDay(from, offset), opId: `complete-${offset}` },
+      });
+      assert.equal(res.status, 200);
+    }
+    assert.equal(read().estimatedTdeeKcal, 2100);
+    assert.deepEqual(read().tdeeBasis, { from, through, completeDays: 10, weightSamples: 3 });
+    save("diet", "meal-0", meal(from, 1900), 1);
+    assert.equal(read().estimatedTdeeKcal, null);
+  } finally {
+    db.close();
+  }
+});
+
+test("排期完成按关联判断，今天待练，动作变式与空睡眠分组不会生成结论", async () => {
+  const { db, call, save, store, owner } = fixture();
+  try {
+    const today = localDate();
+    const yesterday = shiftDay(today, -1);
+    const before = shiftDay(today, -2);
+    save("profile", "settings", { energyProfile: {
+      weightKg: 75, heightCm: 175, birthDate: "1995-01-01", weightDate: today,
+      sex: "male", activityFactor: 1.6, context: "general",
+    } });
+    for (const d of [yesterday, today]) {
+      const scheduled = await call(`/api/web/schedule/${d}`, {
+        method: "PUT",
+        body: { mode: "workout", title: "推力日", exercises: [
+          { exerciseId: "bench-press", sets: 1, repsMin: 8, repsMax: 8, weight: 50, seconds: 0, restSeconds: 90 },
+        ] },
+      });
+      assert.equal(scheduled.status, 200);
+    }
+    const workout = (date: string, routineId: string | null, ids: string[]) => ({
+      title: "推力日", date, status: "completed", routineId,
+      startedAt: new Date(`${date}T07:00:00+08:00`).toISOString(),
+      endedAt: new Date(`${date}T08:00:00+08:00`).toISOString(),
+      exercises: ids.map((exerciseId, i) => ({
+        id: `exercise-${i}`, exerciseId, restSeconds: 90,
+        sets: [{ id: `set-${i}`, type: "normal", weight: 50, reps: 8, completed: true }],
+      })),
+    });
+    const variants = ["incline-dumbbell", "squat", "romanian-deadlift"];
+    save("workout", "free-1", workout(yesterday, null, variants));
+    save("workout", "free-2", workout(before, null, variants));
+    const token = (await (await call("/api/integrations/apple-health/tokens", {
+      method: "POST", body: { label: "睡眠样本" },
+    })).json()).token as string;
+    for (const date of [before, yesterday]) {
+      const res = await call("/api/integrations/apple-health/daily", {
+        method: "POST", token,
+        body: { date, sleepSamples: [`Asleep|${date}T00:00:00+08:00|${date}T06:30:00+08:00`] },
+      });
+      assert.equal(res.status, 200);
+    }
+    const read = () => getWebAnalytics(store, owner.userId, { days: 30, through: today });
+    const first = read();
+    assert.equal(first.planAdherence.completedSessions, 0);
+    assert.equal(first.planAdherence.pendingSessions, 1);
+    assert.equal(first.planAdherence.missedSessions, 1);
+    assert.equal(getWebToday(store, owner.userId, yesterday).planned?.source, "scheduled");
+    assert.equal(first.ipfGl.bench, null);
+    assert.equal(first.ipfGl.total, null);
+    assert.equal(first.sleepTrainingImpact.midSleep.days, 2);
+    assert.equal(first.sleepTrainingImpact.goodSleep.days, 0);
+    assert.match(first.sleepTrainingImpact.insight ?? "", /至少记录 3 天/);
+    save("workout", "planned", workout(yesterday, `schedule_${yesterday}`, ["bench-press", "exdb_0117"]));
+    const after = read();
+    assert.equal(after.planAdherence.completedSessions, 1);
+    assert.equal(after.planAdherence.adherencePct, 100);
+    assert.equal(getWebToday(store, owner.userId, yesterday).planned, null);
+    assert.ok(after.ipfGl.bench && after.ipfGl.total);
+  } finally {
+    db.close();
+  }
+});
 
 test("运动科学公式单元验证：ACWR、单调性、肌群剂量、INOL、IPF GL 与营养评估", () => {
   // 1. ACWR (Gabbett 2016)
@@ -694,12 +791,12 @@ test("高次数 1RM 不断崖下跌、协同肌群 0.5 折算组数及罗马尼�
     assert.equal(auditMap.get("back"), 0.5);
     assert.equal(auditMap.get("core"), 1);
 
-    // 3. RDL (70 * (1 + 10/30) = 93.333...) reports exact Epley 1RM (93.3) without synthetic multipliers
+    // Romanian deadlift has its own trend and contributes no classic deadlift score.
     const rawRdl1Rm = estimatedOneRepMax(70, 10);
     const expectedRdl1Rm = Math.round(rawRdl1Rm * 10) / 10;
-    assert.equal(analytics.ipfGl.components.deadliftRaw1RM, expectedRdl1Rm);
-    assert.equal(analytics.ipfGl.components.deadlift1RM, expectedRdl1Rm);
-    assert.equal(analytics.ipfGl.components.deadliftSourceName, "罗马尼亚硬拉");
+    assert.equal(analytics.exerciseProgress.find((e: any) => e.id === "romanian-deadlift")?.best1RM, expectedRdl1Rm);
+    assert.equal(analytics.ipfGl.components.deadlift1RM, 0);
+    assert.equal(analytics.ipfGl.total, null);
 
     // 4. Symmetry, frequency, effort spectrum, and period breakdown populated cleanly
     assert.equal(analytics.muscles.symmetry?.pushPullStatus, "push_dominant");
@@ -744,12 +841,14 @@ test("科学拓展算法验证：推拉对称性、RIR 强度分布与自适应 
       { date: "2026-11-05", calories: 2100, protein: 155, carbs: 220, fat: 66, isTrainingDay: true },
     ],
     targetCalories: 2100,
-    weightSlopeKgPerWeek: -0.5, // ~550 kcal/day deficit => TDEE ~ 2100 + 550 = 2650 kcal
-    weightSampleCount: 5,
-    weightRSquared: 0.85,
+    tdeeObservation: {
+      from: "2026-11-01", through: "2026-11-21", completeDays: 20,
+      averageIntakeKcal: 2100, weightSlopeKgPerWeek: -0.5, weightSamples: 5, weightRSquared: 0.85,
+    },
   });
   assert.equal(energy.avgCalories, 2100);
   assert.equal(energy.estimatedTdeeKcal, 2650);
+  assert.equal(energy.tdeeBasis?.completeDays, 20);
   assert.equal(energy.trainingDayAvgKcal, 2167);
   assert.equal(energy.restDayAvgKcal, 2000);
 });
@@ -864,7 +963,7 @@ test("全套升级：个人单品/减载偏好接口、180/365天窗口、平台
       rawPrompt: "",
       planId: null,
       planVersion: null,
-      routineId: null,
+      routineId: date === d1 || date === d2 ? `schedule_${date}` : null,
       targetSnapshot: null,
       restEndsAt: null,
       adjustments: [],

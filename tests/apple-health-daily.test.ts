@@ -29,6 +29,36 @@ function setup() {
   return { db, owner, other, call, issue, store };
 }
 
+test("同一 Apple 训练带或不带来源 ID 时只计一次，保留补充心率与相邻场次", async () => {
+  const { db, call, issue, owner } = setup();
+  try {
+    const date = shiftDay(localDate(), -1);
+    const device = await issue();
+    const payload = {
+      schemaVersion: 1, captureMethod: "workout", activityType: "running", environment: "outdoor",
+      startedAt: `${date}T07:00:00+08:00`, endedAt: `${date}T07:30:00+08:00`,
+      durationSeconds: 1800, activeEnergyKcal: 240, energyKind: "workout",
+    };
+    for (const sample of [
+      { ...payload, heartRate: { avgBpm: 145 } },
+      { ...payload, externalWorkoutId: "known-first-activity" },
+      { ...payload, externalWorkoutId: "known-second-activity", activeEnergyKcal: 210,
+        startedAt: `${date}T07:31:00+08:00`, endedAt: `${date}T08:01:00+08:00` },
+    ]) {
+      const response = await call("/api/integrations/apple-health/workouts", device.token, "POST", sample);
+      assert.equal(response.status, 201);
+    }
+    const response = await call(`/api/web/analytics?through=${date}`, owner.token);
+    assert.equal(response.status, 200);
+    const { appleWorkouts } = await response.json() as any;
+    assert.equal(appleWorkouts.totalCount, 2);
+    assert.equal(appleWorkouts.totalCaloriesKcal, 450);
+    assert.equal(appleWorkouts.avgBpm, 145);
+  } finally {
+    db.close();
+  }
+});
+
 test("parseSleepSamples 精确合并重叠阶段区间，不重复计算深睡与卧床时间", () => {
   assert.equal(mergeIntervalsMinutes([[0, 600_000], [300_000, 900_000]]), 15);
   const parsed = parseSleepSamples([

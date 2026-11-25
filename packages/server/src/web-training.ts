@@ -9,6 +9,7 @@ import {
 import { DomainError, type Store } from "./store.js";
 import { getDailyHealth, listDailyHealth, summarizeDailyHealth } from "./apple-health-daily.js";
 import { projectAppleTraining, publicAppleActivity } from "./apple-training-agenda.js";
+import { matchesScheduledWorkout } from "./plan-adherence.js";
 
 function shiftIsoDate(date: string, offset: number): string {
   return new Date(Date.parse(date + "T00:00:00Z") + offset * 86400000).toISOString().slice(0, 10);
@@ -105,14 +106,11 @@ export function getWebToday(store: Store, userId: string, date = localDate()) {
   const manualPlanDone = plan && completed.some((workout) => workout.planId === plan.id &&
     (workout.planVersion === null || workout.planVersion === plan.version) &&
     plan.data.routines.some((routine) => routine.id === workout.routineId));
-  const manualScheduledDone = override?.mode === "workout" && completed.some((workout) =>
-    workout.title === override.title || (override.routineId && workout.routineId === override.routineId));
-
   let planned: { id: string; name: string; date: string; exercises: number; source?: "plan" | "scheduled" } | null = null;
-  if (!applePlan && !manualScheduledDone) {
-    if (override?.mode === "rest") {
-      planned = null;
-    } else if (override?.mode === "workout") {
+  if (override?.mode === "workout") {
+    const scheduledDone = completed.some((workout) => matchesScheduledWorkout(override, workout, plan)) ||
+      apple.some(({ plan: match }) => match && matchesScheduledWorkout(override, match, plan));
+    if (!scheduledDone) {
       planned = {
         id: date,
         name: override.title || "今日排期训练",
@@ -120,16 +118,16 @@ export function getWebToday(store: Store, userId: string, date = localDate()) {
         exercises: override.exercises.length,
         source: "scheduled",
       };
-    } else if (plan && !manualPlanDone) {
-      const suggested = recommendInCycle(plan, projected.completionHistory, date);
-      if (suggested) {
-        planned = {
-          id: suggested.routine.id,
-          name: suggested.routine.name,
-          date: suggested.date,
-          exercises: suggested.routine.exercises.length,
-        };
-      }
+    }
+  } else if (!override && plan && !applePlan && !manualPlanDone) {
+    const suggested = recommendInCycle(plan, projected.completionHistory, date);
+    if (suggested) {
+      planned = {
+        id: suggested.routine.id,
+        name: suggested.routine.name,
+        date: suggested.date,
+        exercises: suggested.routine.exercises.length,
+      };
     }
   }
 

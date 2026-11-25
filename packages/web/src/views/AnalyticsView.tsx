@@ -994,7 +994,7 @@ export function AnalyticsView() {
                   {(
                     [
                       ["充沛睡眠 (≥7h)", data.sleepTrainingImpact.goodSleep, "is-sweet"],
-                      ["中等睡眠 (6–7h)", data.sleepTrainingImpact.midSleep, ""],
+                      ["中等睡眠 (6–<7h)", data.sleepTrainingImpact.midSleep, ""],
                       ["睡眠偏少 (<6h)", data.sleepTrainingImpact.shortSleep, "is-caution"],
                     ] as const
                   ).map(([label, b, tone]) => (
@@ -1512,17 +1512,20 @@ export function AnalyticsView() {
                           <strong>{data.planAdherence.completedSessions} 场</strong>
                         </div>
                         <div>
-                          <span>漏练 / 顺延</span>
+                          <span>已过期未完成</span>
                           <strong>{data.planAdherence.missedSessions} 场</strong>
+                          {data.planAdherence.pendingSessions ? <small>待完成 {data.planAdherence.pendingSessions} 场</small> : null}
                         </div>
                         <div>
                           <span>完成率</span>
-                          <strong>{data.planAdherence.adherencePct ?? 0}%</strong>
+                          <strong>{data.planAdherence.adherencePct == null ? "—" : `${data.planAdherence.adherencePct}%`}</strong>
                         </div>
                       </div>
-                      <div className="who-cardio-bar" role="progressbar" aria-valuenow={data.planAdherence.adherencePct ?? 0} aria-valuemin={0} aria-valuemax={100}>
-                        <i style={{ width: `${data.planAdherence.adherencePct ?? 0}%` }} />
-                      </div>
+                      {data.planAdherence.adherencePct != null ? (
+                        <div className="who-cardio-bar" role="progressbar" aria-label="计划完成率" aria-valuenow={data.planAdherence.adherencePct} aria-valuemin={0} aria-valuemax={100}>
+                          <i style={{ width: `${data.planAdherence.adherencePct}%` }} />
+                        </div>
+                      ) : null}
                       {data.planAdherence.byRoutine.length > 0 ? (
                         <div className="apple-table-scroll">
                           <table className="apple-ledger-table">
@@ -1536,14 +1539,16 @@ export function AnalyticsView() {
                             </thead>
                             <tbody>
                               {data.planAdherence.byRoutine.map((r) => (
-                                <tr key={r.name}>
+                                <tr key={r.key ?? r.name}>
                                   <td><b>{r.name}</b></td>
                                   <td>{r.scheduled} 场</td>
                                   <td>{r.completed} 场</td>
                                   <td>
-                                    <span className={`kpi-pill ${r.adherencePct >= 80 ? "is-sweet" : r.adherencePct >= 50 ? "is-caution" : "is-danger"}`}>
-                                      {r.adherencePct}%
-                                    </span>
+                                    {r.adherencePct == null ? "待完成" : (
+                                      <span className={`kpi-pill ${r.adherencePct >= 80 ? "is-sweet" : r.adherencePct >= 50 ? "is-caution" : "is-danger"}`}>
+                                        {r.adherencePct}%
+                                      </span>
+                                    )}
                                   </td>
                                 </tr>
                               ))}
@@ -1740,8 +1745,8 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-ipf-gl" id="panel-ipf-gl">
               <header className="panel-head">
                 <div>
-                  <h2>按体重算，力量排哪一档</h2>
-                  <p>按 IPF GL 公式排除体重影响，对比健身与力量训练人群相对力量（世界纪录基准为 100 分）</p>
+                  <h2>相对力量参考分</h2>
+                  <p>标准平板杠铃卧推、深蹲和硬拉的估算 1RM，按 IPF GL 公式换算参考分。</p>
                 </div>
                 <span className="atlas-pill">{tierShort}</span>
               </header>
@@ -1779,7 +1784,7 @@ export function AnalyticsView() {
                   </div>
                   <small>
                     卧推 {fmt(ipfGl.components.bench1RM)} + 深蹲 {fmt(ipfGl.components.squat1RM)} +{" "}
-                    {ipfGl.components.deadliftSourceName || "硬拉"} {fmt(ipfGl.components.deadlift1RM)} ={" "}
+                    硬拉 {fmt(ipfGl.components.deadlift1RM)} ={" "}
                     {ipfGl.components.total3Lift
                       ? formatLift(ipfGl.components.total3Lift)
                       : "待补齐"}
@@ -1890,8 +1895,8 @@ export function AnalyticsView() {
             <section className="panel analytics-panel panel-nutrition-physio" id="panel-nutrition-physio">
               <header className="panel-head">
                 <div>
-                  <h2>能量代谢、宏量比例与体重真实走势</h2>
-                  <p>结合热量、蛋白与体重斜率反推真实维持热量（自适应 TDEE）并过滤喝水波动</p>
+                  <h2>饮食、体重与能量估算</h2>
+                  <p>用完整饮食记录和同期体重变化估算维持热量。</p>
                 </div>
                 <span className="atlas-pill">建议蛋白 ≥1.6 g/kg</span>
               </header>
@@ -1982,18 +1987,16 @@ export function AnalyticsView() {
                 {nutrition.energy && nutrition.energy.daysLogged > 0 ? (
                   <div className="physio-block physio-energy-wide">
                     <div className="physio-top">
-                      <strong>热量结构与自适应 TDEE 反推</strong>
+                      <strong>摄入与维持热量</strong>
                       {nutrition.energy.estimatedTdeeKcal != null ? (
                         <span className="kpi-pill is-sweet">
                           推算维持 {fmt(nutrition.energy.estimatedTdeeKcal, 0)} kcal
                         </span>
-                      ) : (
-                        <span className="kpi-pill">热量达成 {nutrition.energy.calorieAdherencePct ?? "—"}%</span>
-                      )}
+                      ) : <span className="kpi-pill">维持热量资料不足</span>}
                     </div>
                     <div className="physio-nums">
                       <div>
-                        <span>日均实际摄入</span>
+                        <span>日均已记录摄入</span>
                         <strong>
                           {fmt(nutrition.energy.avgCalories, 0)} <small>kcal</small>
                         </strong>
@@ -2027,6 +2030,13 @@ export function AnalyticsView() {
                       <span><i className="rep-met" /> 脂肪 {nutrition.energy.macroPct.fat}%</span>
                     </div>
                     <p className="physio-advice">{nutrition.energy.energyAdvice}</p>
+                    {nutrition.energy.tdeeBasis ? (
+                      <p className="physio-advice">
+                        {shortDate(nutrition.energy.tdeeBasis.from)}–{shortDate(nutrition.energy.tdeeBasis.through)}
+                        {" · "}{nutrition.energy.tdeeBasis.completeDays} 天完整饮食
+                        {" · "}{nutrition.energy.tdeeBasis.weightSamples} 次称重
+                      </p>
+                    ) : null}
                   </div>
                 ) : null}
               </div>

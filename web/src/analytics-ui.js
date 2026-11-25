@@ -518,8 +518,8 @@ function renderIpfGlPanel(ipfGl, userProfile) {
     <section class="panel analytics-panel panel-ipf-gl" id="panel-ipf-gl">
       <header class="panel-head">
         <div>
-          <h2>按体重算，力量排哪一档</h2>
-          <p>按 IPF GL 公式排除体重影响，对比健身与力量训练人群相对力量（世界纪录基准为 100 分）</p>
+          <h2>相对力量参考分</h2>
+          <p>标准平板杠铃卧推、深蹲和硬拉的估算 1RM，按 IPF GL 公式换算参考分。</p>
         </div>
         <span class="atlas-pill">${esc(tierShort)}</span>
       </header>
@@ -546,7 +546,7 @@ function renderIpfGlPanel(ipfGl, userProfile) {
             <strong>${total ? fmt(total.score, 1) : '—'}</strong>
             <span>分</span>
           </div>
-          <small>卧推 ${fmt(components.bench1RM)} + 深蹲 ${fmt(components.squat1RM)} + ${esc(components.deadliftSourceName || '硬拉')} ${fmt(components.deadlift1RM)} = ${components.total3Lift ? formatLift(components.total3Lift) : '待补齐'}</small>
+          <small>卧推 ${fmt(components.bench1RM)} + 深蹲 ${fmt(components.squat1RM)} + 硬拉 ${fmt(components.deadlift1RM)} = ${components.total3Lift ? formatLift(components.total3Lift) : '待补齐'}</small>
         </div>
       </div>
 

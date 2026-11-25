@@ -16,13 +16,15 @@ import {
   isValidWorkSet,
   localDate,
   muscleNames,
+  nutritionDayComplete,
   profileSchema,
   SCIENCE_CITATIONS,
   workoutDurationSeconds,
   type Exercise,
   type Diet,
-  type Plan,
+  type NutritionDay,
   type ScheduledDay,
+  type StoredRecord,
   type Weight,
   type Workout,
 } from "@ironlog/shared";
@@ -32,14 +34,11 @@ import { alignSleepSnapshots, listDailyHealthSnapshots, publicDailySnapshot, sum
 import { projectAppleTraining } from "./apple-training-agenda.js";
 import { buildSleepReport } from "./sleep-report.js";
 import { listMeasurements } from "./web-extras.js";
+import { summarizePlanAdherence } from "./plan-adherence.js";
 import { shiftDay } from "./web-statistics.js";
 
 function isWeightedBodyweight(exerciseId: string, name: string) {
   return /pull-up|chin-up|dip|引体|双杠/i.test(`${exerciseId} ${name}`);
-}
-
-function isoWeekday(date: string) {
-  return new Date(`${date}T00:00:00Z`).getUTCDay() || 7;
 }
 
 function round1(value: number) {
@@ -216,7 +215,6 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     rm10?: RepMaxHit;
   }>();
   const workoutStatsByDate = new Map<string, { sessions: number; workSets: number; tonnageKg: number; fatiguedCount: number }>();
-  const completedTitlesByDate = new Map<string, string[]>();
 
   for (const { id: workoutId, workout } of workouts) {
     let workoutLoad = 0;
@@ -224,9 +222,6 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     let workoutTonnageKg = 0;
     const workoutExMap = new Map<string, { name: string; muscle: string; best1RM: number; workSets: number; volume: number }>();
     allTrainingDates.add(workout.date);
-    const titleList = completedTitlesByDate.get(workout.date) ?? [];
-    titleList.push(workout.title);
-    completedTitlesByDate.set(workout.date, titleList);
     const durSec = workoutDurationSeconds(workout) ?? 0;
     const inPeriod = workout.date >= displayStart && workout.date <= through;
     const inPrevPeriod = workout.date >= prevPeriodStart && workout.date <= prevPeriodEnd;
@@ -599,54 +594,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     }
   }
 
-  // IPF GL Points relative strength
-  // Look for best primary bench, squat, deadlift 1RMs (with biomechanical conversion from RDL/SLDL if needed)
-  let primaryBench = 0;
-  let fallbackBench = 0;
-  let primarySquat = 0;
-  let fallbackSquat = 0;
-  let primaryDeadlift = 0;
-  let accessoryDeadlift = 0;
-  let accessoryDeadliftName = "";
-
-  for (const [id, data] of exercise1RMs) {
-    const tag = `${id} ${data.name}`;
-    const isBarbell = catalogue.get(id)?.equipment === "barbell" || /barbell|杠铃/i.test(tag);
-
-    if ((id.includes("bench") || data.name.includes("卧推")) && !/dip|row|curl|pullover|臂屈伸|划船|弯举/i.test(tag)) {
-      if (isBarbell && !/incline|decline|dumbbell|上斜|下斜|哑铃/i.test(tag)) {
-        primaryBench = Math.max(primaryBench, data.best1RM);
-      } else {
-        fallbackBench = Math.max(fallbackBench, data.best1RM);
-      }
-    }
-
-    if (id.includes("squat") || data.name.includes("深蹲")) {
-      if (isBarbell && !/hack|split|goblet|sissy|bulgarian|pistol|哈克|分腿|保加利亚|高脚杯|西斯/i.test(tag)) {
-        primarySquat = Math.max(primarySquat, data.best1RM);
-      } else {
-        fallbackSquat = Math.max(fallbackSquat, data.best1RM);
-      }
-    }
-
-    const isRdlVariant = /romanian|stiff|straight-leg|rdl|罗马尼亚|直腿/i.test(tag);
-    if (isRdlVariant && (id.includes("deadlift") || data.name.includes("硬拉") || /\brdl\b/i.test(tag))) {
-      if (data.best1RM > accessoryDeadlift) {
-        accessoryDeadlift = data.best1RM;
-        accessoryDeadliftName = data.name;
-      }
-    } else if (id.includes("deadlift") || data.name.includes("硬拉")) {
-      primaryDeadlift = Math.max(primaryDeadlift, data.best1RM);
-    }
-  }
-
-  const bestBench = primaryBench > 0 ? primaryBench : fallbackBench;
-  const bestSquat = primarySquat > 0 ? primarySquat : fallbackSquat;
-  const deadliftRaw1RM = primaryDeadlift === 0 && accessoryDeadlift > 0
-    ? Math.round(accessoryDeadlift * 10) / 10
-    : null;
-  const deadliftSourceName = deadliftRaw1RM != null ? accessoryDeadliftName : null;
-  const bestDeadlift = primaryDeadlift > 0 ? primaryDeadlift : accessoryDeadlift;
+  // Canonical catalogue IDs for flat bench, back squat, and conventional or sumo deadlift.
+  const bestClassicLift = (...ids: string[]) => Math.max(...ids.map((id) => exercise1RMs.get(id)?.best1RM ?? 0));
+  const bestBench = bestClassicLift("bench-press", "exdb_0025");
+  const bestSquat = bestClassicLift("squat", "exdb_3593");
+  const bestDeadlift = bestClassicLift("exdb_0032", "exdb_0117");
 
   const benchGl = bestBench > 0 && userGender != null && userWeightKg != null
     ? calculateIpfGlPoints(userGender, userWeightKg, bestBench, "classic_bench")
@@ -664,7 +616,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const dietRecords = store.list(userId, "diet");
   const dailyProteinsMap = new Map<string, number>();
   const dailyMacrosMap = new Map<string, { calories: number; protein: number; carbs: number; fat: number }>();
-  const dailyMealsCountMap = new Map<string, number>();
+  const dailyMeals = new Map<string, StoredRecord[]>();
   const periodDietDays = new Set<string>();
   const prevDietDays = new Set<string>();
   for (const record of dietRecords) {
@@ -678,7 +630,9 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       curM.carbs += diet.carbs ?? 0;
       curM.fat += diet.fat ?? 0;
       dailyMacrosMap.set(diet.date, curM);
-      dailyMealsCountMap.set(diet.date, (dailyMealsCountMap.get(diet.date) ?? 0) + 1);
+      const meals = dailyMeals.get(diet.date) ?? [];
+      meals.push(record);
+      dailyMeals.set(diet.date, meals);
     } else if (diet.date >= prevPeriodStart && diet.date <= prevPeriodEnd) {
       prevDietDays.add(diet.date);
     }
@@ -703,12 +657,30 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     ...m,
     isTrainingDay: allTrainingDates.has(date),
   }));
+  const tdeeStart = shiftDay(through, 1 - Math.min(displayPeriod, 28));
+  const tdeeWeights = recentWeights.filter(({ date }) => date >= tdeeStart);
+  const firstWeighIn = tdeeWeights[0]?.date;
+  const lastWeighIn = tdeeWeights.at(-1)?.date;
+  const markers = new Map(store.list(userId, "nutritionDay")
+    .map(({ data }) => [(data as NutritionDay).date, data as NutritionDay]));
+  const completeDays = dailyMacrosArray.filter(({ date, calories }) => calories > 0 &&
+    nutritionDayComplete(markers.get(date), dailyMeals.get(date) ?? []));
+  const tdeeDays = firstWeighIn && lastWeighIn
+    ? completeDays.filter(({ date }) => date >= firstWeighIn && date <= lastWeighIn)
+    : [];
+  const tdeeTrend = evaluateWeightChangeRate(tdeeWeights);
   const energyNutrition = evaluateNutritionEnergyBalance({
     dailyMacros: dailyMacrosArray,
     targetCalories: profile.calories,
-    weightSlopeKgPerWeek: weightRateReport?.weeklySlopeKg ?? null,
-    weightSampleCount: recentWeights.length,
-    weightRSquared: weightRateReport?.rSquared ?? null,
+    tdeeObservation: firstWeighIn && lastWeighIn ? {
+      from: firstWeighIn,
+      through: lastWeighIn,
+      completeDays: tdeeDays.length,
+      averageIntakeKcal: tdeeDays.length ? tdeeDays.reduce((sum, d) => sum + d.calories, 0) / tdeeDays.length : null,
+      weightSlopeKgPerWeek: tdeeTrend?.weeklySlopeKg ?? null,
+      weightSamples: tdeeWeights.length,
+      weightRSquared: tdeeTrend?.rSquared ?? null,
+    } : undefined,
   });
 
   const waterByDate = new Map<string, number | null>(
@@ -723,7 +695,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       protein: round1(m?.protein ?? 0),
       carbs: round1(m?.carbs ?? 0),
       fat: round1(m?.fat ?? 0),
-      mealsCount: dailyMealsCountMap.get(d) ?? 0,
+      mealsCount: dailyMeals.get(d)?.length ?? 0,
       isTrainingDay: allTrainingDates.has(d),
       waterMl: waterByDate.get(d) ?? null,
     };
@@ -858,98 +830,12 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     .slice(0, 8)
     .map(({ count: _count, ...rest }) => rest);
 
-  // 3. Plan Adherence Rate
-  const activePlan = store.activePlan(userId);
-  const scheduledRecords = store.list(userId, "scheduledDay");
-  const scheduledMap = new Map<string, ScheduledDay>();
-  for (const row of scheduledRecords) {
-    const d = row.data as ScheduledDay;
-    if (d?.date) scheduledMap.set(d.date, d);
-  }
-  const activePlanData = activePlan?.data as Plan | undefined;
-  const planUpdatedDate = activePlan?.updatedAt ? activePlan.updatedAt.slice(0, 10) : null;
-  const earliestWorkoutInPeriod = workouts.find((w) => w.workout.date >= displayStart)?.workout.date ?? null;
-  const earliestScheduledInPeriod = [...scheduledMap.keys()].filter((d) => d >= displayStart && d <= through).sort()[0] ?? null;
-  const anchorCandidates = [planUpdatedDate, earliestWorkoutInPeriod, earliestScheduledInPeriod].filter(
-    (d): d is string => Boolean(d && d <= through),
+  const appleActivities = projectAppleTraining(store, userId, through, catalogue, workouts).entries;
+  const scheduledDays = new Map(store.list(userId, "scheduledDay")
+    .map(({ data }) => [(data as ScheduledDay).date, data as ScheduledDay]));
+  const planAdherence = summarizePlanAdherence(
+    store.planSchedule(userId), scheduledDays, workouts, appleActivities, profile, displayStart, through, today,
   );
-  const earliestAnchor = anchorCandidates.length ? anchorCandidates.sort()[0]! : displayStart;
-  const adherenceStart = earliestAnchor > displayStart ? earliestAnchor : displayStart;
-  const byRoutineMap = new Map<string, { name: string; scheduled: number; completed: number; missed: number }>();
-  let planScheduled = 0;
-  let planCompleted = 0;
-  let planMissed = 0;
-  if (activePlanData && adherenceStart <= through) {
-    if (activePlanData.schedule === "weekdays" || scheduledMap.size > 0) {
-      const totalDaysInWindow = Math.max(
-        1,
-        Math.round((Date.parse(`${through}T00:00:00Z`) - Date.parse(`${adherenceStart}T00:00:00Z`)) / 86_400_000) + 1,
-      );
-      let weekdaySlot = 0;
-      const weekdaysSet = new Set(activePlanData.weekdays ?? []);
-      const routines = activePlanData.routines ?? [];
-      for (let i = 0; i < totalDaysInWindow; i++) {
-        const d = shiftDay(adherenceStart, i);
-        const override = scheduledMap.get(d);
-        let routineLabel = "";
-        if (override) {
-          if (override.mode === "rest") continue;
-          routineLabel = override.title || routines.find((r) => r.id === override.routineId)?.name || "排期训练";
-        } else if (activePlanData.schedule === "weekdays" && weekdaysSet.has(isoWeekday(d)) && routines.length > 0) {
-          const r = routines[weekdaySlot % routines.length]!;
-          weekdaySlot++;
-          routineLabel = r.name;
-        } else {
-          continue;
-        }
-        planScheduled++;
-        const done = allTrainingDates.has(d);
-        if (done) planCompleted++;
-        else planMissed++;
-        const bucket = byRoutineMap.get(routineLabel) ?? { name: routineLabel, scheduled: 0, completed: 0, missed: 0 };
-        bucket.scheduled++;
-        if (done) bucket.completed++;
-        else bucket.missed++;
-        byRoutineMap.set(routineLabel, bucket);
-      }
-    } else {
-      const totalDaysInWindow = Math.max(
-        1,
-        Math.round((Date.parse(`${through}T00:00:00Z`) - Date.parse(`${adherenceStart}T00:00:00Z`)) / 86_400_000) + 1,
-      );
-      const weeksSpan = Math.max(1, totalDaysInWindow / 7);
-      const targetPerWeek = Math.max(1, profile.daysPerWeek || activePlanData.routines.length || 3);
-      planScheduled = Math.max(1, Math.round(weeksSpan * targetPerWeek));
-      for (const [d, titles] of completedTitlesByDate) {
-        if (d < adherenceStart || d > through) continue;
-        planCompleted += titles.length;
-        for (const t of titles) {
-          const bucket = byRoutineMap.get(t) ?? { name: t, scheduled: 0, completed: 0, missed: 0 };
-          bucket.completed++;
-          bucket.scheduled++;
-          byRoutineMap.set(t, bucket);
-        }
-      }
-      planMissed = Math.max(0, planScheduled - planCompleted);
-    }
-  }
-  const planAdherence = {
-    hasPlan: Boolean(activePlanData),
-    planName: activePlanData?.name ?? null,
-    scheduleMode: activePlanData?.schedule ?? null,
-    from: adherenceStart,
-    through,
-    scheduledSessions: planScheduled,
-    completedSessions: planCompleted,
-    missedSessions: planMissed,
-    adherencePct: planScheduled > 0 ? Math.min(100, Math.round((planCompleted / planScheduled) * 100)) : null,
-    byRoutine: [...byRoutineMap.values()]
-      .map((r) => ({
-        ...r,
-        adherencePct: r.scheduled > 0 ? Math.round((r.completed / r.scheduled) * 100) : 100,
-      }))
-      .sort((a, b) => a.adherencePct - b.adherencePct || b.missed - a.missed),
-  };
 
   // 4. Self-tracked Body Measurements & Recomp / Muscle-Preservation Signal
   const measurementsAsc = listMeasurements(store.db, userId)
@@ -1061,13 +947,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const shortSleepBucket = summarizeSleepBucket(shortRows);
   const pairedSleepDays = goodRows.length + midRows.length + shortRows.length;
   let sleepTrainingInsight: string | null = null;
-  if (goodSleepBucket.days > 0 && shortSleepBucket.days > 0 && goodSleepBucket.avgTonnageKg && shortSleepBucket.avgTonnageKg) {
-    const diffPct = Math.round(((goodSleepBucket.avgTonnageKg - shortSleepBucket.avgTonnageKg) / Math.max(1, shortSleepBucket.avgTonnageKg)) * 100);
-    sleepTrainingInsight = diffPct >= 5
-      ? `睡满 7 小时以上时，当天力量总容量比不足 6 小时平均高 ${diffPct}%（${goodSleepBucket.avgTonnageKg} vs ${shortSleepBucket.avgTonnageKg} kg）。`
-      : `本周期已完成 ${pairedSleepDays} 个“睡眠+训练”配对日，继续累积可更精准观察睡眠对表现的影响。`;
-  } else if (pairedSleepDays >= 2) {
-    sleepTrainingInsight = `本周期已配对 ${pairedSleepDays} 个既有睡眠记录又完成训练的日子，睡满 ≥7 小时组平均完成 ${goodSleepBucket.avgWorkSets ?? midSleepBucket.avgWorkSets ?? 0} 组。`;
+  if (goodSleepBucket.days >= 3 && shortSleepBucket.days >= 3 &&
+      goodSleepBucket.avgTonnageKg != null && shortSleepBucket.avgTonnageKg != null) {
+    sleepTrainingInsight = `≥7 小时组（${goodSleepBucket.days} 天）平均容量 ${goodSleepBucket.avgTonnageKg} kg，<6 小时组（${shortSleepBucket.days} 天）平均容量 ${shortSleepBucket.avgTonnageKg} kg。动作和训练安排也会影响容量。`;
+  } else if (pairedSleepDays > 0) {
+    sleepTrainingInsight = `已配对 ${pairedSleepDays} 个睡眠和训练日。每组至少记录 3 天后可对照平均容量。`;
   }
   const sleepTrainingImpact = {
     pairedDays: pairedSleepDays,
@@ -1078,7 +962,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   };
 
   const appleWorkoutsSummary = summarizeAppleWorkouts(
-    projectAppleTraining(store, userId, through, catalogue, workouts).entries.filter(
+    appleActivities.filter(
       (entry) => entry.date >= displayStart && entry.date <= through,
     ),
     profile.energyProfile?.birthDate ?? null,
@@ -1141,8 +1025,6 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
         bench1RM: Math.round(bestBench * 10) / 10,
         squat1RM: Math.round(bestSquat * 10) / 10,
         deadlift1RM: Math.round(bestDeadlift * 10) / 10,
-        deadliftRaw1RM,
-        deadliftSourceName,
         total3Lift: Math.round(total3Lift * 10) / 10,
       },
       citations: SCIENCE_CITATIONS.ipfGl2020,

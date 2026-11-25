@@ -357,6 +357,8 @@ test("Apple 力量按当天抗阻计划打卡，有氧另列，轮换按完成�
     assert.equal(getWebToday(store, owner.userId, second).planned?.id, "rope");
     await upload("jump", "jumpRope", second, "12");
     assert.equal(getWebToday(store, owner.userId, second).applePlan?.routineId, "rope");
+    const analytics = await (await call(`/api/web/analytics?days=14&through=${second}`, owner.token)).json() as any;
+    assert.equal(analytics.planAdherence.completedSessions, 2);
     assert.equal(getWebToday(store, owner.userId, shiftDay(second, 1)).planned?.id, "lift");
     const url = apple + "/agenda?from=" + first + "&through=" + second;
     const activities = async () => await (await call(url, owner.token)).json() as any[];

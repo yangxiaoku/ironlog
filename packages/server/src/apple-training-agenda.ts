@@ -130,6 +130,34 @@ function sameSourceWorkout(a: Uploaded, b: Uploaded) {
     Math.abs(Date.parse(a.endedAt) - Date.parse(b.endedAt)) <= 120000 && overlapping(a, b);
 }
 
+function directWorkoutKey(row: Uploaded) {
+  return [row.activity.key, row.startedAt, row.endedAt].join("|");
+}
+
+function mergeDirectUploads(rows: Uploaded[]) {
+  const identified = new Map<string, Uploaded[]>();
+  for (const row of rows) {
+    if (!row.externalWorkoutId) continue;
+    const key = directWorkoutKey(row);
+    const group = identified.get(key) ?? [];
+    group.push(row);
+    identified.set(key, group);
+  }
+  const collapsed = new Set<string>();
+  for (const row of rows) {
+    if (row.externalWorkoutId) continue;
+    const group = identified.get(directWorkoutKey(row));
+    // Require a unique identified sample. Distinct source IDs may represent separate activities.
+    if (group?.length !== 1) continue;
+    const primary = group[0]!;
+    if (!sameSourceWorkout(primary, row)) continue;
+    const merged = mergeAppleMeasurements(primary, row);
+    Object.assign(primary, merged, { activity: identifyActivity(merged) });
+    collapsed.add(row.id);
+  }
+  return rows.filter((row) => !collapsed.has(row.id));
+}
+
 function canonicalUploads(store: Store, userId: string, through: string): Uploaded[] {
   const limit = new Date(startOf(through) + 8 * DAY).toISOString();
   const records = canonicalUploadsStmt(store.db).all(userId, limit) as { id: string; data: string }[];
@@ -137,7 +165,7 @@ function canonicalUploads(store: Store, userId: string, through: string): Upload
     const workout = JSON.parse(data) as AppleWorkoutInput;
     return { id, ...workout, date: localDate(Date.parse(workout.startedAt)), activity: identifyActivity(workout) };
   });
-  const direct = rows.filter((row) => row.captureMethod === "workout");
+  const direct = mergeDirectUploads(rows.filter((row) => row.captureMethod === "workout"));
   const byDate = new Map<string, Uploaded[]>();
   for (const row of direct) {
     if (!byDate.has(row.date)) byDate.set(row.date, []);
