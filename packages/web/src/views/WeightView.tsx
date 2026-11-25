@@ -141,8 +141,8 @@ export function WeightView() {
           <h2>身体围度档案</h2>
           <p>
             {measurements.length
-              ? `已记 ${measurements.length} 次围度 · 追踪腰围/维度重塑变化`
-              : "记录腰围、胸围、臂围、大腿围、臀围（cm），观察减脂增肌真实变化"}
+              ? `已记 ${measurements.length} 次围度 · 追踪腰围与各部位变化`
+              : "记录腰围、胸围、臂围、大腿围与臀围（cm）"}
           </p>
         </div>
         <button type="button" className="secondary-button" onClick={() => openMeasurementModal(null)}>

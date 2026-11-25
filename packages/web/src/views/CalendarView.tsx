@@ -373,10 +373,6 @@ export function CalendarView() {
   return (
     <>
       <div className="page-heading masthead-calendar">
-        <span className="vf-c tl" aria-hidden="true" />
-        <span className="vf-c tr" aria-hidden="true" />
-        <span className="vf-c bl" aria-hidden="true" />
-        <span className="vf-c br" aria-hidden="true" />
         <div className="cal-mast-copy">
           <div className="cal-mast-title">
             <h1>日历</h1>
@@ -385,7 +381,7 @@ export function CalendarView() {
             </span>
           </div>
           <p>
-            {month.slice(0, 4)} 年 {Number(month.slice(5))} 月 · 训练记录、热量与排期
+            {month.slice(0, 4)} 年 {Number(month.slice(5))} 月
           </p>
         </div>
         <div className="segments" role="group" aria-label="日历视图过滤">

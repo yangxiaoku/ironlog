@@ -49,6 +49,7 @@ export function OverviewView() {
   const username = useAuthStore((s) => s.username);
   const isNewUser = useAuthStore((s) => s.isNewUser);
   const appleHealthConnected = useAuthStore((s) => s.appleHealthConnected);
+  const aiReady = useAuthStore((s) => s.aiReady);
 
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -353,10 +354,6 @@ export function OverviewView() {
       ) : null}
       <div className={`overview-lead${day ? "" : " single-lead"}`}>
         <section className="hero">
-          <span className="vf-c tl" aria-hidden="true" />
-          <span className="vf-c tr" aria-hidden="true" />
-          <span className="vf-c bl" aria-hidden="true" />
-          <span className="vf-c br" aria-hidden="true" />
           <div className="hero-top">
             <time className="hero-date" dateTime={todayKey}>
               <strong>
@@ -394,10 +391,6 @@ export function OverviewView() {
 
           <div className="hero-inner">
             <h1>今天</h1>
-            <button type="button" className="hero-sublink" onClick={openTodayTraining}>
-              <span>{trainingTile.main}</span>
-              <Icon name="chevron" size={15} />
-            </button>
             <WeekStrip
               activity={stats.activity}
               todayKey={todayKey}
@@ -673,9 +666,11 @@ export function OverviewView() {
         <header className="panel-head">
           <h2>近期训练</h2>
           <div className="heading-actions">
-            <button type="button" className="quiet ai-inline-btn" onClick={() => openAiReviewModal()}>
-              <Icon name="bolt" size={15} /> AI 复盘
-            </button>
+            {aiReady ? (
+              <button type="button" className="quiet ai-inline-btn" onClick={() => openAiReviewModal()}>
+                <Icon name="bolt" size={15} /> 智能复盘
+              </button>
+            ) : null}
             <button type="button" className="quiet" onClick={() => navigate("workout")}>
               全部训练 <Icon name="chevron" size={16} />
             </button>

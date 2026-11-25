@@ -11,6 +11,7 @@ export interface MeResponse {
   username?: string;
   appleHealthConnected?: boolean;
   isNewUser?: boolean;
+  aiReady?: boolean;
 }
 
 export interface AuthState {
@@ -21,6 +22,7 @@ export interface AuthState {
   demoToken: string;
   appleHealthConnected: boolean;
   isNewUser: boolean;
+  aiReady: boolean;
   authMode: AuthMode;
   authenticating: boolean;
   setAuthMode: (mode: AuthMode) => void;
@@ -45,6 +47,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   demoToken: "",
   appleHealthConnected: false,
   isNewUser: false,
+  aiReady: false,
   authMode: initialAuthMode(),
   authenticating: false,
 
@@ -59,6 +62,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       username: account.username ?? "",
       appleHealthConnected: Boolean(account.appleHealthConnected),
       isNewUser: Boolean(account.isNewUser),
+      aiReady: Boolean(account.aiReady),
     });
     useUiStore.getState().refreshPendingCount(account.userId ?? "");
   },
@@ -141,6 +145,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       username: "",
       appleHealthConnected: false,
       isNewUser: false,
+      aiReady: false,
       authMode: "login",
     });
     useUiStore.getState().refreshPendingCount("");

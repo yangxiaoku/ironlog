@@ -35,6 +35,7 @@ interface WorkoutViewSnap {
 
 export function WorkoutView() {
   const userId = useAuthStore((s) => s.userId);
+  const aiReady = useAuthStore((s) => s.aiReady);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
@@ -164,9 +165,11 @@ export function WorkoutView() {
         view="workout"
         controls={
           <div className="heading-actions">
-            <button type="button" className="secondary-button" onClick={() => openAiWorkoutModal()}>
-              <Icon name="bolt" size={16} /> AI 记训练
-            </button>
+            {aiReady ? (
+              <button type="button" className="secondary-button" onClick={() => openAiWorkoutModal()}>
+                <Icon name="bolt" size={16} /> 文本速记
+              </button>
+            ) : null}
             <button
               type="button"
               className="secondary-button"

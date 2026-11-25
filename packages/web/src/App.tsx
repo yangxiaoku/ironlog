@@ -90,6 +90,7 @@ export function App() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
+      if (!useAuthStore.getState().userId) return;
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         openCommandPalette();

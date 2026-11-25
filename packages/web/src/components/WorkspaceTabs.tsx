@@ -1,5 +1,5 @@
 import { prefetchWorkspace } from "../lib/prefetch";
-import { HALFTONE_VIEWS, VIEW_WORKSPACE, WORKSPACES, type ViewId } from "../lib/routes";
+import { VIEW_WORKSPACE, WORKSPACES, type ViewId } from "../lib/routes";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
@@ -44,17 +44,8 @@ export function PageHeading({
   view: ViewId;
   controls?: React.ReactNode;
 }) {
-  const hasBrackets = HALFTONE_VIEWS.has(view);
   return (
     <div className={`page-heading masthead-${view}`}>
-      {hasBrackets ? (
-        <>
-          <span className="vf-c tl" aria-hidden="true" />
-          <span className="vf-c tr" aria-hidden="true" />
-          <span className="vf-c bl" aria-hidden="true" />
-          <span className="vf-c br" aria-hidden="true" />
-        </>
-      ) : null}
       <div>
         <h1>{title}</h1>
         {sub ? <p>{sub}</p> : null}

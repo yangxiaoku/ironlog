@@ -414,13 +414,9 @@ export function PlanView() {
     <>
       <WorkspaceTabs />
       <header className="page-heading masthead-plan">
-        <span className="vf-c tl" aria-hidden="true" />
-        <span className="vf-c tr" aria-hidden="true" />
-        <span className="vf-c bl" aria-hidden="true" />
-        <span className="vf-c br" aria-hidden="true" />
         <div>
           <h1>训练计划</h1>
-          <p>{planData ? `${planData.name} · ${planData.weeks} 周` : "训练周期、渐进与未来排期"}</p>
+          <p>{planData ? `${planData.name} · ${planData.weeks} 周` : "周期编排、渐进负荷与排期"}</p>
         </div>
         <div className="heading-actions">
           <button
@@ -435,12 +431,18 @@ export function PlanView() {
           >
             <Icon name="upload" size={15} /> 导入计划
           </button>
-          <button type="button" className="secondary-button" onClick={() => openPlanBuilderModal()}>
+          <button
+            type="button"
+            className={aiReady ? "secondary-button" : "primary-button"}
+            onClick={() => openPlanBuilderModal()}
+          >
             <Icon name="plus" size={16} /> 新建计划
           </button>
-          <button type="button" className="primary-button" onClick={() => openAiPlanModal(activePlan?.id)}>
-            <Icon name="bolt" size={16} /> 生成 AI 计划
-          </button>
+          {aiReady ? (
+            <button type="button" className="primary-button" onClick={() => openAiPlanModal(activePlan?.id)}>
+              <Icon name="bolt" size={16} /> 智能排课
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -520,7 +522,7 @@ export function PlanView() {
           ) : (
             <div className="empty">
               <strong>暂无生效计划</strong>
-              <p>可直接选用「经典方案」，或点击右上角「新建计划」「生成 AI 计划」。</p>
+              <p>{aiReady ? "可直接选用「经典方案」，或点击右上角「新建计划」「智能排课」。" : "可直接选用「经典方案」，或点击右上角「新建计划」开始排课。"}</p>
               <button type="button" className="secondary-button" onClick={() => setPlanTab("starters")}>
                 <Icon name="plan" size={16} /> 浏览经典方案
               </button>
@@ -807,7 +809,7 @@ export function PlanView() {
           ) : (
             <div className="empty">
               <strong>还没有计划草稿</strong>
-              <p>{aiReady ? "生成 AI 计划后，可在这里预览。" : "配置 AI 或手动新建草稿后，会出现在这里。"}</p>
+              <p>{aiReady ? "生成计划草稿后，可在这里预览与启用。" : "点击右上角「新建计划」或导入方案即可在此管理草稿。"}</p>
             </div>
           )}
         </section>

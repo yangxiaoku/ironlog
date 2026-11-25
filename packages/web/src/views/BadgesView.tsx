@@ -107,13 +107,9 @@ export function BadgesView() {
   return (
     <>
       <header className="page-heading masthead-badges">
-        <span className="vf-c tl" aria-hidden="true" />
-        <span className="vf-c tr" aria-hidden="true" />
-        <span className="vf-c bl" aria-hidden="true" />
-        <span className="vf-c br" aria-hidden="true" />
         <div>
           <h1>成就徽章</h1>
-          <p>力量突破、连续坚持、总容量积累与体能成就图鉴</p>
+          <p>力量、连续打卡与累计容量里程碑</p>
         </div>
       </header>
 

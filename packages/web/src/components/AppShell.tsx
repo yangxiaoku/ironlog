@@ -43,6 +43,45 @@ export function AppShell({ children }: { children: ReactNode }) {
   const activeTabLabel = activeGroup.tabs?.find((tab) => tab.id === view)?.label ?? DESTINATIONS[view];
   const moreMenuOpen = modals.at(-1)?.layout === "menu" && modals.at(-1)?.title === "更多";
   const todayStr = today();
+  const isGuestAuth = !userId && view !== "exercises";
+
+  if (isGuestAuth) {
+    return (
+      <div className="guest-shell">
+        <header className="guest-top">
+          <a
+            href="#overview"
+            className="guest-brand"
+            aria-label="铁记首页"
+            onClick={(e) => {
+              e.preventDefault();
+              navigate("overview");
+            }}
+          >
+            <img width={32} height={32} src="/app/icon-192.png" alt="" />
+            <span className="brand-type">
+              <MatrixText value="IRONLOG" />
+              <strong>铁记</strong>
+            </span>
+          </a>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="切换浅色与深色"
+            onClick={() => {
+              triggerHaptic("light");
+              toggleTheme();
+            }}
+          >
+            <Icon name={themeIcon} size={19} />
+          </button>
+        </header>
+        <main id="content" className="guest-main" tabIndex={-1}>
+          {children}
+        </main>
+      </div>
+    );
+  }
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, target: WorkspaceId) => {
     e.preventDefault();
@@ -279,7 +318,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             ) : (
               <button
                 type="button"
-                className="icon-button"
+                className="icon-button top-theme"
                 aria-label="切换浅色与深色"
                 onClick={() => {
                   triggerHaptic("light");

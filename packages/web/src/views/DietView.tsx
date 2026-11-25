@@ -41,6 +41,7 @@ function getWaterGoalMl(userId: string): number {
 
 export function DietView() {
   const userId = useAuthStore((s) => s.userId);
+  const aiReady = useAuthStore((s) => s.aiReady);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const openConfirm = useUiStore((s) => s.openConfirm);
@@ -358,13 +359,15 @@ export function DietView() {
               <Icon name="copy" size={15} /> 复刻昨日 ({prevDayRows.length})
             </button>
           ) : null}
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => openAiDietModal({ initialDate: date })}
-          >
-            <Icon name="bolt" size={16} /> AI 记饮食
-          </button>
+          {aiReady ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => openAiDietModal({ initialDate: date })}
+            >
+              <Icon name="bolt" size={16} /> 文本记餐
+            </button>
+          ) : null}
           <button
             type="button"
             className="primary-button"

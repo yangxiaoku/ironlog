@@ -209,6 +209,7 @@ export function WorkoutEditorModal({
   onCompleted?: (savedRecord: RecordEnvelope<WorkoutData>) => void;
 }) {
   const userId = useAuthStore((s) => s.userId);
+  const aiReady = useAuthStore((s) => s.aiReady);
   const openModal = useUiStore((s) => s.openModal);
   const closeAllModals = useUiStore((s) => s.closeAllModals);
   const openConfirm = useUiStore((s) => s.openConfirm);
@@ -1261,7 +1262,7 @@ export function WorkoutEditorModal({
             </div>
 
             <div className="session-settings-group">
-              <h4 className="session-settings-group-title">记录与自动联动（OpenGym 预设）</h4>
+              <h4 className="session-settings-group-title">记录与自动联动</h4>
               <div className="session-options">
                 <label className="switch-chip">
                   <span>默认同步后续组</span>
@@ -1582,25 +1583,27 @@ export function WorkoutEditorModal({
               >
                 <Icon name="upload" size={15} /> 保存云端草稿
               </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() =>
-                  openAiAdaptWorkoutModal({
-                    ensureSavedWorkout: ensureSavedDraft,
-                    onApplied: (updated) => {
-                      savedRecordRef.current = updated;
-                      setSavedRecord(updated);
-                      setExercises(updated.data.exercises);
-                      setOpenMenu(false);
-                      bumpDataEpoch();
-                      notify("已应用 AI 训中调整");
-                    },
-                  })
-                }
-              >
-                <Icon name="bolt" size={15} /> AI 训中调整
-              </button>
+              {aiReady ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() =>
+                    openAiAdaptWorkoutModal({
+                      ensureSavedWorkout: ensureSavedDraft,
+                      onApplied: (updated) => {
+                        savedRecordRef.current = updated;
+                        setSavedRecord(updated);
+                        setExercises(updated.data.exercises);
+                        setOpenMenu(false);
+                        bumpDataEpoch();
+                        notify("已应用训中调整");
+                      },
+                    })
+                  }
+                >
+                  <Icon name="bolt" size={15} /> 智能训中调整
+                </button>
+              ) : null}
               {savedRecord ? (
                 <button type="button" className="danger" onClick={handleDeleteWorkout}>
                   删除本条记录

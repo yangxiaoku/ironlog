@@ -347,13 +347,9 @@ export function ExercisesView() {
     <>
       <WorkspaceTabs />
       <header className="page-heading masthead-exercises">
-        <span className="vf-c tl" aria-hidden="true" />
-        <span className="vf-c tr" aria-hidden="true" />
-        <span className="vf-c bl" aria-hidden="true" />
-        <span className="vf-c br" aria-hidden="true" />
         <div>
           <h1>动作库</h1>
-          <p>检索中英文动作名称、目标肌群、所需器械与个人动作记录</p>
+          <p>支持中英文检索，按肌群与器械快速筛选</p>
         </div>
         <div className="heading-actions">
           <button type="button" className="secondary-button" onClick={() => openStrengthCalcModal()}>

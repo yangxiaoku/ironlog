@@ -527,8 +527,8 @@ test("AppShell renders LiveWorkoutBar inside .frame flow without floating overla
   const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
 
   const frameIdx = shell.indexOf('<div className="frame">');
-  const liveBarIdx = shell.indexOf("<LiveWorkoutBar />");
-  const mainIdx = shell.indexOf('<main id="content"');
+  const liveBarIdx = shell.indexOf("<LiveWorkoutBar />", frameIdx);
+  const mainIdx = shell.indexOf('<main id="content"', frameIdx);
   assert.ok(frameIdx > 0 && liveBarIdx > frameIdx && mainIdx > liveBarIdx);
   assert.ok(!shell.includes("live-resume-pill"), "AppShell topbar must not emit redundant live-resume-pill");
   assert.match(liveBar, /live-workout-bar-discard/);
@@ -572,4 +572,46 @@ test("WorkoutEditorModal highlights active jump circle, preserves finished activ
   assert.match(css, /\.jump-circle\.finished\.is-active/);
   assert.match(css, /justify-content:\s*center;/);
   assert.match(css, /background:\s*var\(--red\);/);
+});
+
+test("De-AI refinement removes viewfinder brackets & OpenGym label, isolates guest auth, gates AI buttons, and keeps MatrixText", () => {
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+  const shell = readFileSync(resolve(process.cwd(), "packages/web/src/components/AppShell.tsx"), "utf8");
+  const authStore = readFileSync(resolve(process.cwd(), "packages/web/src/store/useAuthStore.ts"), "utf8");
+  const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const overview = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
+  const workout = readFileSync(resolve(process.cwd(), "packages/web/src/views/WorkoutView.tsx"), "utf8");
+  const diet = readFileSync(resolve(process.cwd(), "packages/web/src/views/DietView.tsx"), "utf8");
+  const plan = readFileSync(resolve(process.cwd(), "packages/web/src/views/PlanView.tsx"), "utf8");
+  const badges = readFileSync(resolve(process.cwd(), "packages/web/src/views/BadgesView.tsx"), "utf8");
+  const calendar = readFileSync(resolve(process.cwd(), "packages/web/src/views/CalendarView.tsx"), "utf8");
+  const exercises = readFileSync(resolve(process.cwd(), "packages/web/src/views/ExercisesView.tsx"), "utf8");
+  const tabs = readFileSync(resolve(process.cwd(), "packages/web/src/components/WorkspaceTabs.tsx"), "utf8");
+
+  assert.match(css, /--bg:\s*#09090b/);
+  assert.match(css, /--surface:\s*#111216/);
+  assert.match(css, /\.guest-shell\s*\{/);
+  assert.match(css, /\.top \.quick-record-pill\s*\{/);
+
+  assert.match(shell, /isGuestAuth/);
+  assert.match(shell, /className="guest-shell"/);
+  assert.match(authStore, /aiReady/);
+  assert.ok(!editor.includes("OpenGym 预设"), "internal OpenGym preset label must be removed");
+
+  for (const [name, content] of [
+    ["OverviewView", overview],
+    ["PlanView", plan],
+    ["BadgesView", badges],
+    ["CalendarView", calendar],
+    ["ExercisesView", exercises],
+    ["WorkspaceTabs", tabs],
+  ] as const) {
+    assert.ok(!content.includes("vf-c"), `${name} must not emit viewfinder corner brackets`);
+  }
+
+  assert.ok(!overview.includes("hero-sublink"), "Overview hero must not duplicate today workout sublink");
+  assert.match(workout, /aiReady \?/);
+  assert.match(diet, /aiReady \?/);
+  assert.match(overview, /MatrixText/);
+  assert.match(diet, /MatrixText/);
 });
