@@ -81,16 +81,17 @@ export function buildAppleFitnessLaunchUrl(
 }
 
 function launchIosUrlScheme(url: string): void {
+  try {
+    window.location.href = url;
+    return;
+  } catch {}
   if (typeof document !== "undefined" && document.body) {
     const link = document.createElement("a");
     link.href = url;
-    link.style.display = "none";
     document.body.appendChild(link);
     link.click();
-    link.remove();
-    return;
+    window.setTimeout(() => link.remove(), 300);
   }
-  window.location.href = url;
 }
 
 /**

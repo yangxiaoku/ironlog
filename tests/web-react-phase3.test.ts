@@ -419,15 +419,16 @@ test("packages/web/src/styles/ironlog.css defines cohesive Settings accordions, 
   assert.match(css, /\.analytics-subnav\s+\.segments\s*\{[\s\S]*?grid-auto-flow:\s*column;/);
 });
 
-test("AnalyticsView and OverviewView organize statistics into 4 clear categories with balanced grids", () => {
+test("AnalyticsView and OverviewView expose statistics categories and a dedicated sleep report", () => {
   const analytics = readFileSync(resolve(process.cwd(), "packages/web/src/views/AnalyticsView.tsx"), "utf8");
   const overview = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
   const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
 
-  assert.match(analytics, /type AnalyticsSection = "load" \| "strength" \| "body" \| "reports";/);
+  assert.match(analytics, /\["sleep", "睡眠"\]/);
+  assert.match(analytics, /<SleepReportPanel\b/);
   assert.match(analytics, /type ReportCategory = "all" \| "training" \| "progress" \| "apple";/);
   assert.match(analytics, /className=\{`kpi-card kpi-card-btn/);
-  for (const label of ["负荷恢复", "肌群力量", "体态饮食", "周期报表"]) {
+  for (const label of ["负荷恢复", "肌群力量", "体态饮食", "睡眠", "周期报表"]) {
     assert.ok(analytics.includes(label), `expected analytics category ${label}`);
   }
   const bodyIdx = analytics.indexOf('{activeSection === "body" ? (');
@@ -513,7 +514,11 @@ test("WorkoutEditorModal fixes plan source validation, implements single-exercis
   assert.match(editor, /completeAllPending/);
 
   assert.match(appleFitness, /function launchIosUrlScheme/);
+  assert.match(appleFitness, /window\.location\.href\s*=\s*url/);
+  assert.doesNotMatch(appleFitness, /link\.style\.display\s*=\s*"none"/);
   assert.match(planModals, /className="preview-apple-row"/);
+  assert.match(planModals, /className="preview-apple-modes"/);
+  assert.match(editor, /buildAppleFitnessLaunchUrl/);
 
   assert.match(css, /\.workout-pager-bar\s*\{/);
   assert.match(css, /\.workout-finish-overlay\s/);

@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { apiFetch } from "../../lib/api";
-import { inferAppleFitnessKind, triggerAppleFitnessLaunch, triggerAppleHubAction } from "../../lib/apple-fitness";
+import {
+  buildAppleFitnessLaunchUrl,
+  buildAppleHubActionUrl,
+  inferAppleFitnessKind,
+  isAppleMobileDevice,
+  triggerAppleFitnessLaunch,
+  triggerAppleHubAction,
+} from "../../lib/apple-fitness";
 import { fmt, today } from "../../lib/date";
 import {
   EQUIPMENT,
@@ -1157,6 +1164,9 @@ export function WorkoutEditorModal({
   const isPausedClock = timing.runningSince == null;
   const fitnessKind = inferAppleFitnessKind(exercises, title);
   const activeLaunchMode = fitnessKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
+  const onIos = isAppleMobileDevice();
+  const appleLaunchUrl = buildAppleFitnessLaunchUrl(fitnessKind, prefs);
+  const appleEndUrl = buildAppleHubActionUrl("end", prefs);
 
   return (
     <div className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""}`}>
@@ -1222,18 +1232,29 @@ export function WorkoutEditorModal({
           <div className="workout-progress-strip">
             <progress value={doneSets} max={Math.max(1, totalSets)} />
             <span className="workout-live-vol">{fmt(liveVolume, 0)} kg</span>
-            {activeLaunchMode !== "off" ? (
-              <button
-                type="button"
-                className="micro-chip workout-apple-chip"
-                title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
-                onClick={() => {
-                  triggerHaptic("light");
-                  triggerAppleFitnessLaunch(fitnessKind, { prefs, notify });
-                }}
-              >
-                <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "传统力量"}
-              </button>
+            {activeLaunchMode !== "off" && appleLaunchUrl ? (
+              onIos ? (
+                <a
+                  href={appleLaunchUrl}
+                  className="micro-chip workout-apple-chip"
+                  title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
+                  onClick={() => triggerHaptic("light")}
+                >
+                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "传统力量"}
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="micro-chip workout-apple-chip"
+                  title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
+                  onClick={() => {
+                    triggerHaptic("light");
+                    triggerAppleFitnessLaunch(fitnessKind, { prefs, notify });
+                  }}
+                >
+                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "传统力量"}
+                </button>
+              )
             ) : null}
           </div>
         </header>
@@ -1700,16 +1721,27 @@ export function WorkoutEditorModal({
               </label>
 
               {activeLaunchMode !== "off" ? (
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    triggerHaptic("light");
-                    triggerAppleHubAction("end", { prefs, notify });
-                  }}
-                >
-                  <Icon name="upload" size={14} /> 同步 Apple 心率/热量
-                </button>
+                onIos ? (
+                  <a
+                    href={appleEndUrl}
+                    className="secondary-button"
+                    style={{ textDecoration: "none", justifyContent: "center" }}
+                    onClick={() => triggerHaptic("light")}
+                  >
+                    <Icon name="upload" size={14} /> 同步 Apple 心率/热量
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      triggerHaptic("light");
+                      triggerAppleHubAction("end", { prefs, notify });
+                    }}
+                  >
+                    <Icon name="upload" size={14} /> 同步 Apple 心率/热量
+                  </button>
+                )
               ) : null}
             </div>
 

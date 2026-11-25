@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createApp } from "../packages/server/src/app.js";
 import { openDatabase } from "../packages/server/src/db.js";
+import { workoutPrefsSchema } from "../packages/shared/src/index.js";
 import {
   DEFAULT_APPLE_CARDIO_SHORTCUT,
   DEFAULT_APPLE_HUB_SHORTCUT,
@@ -736,4 +737,51 @@ test("apple-fitness builds Shortcut/Fitness deep-links, classifies workouts accu
     `shortcuts://run-shortcut?name=${encodeURIComponent(DEFAULT_APPLE_HUB_SHORTCUT)}&input=text&text=daily`,
   );
   assert.equal(notices.length, 2);
+
+  // Server workoutPrefsSchema default matches frontend auto-launch = true
+  assert.equal(workoutPrefsSchema.parse({}).appleFitnessAutoLaunch, true);
+
+  // Mocked iOS environment navigates synchronously via window.location.href
+  const prevWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const prevNav = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const prevDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+  try {
+    const loc = { href: "http://localhost/" };
+    Object.defineProperty(globalThis, "window", {
+      configurable: true,
+      writable: true,
+      value: { location: loc, setTimeout: globalThis.setTimeout },
+    });
+    Object.defineProperty(globalThis, "navigator", {
+      configurable: true,
+      writable: true,
+      value: {
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X)",
+        platform: "iPhone",
+        maxTouchPoints: 5,
+      },
+    });
+    Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: undefined });
+
+    const iosStrength = triggerAppleFitnessLaunch("strength", {
+      prefs: { ...prefs, appleStrengthLaunch: "hub", appleHubShortcutName: "铁记全能" },
+      silentNonIos: true,
+    });
+    assert.equal(iosStrength.launched, true);
+    assert.equal(loc.href, `shortcuts://run-shortcut?name=${encodeURIComponent("铁记全能")}&input=text&text=strength`);
+
+    const iosCardio = triggerAppleFitnessLaunch("cardio", {
+      prefs: { ...prefs, appleCardioLaunch: "fitness_app" },
+      silentNonIos: true,
+    });
+    assert.equal(iosCardio.launched, true);
+    assert.equal(loc.href, APPLE_FITNESS_APP_URL);
+  } finally {
+    if (prevWindow) Object.defineProperty(globalThis, "window", prevWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+    if (prevNav) Object.defineProperty(globalThis, "navigator", prevNav);
+    else Reflect.deleteProperty(globalThis, "navigator");
+    if (prevDoc) Object.defineProperty(globalThis, "document", prevDoc);
+    else Reflect.deleteProperty(globalThis, "document");
+  }
 });

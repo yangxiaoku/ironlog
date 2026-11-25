@@ -275,7 +275,7 @@ export const workoutPrefsSchema = z.object({
   showPlateMath: workoutPrefsBase.showPlateMath.default(true),
   warmupScheme: workoutPrefsBase.warmupScheme.default("standard"),
   soundStyle: workoutPrefsBase.soundStyle.default("chime"),
-  appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(false),
+  appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(true),
   appleStrengthLaunch: workoutPrefsBase.appleStrengthLaunch.default("hub"),
   appleCardioLaunch: workoutPrefsBase.appleCardioLaunch.default("fitness_app"),
   appleHubShortcutName: workoutPrefsBase.appleHubShortcutName.default("铁记-通用-Apple健康全能联动"),
@@ -427,3 +427,4 @@ export interface MutationResult {
   record: StoredRecord | null;
 }
 export * from "./starter-plans.js";
+export type { SleepReport, SleepReportDay } from "./sleep-report.js";
