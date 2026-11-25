@@ -628,8 +628,9 @@ function delayActionXml(seconds = 5): string {
 
 /**
  * Native Apple Watch "Start Workout" action (`is.workflow.actions.workout.start`)
- * targeting `com.apple.SessionTrackerApp` (verified against Apple iCloud plist client 3607.0.2).
- * Omitting `WorkoutGoal` starts an Open Goal workout.
+ * targeting `com.apple.SessionTrackerApp` (verified against Apple iCloud plist client 3607.0.2
+ * and iOS ToolKit v78 schema: `IntentAppDefinition`, `workoutName`, `isOpenEnded`, `WorkoutGoal`).
+ * Setting `isOpenEnded = true` starts an Open Goal workout without prompting for a goal.
  */
 function startWorkoutActionXml({
   uuid,
@@ -648,6 +649,8 @@ function startWorkoutActionXml({
     "\t\t\t\t</dict>",
     "\t\t\t\t<key>UUID</key>",
     `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
+    "\t\t\t\t<key>isOpenEnded</key>",
+    "\t\t\t\t<true/>",
     "\t\t\t\t<key>workoutName</key>",
     actionOutputAttachmentXml({ outputUuid: workoutNameUuid, outputName: workoutNameOutputName, indent: 4 }),
   ].join("\n"));

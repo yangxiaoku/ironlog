@@ -243,7 +243,10 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.ok(hubUniversal.xml.includes("【传统力量训练】"));
   const startWorkoutCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.workout\.start<\/string>/g) ?? []).length;
   assert.equal(startWorkoutCount, 16, `expected Start Workout in all 16 launch routes, got ${startWorkoutCount}`);
+  const openEndedCount = (hubUniversal.xml.match(/<key>isOpenEnded<\/key>\n\t\t\t\t<true\/>/g) ?? []).length;
+  assert.equal(openEndedCount, 16, `expected isOpenEnded=true in all 16 Start Workout actions, got ${openEndedCount}`);
   assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringFillMissing</key>\n\t\t\t\t<false/>"));
   assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>coreTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));
