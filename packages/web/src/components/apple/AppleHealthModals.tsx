@@ -1610,7 +1610,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 打开 iPhone <b>「健康」App → 右上角头像 → 隐私 → App → 快捷指令</b>，将需要的指标权限打开（建议「全部打开」）；
               </li>
               <li>
-                新版快捷指令的步数/热量已改为<b>「今天 00:00 至现在 + 原生按日求和」</b>（秒级执行、不会回退成 7 天），已关闭最大摄氧量并对齐 <code>Resting Calories</code> / <code>Dietary Calories</code> / <code>Oxygen Saturation</code>；
+                新版快捷指令的步数/热量已改为<b>「过去 1 天内（24 小时）+ 原生按天分组取最新 1 条」</b>（秒级执行、不会显示 7 天），已关闭最大摄氧量并对齐 <code>Resting Calories</code> / <code>Dietary Calories</code> / <code>Oxygen Saturation</code>；
               </li>
               <li>若某项提示「未找到样本」，说明今日暂未测得该项（可回到第 2 步换「基础 4项」或「自动体征 13项」）。</li>
             </ol>

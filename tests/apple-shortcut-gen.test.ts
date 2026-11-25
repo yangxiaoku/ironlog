@@ -174,10 +174,11 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "is.workflow.actions.repeat.each",
     "is.workflow.actions.setvariable",
     "WFStringSubstitutableState",
-    "<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>",
-    "<string>Get Start of Day</string>",
-    "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1003</integer>",
-    "<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>",
+    "<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>",
+    "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>",
+    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>",
+    "<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>",
+    "<key>WFContentItemLimitNumber</key>\n\t\t\t\t<integer>1</integer>",
     "<string>Steps</string>",
     "<string>count</string>",
     "<string>Active Calories</string>",
@@ -207,10 +208,10 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     assert.ok(daily.xml.includes(needle), `Expected generated daily shortcut XML to contain ${needle}`);
   }
 
-  // Must use canonical HealthKit keys and explicit betweenDates (Operator 1003, never 1000/1001/1002 which default to 7 days)
+  // Must use canonical HealthKit keys and relative 1-day (24h) Operator 1001 + Day GroupBy + Limit 1
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
-  assert.ok(!daily.xml.includes("<integer>1001</integer>"));
   assert.ok(!daily.xml.includes("<integer>1002</integer>"));
+  assert.ok(!daily.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
   assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
   assert.ok(!daily.xml.includes("<string>步数</string>"));
   assert.ok(!daily.xml.includes("<string>体重</string>"));
@@ -273,7 +274,7 @@ test("buildIronlogEventShortcut end 默认延迟并查询开放训练时长以�
   assert.ok(endRunning.xml.includes("<string>is.workflow.actions.adjustdate</string>"));
   assert.ok(endRunning.xml.includes("<integer>1003</integer>"));
   assert.ok(endRunning.xml.includes("<key>AnotherDate</key>"));
-  assert.ok(endRunning.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
+  assert.ok(endRunning.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
   assert.ok(!endRunning.xml.includes("<integer>64</integer>"), "Find Health Samples must not use Unit 64 (Minutes)");
   assert.ok(endRunning.xml.includes("<string>Active Calories</string>"));
   assert.ok(endRunning.xml.includes("<string>Walking + Running Distance</string>"));

@@ -456,17 +456,6 @@ function adjustDateSubtractMinutesActionXml({
   ].join("\n"));
 }
 
-function adjustDateStartOfDayActionXml({ uuid, inputUuid, inputName = "Date" }) {
-  return actionBlockXml("is.workflow.actions.adjustdate", [
-    "\t\t\t\t<key>UUID</key>",
-    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
-    "\t\t\t\t<key>WFAdjustOperation</key>",
-    "\t\t\t\t<string>Get Start of Day</string>",
-    "\t\t\t\t<key>WFDate</key>",
-    actionOutputAttachmentXml({ outputUuid: inputUuid, outputName: inputName, indent: 4 }),
-  ].join("\n"));
-}
-
 function findHealthSampleActionXml({
   uuid,
   typeLabel,
@@ -579,7 +568,7 @@ function findHealthSampleActionXml({
     ...dateTemplate,
     "\t\t\t\t\t\t</array>",
     "\t\t\t\t\t\t<key>WFContentPredicateBoundedDate</key>",
-    "\t\t\t\t\t\t<true/>",
+    "\t\t\t\t\t\t<false/>",
     "\t\t\t\t\t</dict>",
     "\t\t\t\t\t<key>WFSerializationType</key>",
     "\t\t\t\t\t<string>WFContentPredicateTableTemplate</string>",
@@ -1219,39 +1208,11 @@ export function buildIronlogDailyHealthShortcut({
   // Format Current Date inline via WFDateFormatVariableAggrandizement instead of calling
   // is.workflow.actions.format.date, which can evaluate to "" on some iOS builds.
   const rawNowUuid = uuidFactory();
-  const todayStartUuid = uuidFactory();
-  const dayAgoUuid = uuidFactory();
   actions.push(currentDateActionXml({ uuid: rawNowUuid }));
-  actions.push(adjustDateStartOfDayActionXml({
-    uuid: todayStartUuid,
-    inputUuid: rawNowUuid,
-    inputName: "Date",
-  }));
-  actions.push(adjustDateSubtractMinutesActionXml({
-    uuid: dayAgoUuid,
-    minutes: 1440,
-    inputUuid: rawNowUuid,
-    inputName: "Date",
-  }));
   jsonBodyItems.push({
     key: "occurredAt",
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
-
-  const todayWindowFilter = {
-    kind: "betweenDates",
-    startDateUuid: todayStartUuid,
-    startDateOutputName: "Adjusted Date",
-    endDateUuid: rawNowUuid,
-    endDateOutputName: "Date",
-  };
-  const explicitWindowFilter = {
-    kind: "betweenDates",
-    startDateUuid: dayAgoUuid,
-    startDateOutputName: "Adjusted Date",
-    endDateUuid: rawNowUuid,
-    endDateOutputName: "Date",
-  };
 
   for (const metric of selectedMetrics) {
     const findUuid = uuidFactory();
@@ -1264,11 +1225,9 @@ export function buildIronlogDailyHealthShortcut({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isDailySum ? "Day" : null,
-      dateFilter: isDailySum
-        ? todayWindowFilter
-        : { ...explicitWindowFilter, byEndDate: isSleep },
+      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
-      limit: latest ? 1 : null,
+      limit: latest || isDailySum ? 1 : null,
     }));
 
     let bodyActions;

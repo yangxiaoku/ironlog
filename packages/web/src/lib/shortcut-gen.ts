@@ -692,25 +692,6 @@ function adjustDateSubtractMinutesActionXml({
   ].join("\n"));
 }
 
-function adjustDateStartOfDayActionXml({
-  uuid,
-  inputUuid,
-  inputName = "Date",
-}: {
-  uuid: string;
-  inputUuid: string;
-  inputName?: string;
-}): string {
-  return actionBlockXml("is.workflow.actions.adjustdate", [
-    "\t\t\t\t<key>UUID</key>",
-    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
-    "\t\t\t\t<key>WFAdjustOperation</key>",
-    "\t\t\t\t<string>Get Start of Day</string>",
-    "\t\t\t\t<key>WFDate</key>",
-    actionOutputAttachmentXml({ outputUuid: inputUuid, outputName: inputName, indent: 4 }),
-  ].join("\n"));
-}
-
 type DateFilterSpec =
   | {
       kind: "betweenDates";
@@ -850,7 +831,7 @@ function findHealthSampleActionXml({
     ...dateTemplate,
     "\t\t\t\t\t\t</array>",
     "\t\t\t\t\t\t<key>WFContentPredicateBoundedDate</key>",
-    "\t\t\t\t\t\t<true/>",
+    "\t\t\t\t\t\t<false/>",
     "\t\t\t\t\t</dict>",
     "\t\t\t\t\t<key>WFSerializationType</key>",
     "\t\t\t\t\t<string>WFContentPredicateTableTemplate</string>",
@@ -1753,40 +1734,15 @@ function buildDailyHealthCollectionActions({
     { key: "source", value: "shortcut" },
   ];
   const rawNowUuid = uuidFactory();
-  const todayStartUuid = uuidFactory();
-  const dayAgoUuid = uuidFactory();
   actions.push(currentDateActionXml({ uuid: rawNowUuid }));
-  actions.push(adjustDateStartOfDayActionXml({
-    uuid: todayStartUuid,
-    inputUuid: rawNowUuid,
-    inputName: "Date",
-  }));
-  actions.push(adjustDateSubtractMinutesActionXml({
-    uuid: dayAgoUuid,
-    minutes: 1440,
-    inputUuid: rawNowUuid,
-    inputName: "Date",
-  }));
   jsonBodyItems.push({
     key: "occurredAt",
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
 
-  const todayWindowFilter = {
-    kind: "betweenDates" as const,
-    startDateUuid: todayStartUuid,
-    startDateOutputName: "Adjusted Date",
-    endDateUuid: rawNowUuid,
-    endDateOutputName: "Date",
-  };
-  const explicitWindowFilter = {
-    kind: "betweenDates" as const,
-    startDateUuid: dayAgoUuid,
-    startDateOutputName: "Adjusted Date",
-    endDateUuid: rawNowUuid,
-    endDateOutputName: "Date",
-  };
-
+  // Use native relative 1-day (24h) filter (`Operator: 1001`, `Unit: 16`, `Number: "1"`,
+  // `WFContentPredicateBoundedDate: false`), verified on real iOS 18/26 Shortcuts.
+  // For dailySum metrics, `Group by: Day` + `Latest First` + `Limit: 1` returns only today's aggregated total.
   for (const metric of selectedMetrics) {
     const findUuid = uuidFactory();
     const variableName = `v_${metric.key}`;
@@ -1798,11 +1754,9 @@ function buildDailyHealthCollectionActions({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isDailySum ? "Day" : null,
-      dateFilter: isDailySum
-        ? todayWindowFilter
-        : { ...explicitWindowFilter, byEndDate: isSleep },
+      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
-      limit: latest ? 1 : null,
+      limit: latest || isDailySum ? 1 : null,
     }));
 
     let bodyActions: string[];
