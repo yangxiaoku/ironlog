@@ -408,17 +408,20 @@ export function buildAppleCardioLaunchUrl(
 }
 
 function launchIosUrlScheme(url: string): void {
+  if (typeof document !== "undefined" && document.body) {
+    try {
+      const link = document.createElement("a");
+      link.href = url;
+      link.rel = "noopener noreferrer";
+      document.body.appendChild(link);
+      link.click();
+      window.setTimeout(() => link.remove(), 400);
+      return;
+    } catch {}
+  }
   try {
     window.location.href = url;
-    return;
   } catch {}
-  if (typeof document !== "undefined" && document.body) {
-    const link = document.createElement("a");
-    link.href = url;
-    document.body.appendChild(link);
-    link.click();
-    window.setTimeout(() => link.remove(), 300);
-  }
 }
 
 /**

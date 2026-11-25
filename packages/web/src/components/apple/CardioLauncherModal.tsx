@@ -3,8 +3,11 @@ import { apiFetch } from "../../lib/api";
 import {
   APPLE_CARDIO_PRESETS,
   APPLE_STRENGTH_PRESETS,
+  buildAppleCardioLaunchUrl,
+  buildAppleStrengthLaunchUrl,
   getAppleCardioPreset,
   getAppleStrengthPreset,
+  isAppleMobileDevice,
   openAppleShortcutCreator,
   readLastCardioPreset,
   resolveCardioShortcutName,
@@ -12,6 +15,7 @@ import {
   triggerAppleCardioLaunch,
   triggerAppleHubAction,
   triggerAppleStrengthLaunch,
+  writeLastCardioPreset,
   type AppleCardioPresetId,
   type AppleStrengthPresetId,
 } from "../../lib/apple-fitness";
@@ -95,9 +99,12 @@ export function CardioLauncherModal({
     setPrefs(readWorkoutPreferences());
   };
 
-  const handleSelectCardio = (presetId: AppleCardioPresetId) => {
+  const onIos = isAppleMobileDevice();
+
+  const handleSelectCardio = (presetId: AppleCardioPresetId, viaNativeLink = false) => {
     triggerHaptic("light");
     setSelectedId(presetId);
+    writeLastCardioPreset(presetId);
     const preset = getAppleCardioPreset(presetId) ?? APPLE_CARDIO_PRESETS[0]!;
     if (prefs.appleCardioLaunch === "shortcut" || prefs.appleCardioLaunch === "fitness_app") {
       void apiFetch("/api/integrations/apple-health/session-start", {
@@ -105,13 +112,17 @@ export function CardioLauncherModal({
         body: { activityType: preset.activityType, environment: preset.environment },
       }).catch(() => {});
     }
+    if (viaNativeLink) {
+      window.setTimeout(() => closeTopModal(), 240);
+      return;
+    }
     const res = triggerAppleCardioLaunch(presetId, { prefs, notify });
     if (res.launched) {
-      closeTopModal();
+      window.setTimeout(() => closeTopModal(), 240);
     }
   };
 
-  const handleSelectStrength = (presetId: AppleStrengthPresetId) => {
+  const handleSelectStrength = (presetId: AppleStrengthPresetId, viaNativeLink = false) => {
     triggerHaptic("light");
     setSelectedStrengthId(presetId);
     const preset = getAppleStrengthPreset(presetId) ?? APPLE_STRENGTH_PRESETS[0]!;
@@ -121,9 +132,13 @@ export function CardioLauncherModal({
         body: { activityType: preset.activityType, environment: preset.environment },
       }).catch(() => {});
     }
+    if (viaNativeLink) {
+      window.setTimeout(() => closeTopModal(), 240);
+      return;
+    }
     const res = triggerAppleStrengthLaunch(presetId, { prefs, notify });
     if (res.launched) {
-      closeTopModal();
+      window.setTimeout(() => closeTopModal(), 240);
     }
   };
 
@@ -161,7 +176,7 @@ export function CardioLauncherModal({
           </p>
         ) : mode === "hub" ? (
           <p className="muted">
-            点击下方项目，通过全能快捷指令上报 <code>{selected.label}</code> 开练事件并按对应分支启动。
+            点击下方项目，调用全能快捷指令 <code>{prefs.appleHubShortcutName}</code> 上报 <code>{selected.label}</code> 开练事件并拉起健身 App（请确认手机「快捷指令」里同名，重复导入请选「替换」）。
           </p>
         ) : (
           <div className="cardio-mode-warn">
@@ -186,6 +201,23 @@ export function CardioLauncherModal({
         <div className="cardio-preset-grid" role="group" aria-label="选择力量训练方式">
           {APPLE_STRENGTH_PRESETS.map((preset) => {
             const isSelected = preset.id === selectedStrength.id;
+            const launchUrl = onIos ? buildAppleStrengthLaunchUrl(preset.id, prefs) : null;
+            if (launchUrl) {
+              return (
+                <a
+                  key={preset.id}
+                  href={launchUrl}
+                  className={`cardio-preset-card${isSelected ? " is-selected" : ""}`}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                  onClick={() => handleSelectStrength(preset.id, true)}
+                >
+                  <div className="cardio-preset-head">
+                    <strong>{preset.label}</strong>
+                  </div>
+                  <small>{preset.subtitle}</small>
+                </a>
+              );
+            }
             return (
               <button
                 key={preset.id}
@@ -207,6 +239,24 @@ export function CardioLauncherModal({
           {APPLE_CARDIO_PRESETS.map((preset) => {
             const isSelected = preset.id === selectedCardio.id;
             const isLast = preset.id === lastPreset;
+            const launchUrl = onIos ? buildAppleCardioLaunchUrl(preset.id, prefs) : null;
+            if (launchUrl) {
+              return (
+                <a
+                  key={preset.id}
+                  href={launchUrl}
+                  className={`cardio-preset-card${isSelected ? " is-selected" : ""}`}
+                  style={{ textDecoration: "none", color: "inherit" }}
+                  onClick={() => handleSelectCardio(preset.id, true)}
+                >
+                  <div className="cardio-preset-head">
+                    <strong>{preset.label}</strong>
+                    {isLast ? <span className="cardio-last-tag">上次</span> : null}
+                  </div>
+                  <small>{preset.subtitle}</small>
+                </a>
+              );
+            }
             return (
               <button
                 key={preset.id}

@@ -1348,8 +1348,8 @@ export function SettingsView() {
                     <div className="segments">
                       {(
                         [
-                          ["shortcut", "按项目直开"],
                           ["hub", "全能联动"],
+                          ["shortcut", "按项目直开"],
                           ["fitness_app", "健身 App"],
                           ["off", "关闭"],
                         ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
