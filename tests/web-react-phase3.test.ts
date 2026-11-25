@@ -217,15 +217,17 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   // Menu fallback + ExtensionInput conditional routing
   assert.ok(hubUniversal.xml.includes("<string>ExtensionInput</string>"));
   assert.ok(hubUniversal.xml.includes("is.workflow.actions.choosefrommenu"));
-  for (const label of ["开始传统力量", "打开有氧健身", "结束训练并同步心率热量", "同步今日健康数据"]) {
+  for (const label of ["开始传统力量", "打开有氧健身", "结束训练并同步心率热量", "同步今日健康数据", "选择有氧方式"]) {
     assert.ok(hubUniversal.xml.includes(`<string>${label}</string>`), `contains menu item ${label}`);
   }
-  for (const mode of ["strength", "cardio", "end", "daily"]) {
+  for (const mode of ["strength", "cardio", "cardio:indoor_run", "cardio:stair_climbing", "end", "daily"]) {
     assert.ok(
       hubUniversal.xml.includes(`<key>WFConditionalActionString</key>\n\t\t\t\t<string>${mode}</string>`),
       `contains conditional route for ${mode}`,
     );
   }
+  assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>running</string>"));
   assert.ok(hubUniversal.xml.includes("is.workflow.actions.openapp"));
   assert.ok(hubUniversal.xml.includes("<key>WFSelectedApp</key>"));
   assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.Fitness</string>"));
@@ -239,6 +241,7 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   for (const p of [
     "/api/integrations/apple-health/events",
     "/api/integrations/apple-health/events/active?activityType=traditionalStrengthTraining",
+    "/api/integrations/apple-health/events/active?activityType=any",
     "/api/integrations/apple-health/workouts",
     "/api/integrations/apple-health/daily",
   ]) {
@@ -811,4 +814,23 @@ test("Audit fixes harden diet upsert rollback, assisted ref/prog math, draft con
   assert.match(openers, /parsed\.baseVersion/);
   assert.match(authStore, /resetLocalWorkoutPreferences\(\)/);
   assert.match(appShell, /清空冲突条目/);
+});
+
+test("Cardio modality picker connects QuickRecordSheet, WorkoutView, SettingsView, WorkoutEditorModal, and CardioLauncherModal", () => {
+  const quickSheet = readFileSync(resolve(process.cwd(), "packages/web/src/components/QuickRecordSheet.tsx"), "utf8");
+  const workoutView = readFileSync(resolve(process.cwd(), "packages/web/src/views/WorkoutView.tsx"), "utf8");
+  const settingsView = readFileSync(resolve(process.cwd(), "packages/web/src/views/SettingsView.tsx"), "utf8");
+  const workoutModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const cardioModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/CardioLauncherModal.tsx"), "utf8");
+
+  assert.match(quickSheet, /openCardioLauncherModal/);
+  assert.match(workoutView, /openCardioLauncherModal/);
+  assert.match(settingsView, /openCardioLauncherModal/);
+  assert.match(settingsView, /按项目直开/);
+  assert.match(workoutModal, /inferAppleCardioPreset/);
+  assert.match(workoutModal, /triggerAppleCardioLaunch/);
+  assert.match(workoutModal, /openCardioLauncherModal/);
+  assert.match(cardioModal, /APPLE_CARDIO_PRESETS/);
+  assert.match(cardioModal, /resolveCardioShortcutName/);
+  assert.match(cardioModal, /triggerAppleCardioLaunch/);
 });

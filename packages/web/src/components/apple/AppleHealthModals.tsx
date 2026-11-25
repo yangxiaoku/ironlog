@@ -1662,6 +1662,9 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 <li>
                   <b>Watch 直开力量</b>：如需在「开始传统力量」时直拉 Watch 体能训练，展开该快捷指令把 <code>strength</code> 分支末尾「打开 URL」换成 <b>开始体能训练 → 传统力量训练</b>。
                 </li>
+                <li>
+                  <b>有氧直开指定项目</b>：新版全能快捷指令内置 <code>cardio:indoor_run</code> / <code>cardio:stair_climbing</code> 等 13 个有氧分支，将对应分支末尾「打开 Fitness」换成 <b>开始体能训练 → 对应项目</b>，在网页点选后即可直接开练。
+                </li>
               </ol>
             </div>
           </details>

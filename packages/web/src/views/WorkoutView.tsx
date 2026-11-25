@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../components/Icon";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
-import { apiFetch } from "../lib/api";
-import { triggerAppleFitnessLaunch } from "../lib/apple-fitness";
 import { displayWeekday, duration, fmt, shortDate } from "../lib/date";
 import {
   FEELINGS,
@@ -19,6 +17,7 @@ import {
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
+  openCardioLauncherModal,
   openWorkoutEditor,
   openWorkoutReport,
   resumeLocalWorkoutDraft,
@@ -168,7 +167,7 @@ export function WorkoutView() {
               className="secondary-button"
               onClick={() => {
                 triggerHaptic("light");
-                triggerAppleFitnessLaunch("cardio", { notify });
+                openCardioLauncherModal();
               }}
             >
               <Icon name="heart" size={15} /> Apple 有氧

@@ -502,6 +502,15 @@ test("events/active 查询开放训练耗时，且直传与结束事件兼容快
     assert.equal(activeBody.startedAt, startedIso);
     assert.ok(typeof activeBody.elapsedMinutes === "number" && activeBody.elapsedMinutes >= 35);
 
+    const anyActiveRes = await call(apple + "/events/active?activityType=any", token);
+    assert.equal(anyActiveRes.status, 200);
+    const anyActiveBody = await anyActiveRes.json() as any;
+    assert.equal(anyActiveBody.found, true);
+    assert.equal(anyActiveBody.activityType, "stairclimbing");
+    assert.equal(anyActiveBody.environment, "indoor");
+    assert.equal(anyActiveBody.startedAt, startedIso);
+    assert.ok(typeof anyActiveBody.elapsedMinutes === "number" && anyActiveBody.elapsedMinutes >= 35);
+
     const endRes = await call(apple + "/events", token, "POST", {
       schemaVersion: 1,
       event: "end",
@@ -522,6 +531,8 @@ test("events/active 查询开放训练耗时，且直传与结束事件兼容快
 
     const closed = await call(apple + "/events/active?activityType=stairClimbing", token);
     assert.equal((await closed.json() as any).found, false);
+    const closedAny = await call(apple + "/events/active?activityType=any", token);
+    assert.equal((await closedAny.json() as any).found, false);
 
     const orphanEnd = await call(apple + "/events", token, "POST", {
       schemaVersion: 1,

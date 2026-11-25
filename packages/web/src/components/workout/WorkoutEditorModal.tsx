@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import {
+  buildAppleCardioLaunchUrl,
   buildAppleFitnessLaunchUrl,
   buildAppleHubActionUrl,
+  inferAppleCardioPreset,
   inferAppleFitnessKind,
   isAppleMobileDevice,
+  triggerAppleCardioLaunch,
   triggerAppleFitnessLaunch,
   triggerAppleHubAction,
 } from "../../lib/apple-fitness";
@@ -65,7 +68,7 @@ import {
   type SetFieldPatch,
   type WorkoutPreferences,
 } from "../../lib/workout-helpers";
-import { openAiAdaptWorkoutModal, openExerciseDetailModal } from "../../lib/record-openers";
+import { openAiAdaptWorkoutModal, openCardioLauncherModal, openExerciseDetailModal } from "../../lib/record-openers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -1248,9 +1251,15 @@ export function WorkoutEditorModal({
   const restInfo = rest ? restProgress(rest, nowMs) : null;
   const isPausedClock = timing.runningSince == null;
   const fitnessKind = inferAppleFitnessKind(exercises, title);
+  const inferredCardio = fitnessKind === "cardio" ? inferAppleCardioPreset(exercises, title) : null;
   const activeLaunchMode = fitnessKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
   const onIos = isAppleMobileDevice();
-  const appleLaunchUrl = buildAppleFitnessLaunchUrl(fitnessKind, prefs);
+  const appleLaunchUrl =
+    fitnessKind === "cardio"
+      ? inferredCardio
+        ? buildAppleCardioLaunchUrl(inferredCardio.id, prefs)
+        : null
+      : buildAppleFitnessLaunchUrl("strength", prefs);
   const appleEndUrl = buildAppleHubActionUrl("end", prefs);
 
   return (
@@ -1317,27 +1326,43 @@ export function WorkoutEditorModal({
           <div className="workout-progress-strip">
             <progress value={doneSets} max={Math.max(1, totalSets)} />
             <span className="workout-live-vol">{fmt(liveVolume, 0)} kg</span>
-            {activeLaunchMode !== "off" && appleLaunchUrl ? (
+            {activeLaunchMode !== "off" && fitnessKind === "cardio" && !inferredCardio ? (
+              <button
+                type="button"
+                className="micro-chip workout-apple-chip"
+                title="选择有氧方式并跳转 Apple 健身"
+                onClick={() => {
+                  triggerHaptic("light");
+                  openCardioLauncherModal();
+                }}
+              >
+                <Icon name="heart" size={12} /> 选择有氧
+              </button>
+            ) : activeLaunchMode !== "off" && appleLaunchUrl ? (
               onIos ? (
                 <a
                   href={appleLaunchUrl}
                   className="micro-chip workout-apple-chip"
-                  title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始传统力量训练"}
+                  title={inferredCardio ? `跳转 Apple 健身开始${inferredCardio.label}` : "跳转 Apple 健身开始传统力量训练"}
                   onClick={() => triggerHaptic("light")}
                 >
-                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "力量训练"}
+                  <Icon name="heart" size={12} /> {inferredCardio ? inferredCardio.label : "力量训练"}
                 </a>
               ) : (
                 <button
                   type="button"
                   className="micro-chip workout-apple-chip"
-                  title={fitnessKind === "cardio" ? "跳转 Apple 健身开始有氧" : "跳转 Apple 健身开始力量训练"}
+                  title={inferredCardio ? `跳转 Apple 健身开始${inferredCardio.label}` : "跳转 Apple 健身开始力量训练"}
                   onClick={() => {
                     triggerHaptic("light");
-                    triggerAppleFitnessLaunch(fitnessKind, { prefs, notify });
+                    if (inferredCardio) {
+                      triggerAppleCardioLaunch(inferredCardio.id, { prefs, notify });
+                    } else {
+                      triggerAppleFitnessLaunch("strength", { prefs, notify });
+                    }
                   }}
                 >
-                  <Icon name="heart" size={12} /> {fitnessKind === "cardio" ? "Apple 有氧" : "力量训练"}
+                  <Icon name="heart" size={12} /> {inferredCardio ? inferredCardio.label : "力量训练"}
                 </button>
               )
             ) : null}
@@ -1649,10 +1674,11 @@ export function WorkoutEditorModal({
                   className="secondary-button"
                   onClick={() => {
                     triggerHaptic("light");
-                    triggerAppleFitnessLaunch("cardio", { prefs, notify });
+                    setOpenMenu(false);
+                    openCardioLauncherModal(inferredCardio?.id);
                   }}
                 >
-                  <Icon name="heart" size={14} /> 打开健身(有氧)
+                  <Icon name="heart" size={14} /> 选择有氧方式
                 </button>
                 <button
                   type="button"

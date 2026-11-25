@@ -228,6 +228,7 @@ export class AppleHealth {
   private readonly stmtListDailyData: Stmt;
   private readonly stmtRecentWorkouts: Stmt;
   private readonly stmtGetEvent: Stmt;
+  private readonly stmtGetLatestActiveEvent: Stmt;
   private readonly stmtGetEventFull: Stmt;
   private readonly stmtCloseEventNull: Stmt;
   private readonly stmtCloseDanglingEvents: Stmt;
@@ -253,6 +254,11 @@ export class AppleHealth {
       WHERE user_id=? ORDER BY ended_at DESC, id LIMIT 30`);
     this.stmtGetEvent = db.prepare(`SELECT started_at AS startedAt, started_environment AS environment,
       ended_at AS endedAt FROM apple_health_events WHERE device_id=? AND activity_type=?`);
+    this.stmtGetLatestActiveEvent = db.prepare(`SELECT activity_type AS activityType, started_at AS startedAt,
+      started_environment AS environment, ended_at AS endedAt
+      FROM apple_health_events
+      WHERE device_id=? AND (ended_at IS NULL OR started_at > ended_at)
+      ORDER BY started_at DESC LIMIT 1`);
     this.stmtGetEventFull = db.prepare(`SELECT started_at AS startedAt, started_environment AS environment,
         ended_at AS endedAt, workout_id AS workoutId FROM apple_health_events WHERE device_id=? AND activity_type=?`);
     this.stmtCloseEventNull = db.prepare("UPDATE apple_health_events SET ended_at=?, workout_id=NULL WHERE device_id=? AND activity_type=?");
@@ -347,6 +353,36 @@ export class AppleHealth {
     const parsed = activityType.safeParse(String(rawActivityType ?? "").trim());
     if (!parsed.success) throw new DomainError("运动类型标识不合法", 400);
     const type = parsed.data.toLowerCase();
+    if (type === "any") {
+      const row = this.stmtGetLatestActiveEvent.get(device.id) as
+        { activityType: string; startedAt: string; environment: AppleWorkoutInput["environment"]; endedAt: string | null } | undefined;
+      if (!row || (row.endedAt && row.startedAt <= row.endedAt)) {
+        return { ok: true as const, found: false as const, activityType: "any" };
+      }
+      const elapsedSeconds = Math.floor((Date.now() - Date.parse(row.startedAt)) / 1000);
+      if (!Number.isFinite(elapsedSeconds) || elapsedSeconds < 0 || elapsedSeconds > MAX_TRIGGER_WORKOUT_SECONDS) {
+        this.stmtCloseEventNull.run(row.startedAt, device.id, row.activityType.toLowerCase());
+        return { ok: true as const, found: false as const, expired: true as const, activityType: row.activityType };
+      }
+      if (elapsedSeconds < MIN_TRIGGER_WORKOUT_SECONDS) {
+        return {
+          ok: true as const,
+          found: false as const,
+          tooShort: true as const,
+          durationSeconds: elapsedSeconds,
+          activityType: row.activityType,
+        };
+      }
+      const elapsedMinutes = Math.max(1, Math.min(360, Math.ceil(elapsedSeconds / 60)));
+      return {
+        ok: true as const,
+        found: true as const,
+        activityType: row.activityType,
+        environment: row.environment,
+        startedAt: row.startedAt,
+        elapsedMinutes,
+      };
+    }
     const row = this.stmtGetEvent.get(device.id, type) as
       { startedAt: string; environment: AppleWorkoutInput["environment"]; endedAt: string | null } | undefined;
     if (!row || (row.endedAt && row.startedAt <= row.endedAt)) {

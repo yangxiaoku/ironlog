@@ -1,7 +1,13 @@
-import { triggerAppleFitnessLaunch } from "../lib/apple-fitness";
 import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
-import { openDietEditor, openStrengthCalcModal, openTextLogModal, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
+import {
+  openCardioLauncherModal,
+  openDietEditor,
+  openStrengthCalcModal,
+  openTextLogModal,
+  openWeightEditor,
+  openWorkoutEditor,
+} from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { Icon, type IconName } from "./Icon";
@@ -25,7 +31,7 @@ const BASE_QUICK_OPTIONS: QuickOption[] = [
   {
     kind: "cardio",
     title: "有氧运动（Apple 健身）",
-    desc: "打开 Apple 健身记录有氧",
+    desc: "选择有氧方式，跳转 Apple 健身直接开练",
     accent: "workout-accent",
     icon: "heart",
   },
@@ -63,7 +69,6 @@ const TEXT_LOG_OPTION: QuickOption = {
 export function QuickRecordSheetBody() {
   const aiReady = useAuthStore((s) => s.aiReady);
   const closeModalSilent = useUiStore((s) => s.closeModalSilent);
-  const notify = useUiStore((s) => s.notify);
 
   const options = aiReady
     ? [...BASE_QUICK_OPTIONS.slice(0, 4), TEXT_LOG_OPTION, BASE_QUICK_OPTIONS[4]!]
@@ -83,7 +88,7 @@ export function QuickRecordSheetBody() {
               if (item.kind === "workout") {
                 openWorkoutEditor();
               } else if (item.kind === "cardio") {
-                triggerAppleFitnessLaunch("cardio", { notify });
+                openCardioLauncherModal();
               } else if (item.kind === "diet") {
                 openDietEditor({ date: today() });
               } else if (item.kind === "weight") {

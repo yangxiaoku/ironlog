@@ -13,6 +13,7 @@ const TextLogModal = lazy(() => import("../components/ai/AiModals").then((m) => 
 
 const AppleDailyDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleDailyDetailsModal })));
 const AppleWorkoutDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleWorkoutDetailsModal })));
+const CardioLauncherModal = lazy(() => import("../components/apple/CardioLauncherModal").then((m) => ({ default: m.CardioLauncherModal })));
 const DeviceSetupModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.DeviceSetupModal })));
 const HealthDataImportModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.HealthDataImportModal })));
 const HealthDataWebhookModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.HealthDataWebhookModal })));
@@ -45,7 +46,13 @@ const WeightEditorModal = lazy(() => import("../components/weight/WeightEditorMo
 const WorkoutEditorModal = lazy(() => import("../components/workout/WorkoutEditorModal").then((m) => ({ default: m.WorkoutEditorModal })));
 const WorkoutReportModal = lazy(() => import("../components/workout/WorkoutReportModal").then((m) => ({ default: m.WorkoutReportModal })));
 import { apiFetch } from "./api";
-import { inferAppleFitnessKind, triggerAppleFitnessLaunch } from "./apple-fitness";
+import {
+  inferAppleCardioPreset,
+  inferAppleFitnessKind,
+  triggerAppleCardioLaunch,
+  triggerAppleFitnessLaunch,
+  type AppleCardioPresetId,
+} from "./apple-fitness";
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
 import { shortDate, today } from "./date";
@@ -138,12 +145,31 @@ export function openWorkoutEditor(
     const prefs = readWorkoutPreferences();
     if (prefs.appleFitnessAutoLaunch) {
       const kind = inferAppleFitnessKind(seed?.exercises, seed?.title);
-      const res = triggerAppleFitnessLaunch(kind, { prefs, silentNonIos: true });
+      const cardioPreset = kind === "cardio" ? inferAppleCardioPreset(seed?.exercises, seed?.title) : null;
+      const res = cardioPreset
+        ? triggerAppleCardioLaunch(cardioPreset.id, { prefs, silentNonIos: true })
+        : triggerAppleFitnessLaunch(kind, { prefs, silentNonIos: true });
       if (res.launched) {
-        ui.notify("已拉起 Apple 健身 / 快捷指令");
+        ui.notify(cardioPreset ? `已拉起 ${cardioPreset.label}` : "已拉起 Apple 健身 / 快捷指令");
       }
     }
   }
+}
+
+export function openCardioLauncherModal(initialPresetId?: AppleCardioPresetId): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: "选择有氧方式",
+    content: (
+      <CardioLauncherModal
+        initialPresetId={initialPresetId}
+        onOpenDeviceSetup={() => {
+          ui.closeTopModal();
+          openDeviceSetupModal();
+        }}
+      />
+    ),
+  });
 }
 
 export async function resumeLocalWorkoutDraft(

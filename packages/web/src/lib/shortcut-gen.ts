@@ -1907,13 +1907,13 @@ export function buildIronlogUnifiedAppleHubShortcut({
     `默认运动：${sportLabel}（${resolvedEnv}），兜底窗口 ${resolvedMinutes} 分钟；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
     `  • strength：上报开始事件并跳转「健身」App（若需直开 Watch 传统力量，可在 strength 分支末尾将「打开 App（健身）」替换为「开始体能训练 → 传统力量训练」）`,
-    `  • cardio：直开 Apple「健身」App 开启有氧`,
-    `  • end：等待 5 秒并回传活动能量、心率${distanceSpec ? "、距离" : ""}（优先匹配 active 开始事件，未打卡开始则自动按最近 ${resolvedMinutes} 分钟直传）`,
+    `  • cardio / cardio:<方式>：按所选有氧方式（如 cardio:outdoor_run、cardio:stair_climbing）上报开始事件并启动；各分支末尾把「打开 Fitness」替换为「开始体能训练 → 对应项目」即可真正跳过健身首页直开！`,
+    `  • end：等待 5 秒并回传活动能量、心率${distanceSpec ? "、距离" : ""}（优先匹配当前运动或任意刚开启的 active 有氧/力量事件，未打卡开始则自动按最近 ${resolvedMinutes} 分钟直传）`,
     `  • daily：同步今日选定 Apple 健康指标`,
     `在手机上直接点击运行（无入参）时，会自动弹出 4 合 1 菜单。`,
   ].join("\n");
 
-  const makeMenuSetMode = (modeValue: "strength" | "cardio" | "end" | "daily") => {
+  const makeMenuSetMode = (modeValue: string) => {
     const valUuid = uuidFactory();
     return [
       textActionXml({ uuid: valUuid, text: modeValue }),
@@ -1970,16 +1970,81 @@ export function buildIronlogUnifiedAppleHubShortcut({
     ],
   });
 
-  // Branch 2: cardio -> open Apple Fitness
+  const cardioRoutes: ReadonlyArray<{
+    id: string;
+    label: string;
+    appleWorkoutLabel: string;
+    activityType: string;
+    environment: ShortcutEnvironment;
+  }> = [
+    { id: "outdoor_run", label: "户外跑步", appleWorkoutLabel: "户外跑步", activityType: "running", environment: "outdoor" },
+    { id: "indoor_run", label: "室内跑步", appleWorkoutLabel: "室内跑步", activityType: "running", environment: "indoor" },
+    { id: "outdoor_cycle", label: "户外骑行", appleWorkoutLabel: "户外单车", activityType: "cycling", environment: "outdoor" },
+    { id: "indoor_cycle", label: "室内单车", appleWorkoutLabel: "室内单车", activityType: "cycling", environment: "indoor" },
+    { id: "stair_climbing", label: "爬楼机", appleWorkoutLabel: "踏步机", activityType: "stairClimbing", environment: "indoor" },
+    { id: "elliptical", label: "椭圆机", appleWorkoutLabel: "椭圆机", activityType: "elliptical", environment: "indoor" },
+    { id: "rowing", label: "划船机", appleWorkoutLabel: "划船机", activityType: "rowing", environment: "indoor" },
+    { id: "swimming", label: "游泳", appleWorkoutLabel: "泳池游泳", activityType: "swimming", environment: "indoor" },
+    { id: "hiit", label: "HIIT", appleWorkoutLabel: "高强度间歇训练", activityType: "highIntensityIntervalTraining", environment: "indoor" },
+    { id: "jump_rope", label: "跳绳", appleWorkoutLabel: "跳绳", activityType: "jumpRope", environment: "indoor" },
+    { id: "outdoor_walk", label: "户外步行", appleWorkoutLabel: "户外步行", activityType: "walking", environment: "outdoor" },
+    { id: "hiking", label: "徒步", appleWorkoutLabel: "徒步", activityType: "hiking", environment: "outdoor" },
+    { id: "mixed_cardio", label: "混合有氧", appleWorkoutLabel: "混合有氧", activityType: "mixedCardio", environment: "indoor" },
+  ];
+
+  // Branch 2: cardio -> interactive menu of cardio modalities, setting v_mode to cardio:<id>
   const cardioBranch = conditionalBlock({
     groupUuid: uuidFactory(),
     input: { kind: "variable", variableName: "v_mode" },
     condition: 4,
     equalsText: "cardio",
-    bodyActions: [openAppActionXml("com.apple.Fitness", "Fitness")],
+    bodyActions: chooseFromMenuBlock({
+      groupUuid: uuidFactory(),
+      prompt: "选择有氧方式",
+      items: [
+        ...cardioRoutes.map((route) => ({
+          title: route.label,
+          actions: makeMenuSetMode(`cardio:${route.id}`),
+        })),
+        { title: "直接打开健身 App", actions: [openAppActionXml("com.apple.Fitness", "Fitness")] },
+      ],
+    }),
   });
 
-  // Branch 3: end -> check active start event or fallback recent workout window upload
+  // Branch 2b..n: cardio:<id> -> log modality start event + launch Fitness (user can swap openapp for Start Workout)
+  const cardioRouteBranches = cardioRoutes.flatMap((route) => {
+    const startDateUuid = uuidFactory();
+    return conditionalBlock({
+      groupUuid: uuidFactory(),
+      input: { kind: "variable", variableName: "v_mode" },
+      condition: 4,
+      equalsText: `cardio:${route.id}`,
+      bodyActions: [
+        currentDateActionXml({ uuid: startDateUuid }),
+        downloadJsonActionXml({
+          uuid: uuidFactory(),
+          endpoint: eventsEndpoint,
+          endpointPath: prelude ? eventsPath : undefined,
+          token: cleanToken,
+          originUuid: prelude?.originUuid,
+          tokenUuid: prelude?.tokenUuid,
+          bodyItems: [
+            { key: "schemaVersion", value: "1", itemType: 3 },
+            { key: "event", value: "start" },
+            { key: "activityType", value: route.activityType },
+            { key: "environment", value: route.environment },
+            { key: "occurredAt", outputAttachment: { name: "Date", uuid: startDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+          ],
+        }),
+        commentActionXml(
+          `【${route.label}】如需跳过健身首页直接开练，把下方「打开 Fitness」替换为「开始体能训练 → ${route.appleWorkoutLabel}」`,
+        ),
+        openAppActionXml("com.apple.Fitness", "Fitness"),
+      ],
+    });
+  });
+
+  // Branch 3: end -> check active start event (default activityType or any active cardio/strength) or fallback recent workout window upload
   const endDateUuid = uuidFactory();
   const activeReqUuid = uuidFactory();
   const elapsedValUuid = uuidFactory();
@@ -1989,6 +2054,24 @@ export function buildIronlogUnifiedAppleHubShortcut({
     dateFilter: {
       kind: "betweenDates",
       startDateUuid: pairedStartUuid,
+      startDateOutputName: "Adjusted Date",
+      endDateUuid: endDateUuid,
+      endDateOutputName: "Date",
+    },
+    distanceSpec,
+  });
+  const activeAnyPath = "/api/integrations/apple-health/events/active?activityType=any";
+  const activeAnyEndpoint = `${prefix}${activeAnyPath}`;
+  const activeAnyReqUuid = uuidFactory();
+  const anyElapsedValUuid = uuidFactory();
+  const anyTypeValUuid = uuidFactory();
+  const anyEnvValUuid = uuidFactory();
+  const anyPairedStartUuid = uuidFactory();
+  const anyPairedMetrics = buildWorkoutWindowMetricsActions({
+    uuidFactory,
+    dateFilter: {
+      kind: "betweenDates",
+      startDateUuid: anyPairedStartUuid,
       startDateOutputName: "Adjusted Date",
       endDateUuid: endDateUuid,
       endDateOutputName: "Date",
@@ -2062,31 +2145,91 @@ export function buildIronlogUnifiedAppleHubShortcut({
           }),
         ],
         otherwiseActions: [
-          adjustDateSubtractMinutesActionXml({
-            uuid: fallbackStartUuid,
-            minutes: resolvedMinutes,
-            inputUuid: endDateUuid,
-            inputName: "Date",
-          }),
-          ...fallbackMetrics.actions,
           downloadJsonActionXml({
-            uuid: uuidFactory(),
-            endpoint: workoutsEndpoint,
-            endpointPath: prelude ? workoutsPath : undefined,
+            uuid: activeAnyReqUuid,
+            endpoint: activeAnyEndpoint,
+            endpointPath: prelude ? activeAnyPath : undefined,
             token: cleanToken,
             originUuid: prelude?.originUuid,
             tokenUuid: prelude?.tokenUuid,
-            bodyItems: [
-              { key: "schemaVersion", value: "1", itemType: 3 },
-              { key: "source", value: "shortcut" },
-              { key: "captureMethod", value: "trigger" },
-              { key: "durationKind", value: "event_elapsed" },
-              { key: "activityType", value: activityType },
-              { key: "environment", value: resolvedEnv },
-              { key: "startedAt", outputAttachment: { name: "Adjusted Date", uuid: fallbackStartUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-              { key: "endedAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
-              { key: "durationMinutes", value: String(resolvedMinutes), itemType: 3 },
-              ...fallbackMetrics.bodyItems,
+            method: "GET",
+          }),
+          getDictionaryValueActionXml({
+            uuid: anyElapsedValUuid,
+            key: "elapsedMinutes",
+            inputUuid: activeAnyReqUuid,
+            inputName: "Contents of URL",
+          }),
+          getDictionaryValueActionXml({
+            uuid: anyTypeValUuid,
+            key: "activityType",
+            inputUuid: activeAnyReqUuid,
+            inputName: "Contents of URL",
+          }),
+          getDictionaryValueActionXml({
+            uuid: anyEnvValUuid,
+            key: "environment",
+            inputUuid: activeAnyReqUuid,
+            inputName: "Contents of URL",
+          }),
+          ...conditionalBlock({
+            groupUuid: uuidFactory(),
+            input: { kind: "output", outputUuid: anyElapsedValUuid, outputName: "Dictionary Value" },
+            condition: 100,
+            bodyActions: [
+              adjustDateSubtractMinutesActionXml({
+                uuid: anyPairedStartUuid,
+                minutesUuid: anyElapsedValUuid,
+                minutesOutputName: "Dictionary Value",
+                inputUuid: endDateUuid,
+                inputName: "Date",
+              }),
+              ...anyPairedMetrics.actions,
+              downloadJsonActionXml({
+                uuid: uuidFactory(),
+                endpoint: eventsEndpoint,
+                endpointPath: prelude ? eventsPath : undefined,
+                token: cleanToken,
+                originUuid: prelude?.originUuid,
+                tokenUuid: prelude?.tokenUuid,
+                bodyItems: [
+                  { key: "schemaVersion", value: "1", itemType: 3 },
+                  { key: "event", value: "end" },
+                  { key: "activityType", outputAttachment: { name: "Dictionary Value", uuid: anyTypeValUuid } },
+                  { key: "environment", outputAttachment: { name: "Dictionary Value", uuid: anyEnvValUuid } },
+                  { key: "occurredAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+                  ...anyPairedMetrics.bodyItems,
+                ],
+              }),
+            ],
+            otherwiseActions: [
+              adjustDateSubtractMinutesActionXml({
+                uuid: fallbackStartUuid,
+                minutes: resolvedMinutes,
+                inputUuid: endDateUuid,
+                inputName: "Date",
+              }),
+              ...fallbackMetrics.actions,
+              downloadJsonActionXml({
+                uuid: uuidFactory(),
+                endpoint: workoutsEndpoint,
+                endpointPath: prelude ? workoutsPath : undefined,
+                token: cleanToken,
+                originUuid: prelude?.originUuid,
+                tokenUuid: prelude?.tokenUuid,
+                bodyItems: [
+                  { key: "schemaVersion", value: "1", itemType: 3 },
+                  { key: "source", value: "shortcut" },
+                  { key: "captureMethod", value: "trigger" },
+                  { key: "durationKind", value: "event_elapsed" },
+                  { key: "activityType", value: activityType },
+                  { key: "environment", value: resolvedEnv },
+                  { key: "startedAt", outputAttachment: { name: "Adjusted Date", uuid: fallbackStartUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+                  { key: "endedAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+                  { key: "durationMinutes", value: String(resolvedMinutes), itemType: 3 },
+                  ...fallbackMetrics.bodyItems,
+                ],
+              }),
             ],
           }),
         ],
@@ -2117,6 +2260,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     ...resolveModeActions,
     ...strengthBranch,
     ...cardioBranch,
+    ...cardioRouteBranches,
     ...endBranch,
     ...dailyBranch,
   ];

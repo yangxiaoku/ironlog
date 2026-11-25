@@ -18,13 +18,20 @@ import {
   writeWorkoutPreference,
 } from "../packages/web/src/lib/workout-helpers.ts";
 import {
+  APPLE_CARDIO_PRESETS,
   APPLE_FITNESS_APP_URL,
+  buildAppleCardioLaunchUrl,
   buildAppleFitnessLaunchUrl,
   buildAppleHubActionUrl,
+  inferAppleCardioPreset,
   inferAppleFitnessKind,
   isAppleMobileDevice,
+  readLastCardioPreset,
+  resolveCardioShortcutName,
+  triggerAppleCardioLaunch,
   triggerAppleFitnessLaunch,
   triggerAppleHubAction,
+  writeLastCardioPreset,
 } from "../packages/web/src/lib/apple-fitness.ts";
 import {
   cachedQuery,
@@ -822,5 +829,116 @@ test("applyDeloadToTarget scales sets and weight cleanly and deload prefs round-
   } finally {
     if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
     else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("cardio presets, shortcut naming, inference, and per-modality launch routing work cleanly", () => {
+  assert.equal(APPLE_CARDIO_PRESETS.length, 13);
+
+  const indoorRun = inferAppleCardioPreset(
+    [{ snapshot: { mode: "timed", name: "跑步机坡度走" } }],
+    "跑步机有氧",
+  );
+  assert.equal(indoorRun?.id, "indoor_run");
+  assert.equal(inferAppleCardioPreset(undefined, "户外慢跑 5km")?.id, "outdoor_run");
+  assert.equal(inferAppleCardioPreset(undefined, "动感单车 40分钟")?.id, "indoor_cycle");
+  assert.equal(inferAppleCardioPreset(undefined, "周末公路骑行")?.id, "outdoor_cycle");
+  assert.equal(inferAppleCardioPreset(undefined, "爬楼机 30分钟")?.id, "stair_climbing");
+  assert.equal(inferAppleCardioPreset(undefined, "椭圆机恢复")?.id, "elliptical");
+  assert.equal(inferAppleCardioPreset(undefined, "HIIT 燃脂")?.id, "hiit");
+  assert.equal(inferAppleCardioPreset([{ snapshot: { mode: "reps", name: "杠铃深蹲" } }], "下肢力量"), null);
+
+  assert.equal(resolveCardioShortcutName(indoorRun!, "铁记开始有氧"), "铁记开始有氧-室内跑步");
+  assert.equal(resolveCardioShortcutName(indoorRun!, "开始-{sport}-手表"), "开始-室内跑步-手表");
+
+  assert.equal(
+    buildAppleCardioLaunchUrl("stair_climbing", {
+      appleCardioLaunch: "shortcut",
+      appleCardioShortcutName: "铁记开始有氧",
+    }),
+    `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始有氧-爬楼机")}&input=text&text=stair_climbing`,
+  );
+  assert.equal(
+    buildAppleCardioLaunchUrl("stair_climbing", {
+      appleCardioLaunch: "hub",
+      appleCardioShortcutName: "铁记开始有氧",
+      appleHubShortcutName: "铁记全能",
+    }),
+    `shortcuts://run-shortcut?name=${encodeURIComponent("铁记全能")}&input=text&text=${encodeURIComponent("cardio:stair_climbing")}`,
+  );
+  assert.equal(
+    buildAppleCardioLaunchUrl("stair_climbing", {
+      appleCardioLaunch: "fitness_app",
+      appleCardioShortcutName: "铁记开始有氧",
+    }),
+    APPLE_FITNESS_APP_URL,
+  );
+  assert.equal(
+    buildAppleCardioLaunchUrl("stair_climbing", {
+      appleCardioLaunch: "off",
+      appleCardioShortcutName: "铁记开始有氧",
+    }),
+    null,
+  );
+
+  const prevStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const prevWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const prevNav = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const prevDoc = Object.getOwnPropertyDescriptor(globalThis, "document");
+  const mem = new Map<string, string>();
+  const loc = { href: "http://localhost/" };
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    writable: true,
+    value: {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => { mem.set(k, v); },
+      removeItem: (k: string) => { mem.delete(k); },
+    },
+  });
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    writable: true,
+    value: { location: loc, setTimeout: globalThis.setTimeout },
+  });
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    writable: true,
+    value: {
+      userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_2 like Mac OS X)",
+      platform: "iPhone",
+      maxTouchPoints: 5,
+    },
+  });
+  Object.defineProperty(globalThis, "document", { configurable: true, writable: true, value: undefined });
+
+  try {
+    assert.equal(readLastCardioPreset(), null);
+    writeLastCardioPreset("rowing");
+    assert.equal(readLastCardioPreset(), "rowing");
+
+    const launched = triggerAppleCardioLaunch("indoor_run", {
+      prefs: {
+        ...DEFAULT_WORKOUT_PREFERENCES,
+        appleCardioLaunch: "shortcut",
+        appleCardioShortcutName: "铁记开始有氧",
+      },
+      silentNonIos: true,
+    });
+    assert.equal(launched.launched, true);
+    assert.equal(readLastCardioPreset(), "indoor_run");
+    assert.equal(
+      loc.href,
+      `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始有氧-室内跑步")}&input=text&text=indoor_run`,
+    );
+  } finally {
+    if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+    if (prevWindow) Object.defineProperty(globalThis, "window", prevWindow);
+    else Reflect.deleteProperty(globalThis, "window");
+    if (prevNav) Object.defineProperty(globalThis, "navigator", prevNav);
+    else Reflect.deleteProperty(globalThis, "navigator");
+    if (prevDoc) Object.defineProperty(globalThis, "document", prevDoc);
+    else Reflect.deleteProperty(globalThis, "document");
   }
 });

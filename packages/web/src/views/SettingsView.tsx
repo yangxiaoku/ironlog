@@ -28,6 +28,7 @@ import {
 } from "../lib/workout-helpers";
 import {
   openBackupRestoreModal,
+  openCardioLauncherModal,
   openCsvImportModal,
   openDeviceSetupModal,
   openHealthDataImportModal,
@@ -1210,7 +1211,7 @@ export function SettingsView() {
                       className="secondary-button"
                       onClick={() => {
                         triggerHaptic("light");
-                        triggerAppleFitnessLaunch("cardio", { prefs: workoutPrefs, notify });
+                        openCardioLauncherModal();
                       }}
                     >
                       <Icon name="heart" size={14} /> 打开有氧健身
@@ -1320,9 +1321,9 @@ export function SettingsView() {
                     <div className="segments">
                       {(
                         [
-                          ["fitness_app", "健身 App"],
+                          ["shortcut", "按项目直开"],
                           ["hub", "全能联动"],
-                          ["shortcut", "独立快捷指令"],
+                          ["fitness_app", "健身 App"],
                           ["off", "关闭"],
                         ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
                       ).map(([mode, label]) => (
@@ -1340,21 +1341,13 @@ export function SettingsView() {
                   {workoutPrefs.appleCardioLaunch === "shortcut" ? (
                     <div className="field">
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <span>独立有氧快捷指令名称</span>
+                        <span>有氧直开快捷指令前缀</span>
                         <button
                           type="button"
                           className="quiet"
-                          onClick={() =>
-                            triggerAppleFitnessLaunch("cardio", {
-                              prefs: {
-                                ...workoutPrefs,
-                                appleCardioShortcutName: cardioShortcutInput.trim() || DEFAULT_APPLE_CARDIO_SHORTCUT,
-                              },
-                              notify,
-                            })
-                          }
+                          onClick={() => openCardioLauncherModal()}
                         >
-                          测试跳转
+                          选择并测试
                         </button>
                       </div>
                       <input
@@ -1372,6 +1365,9 @@ export function SettingsView() {
                           updateWorkoutPref("appleCardioShortcutName", normalized);
                         }}
                       />
+                      <small className="muted">
+                        选择有氧时自动拼接为「前缀-方式」（如 <code>铁记开始有氧-爬楼机</code>），支持用 <code>{"{sport}"}</code> 自定义位置。
+                      </small>
                     </div>
                   ) : null}
 
