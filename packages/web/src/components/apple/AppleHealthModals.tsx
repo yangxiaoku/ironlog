@@ -1610,7 +1610,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 打开 iPhone <b>「健康」App → 右上角头像 → 隐私 → App → 快捷指令</b>，将需要的指标权限打开（建议「全部打开」）；
               </li>
               <li>
-                新版快捷指令已优化为仅采集<b>近 1 天</b>样本（血氧已对齐 <code>Oxygen Saturation</code>），秒级完成不卡顿；
+                新版快捷指令的步数/热量已改为<b>「今天 + 原生按日求和」</b>（秒级执行、不会回退成 7 天），最大摄氧量与血氧已对齐 <code>VO2 Max</code> / <code>Oxygen Saturation</code>；
               </li>
               <li>若某项提示「未找到样本」，说明今日暂未测得该项（可回到第 2 步换「基础 4项」或「自动体征 14项」）。</li>
             </ol>

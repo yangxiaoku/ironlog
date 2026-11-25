@@ -136,11 +136,15 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   // Can omit serverOrigin & token completely
   const dailyNoCreds = buildIronlogDailyHealthShortcut({
     useImportQuestions: true,
-    metrics: ["steps", "sleepSamples", "hrvMs", "bloodOxygenPct"],
+    metrics: ["steps", "sleepSamples", "hrvMs", "vo2Max", "bloodOxygenPct"],
   });
   makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
-  assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
-  assert.ok(!dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>"));
+  assert.ok(!dailyNoCreds.xml.includes("<integer>1001</integer>"));
+  assert.ok(dailyNoCreds.xml.includes("<string>VO2 Max</string>"));
+  assert.ok(!dailyNoCreds.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(dailyNoCreds.xml.includes("<string>Oxygen Saturation</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>Blood Oxygen</string>"));
   assert.ok(dailyNoCreds.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
@@ -185,16 +189,20 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
     token: secretToken,
     activityType: "traditionalStrengthTraining",
     windowMinutes: 45,
-    metrics: ["steps", "sleepSamples", "hrvMs", "bloodOxygenPct"],
+    metrics: ["steps", "sleepSamples", "hrvMs", "vo2Max", "bloodOxygenPct"],
     useImportQuestions: true,
   });
 
   assert.equal(hubUniversal.filename, `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut`);
   assert.equal(hubUniversal.shortcutName, DEFAULT_APPLE_HUB_SHORTCUT_NAME);
   assert.equal(hubUniversal.windowMinutes, 45);
-  assert.equal(hubUniversal.metricCount, 4);
-  assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
-  assert.ok(!hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
+  assert.equal(hubUniversal.metricCount, 5);
+  assert.ok(hubUniversal.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
+  assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
+  assert.ok(hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>"));
+  assert.ok(!hubUniversal.xml.includes("<integer>1001</integer>"));
+  assert.ok(hubUniversal.xml.includes("<string>VO2 Max</string>"));
+  assert.ok(!hubUniversal.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Oxygen Saturation</string>"));
   assert.ok(!hubUniversal.xml.includes("<string>Blood Oxygen</string>"));
   assert.ok(!hubUniversal.xml.includes(secretToken), "universal hub shortcut must not embed literal token");

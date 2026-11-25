@@ -113,7 +113,7 @@ export const APPLE_HEALTH_DAILY_GROUPS: HealthDailyGroupDef[] = [
       { key: "restingHeartRateBpm", typeLabel: "静息心率", typeLabelEn: "Resting Heart Rate", unit: null, mode: "latest", jsonKey: "restingHeartRateBpm" },
       { key: "heartRateBpm", typeLabel: "心率", typeLabelEn: "Heart Rate", unit: null, mode: "latest", jsonKey: "heartRateBpm" },
       { key: "hrvMs", typeLabel: "心率变异性", typeLabelEn: "Heart Rate Variability", unit: "ms", mode: "latest", jsonKey: "hrvMs" },
-      { key: "vo2Max", typeLabel: "最大摄氧量", typeLabelEn: "Cardio Fitness", unit: null, mode: "latest", jsonKey: "vo2Max" },
+      { key: "vo2Max", typeLabel: "最大摄氧量", typeLabelEn: "VO2 Max", unit: null, mode: "latest", jsonKey: "vo2Max" },
       { key: "bloodOxygenPct", typeLabel: "血氧", typeLabelEn: "Oxygen Saturation", unit: null, mode: "latest", jsonKey: "bloodOxygenPct", emptyHint: "需测过" },
       { key: "respiratoryRate", typeLabel: "呼吸频率", typeLabelEn: "Respiratory Rate", unit: null, mode: "latest", jsonKey: "respiratoryRate" },
     ],
@@ -166,7 +166,6 @@ const ACTIVITY_TYPE_RE = /^[A-Za-z][A-Za-z0-9_-]{0,47}$/;
 const VALID_EVENTS = new Set(["start", "end"]);
 const VALID_ENVIRONMENTS = new Set(Object.keys(APPLE_SHORTCUT_ENVIRONMENTS));
 const VALID_DAILY_GROUPS = new Set(APPLE_HEALTH_DAILY_GROUPS.map((g) => g.id));
-const DAILY_LOOKBACK_DAYS = 1;
 
 export function escapeXml(value: unknown): string {
   const map: Record<string, string> = {
@@ -702,6 +701,11 @@ type DateFilterSpec =
       startDateOutputName?: string;
       endDateUuid: string;
       endDateOutputName?: string;
+      byEndDate?: boolean;
+    }
+  | {
+      kind: "today";
+      byEndDate?: boolean;
     }
   | {
       kind: "lastDays";
@@ -727,8 +731,8 @@ function findHealthSampleActionXml({
   limit?: number | null;
 }): string {
   let dateTemplate: string[];
-  const isBoundedBetween = dateFilter.kind === "betweenDates";
-  if (isBoundedBetween) {
+  const dateProp = dateFilter.byEndDate ? "End Date" : "Start Date";
+  if (dateFilter.kind === "betweenDates") {
     dateTemplate = [
       "\t\t\t\t\t\t\t\t<dict>",
       "\t\t\t\t\t\t\t\t\t<key>Bounded</key>",
@@ -736,7 +740,7 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Operator</key>",
       "\t\t\t\t\t\t\t\t\t<integer>1003</integer>",
       "\t\t\t\t\t\t\t\t\t<key>Property</key>",
-      "\t\t\t\t\t\t\t\t\t<string>Start Date</string>",
+      `\t\t\t\t\t\t\t\t\t<string>${dateProp}</string>`,
       "\t\t\t\t\t\t\t\t\t<key>Removable</key>",
       "\t\t\t\t\t\t\t\t\t<false/>",
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
@@ -756,6 +760,21 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t</dict>",
       "\t\t\t\t\t\t\t\t</dict>",
     ];
+  } else if (dateFilter.kind === "today") {
+    dateTemplate = [
+      "\t\t\t\t\t\t\t\t<dict>",
+      "\t\t\t\t\t\t\t\t\t<key>Bounded</key>",
+      "\t\t\t\t\t\t\t\t\t<true/>",
+      "\t\t\t\t\t\t\t\t\t<key>Operator</key>",
+      "\t\t\t\t\t\t\t\t\t<integer>1002</integer>",
+      "\t\t\t\t\t\t\t\t\t<key>Property</key>",
+      `\t\t\t\t\t\t\t\t\t<string>${dateProp}</string>`,
+      "\t\t\t\t\t\t\t\t\t<key>Removable</key>",
+      "\t\t\t\t\t\t\t\t\t<false/>",
+      "\t\t\t\t\t\t\t\t\t<key>Values</key>",
+      "\t\t\t\t\t\t\t\t\t<dict/>",
+      "\t\t\t\t\t\t\t\t</dict>",
+    ];
   } else {
     const unitCode = 16;
     const amount = dateFilter.days;
@@ -766,7 +785,7 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Operator</key>",
       "\t\t\t\t\t\t\t\t\t<integer>1001</integer>",
       "\t\t\t\t\t\t\t\t\t<key>Property</key>",
-      `\t\t\t\t\t\t\t\t\t<string>${dateFilter.byEndDate ? "End Date" : "Start Date"}</string>`,
+      `\t\t\t\t\t\t\t\t\t<string>${dateProp}</string>`,
       "\t\t\t\t\t\t\t\t\t<key>Removable</key>",
       "\t\t\t\t\t\t\t\t\t<false/>",
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
@@ -814,7 +833,7 @@ function findHealthSampleActionXml({
     ...dateTemplate,
     "\t\t\t\t\t\t</array>",
     "\t\t\t\t\t\t<key>WFContentPredicateBoundedDate</key>",
-    isBoundedBetween ? "\t\t\t\t\t\t<true/>" : "\t\t\t\t\t\t<false/>",
+    "\t\t\t\t\t\t<true/>",
     "\t\t\t\t\t</dict>",
     "\t\t\t\t\t<key>WFSerializationType</key>",
     "\t\t\t\t\t<string>WFContentPredicateTableTemplate</string>",
@@ -1717,24 +1736,42 @@ function buildDailyHealthCollectionActions({
     { key: "source", value: "shortcut" },
   ];
   const rawNowUuid = uuidFactory();
+  const dayAgoUuid = uuidFactory();
   actions.push(currentDateActionXml({ uuid: rawNowUuid }));
+  actions.push(adjustDateSubtractMinutesActionXml({
+    uuid: dayAgoUuid,
+    minutes: 1440,
+    inputUuid: rawNowUuid,
+    inputName: "Date",
+  }));
   jsonBodyItems.push({
     key: "occurredAt",
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
+
+  const explicitWindowFilter = {
+    kind: "betweenDates" as const,
+    startDateUuid: dayAgoUuid,
+    startDateOutputName: "Adjusted Date",
+    endDateUuid: rawNowUuid,
+    endDateOutputName: "Date",
+  };
 
   for (const metric of selectedMetrics) {
     const findUuid = uuidFactory();
     const variableName = `v_${metric.key}`;
     const isSleep = metric.mode === "sleepIntervals";
     const latest = metric.mode === "latest";
+    const isDailySum = metric.mode === "dailySum";
     actions.push(findHealthSampleActionXml({
       uuid: findUuid,
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
-      groupBy: metric.mode === "dailySum" ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: DAILY_LOOKBACK_DAYS, byEndDate: isSleep },
-      sortOrder: latest ? "Latest First" : "Oldest First",
+      groupBy: isDailySum ? "Day" : null,
+      dateFilter: isDailySum
+        ? { kind: "today" }
+        : { ...explicitWindowFilter, byEndDate: isSleep },
+      sortOrder: isSleep ? "Oldest First" : "Latest First",
       limit: latest ? 1 : null,
     }));
 
@@ -1754,14 +1791,23 @@ function buildDailyHealthCollectionActions({
         { key: metric.jsonKey, varAttachment: variableName },
         { key: dateKey, varAttachment: { name: dateVariable, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
       );
+    } else if (isDailySum) {
+      const valueUuid = uuidFactory();
+      const sumUuid = uuidFactory();
+      bodyActions = [
+        getHealthDetailActionXml({ uuid: valueUuid, propertyName: "Value", inputUuid: findUuid }),
+        calculateStatisticsActionXml({ uuid: sumUuid, operation: "Sum", inputUuid: valueUuid, inputName: "Value" }),
+        setVariableActionXml({ variableName, inputUuid: sumUuid, inputName: "Sum" }),
+      ];
+      jsonBodyItems.push({ key: metric.jsonKey, varAttachment: variableName });
     } else {
       bodyActions = healthSampleRowsActions({
         uuidFactory,
         inputUuid: findUuid,
         variableName,
-        columns: isSleep ? ["Value", "Start Date", "End Date", "Duration"] : ["Start Date", "Value"],
+        columns: ["Value", "Start Date", "End Date", "Duration"],
       });
-      jsonBodyItems.push({ key: isSleep ? metric.jsonKey : `${metric.jsonKey}Samples`, varAttachment: variableName });
+      jsonBodyItems.push({ key: metric.jsonKey, varAttachment: variableName });
     }
 
     actions.push(...conditionalHasValueBlock({
