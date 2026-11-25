@@ -558,3 +558,146 @@ test("Store.list 读缓存在外部数组修改、同库跨实例写入与逻辑
     f.db.close();
   }
 });
+
+test("训练记录兼容历史 source='plan'/null 字段并保留详情级 Zod 报错信息", async () => {
+  const f = fixture();
+  try {
+    const owner = await f.login("workout-compat-user");
+
+    // Schema compatibility: legacy source, null rawPrompt/adjustments/timing/completedAt, offset ISO timestamps
+    const normalized = workoutSchema.parse({
+      title: "推胸日",
+      date: "2026-11-24",
+      startedAt: "2026-11-24T10:00:00+08:00",
+      endedAt: "2026-11-24T10:45:00+08:00",
+      timing: null,
+      status: "completed",
+      notes: "",
+      feeling: "balanced",
+      source: "plan",
+      rawPrompt: null,
+      adjustments: null,
+      targetSnapshot: null,
+      exercises: [
+        {
+          id: "ex-row-1",
+          exerciseId: "bench-press",
+          restSeconds: 90,
+          sets: [
+            {
+              id: "set-row-1",
+              type: "normal",
+              weight: 80,
+              reps: 8,
+              seconds: 0,
+              completed: true,
+              completedAt: null,
+              rir: null,
+            },
+          ],
+        },
+      ],
+    });
+    assert.equal(normalized.source, "manual");
+    assert.equal(normalized.rawPrompt, "");
+    assert.deepEqual(normalized.adjustments, []);
+    assert.equal(normalized.timing, undefined);
+
+    // End-to-end POST /api/records from plan preview payload
+    const planRes = await f.request(owner.token, "/api/web/starter-plans/ppl-3/adopt", { mode: "apply" });
+    assert.equal(planRes.status, 201);
+    const adopted = (await planRes.json()) as {
+      draft: { id: string; version: number; data: { routines: Array<{ id: string }> } };
+    };
+    const routineId = adopted.draft.data.routines[0]!.id;
+    const routineRes = await f.request(
+      owner.token,
+      `/api/web/routine?id=${encodeURIComponent(routineId)}&source=plan&date=2026-11-24`,
+    );
+    assert.equal(routineRes.status, 200);
+    const routinePayload = (await routineRes.json()) as {
+      name: string;
+      routineId: string;
+      planId: string | null;
+      planVersion: number | null;
+      targetSnapshot: unknown;
+      exercises: Array<{
+        exerciseId: string;
+        targetIndex: number;
+        restSeconds: number;
+        supersetGroup: string | null;
+        snapshot: unknown;
+        sets: number;
+        weight: number;
+        reps: number;
+        seconds: number;
+      }>;
+    };
+
+    const saveRes = await f.request(owner.token, "/api/records", {
+      opId: "save-from-routine-1",
+      id: "wk-routine-1",
+      kind: "workout",
+      baseVersion: 0,
+      deleted: false,
+      data: {
+        title: routinePayload.name,
+        date: "2026-11-24",
+        startedAt: "2026-11-24T09:00:00.000Z",
+        endedAt: "2026-11-24T09:50:00.000Z",
+        status: "completed",
+        notes: "",
+        feeling: "balanced",
+        source: "plan",
+        rawPrompt: null,
+        planId: routinePayload.planId,
+        planVersion: routinePayload.planVersion,
+        routineId: routinePayload.routineId,
+        targetSnapshot: routinePayload.targetSnapshot,
+        adjustments: null,
+        exercises: routinePayload.exercises.map((ex, i) => ({
+          id: `ex-${i}`,
+          exerciseId: ex.exerciseId,
+          targetIndex: ex.targetIndex,
+          restSeconds: ex.restSeconds,
+          supersetGroup: ex.supersetGroup,
+          snapshot: ex.snapshot,
+          sets: Array.from({ length: ex.sets }, (_, j) => ({
+            id: `set-${i}-${j}`,
+            type: "normal",
+            weight: ex.weight,
+            reps: ex.reps,
+            seconds: ex.seconds,
+            completed: true,
+            completedAt: "2026-11-24T09:30:00.000Z",
+            rir: null,
+          })),
+        })),
+      },
+    });
+    assert.equal(saveRes.status, 200);
+
+    // Invalid workout payload returns 400 with field-level details
+    const badRes = await f.request(owner.token, "/api/records", {
+      opId: "save-bad-1",
+      id: "wk-bad-1",
+      kind: "workout",
+      baseVersion: 0,
+      deleted: false,
+      data: {
+        title: "错位时间训练",
+        date: "2026-11-24",
+        startedAt: "2026-11-24T10:00:00.000Z",
+        endedAt: "2026-11-24T09:00:00.000Z",
+        status: "completed",
+        exercises: [],
+      },
+    });
+    assert.equal(badRes.status, 400);
+    const badJson = (await badRes.json()) as { error: string; details?: Array<{ message: string }> };
+    assert.equal(badJson.error, "输入格式不正确");
+    assert.ok(Array.isArray(badJson.details) && badJson.details.length > 0);
+  } finally {
+    f.db.close();
+  }
+});

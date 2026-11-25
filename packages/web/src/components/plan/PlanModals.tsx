@@ -28,6 +28,13 @@ import {
 
 const WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
 
+function safeUuid(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `id_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
 async function fetchMissingPrs(
   ids: string[],
   current: Map<string, ExercisePrInfo>,
@@ -868,7 +875,7 @@ export function TemplateEditorModal({
   const notify = useUiStore((s) => s.notify);
 
   const isEdit = Boolean(existingTemplate?.data);
-  const [tplId] = useState(() => existingTemplate?.id ?? `tpl_${crypto.randomUUID().slice(0, 12)}`);
+  const [tplId] = useState(() => existingTemplate?.id ?? `tpl_${safeUuid().slice(0, 12)}`);
   const baseVersion = existingTemplate?.version ?? 0;
 
   const [name, setName] = useState(existingTemplate?.data?.name ?? "");
@@ -1208,14 +1215,14 @@ export function RoutinePreviewModal({
 
   const handleLaunch = () => {
     const exercises = result.exercises.map((row) => ({
-      id: crypto.randomUUID(),
+      id: safeUuid(),
       exerciseId: row.exerciseId,
       targetIndex: row.targetIndex ?? null,
       restSeconds: row.restSeconds,
       supersetGroup: row.supersetGroup ?? null,
       snapshot: row.snapshot,
       sets: Array.from({ length: row.sets }, () => ({
-        id: crypto.randomUUID(),
+        id: safeUuid(),
         type: "normal" as const,
         weight: row.weight,
         reps: row.reps,

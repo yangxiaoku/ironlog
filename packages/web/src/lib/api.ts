@@ -66,14 +66,21 @@ export async function apiFetch<T = unknown>(
   });
 
   const data = (await response.json().catch(() => undefined)) as
-    | { error?: string; details?: Array<{ message?: string }> }
+    | { error?: string; details?: Array<{ path?: Array<string | number>; message?: string }> }
     | undefined;
 
   if (!response.ok) {
+    const firstDetail = data?.details?.[0];
+    const detailPath = Array.isArray(firstDetail?.path) ? firstDetail.path.join(".") : "";
+    const detailMsg = firstDetail?.message;
     const msg =
-      (path.startsWith("/auth/web/") ? data?.details?.[0]?.message : undefined) ??
-      data?.error ??
-      "请求失败，请重试";
+      path.startsWith("/auth/web/")
+        ? (detailMsg ?? data?.error ?? "请求失败，请重试")
+        : data?.error
+          ? detailMsg
+            ? `${data.error}（${detailPath ? `${detailPath}: ` : ""}${detailMsg}）`
+            : data.error
+          : (detailMsg ?? "请求失败，请重试");
     throw new ApiError(msg, response.status);
   }
 

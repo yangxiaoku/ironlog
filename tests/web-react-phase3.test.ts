@@ -537,3 +537,25 @@ test("AppShell renders LiveWorkoutBar inside .frame flow without floating overla
   assert.match(barRule, /position:\s*relative;/);
   assert.doesNotMatch(barRule, /position:\s*fixed;/);
 });
+
+test("PWA uses autoUpdate, apiFetch surfaces Zod details, and WorkoutEditorModal sanitizes payload fields", () => {
+  const viteConfig = readFileSync(resolve(process.cwd(), "packages/web/vite.config.ts"), "utf8");
+  const mainTsx = readFileSync(resolve(process.cwd(), "packages/web/src/main.tsx"), "utf8");
+  const apiTs = readFileSync(resolve(process.cwd(), "packages/web/src/lib/api.ts"), "utf8");
+  const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+
+  assert.match(viteConfig, /registerType:\s*"autoUpdate"/);
+  assert.match(viteConfig, /skipWaiting:\s*true/);
+  assert.match(viteConfig, /clientsClaim:\s*true/);
+  assert.match(mainTsx, /visibilitychange/);
+  assert.match(mainTsx, /randomUUID/);
+
+  assert.match(apiTs, /detailPath/);
+  assert.match(apiTs, /detailMsg/);
+
+  assert.match(editor, /function sanitizeTargetSnapshot/);
+  assert.match(editor, /function sanitizeExerciseSnapshot/);
+  assert.match(editor, /takeUniqueId/);
+  assert.match(planModals, /function safeUuid/);
+});

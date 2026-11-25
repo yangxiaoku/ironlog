@@ -188,9 +188,13 @@ export function createApp(
     if (error instanceof HTTPException)
       return c.json({ error: error.message }, error.status);
     if (error instanceof z.ZodError) {
-      if (c.req.path.startsWith(apple)) {
-        console.warn("Ironlog Apple Health input rejected", c.req.path, error.issues.map((i) => `${i.path.join(".")}:${i.message}`).join("; "));
-      }
+      const issuesSummary = error.issues.map((i) => `${i.path.join(".") || "<root>"}:${i.message}`).join("; ");
+      console.warn(
+        c.req.path.startsWith(apple) ? "Ironlog Apple Health input rejected" : "Ironlog input rejected",
+        c.req.method,
+        c.req.path,
+        issuesSummary,
+      );
       return c.json(
         {
           error: "输入格式不正确",

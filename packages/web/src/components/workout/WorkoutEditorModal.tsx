@@ -67,8 +67,98 @@ import { ExercisePickerModal } from "./ExercisePickerModal";
 const SET_TYPE_ORDER: SetType[] = ["normal", "warmup", "failure", "drop", "rest_pause"];
 const REST_PRESETS = [30, 60, 90, 120, 180];
 
+const RECORD_ID_RE = /^[a-zA-Z0-9_-]{1,100}$/;
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const VALID_SET_TYPES = new Set<SetType>(SET_TYPE_ORDER);
+const VALID_FEELINGS = new Set<FeelingKey>(["easy", "balanced", "fatigued"]);
+const VALID_MODES = new Set<ExerciseMode>(["reps", "timed", "assisted"]);
+
+function isValidRecordId(val: unknown): val is string {
+  return typeof val === "string" && RECORD_ID_RE.test(val);
+}
+
 function normalizeWorkoutSource(raw?: string): "manual" | "ai" | "agent" {
   return raw === "ai" || raw === "agent" ? raw : "manual";
+}
+
+function normalizeIsoTimestamp(raw: unknown, fallback?: string): string | undefined {
+  if (typeof raw !== "string" || !raw.trim()) return fallback;
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : fallback;
+}
+
+function sanitizeExerciseSnapshot(
+  raw: WorkoutExercise["snapshot"],
+): WorkoutExercise["snapshot"] {
+  if (!raw || typeof raw !== "object") return null;
+  const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 120) : "";
+  if (!name) return null;
+  if (!(raw.muscle in MUSCLES) || !(raw.equipment in EQUIPMENT) || !VALID_MODES.has(raw.mode)) {
+    return null;
+  }
+  const vm = Number(raw.volumeMultiplier);
+  return {
+    name,
+    muscle: raw.muscle,
+    equipment: raw.equipment,
+    mode: raw.mode,
+    volumeMultiplier: Number.isFinite(vm) ? Math.min(2, Math.max(1, vm)) : 1,
+  };
+}
+
+function sanitizeTargetSnapshot(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as { id?: unknown; name?: unknown; exercises?: unknown };
+  if (!isValidRecordId(r.id)) return null;
+  const name = typeof r.name === "string" ? r.name.trim().slice(0, 120) : "";
+  if (!name || !Array.isArray(r.exercises) || r.exercises.length === 0 || r.exercises.length > 100) {
+    return null;
+  }
+  const cleanExercises: Array<Record<string, unknown>> = [];
+  for (const item of r.exercises) {
+    if (!item || typeof item !== "object") return null;
+    const it = item as Record<string, unknown>;
+    if (!isValidRecordId(it.exerciseId)) return null;
+    const sets = Math.max(1, Math.min(100, Math.round(Number(it.sets) || 1)));
+    const repsMin = Math.max(1, Math.min(1000, Math.round(Number(it.repsMin) || 1)));
+    const repsMax = Math.max(repsMin, Math.min(1000, Math.round(Number(it.repsMax) || repsMin)));
+    const rawWeight = it.weight;
+    const weight =
+      rawWeight == null
+        ? null
+        : Number.isFinite(Number(rawWeight))
+          ? Math.max(0, Math.min(100000, Number(rawWeight)))
+          : null;
+    const seconds = Math.max(0, Math.min(86400, Math.round(Number(it.seconds) || 0)));
+    const restSeconds = Math.max(0, Math.min(900, Math.round(Number(it.restSeconds) || 90)));
+    const targetRir = Math.max(0, Math.min(10, Math.round(Number(it.targetRir ?? 2) || 0)));
+    const progression =
+      it.progression === "linear" || it.progression === "greyskull" || it.progression === "manual"
+        ? it.progression
+        : "double";
+    const rawInc = Number(it.increment);
+    const increment = Number.isFinite(rawInc) ? Math.max(0, Math.min(20, rawInc)) : 2.5;
+    const backupExerciseId = isValidRecordId(it.backupExerciseId) ? it.backupExerciseId : null;
+    const supersetGroup =
+      typeof it.supersetGroup === "string" && it.supersetGroup.trim()
+        ? it.supersetGroup.trim().slice(0, 16)
+        : null;
+    cleanExercises.push({
+      exerciseId: it.exerciseId,
+      sets,
+      repsMin,
+      repsMax,
+      weight,
+      seconds,
+      restSeconds,
+      targetRir,
+      progression,
+      increment,
+      backupExerciseId,
+      supersetGroup,
+    });
+  }
+  return { id: r.id, name, exercises: cleanExercises };
 }
 
 function newId(): string {
@@ -783,35 +873,88 @@ export function WorkoutEditorModal({
   ) => {
     const curRec = savedRecordRef.current;
     const cleanTitle = (title.trim() || "自由训练").slice(0, 120);
+    const cleanDate = ISO_DATE_RE.test(date) ? date : todayStr;
     const nowDate = new Date();
-    const startMs = Date.parse(sessionStart);
-    const endedAt =
-      targetStatus === "active"
-        ? null
-        : curRec?.data.endedAt && date === curRec.data.date
-          ? curRec.data.endedAt
-          : date === todayStr
-            ? new Date(Math.max(Number.isFinite(startMs) ? startMs : 0, nowDate.getTime())).toISOString()
-            : new Date((Number.isFinite(startMs) ? startMs : nowDate.getTime()) + Math.max(0, elapsedSeconds) * 1000).toISOString();
+    const nowMs = nowDate.getTime();
+    const nowIso = nowDate.toISOString();
+    const cleanStartedAt = normalizeIsoTimestamp(sessionStart, nowIso) ?? nowIso;
+    const startMs = Date.parse(cleanStartedAt);
 
-    const pausedRaw = pauseAt(timing, nowDate.getTime());
+    const pausedRaw = pauseAt(timing, nowMs);
+    const rawElapsed = Number(pausedRaw.elapsedSeconds);
     const pausedTiming: WorkoutTiming = {
-      elapsedSeconds: Math.max(0, Math.round(pausedRaw.elapsedSeconds)),
-      runningSince: pausedRaw.runningSince,
+      elapsedSeconds: Number.isFinite(rawElapsed) ? Math.max(0, Math.round(rawElapsed)) : 0,
+      runningSince: normalizeIsoTimestamp(pausedRaw.runningSince, null as unknown as string) ?? null,
     };
-    const resting = targetStatus === "active" && rest?.pausedLeftMs == null && (rest?.end ?? 0) > nowDate.getTime();
-    const sourceExercises = options?.exercisesOverride ?? exercises;
 
-    const sanitizedExercises = sourceExercises.map((ex) => ({
-      ...ex,
-      restSeconds: Math.max(0, Math.min(900, Math.round(ex.restSeconds ?? 90))),
-      sets: ex.sets.map((s) => ({
-        ...s,
-        weight: Math.max(0, Number(s.weight) || 0),
-        reps: Math.max(0, Math.min(1000, Math.round(Number(s.reps) || 0))),
-        seconds: Math.max(0, Math.min(86400, Math.round(Number(s.seconds) || 0))),
-      })),
-    }));
+    let endedAt: string | null = null;
+    if (targetStatus === "completed") {
+      const candidateEndedAt =
+        curRec?.data.endedAt && cleanDate === curRec.data.date
+          ? curRec.data.endedAt
+          : cleanDate === todayStr
+            ? new Date(Math.max(startMs, nowMs)).toISOString()
+            : new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString();
+      const parsedEndMs = Date.parse(candidateEndedAt);
+      endedAt = new Date(
+        Math.max(startMs, Number.isFinite(parsedEndMs) ? parsedEndMs : nowMs),
+      ).toISOString();
+    }
+
+    const resting = targetStatus === "active" && rest?.pausedLeftMs == null && (rest?.end ?? 0) > nowMs;
+    const sourceExercises = (options?.exercisesOverride ?? exercises).slice(0, 100);
+    const usedIds = new Set<string>();
+    const takeUniqueId = (candidate: unknown): string => {
+      if (isValidRecordId(candidate) && !usedIds.has(candidate)) {
+        usedIds.add(candidate);
+        return candidate;
+      }
+      let next = newId();
+      while (usedIds.has(next)) next = newId();
+      usedIds.add(next);
+      return next;
+    };
+
+    const sanitizedExercises: WorkoutExercise[] = sourceExercises
+      .filter((ex) => isValidRecordId(ex?.exerciseId))
+      .map((ex) => {
+        const cleanRest = Number(ex.restSeconds ?? 90);
+        const rawTargetIdx = ex.targetIndex == null ? NaN : Number(ex.targetIndex);
+        const cleanTargetIdx =
+          Number.isFinite(rawTargetIdx) && rawTargetIdx >= 0 && rawTargetIdx <= 99
+            ? Math.round(rawTargetIdx)
+            : null;
+        const cleanSuperset =
+          typeof ex.supersetGroup === "string" && ex.supersetGroup.trim()
+            ? ex.supersetGroup.trim().slice(0, 16)
+            : null;
+        return {
+          id: takeUniqueId(ex.id),
+          exerciseId: ex.exerciseId,
+          targetIndex: cleanTargetIdx,
+          supersetGroup: cleanSuperset,
+          restSeconds: Number.isFinite(cleanRest) ? Math.max(0, Math.min(900, Math.round(cleanRest))) : 90,
+          snapshot: sanitizeExerciseSnapshot(ex.snapshot),
+          sets: (Array.isArray(ex.sets) ? ex.sets : []).slice(0, 100).map((s) => {
+            const rawWeight = Number(s.weight);
+            const rawReps = Number(s.reps);
+            const rawSeconds = Number(s.seconds);
+            const rawRir = s.rir == null ? NaN : Number(s.rir);
+            const cleanCompleted = Boolean(s.completed);
+            const cleanCompletedAt = cleanCompleted ? normalizeIsoTimestamp(s.completedAt) : undefined;
+            return {
+              id: takeUniqueId(s.id),
+              type: VALID_SET_TYPES.has(s.type) ? s.type : "normal",
+              weight: Number.isFinite(rawWeight) ? Math.max(0, Math.min(100000, rawWeight)) : 0,
+              reps: Number.isFinite(rawReps) ? Math.max(0, Math.min(1000, Math.round(rawReps))) : 0,
+              seconds: Number.isFinite(rawSeconds) ? Math.max(0, Math.min(86400, Math.round(rawSeconds))) : 0,
+              completed: cleanCompleted,
+              ...(cleanCompletedAt ? { completedAt: cleanCompletedAt } : {}),
+              rir: Number.isFinite(rawRir) ? Math.max(0, Math.min(10, Math.round(rawRir))) : null,
+            };
+          }),
+        };
+      });
 
     const curMeta = sessionMetaRef.current;
     const rawPlanVersion = curRec?.data.planVersion ?? curMeta.planVersion;
@@ -819,32 +962,36 @@ export function WorkoutEditorModal({
       typeof rawPlanVersion === "number" && Number.isFinite(rawPlanVersion) && rawPlanVersion > 0
         ? Math.round(rawPlanVersion)
         : null;
+    const rawPlanId = curRec?.data.planId ?? curMeta.planId;
+    const rawRoutineId = curRec?.data.routineId ?? curMeta.routineId;
+    const rawPromptSource = curRec?.data.rawPrompt ?? curMeta.rawPrompt;
+    const rawAdjustments = curRec?.data.adjustments ?? curMeta.adjustments;
 
     const workoutData: WorkoutData = {
       title: cleanTitle,
-      date,
-      startedAt: sessionStart,
+      date: cleanDate,
+      startedAt: cleanStartedAt,
       endedAt,
       status: targetStatus,
-      durationUnknown: curRec?.data.durationUnknown,
-      notes: notes.trim(),
-      feeling,
+      ...(typeof curRec?.data.durationUnknown === "boolean" ? { durationUnknown: curRec.data.durationUnknown } : {}),
+      notes: notes.trim().slice(0, 4000),
+      feeling: feeling && VALID_FEELINGS.has(feeling) ? feeling : null,
       source: normalizeWorkoutSource(curRec?.data.source ?? curMeta.source),
-      rawPrompt: curRec?.data.rawPrompt ?? curMeta.rawPrompt,
-      planId: curRec?.data.planId ?? curMeta.planId ?? null,
+      rawPrompt: typeof rawPromptSource === "string" ? rawPromptSource.slice(0, 4000) : "",
+      planId: isValidRecordId(rawPlanId) ? rawPlanId : null,
       planVersion,
-      routineId: curRec?.data.routineId ?? curMeta.routineId ?? null,
-      targetSnapshot: curRec?.data.targetSnapshot ?? curMeta.targetSnapshot,
-      adjustments: curRec?.data.adjustments ?? curMeta.adjustments,
+      routineId: isValidRecordId(rawRoutineId) ? rawRoutineId : null,
+      targetSnapshot: sanitizeTargetSnapshot(curRec?.data.targetSnapshot ?? curMeta.targetSnapshot),
+      adjustments: Array.isArray(rawAdjustments) ? rawAdjustments.slice(0, 100) : [],
       exercises: sanitizedExercises,
       ...(isHistoricalEdit && !hadTiming ? {} : { timing: pausedTiming }),
-      restEndsAt: resting && rest ? Math.round(rest.end) : null,
-      restStartedAt: resting && rest ? Math.max(0, Math.round(rest.start)) : null,
+      restEndsAt: resting && rest && Number.isFinite(rest.end) ? Math.round(rest.end) : null,
+      restStartedAt: resting && rest && Number.isFinite(rest.start) ? Math.max(0, Math.round(rest.start)) : null,
     };
 
     const body = {
       opId: newId(),
-      id: workoutId,
+      id: isValidRecordId(workoutId) ? workoutId : newId(),
       kind: "workout" as const,
       baseVersion: curRec?.version ?? 0,
       deleted: false,

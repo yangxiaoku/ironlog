@@ -65,7 +65,10 @@ export const setSchema = z.object({
   reps: z.number().int().min(0).max(1000),
   seconds: z.number().int().min(0).max(86400).default(0),
   completed: z.boolean(),
-  completedAt: z.iso.datetime().optional(),
+  completedAt: z.preprocess(
+    (v) => (v === null || v === "" ? undefined : v),
+    z.iso.datetime({ offset: true }).optional(),
+  ),
   rir: z.number().int().min(0).max(10).nullable().default(null),
 });
 export const sessionExerciseSchema = z.object({
@@ -117,7 +120,7 @@ export const workoutAdaptationSchema = z.object({
   id,
   workoutId: id,
   baseVersion: z.number().int().min(0),
-  createdAt: z.iso.datetime(),
+  createdAt: z.iso.datetime({ offset: true }),
   summary: z.string().trim().min(1).max(4000),
   source: z.enum(["ai", "manual", "agent"]).default("ai"),
   changes: z.array(workoutAdjustmentSchema).max(6),
@@ -129,18 +132,24 @@ export const workoutSchema = z
   .object({
     title: shortText,
     date,
-    startedAt: z.iso.datetime(),
-    endedAt: z.iso.datetime().nullable(),
-    timing: z.object({
-      elapsedSeconds: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
-      runningSince: z.iso.datetime().nullable(),
-    }).optional(),
+    startedAt: z.iso.datetime({ offset: true }),
+    endedAt: z.iso.datetime({ offset: true }).nullable(),
+    timing: z.preprocess(
+      (v) => (v === null ? undefined : v),
+      z.object({
+        elapsedSeconds: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+        runningSince: z.iso.datetime({ offset: true }).nullable(),
+      }).optional(),
+    ),
     durationUnknown: z.boolean().optional(),
     status: z.enum(["active", "completed", "cancelled"]),
     notes: z.string().max(4000).default(""),
     feeling: z.enum(["fatigued", "balanced", "easy"]).nullable().default(null),
-    source: z.enum(["manual", "ai", "agent"]).default("manual"),
-    rawPrompt: z.string().max(4000).default(""),
+    source: z.preprocess(
+      (v) => (v === "plan" || v === "template" || v === "scheduled" || v === null || v === "" ? "manual" : v),
+      z.enum(["manual", "ai", "agent"]).default("manual"),
+    ),
+    rawPrompt: z.preprocess((v) => (v === null ? "" : v), z.string().max(4000).default("")),
     planId: id.nullable().default(null),
     planVersion: z.number().int().positive().nullable().default(null),
     routineId: id.nullable().default(null),
@@ -151,7 +160,7 @@ export const workoutSchema = z
     exercises: z.array(sessionExerciseSchema).max(100),
     restEndsAt: z.number().nullable().default(null),
     restStartedAt: z.number().int().nonnegative().nullish(),
-    adjustments: z.array(workoutAdaptationSchema).max(100).default([]),
+    adjustments: z.preprocess((v) => (v === null ? [] : v), z.array(workoutAdaptationSchema).max(100).default([])),
   })
   .superRefine((value, ctx) => {
     const ids = value.exercises.flatMap((item) => [

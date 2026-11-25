@@ -31,7 +31,7 @@ export default defineConfig({
     ironlogCssUrls(),
     react(),
     VitePWA({
-      registerType: "prompt",
+      registerType: "autoUpdate",
       includeAssets: ["icon-192.png", "icon-512.png"],
       manifest: {
         name: "铁记 · 训练工作台",
@@ -48,6 +48,9 @@ export default defineConfig({
         ],
       },
       workbox: {
+        skipWaiting: true,
+        clientsClaim: true,
+        cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,webmanifest}", "icon-*.png"],
         navigateFallback: "/app/index.html",
         runtimeCaching: [
