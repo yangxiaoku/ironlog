@@ -167,6 +167,21 @@ export const appleEventInput = z.preprocess(
 );
 export type AppleWorkoutInput = z.infer<typeof appleWorkoutInput>;
 type EventInput = z.infer<typeof appleEventInput>;
+export const appleWebSessionStartInput = z.object({
+  activityType,
+  environment,
+  startedAt: z.iso.datetime({ offset: true }).optional(),
+  onlyIfIdle: z.boolean().optional(),
+});
+
+function inferDistanceMode(rawType: string): "foot" | "cycling" | "swimming" | "" {
+  const key = rawType.trim().toLowerCase();
+  if (key === "running" || key === "walking" || key === "hiking") return "foot";
+  if (key === "cycling") return "cycling";
+  if (key === "swimming") return "swimming";
+  return "";
+}
+
 type Device = { id: string; userId: string };
 
 function mergeHeartRate(first: AppleWorkoutInput["heartRate"], second: AppleWorkoutInput["heartRate"]) {
@@ -221,6 +236,7 @@ export class AppleHealth {
   private readonly uploads = new Map<string, number>();
   private readonly stmtInsertDevice: Stmt;
   private readonly stmtIdentifyDevice: Stmt;
+  private readonly stmtActiveDeviceIds: Stmt;
   private readonly stmtListDevices: Stmt;
   private readonly stmtRevokeDevice: Stmt;
   private readonly stmtHasDevice: Stmt;
@@ -244,6 +260,8 @@ export class AppleHealth {
     this.stmtInsertDevice = db.prepare("INSERT INTO apple_health_devices VALUES (?, ?, ?, ?, ?, ?, NULL)");
     this.stmtIdentifyDevice = db.prepare(`SELECT id, user_id AS userId FROM apple_health_devices
       WHERE token_hash=? AND revoked_at IS NULL AND expires_at>?`);
+    this.stmtActiveDeviceIds = db.prepare(`SELECT id FROM apple_health_devices
+      WHERE user_id=? AND revoked_at IS NULL AND expires_at>? ORDER BY created_at DESC`);
     this.stmtListDevices = db.prepare(`SELECT id, label, created_at AS createdAt, expires_at AS expiresAt
       FROM apple_health_devices WHERE user_id=? AND revoked_at IS NULL ORDER BY created_at DESC`);
     this.stmtRevokeDevice = db.prepare("UPDATE apple_health_devices SET revoked_at=? WHERE user_id=? AND id=? AND revoked_at IS NULL");
@@ -381,6 +399,7 @@ export class AppleHealth {
         environment: row.environment,
         startedAt: row.startedAt,
         elapsedMinutes,
+        distanceMode: inferDistanceMode(row.activityType),
       };
     }
     const row = this.stmtGetEvent.get(device.id, type) as
@@ -410,7 +429,40 @@ export class AppleHealth {
       environment: row.environment,
       startedAt: row.startedAt,
       elapsedMinutes,
+      distanceMode: inferDistanceMode(parsed.data),
     };
+  }
+
+  recordWebSessionStart(userId: string, input: z.infer<typeof appleWebSessionStartInput>) {
+    const startedIso = input.startedAt ? new Date(input.startedAt).toISOString() : new Date().toISOString();
+    this.checkFuture(startedIso);
+    const nowIso = new Date().toISOString();
+    const ageSeconds = (Date.now() - Date.parse(startedIso)) / 1000;
+    if (!Number.isFinite(ageSeconds) || ageSeconds > MAX_TRIGGER_WORKOUT_SECONDS) {
+      return { ok: true as const, recorded: 0 };
+    }
+    const type = input.activityType.toLowerCase();
+    return this.db.transaction(() => {
+      const devices = this.stmtActiveDeviceIds.all(userId, nowIso) as { id: string }[];
+      let recorded = 0;
+      for (const dev of devices) {
+        if (input.onlyIfIdle) {
+          const active = this.stmtGetLatestActiveEvent.get(dev.id) as
+            | { activityType: string; startedAt: string; endedAt: string | null }
+            | undefined;
+          if (active && (!active.endedAt || active.startedAt > active.endedAt)) {
+            const elapsed = (Date.now() - Date.parse(active.startedAt)) / 1000;
+            if (Number.isFinite(elapsed) && elapsed >= 0 && elapsed <= MAX_TRIGGER_WORKOUT_SECONDS) {
+              continue;
+            }
+          }
+        }
+        this.stmtCloseDanglingEvents.run(startedIso, dev.id, type, startedIso);
+        this.stmtUpsertEventStart.run(dev.id, type, startedIso, input.environment);
+        recorded += 1;
+      }
+      return { ok: true as const, recorded };
+    }).immediate();
   }
 
   event(device: Device, event: EventInput) {

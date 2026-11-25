@@ -250,6 +250,10 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   ]) {
     assert.ok(hubUniversal.xml.includes(`<string>&#xFFFC;${p}</string>`), `contains magic path ${p}`);
   }
+  assert.ok(hubUniversal.xml.includes("<string>distanceMode</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>Walking + Running Distance</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>Cycling Distance</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>Swimming Distance</string>"));
 
   assert.equal(hubUniversal.base64, encodeShortcutXmlToBase64(hubUniversal.xml));
   assert.equal(Buffer.from(hubUniversal.base64, "base64").toString("utf8"), hubUniversal.xml);
@@ -841,8 +845,13 @@ test("Cardio modality picker connects QuickRecordSheet, WorkoutView, SettingsVie
   assert.match(cardioModal, /triggerAppleStrengthLaunch/);
 
   const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+  const reportModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutReportModal.tsx"), "utf8");
   assert.match(settingsView, /openStrengthLauncherModal/);
+  assert.match(settingsView, /appleAutoSyncOnFinish/);
   assert.match(workoutModal, /openStrengthLauncherModal/);
+  assert.match(workoutModal, /\/api\/integrations\/apple-health\/session-start/);
+  assert.match(workoutModal, /triggerAppleHubAction\("end"/);
+  assert.match(reportModal, /visibilitychange/);
   assert.match(planModals, /openStrengthLauncherModal/);
   assert.match(planModals, /openCardioLauncherModal/);
 });

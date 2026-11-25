@@ -143,6 +143,7 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
   assert.equal(defaults.appleHubShortcutName, DEFAULT_APPLE_HUB_SHORTCUT);
   assert.equal(defaults.appleStrengthShortcutName, DEFAULT_APPLE_STRENGTH_SHORTCUT);
   assert.equal(defaults.appleCardioShortcutName, DEFAULT_APPLE_CARDIO_SHORTCUT);
+  assert.equal(defaults.appleAutoSyncOnFinish, true);
   assert.equal(defaults.showPlateMath, true);
   assert.deepEqual(defaults.enabledPlates, DEFAULT_WORKOUT_PREFERENCES.enabledPlates);
 
@@ -903,7 +904,7 @@ test("cardio presets, shortcut naming, inference, and per-modality launch routin
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     writable: true,
-    value: { location: loc, setTimeout: globalThis.setTimeout },
+    value: { location: loc, setTimeout: globalThis.setTimeout, dispatchEvent: () => true },
   });
   Object.defineProperty(globalThis, "navigator", {
     configurable: true,
@@ -969,6 +970,12 @@ test("cardio presets, shortcut naming, inference, and per-modality launch routin
     });
     assert.equal(strengthLaunched.launched, true);
     assert.equal(loc.href, `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始力量")}`);
+
+    assert.equal(workoutPrefsSchema.parse({}).appleAutoSyncOnFinish, true);
+    writeWorkoutPreference("appleAutoSyncOnFinish", false);
+    assert.equal(readWorkoutPreferences().appleAutoSyncOnFinish, false);
+    const syncedBack = applyRemoteWorkoutPreferences({ appleAutoSyncOnFinish: true });
+    assert.equal(syncedBack.appleAutoSyncOnFinish, true);
   } finally {
     if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
     else Reflect.deleteProperty(globalThis, "localStorage");

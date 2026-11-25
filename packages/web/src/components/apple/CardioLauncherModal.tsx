@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { apiFetch } from "../../lib/api";
 import {
   APPLE_CARDIO_PRESETS,
   APPLE_STRENGTH_PRESETS,
@@ -9,6 +10,7 @@ import {
   resolveCardioShortcutName,
   resolveStrengthShortcutName,
   triggerAppleCardioLaunch,
+  triggerAppleHubAction,
   triggerAppleStrengthLaunch,
   type AppleCardioPresetId,
   type AppleStrengthPresetId,
@@ -96,6 +98,13 @@ export function CardioLauncherModal({
   const handleSelectCardio = (presetId: AppleCardioPresetId) => {
     triggerHaptic("light");
     setSelectedId(presetId);
+    const preset = getAppleCardioPreset(presetId) ?? APPLE_CARDIO_PRESETS[0]!;
+    if (prefs.appleCardioLaunch === "shortcut" || prefs.appleCardioLaunch === "fitness_app") {
+      void apiFetch("/api/integrations/apple-health/session-start", {
+        method: "POST",
+        body: { activityType: preset.activityType, environment: preset.environment },
+      }).catch(() => {});
+    }
     const res = triggerAppleCardioLaunch(presetId, { prefs, notify });
     if (res.launched) {
       closeTopModal();
@@ -105,6 +114,13 @@ export function CardioLauncherModal({
   const handleSelectStrength = (presetId: AppleStrengthPresetId) => {
     triggerHaptic("light");
     setSelectedStrengthId(presetId);
+    const preset = getAppleStrengthPreset(presetId) ?? APPLE_STRENGTH_PRESETS[0]!;
+    if (prefs.appleStrengthLaunch === "shortcut" || prefs.appleStrengthLaunch === "fitness_app") {
+      void apiFetch("/api/integrations/apple-health/session-start", {
+        method: "POST",
+        body: { activityType: preset.activityType, environment: preset.environment },
+      }).catch(() => {});
+    }
     const res = triggerAppleStrengthLaunch(presetId, { prefs, notify });
     if (res.launched) {
       closeTopModal();
@@ -297,6 +313,16 @@ export function CardioLauncherModal({
       </details>
 
       <footer>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => {
+            triggerHaptic("light");
+            triggerAppleHubAction("end", { prefs, notify });
+          }}
+        >
+          <Icon name="upload" size={14} /> 完练回传数据
+        </button>
         <button
           type="button"
           className="quiet"

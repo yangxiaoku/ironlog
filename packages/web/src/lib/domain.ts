@@ -236,6 +236,7 @@ export interface ProfileGoals {
     appleHubShortcutName?: string;
     appleStrengthShortcutName?: string;
     appleCardioShortcutName?: string;
+    appleAutoSyncOnFinish?: boolean;
     deloadMode?: boolean;
     deloadWeightPct?: number;
     deloadSetsPct?: number;

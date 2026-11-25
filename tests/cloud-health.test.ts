@@ -597,6 +597,70 @@ test("events/active 查询开放训练耗时，且直传与结束事件兼容快
   }
 });
 
+test("POST /api/integrations/apple-health/session-start 为网页训练建立闭环起点并透传 distanceMode", async () => {
+  const { db, owner, call, issue } = fixture();
+  try {
+    const { token } = await issue();
+    const runStartIso = new Date(Date.now() - 25 * 60_000).toISOString();
+    const runSeed = await call(apple + "/session-start", owner.token, "POST", {
+      activityType: "running",
+      environment: "outdoor",
+      startedAt: runStartIso,
+    });
+    assert.equal(runSeed.status, 200);
+    assert.equal(((await runSeed.json()) as any).recorded, 1);
+
+    // onlyIfIdle: true preserves active running session
+    const skipSeed = await call(apple + "/session-start", owner.token, "POST", {
+      activityType: "cycling",
+      environment: "indoor",
+      onlyIfIdle: true,
+    });
+    assert.equal(skipSeed.status, 200);
+    assert.equal(((await skipSeed.json()) as any).recorded, 0);
+
+    const activeAny = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
+    assert.equal(activeAny.found, true);
+    assert.equal(activeAny.activityType, "running");
+    assert.equal(activeAny.environment, "outdoor");
+    assert.equal(activeAny.distanceMode, "foot");
+    assert.ok(activeAny.elapsedMinutes >= 25);
+
+    const endRun = await call(apple + "/events", token, "POST", {
+      schemaVersion: 1,
+      event: "end",
+      activityType: activeAny.activityType,
+      environment: activeAny.environment,
+      occurredAt: new Date().toISOString(),
+      activeEnergyKcal: "280 kcal",
+      distanceKm: "4.15",
+      avgBpm: "152",
+    });
+    assert.equal(endRun.status, 201);
+
+    // Swimming and cycling also report accurate distanceMode; stairClimbing reports ""
+    const swimSeed = await call(apple + "/session-start", owner.token, "POST", {
+      activityType: "swimming",
+      environment: "indoor",
+      startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    });
+    assert.equal(((await swimSeed.json()) as any).recorded, 1);
+    const activeSwim = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
+    assert.equal(activeSwim.distanceMode, "swimming");
+
+    const cycleSeed = await call(apple + "/session-start", owner.token, "POST", {
+      activityType: "cycling",
+      environment: "outdoor",
+      startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
+    });
+    assert.equal(((await cycleSeed.json()) as any).recorded, 1);
+    const activeCycle = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
+    assert.equal(activeCycle.distanceMode, "cycling");
+  } finally {
+    db.close();
+  }
+});
+
 
 test("events 与 workouts 兼容常见 Apple 快捷指令本地化时间格式并拒绝空值或非法日历日期", async () => {
   const { db, call, issue } = fixture();

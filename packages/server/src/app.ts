@@ -35,7 +35,7 @@ import {
 import { Auth } from "./auth.js";
 import { AiService, type AiConfig } from "./ai.js";
 import { serverCatalogue } from "./catalogue.js";
-import { AppleHealth, appleEventInput, appleWorkoutInput } from "./apple-health.js";
+import { AppleHealth, appleEventInput, appleWebSessionStartInput, appleWorkoutInput } from "./apple-health.js";
 import { isEnabledHealthFlag, listDailyHealth, upsertDailyHealth } from "./apple-health-daily.js";
 import { readHealthDataExport } from "./health-data-export.js";
 import { catalogueETag, catalogueLookup, catalogueQuery, CloudCatalogue, exerciseFrame } from "./cloud-catalogue.js";
@@ -671,6 +671,8 @@ export function createApp(
     return c.json({ ok: true });
   });
   app.get(`${apple}/workouts`, (c) => c.json(health.workouts(c.get("userId"))));
+  app.post(`${apple}/session-start`, async (c) =>
+    c.json(health.recordWebSessionStart(c.get("userId"), appleWebSessionStartInput.parse(await c.req.json()))));
   app.get(`${healthExport}/config`, (c) =>
     c.json({ webhookUrl: config.healthDataExportWebhookUrl ?? null }));
   app.post(healthExportImport, healthExportBody, async (c) =>

@@ -1648,7 +1648,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
 
           <details className="settings-accordion">
             <summary>
-              <span>3. 可选：设置每日 23:30 自动同步 & Watch 锻炼触发</span>
+              <span>3. 完整闭环：完练自动回传 + 每日 23:30 同步（全部用这 1 个快捷指令）</span>
               <span className="settings-accordion-meta">
                 <span>展开做法</span>
                 <Icon name="chevron" size={14} />
@@ -1657,13 +1657,16 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
             <div className="settings-accordion-body">
               <ol className="shortcut-steps">
                 <li>
-                  <b>每日定时</b>：iPhone <b>快捷指令 → 自动化 → ＋ → 特定时间（建议 23:30 亮屏或充电时）→ 立即运行</b> → 选本全能快捷指令；
+                  <b>网页训练完练自动闭环</b>：在网页点开练自动记下起点，点「完成并保存训练」时会自动拉起全能快捷指令 <code>end</code> 回传心率、热量与对应项目距离，返回网页复盘页自动刷新显示。
                 </li>
                 <li>
-                  <b>Watch 直开力量</b>：如需在「开始传统力量」时直拉 Watch 体能训练，展开该快捷指令把 <code>strength</code> 分支末尾「打开 URL」换成 <b>开始体能训练 → 传统力量训练</b>。
+                  <b>手表端结束体能训练全自动回传（纯 Apple Watch 也能传）</b>：iPhone <b>快捷指令 → 自动化 → ＋ → Apple Watch 体能训练 → 结束任何体能训练 → 立即运行</b> → 新建空白自动化，只需放 2 个动作：① <b>「文本」填 <code>end</code></b> → ② <b>「运行快捷指令」选 <code>{DEFAULT_APPLE_HUB_SHORTCUT_NAME}</code></b>（输入选上方文本）。
                 </li>
                 <li>
-                  <b>有氧直开指定项目</b>：新版全能快捷指令内置 <code>cardio:indoor_run</code> / <code>cardio:stair_climbing</code> 等 13 个有氧分支，将对应分支末尾「打开 Fitness」换成 <b>开始体能训练 → 对应项目</b>，在网页点选后即可直接开练。
+                  <b>每日定时健康同步</b>：新建自动化 <b>特定时间（如 23:30 亮屏/充电）→ 立即运行</b> → ① <b>「文本」填 <code>daily</code></b> → ② <b>「运行快捷指令」选 <code>{DEFAULT_APPLE_HUB_SHORTCUT_NAME}</code></b>（输入选文本）。
+                </li>
+                <li>
+                  <b>直开具体 Watch 项目</b>：如需跳过健身 App 首页直接启动力量或指定有氧，展开本快捷指令把 <code>strength</code> 或对应 <code>cardio:*</code> 分支末尾的「打开 Fitness」换成 <b>开始体能训练 → 对应项目</b>。
                 </li>
               </ol>
             </div>

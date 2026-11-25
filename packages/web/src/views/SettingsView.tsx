@@ -1242,7 +1242,7 @@ export function SettingsView() {
                 </section>
 
                 <section className="form-section">
-                  <h3 className="form-section-title">自动跳转行为</h3>
+                  <h3 className="form-section-title">自动联动闭环</h3>
                   <div className="session-options">
                     <label className="switch-chip">
                       <span>新建今日训练时自动跳转 Apple 健身</span>
@@ -1253,9 +1253,18 @@ export function SettingsView() {
                         onChange={(e) => updateWorkoutPref("appleFitnessAutoLaunch", e.target.checked)}
                       />
                     </label>
+                    <label className="switch-chip">
+                      <span>完成训练时自动回传 Apple Watch 心率与热量</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.appleAutoSyncOnFinish}
+                        onChange={(e) => updateWorkoutPref("appleAutoSyncOnFinish", e.target.checked)}
+                      />
+                    </label>
                   </div>
                   <small className="muted">
-                    仅在 iPhone / iPad 上新建当日训练时生效，补录历史或恢复草稿不会触发。
+                    仅在 iPhone / iPad 当日训练生效：开练自动跳转健身，点「完成并保存训练」自动通过全能联动回传心率、消耗与距离。
                   </small>
 
                   <div className="field">

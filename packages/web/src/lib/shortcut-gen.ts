@@ -1906,9 +1906,9 @@ export function buildIronlogUnifiedAppleHubShortcut({
     `铁记（Ironlog）Apple 健康全能智能联动（1 个快捷指令覆盖全流程）`,
     `默认运动：${sportLabel}（${resolvedEnv}），兜底窗口 ${resolvedMinutes} 分钟；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
-    `  • strength：上报开始事件并跳转「健身」App（若需直开 Watch 传统力量，可在 strength 分支末尾将「打开 App（健身）」替换为「开始体能训练 → 传统力量训练」）`,
-    `  • cardio / cardio:<方式>：按所选有氧方式（如 cardio:outdoor_run、cardio:stair_climbing）上报开始事件并启动；各分支末尾把「打开 Fitness」替换为「开始体能训练 → 对应项目」即可真正跳过健身首页直开！`,
-    `  • end：等待 5 秒并回传活动能量、心率${distanceSpec ? "、距离" : ""}（优先匹配当前运动或任意刚开启的 active 有氧/力量事件，未打卡开始则自动按最近 ${resolvedMinutes} 分钟直传）`,
+    `  • strength / strength:functional / strength:core：上报对应力量开始事件并跳转「健身」App`,
+    `  • cardio / cardio:<方式>：按所选有氧方式上报开始事件并启动；各分支末尾把「打开 Fitness」替换为「开始体能训练 → 对应项目」即可跳过健身首页直开！`,
+    `  • end：等待 5 秒并回传活动能量、心率与对应距离（自动匹配网页或手表刚开启的训练，并可绑定 Apple Watch「体能训练结束时 → 文本 end → 运行本快捷指令」实现免动手全自动闭环）`,
     `  • daily：同步今日选定 Apple 健康指标`,
     `在手机上直接点击运行（无入参）时，会自动弹出 4 合 1 菜单。`,
   ].join("\n");
@@ -2122,17 +2122,70 @@ export function buildIronlogUnifiedAppleHubShortcut({
   const anyElapsedValUuid = uuidFactory();
   const anyTypeValUuid = uuidFactory();
   const anyEnvValUuid = uuidFactory();
+  const anyDistModeValUuid = uuidFactory();
   const anyPairedStartUuid = uuidFactory();
+  const anyDateFilter: DateFilterSpec = {
+    kind: "betweenDates",
+    startDateUuid: anyPairedStartUuid,
+    startDateOutputName: "Adjusted Date",
+    endDateUuid: endDateUuid,
+    endDateOutputName: "Date",
+  };
   const anyPairedMetrics = buildWorkoutWindowMetricsActions({
     uuidFactory,
-    dateFilter: {
-      kind: "betweenDates",
-      startDateUuid: anyPairedStartUuid,
-      startDateOutputName: "Adjusted Date",
-      endDateUuid: endDateUuid,
-      endDateOutputName: "Date",
-    },
-    distanceSpec,
+    dateFilter: anyDateFilter,
+    distanceSpec: null,
+  });
+  const anyDistanceBranches = (
+    [
+      {
+        mode: "foot",
+        typeLabel: "Walking + Running Distance",
+        unit: "km",
+        varName: "v_anyDistKm",
+      },
+      {
+        mode: "cycling",
+        typeLabel: "Cycling Distance",
+        unit: "km",
+        varName: "v_anyDistKm",
+      },
+      {
+        mode: "swimming",
+        typeLabel: "Swimming Distance",
+        unit: "m",
+        varName: "v_anyDistMeters",
+      },
+    ] as const
+  ).flatMap((spec) => {
+    const findDistUuid = uuidFactory();
+    const distValUuid = uuidFactory();
+    const distSumUuid = uuidFactory();
+    return conditionalBlock({
+      groupUuid: uuidFactory(),
+      input: { kind: "output", outputUuid: anyDistModeValUuid, outputName: "Dictionary Value" },
+      condition: 4,
+      equalsText: spec.mode,
+      bodyActions: [
+        findHealthSampleActionXml({
+          uuid: findDistUuid,
+          typeLabel: spec.typeLabel,
+          unit: spec.unit,
+          dateFilter: anyDateFilter,
+          sortOrder: "Latest First",
+          limit: null,
+        }),
+        ...conditionalHasValueBlock({
+          groupUuid: uuidFactory(),
+          inputUuid: findDistUuid,
+          bodyActions: [
+            getHealthDetailActionXml({ uuid: distValUuid, propertyName: "Value", inputUuid: findDistUuid }),
+            calculateStatisticsActionXml({ uuid: distSumUuid, operation: "Sum", inputUuid: distValUuid, inputName: "Value" }),
+            setVariableActionXml({ variableName: spec.varName, inputUuid: distSumUuid, inputName: "Sum" }),
+          ],
+        }),
+      ],
+    });
   });
   const fallbackStartUuid = uuidFactory();
   const fallbackMetrics = buildWorkoutWindowMetricsActions({
@@ -2228,6 +2281,12 @@ export function buildIronlogUnifiedAppleHubShortcut({
             inputUuid: activeAnyReqUuid,
             inputName: "Contents of URL",
           }),
+          getDictionaryValueActionXml({
+            uuid: anyDistModeValUuid,
+            key: "distanceMode",
+            inputUuid: activeAnyReqUuid,
+            inputName: "Contents of URL",
+          }),
           ...conditionalBlock({
             groupUuid: uuidFactory(),
             input: { kind: "output", outputUuid: anyElapsedValUuid, outputName: "Dictionary Value" },
@@ -2241,6 +2300,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
                 inputName: "Date",
               }),
               ...anyPairedMetrics.actions,
+              ...anyDistanceBranches,
               downloadJsonActionXml({
                 uuid: uuidFactory(),
                 endpoint: eventsEndpoint,
@@ -2255,6 +2315,8 @@ export function buildIronlogUnifiedAppleHubShortcut({
                   { key: "environment", outputAttachment: { name: "Dictionary Value", uuid: anyEnvValUuid } },
                   { key: "occurredAt", outputAttachment: { name: "Date", uuid: endDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
                   ...anyPairedMetrics.bodyItems,
+                  { key: "distanceKm", varAttachment: "v_anyDistKm" },
+                  { key: "distanceMeters", varAttachment: "v_anyDistMeters" },
                 ],
               }),
             ],

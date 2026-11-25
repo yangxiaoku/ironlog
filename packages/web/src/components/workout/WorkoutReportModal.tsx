@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { duration, fmt, shortDate, today } from "../../lib/date";
@@ -55,6 +55,7 @@ export function WorkoutReportModal({
 
   const [report, setReport] = useState<WorkoutReportResponse | null>(null);
   const [appleItem, setAppleItem] = useState<AppleWorkoutAgendaItem | null>(null);
+  const [checkingApple, setCheckingApple] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busyAction, setBusyAction] = useState("");
@@ -97,6 +98,59 @@ export function WorkoutReportModal({
       active = false;
     };
   }, [workoutId]);
+
+  const refreshAppleAgenda = useCallback(
+    async (reportDate: string, targetId: string, opts?: { notifyFound?: boolean }) => {
+      setCheckingApple(true);
+      try {
+        const items = await apiFetch<AppleWorkoutAgendaItem[]>(
+          `/api/integrations/apple-health/agenda?from=${encodeURIComponent(reportDate)}&through=${encodeURIComponent(reportDate)}`,
+        );
+        const linked = items.find((item) => item.manualWorkoutId === targetId) ?? null;
+        if (linked) {
+          setAppleItem(linked);
+          if (opts?.notifyFound) {
+            bumpDataEpoch();
+            notify("已同步 Apple Watch 心率与消耗");
+          }
+        }
+      } catch {}
+      setCheckingApple(false);
+    },
+    [bumpDataEpoch, notify],
+  );
+
+  useEffect(() => {
+    if (!report || appleItem || report.date !== today()) return;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      void refreshAppleAgenda(report.date, report.id, { notifyFound: true });
+      if (timer != null) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void refreshAppleAgenda(report.date, report.id, { notifyFound: true });
+      }, 3000);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") scheduleRefresh();
+    };
+    const onFocus = () => scheduleRefresh();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", onFocus);
+    }
+    return () => {
+      if (timer != null) clearTimeout(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", onFocus);
+      }
+    };
+  }, [report, appleItem, refreshAppleAgenda]);
 
   const fetchFullRecord = async (): Promise<RecordEnvelope<WorkoutData>> => {
     if (record) return record;
@@ -339,16 +393,29 @@ export function WorkoutReportModal({
       ) : report.date === today() ? (
         <div className="report-comparison-bar" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
           <span>回传 Apple Watch 心率与消耗</span>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => {
-              triggerHaptic("light");
-              triggerAppleHubAction("end", { notify });
-            }}
-          >
-            <Icon name="heart" size={14} /> 回传 Apple 心率/热量
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="quiet"
+              disabled={checkingApple}
+              onClick={() => {
+                triggerHaptic("light");
+                void refreshAppleAgenda(report.date, report.id, { notifyFound: true });
+              }}
+            >
+              <Icon name="refresh" size={14} /> {checkingApple ? "检查中…" : "刷新"}
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                triggerHaptic("light");
+                triggerAppleHubAction("end", { notify });
+              }}
+            >
+              <Icon name="heart" size={14} /> 回传 Apple 心率/热量
+            </button>
+          </div>
         </div>
       ) : null}
 

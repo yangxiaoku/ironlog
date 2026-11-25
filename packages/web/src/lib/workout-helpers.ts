@@ -6,6 +6,7 @@ export const appleCardioLaunchPreference = "ironlog-web-apple-cardio-mode";
 export const appleHubShortcutPreference = "ironlog-web-apple-hub-shortcut";
 export const appleStrengthShortcutPreference = "ironlog-web-apple-strength-shortcut";
 export const appleCardioShortcutPreference = "ironlog-web-apple-cardio-shortcut";
+export const appleAutoSyncOnFinishPreference = "ironlog-web-apple-auto-sync-finish";
 export const screenPreference = "ironlog-web-workout-screen";
 export const rirPreference = "ironlog-web-show-rir";
 export const dialPreference = "ironlog-web-auto-rest-dial";
@@ -119,6 +120,7 @@ export interface WorkoutPreferences {
   appleHubShortcutName: string;
   appleStrengthShortcutName: string;
   appleCardioShortcutName: string;
+  appleAutoSyncOnFinish: boolean;
   deloadMode: boolean;
   deloadWeightPct: number;
   deloadSetsPct: number;
@@ -148,6 +150,7 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   appleHubShortcutName: DEFAULT_APPLE_HUB_SHORTCUT,
   appleStrengthShortcutName: DEFAULT_APPLE_STRENGTH_SHORTCUT,
   appleCardioShortcutName: DEFAULT_APPLE_CARDIO_SHORTCUT,
+  appleAutoSyncOnFinish: true,
   deloadMode: false,
   deloadWeightPct: 80,
   deloadSetsPct: 50,
@@ -318,6 +321,10 @@ export function readWorkoutPreferences(): WorkoutPreferences {
       appleCardioShortcutPreference,
       DEFAULT_APPLE_CARDIO_SHORTCUT,
     ),
+    appleAutoSyncOnFinish: readBoolPrefValue(
+      appleAutoSyncOnFinishPreference,
+      DEFAULT_WORKOUT_PREFERENCES.appleAutoSyncOnFinish,
+    ),
     deloadMode: readBoolPrefValue(deloadModePreference, DEFAULT_WORKOUT_PREFERENCES.deloadMode),
     deloadWeightPct: readIntRangePref(
       deloadWeightPctPreference,
@@ -456,6 +463,9 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
           sanitizeShortcutName(value, DEFAULT_APPLE_CARDIO_SHORTCUT),
         );
         break;
+      case "appleAutoSyncOnFinish":
+        localStorage.setItem(appleAutoSyncOnFinishPreference, value ? "on" : "off");
+        break;
       case "deloadMode":
         localStorage.setItem(deloadModePreference, value ? "on" : "off");
         break;
@@ -508,6 +518,7 @@ export function applyRemoteWorkoutPreferences(
     "autoAdvanceExercise",
     "showPlateMath",
     "appleFitnessAutoLaunch",
+    "appleAutoSyncOnFinish",
     "deloadMode",
   ] as const;
   for (const key of boolKeys) {
@@ -603,6 +614,7 @@ const ALL_WORKOUT_PREF_KEYS = [
   appleHubShortcutPreference,
   appleStrengthShortcutPreference,
   appleCardioShortcutPreference,
+  appleAutoSyncOnFinishPreference,
   deloadModePreference,
   deloadWeightPctPreference,
   deloadSetsPctPreference,
