@@ -684,16 +684,18 @@ export function WeightChart({
   to,
   goal = null,
   showAverage = false,
+  wide = false,
 }: {
   rows: Array<{ date: string; weight: number; average?: number | null }>;
   from?: string;
   to?: string;
   goal?: number | null;
   showAverage?: boolean;
+  wide?: boolean;
 }) {
   const [readout, setReadout] = useState("");
   const compact = useCompactViewport();
-  const width = compact ? 344 : showAverage ? 420 : 660;
+  const width = compact ? 344 : wide ? 660 : showAverage ? 420 : 660;
   const height = 200;
   const left = 48;
   const right = 14;

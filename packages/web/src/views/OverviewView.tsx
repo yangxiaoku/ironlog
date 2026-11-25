@@ -520,9 +520,7 @@ export function OverviewView() {
             <span>完成训练</span>
           </div>
           <strong>
-            <span className="kpi-num">
-              <MatrixText value={fmt(activities)} />
-            </span>
+            <span className="kpi-num">{fmt(activities)}</span>
             <small>次</small>
           </strong>
           {deltaText(activities, prevActivities, " 次")}
@@ -533,9 +531,7 @@ export function OverviewView() {
             <span>训练容量</span>
           </div>
           <strong>
-            <span className="kpi-num">
-              <MatrixText value={fmt(stats.totals.volume)} />
-            </span>
+            <span className="kpi-num">{fmt(stats.totals.volume)}</span>
             <small>kg</small>
           </strong>
           {deltaText(stats.totals.volume, stats.previous.volume, " kg")}
@@ -546,9 +542,7 @@ export function OverviewView() {
             <span>完成组数</span>
           </div>
           <strong>
-            <span className="kpi-num">
-              <MatrixText value={fmt(stats.totals.sets)} />
-            </span>
+            <span className="kpi-num">{fmt(stats.totals.sets)}</span>
             <small>组</small>
           </strong>
           {deltaText(stats.totals.sets, stats.previous.sets, " 组")}
@@ -560,7 +554,7 @@ export function OverviewView() {
           </div>
           <strong>
             <span className="kpi-num">
-              <MatrixText value={stats.totals.timedWorkouts ? fmt(stats.totals.seconds / 3600, 1) : "—"} />
+              {stats.totals.timedWorkouts ? fmt(stats.totals.seconds / 3600, 1) : "—"}
             </span>
             <small>h</small>
           </strong>
@@ -618,6 +612,13 @@ export function OverviewView() {
                   />
                 );
               }
+              const latestPt = weightSeries.at(-1);
+              const firstPt = weightSeries[0];
+              const targetW = stats.goals?.targetWeight ?? null;
+              const minW = weightSeries.length ? Math.min(...weightSeries.map((r) => r.weight)) : null;
+              const maxW = weightSeries.length ? Math.max(...weightSeries.map((r) => r.weight)) : null;
+              const rangeDelta = firstPt && latestPt ? Math.round((latestPt.weight - firstPt.weight) * 10) / 10 : 0;
+              const goalDiff = latestPt && targetW != null ? Math.round((latestPt.weight - targetW) * 10) / 10 : null;
               return (
                 <section key="weight" className="panel panel-weight" id="panel-weight">
                   <header className="panel-head">
@@ -631,13 +632,56 @@ export function OverviewView() {
                       体重档案 <Icon name="chevron" size={14} />
                     </button>
                   </header>
-                  <WeightChart
-                    rows={weightSeries}
-                    from={stats.from}
-                    to={stats.through}
-                    goal={stats.goals?.targetWeight ?? null}
-                    showAverage={weightSeries.length >= 2}
-                  />
+                  {weightSeries.length > 0 && latestPt ? (
+                    <div className="weight-panel-body">
+                      <WeightChart
+                        rows={weightSeries}
+                        from={stats.from}
+                        to={stats.through}
+                        goal={targetW}
+                        showAverage={weightSeries.length >= 2}
+                        wide
+                      />
+                      <aside className="weight-panel-rail" aria-label="体重统计摘要">
+                        <div className="weight-rail-stat">
+                          <span>最新体重</span>
+                          <strong>{fmt(latestPt.weight, 1)} kg</strong>
+                          <small>{shortDate(latestPt.date)}</small>
+                        </div>
+                        {weightSeries.length >= 2 ? (
+                          <div className="weight-rail-stat">
+                            <span>7日均值</span>
+                            <strong>{fmt(latestPt.average, 1)} kg</strong>
+                            <small>
+                              {rangeDelta === 0 ? "区间持平" : `区间 ${rangeDelta > 0 ? "+" : ""}${fmt(rangeDelta, 1)} kg`}
+                            </small>
+                          </div>
+                        ) : null}
+                        {goalDiff != null && targetW != null ? (
+                          <div className="weight-rail-stat">
+                            <span>距目标</span>
+                            <strong>{goalDiff === 0 ? "已达标" : `${goalDiff > 0 ? "+" : ""}${fmt(goalDiff, 1)} kg`}</strong>
+                            <small>目标 {fmt(targetW, 1)} kg</small>
+                          </div>
+                        ) : minW != null && maxW != null ? (
+                          <div className="weight-rail-stat">
+                            <span>区间范围</span>
+                            <strong>{fmt(minW, 1)}–{fmt(maxW, 1)}</strong>
+                            <small>kg · {weightSeries.length} 次记录</small>
+                          </div>
+                        ) : null}
+                      </aside>
+                    </div>
+                  ) : (
+                    <WeightChart
+                      rows={weightSeries}
+                      from={stats.from}
+                      to={stats.through}
+                      goal={targetW}
+                      showAverage={weightSeries.length >= 2}
+                      wide
+                    />
+                  )}
                 </section>
               );
             })}

@@ -34,12 +34,20 @@ import type { ScheduleDayEntry } from "../plan/PlanModals";
 
 export function fullWorkoutTag(title: string): string {
   if (!title) return "";
-  return title
+  const clean = title
     .replace(/\s*等\s*\d+\s*项$/, "")
     .trim()
     .replace(/\s*·\s*/g, "·")
     .replace(/传统力量训练/, "力量训练")
     .replace(/高强度间歇/, "HIIT");
+  if (clean.includes("·")) {
+    const [head, tail] = clean.split("·");
+    if (head && tail && clean.length > 4) {
+      const compactTail = tail.replace(/[和与及]/g, "");
+      return `${head}·${compactTail.slice(0, 2)}`;
+    }
+  }
+  return clean.length > 5 ? clean.slice(0, 4) : clean;
 }
 
 export function compactWorkoutTag(title: string): string {
@@ -466,7 +474,7 @@ export function DayDossier({
               </div>
               {daySched?.weekForecast?.conflicts?.length ? (
                 <p className="forecast-conflict">
-                  <Icon name="bolt" size={13} /> {daySched.weekForecast.conflicts[0]}
+                  {daySched.weekForecast.conflicts[0]}
                 </p>
               ) : null}
               {daySched?.telemetry?.exercises?.length ? (
@@ -488,15 +496,15 @@ export function DayDossier({
                 </ol>
               ) : null}
               <div className="hero-drawer-actions">
-                <button type="button" className="primary-button" onClick={() => openDayScheduler(date)}>
-                  调整排期
-                </button>
                 <button
                   type="button"
-                  className="secondary-button"
+                  className="primary-button"
                   onClick={() => openRoutinePreview({ id: date, source: "scheduled", date })}
                 >
                   {date === todayKey ? "开始训练" : "动作与 PR"}
+                </button>
+                <button type="button" className="secondary-button" onClick={() => openDayScheduler(date)}>
+                  调整排期
                 </button>
                 <button type="button" className="quiet" onClick={() => void handleShiftDay()}>
                   顺延+1
@@ -518,7 +526,7 @@ export function DayDossier({
               </button>
             </header>
             <p className="muted dossier-empty-note">
-              {schedSummary?.notes || "当天暂未安排训练，可一键排入计划日或训练模板。"}
+              {schedSummary?.notes || "当天暂未安排训练，可排入计划日或训练模板。"}
             </p>
             {daySched?.override ? (
               <div className="hero-drawer-actions">

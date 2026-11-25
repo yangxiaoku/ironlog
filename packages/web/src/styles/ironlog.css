@@ -901,12 +901,22 @@ dialog.workout-dialog .workout-inline-add-btn {
   gap: 6px;
 }
 
-.hero-refresh-btn {
+.icon-button.hero-refresh-btn {
   min-width: 32px;
   min-height: 32px;
   width: 32px;
   height: 32px;
   padding: 0;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hero-base) 92%, transparent);
+  color: var(--hero-ink);
+}
+
+.icon-button.hero-refresh-btn:hover {
+  border-color: var(--ink);
+  background: var(--hero-base);
+  color: var(--hero-ink);
 }
 
 .workout-apple-chip {
@@ -1030,11 +1040,12 @@ dialog.workout-dialog .workout-inline-add-btn {
 .overview-stats-cats {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 18px;
   overflow-x: auto;
   scrollbar-width: none;
   scroll-snap-type: x proximity;
-  padding-bottom: 2px;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 0;
 }
 
 .report-cat-bar::-webkit-scrollbar,
@@ -1047,35 +1058,40 @@ dialog.workout-dialog .workout-inline-add-btn {
 }
 
 .overview-stats-cats {
-  margin: -4px 0 12px;
+  margin: -2px 0 12px;
 }
 
 .report-cat-bar button,
 .overview-stats-cats button {
   flex: none;
-  min-height: 32px;
-  padding: 0 12px;
-  border: 1px solid var(--edge);
-  border-radius: 999px;
-  background: var(--surface);
+  min-height: 34px;
+  padding: 0 2px 8px;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
   scroll-snap-align: start;
 }
 
 .report-cat-bar button[aria-pressed="true"],
 .overview-stats-cats button[aria-pressed="true"] {
-  background: var(--white-button);
-  border-color: var(--white-button);
-  color: var(--bg);
-  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+  border-bottom-color: var(--ink);
+  color: var(--ink);
+  font-weight: 650;
 }
 
 .report-cat-bar button:hover:not([aria-pressed="true"]),
 .overview-stats-cats button:hover:not([aria-pressed="true"]) {
   color: var(--ink);
-  border-color: var(--soft);
+  border-color: transparent;
+  border-bottom-color: var(--edge);
 }
 
 .stats-header-title {
@@ -2445,4 +2461,187 @@ dialog.workout-dialog .workout-inline-add-btn {
   align-items: center;
   gap: 10px;
   margin-left: auto;
+}
+
+/* ==== Phase 2 Visual Polish: Weight Rail, Adherence 4-Col, Underline Subnavs, KPI Mono & Badges ==== */
+.weight-panel-body {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+}
+
+.weight-panel-rail {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.weight-rail-stat {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rule);
+  background: var(--inset);
+  display: grid;
+  gap: 3px;
+  align-content: center;
+}
+
+.weight-rail-stat span {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.weight-rail-stat strong {
+  font: 700 18px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.weight-rail-stat small {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (min-width: 960px) {
+  .dashboard:not(.is-two-panel):not(.is-single-panel) > #panel-weight .weight-panel-body,
+  .dashboard.is-single-panel > #panel-weight .weight-panel-body {
+    grid-template-columns: minmax(0, 1.85fr) minmax(210px, 250px);
+    gap: 18px;
+    align-items: stretch;
+  }
+
+  .dashboard:not(.is-two-panel):not(.is-single-panel) > #panel-weight .weight-panel-rail,
+  .dashboard.is-single-panel > #panel-weight .weight-panel-rail {
+    grid-template-columns: 1fr;
+    align-content: stretch;
+  }
+}
+
+.adherence-grid.is-four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 720px) {
+  .adherence-grid.is-four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.analytics-empty-inline {
+  padding: 12px 14px;
+  border: 1px dashed var(--edge);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  background: color-mix(in srgb, var(--inset) 55%, transparent);
+}
+
+/* Underline secondary navigation for Plan & Analytics */
+.plan-sections .segments,
+.analytics-subnav .segments {
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--rule);
+  border-radius: 0;
+  padding: 0;
+  gap: 18px;
+  width: 100%;
+  display: flex;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.plan-sections .segments::-webkit-scrollbar,
+.analytics-subnav .segments::-webkit-scrollbar {
+  display: none;
+}
+
+.plan-sections .segments button,
+.analytics-subnav .segments button {
+  flex: none;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  min-height: 38px;
+  min-width: auto;
+  padding: 6px 2px 10px;
+  margin-bottom: -1px;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.plan-sections .segments button[aria-pressed="true"],
+.analytics-subnav .segments button[aria-pressed="true"] {
+  background: transparent;
+  color: var(--ink);
+  border-bottom-color: var(--red);
+  font-weight: 650;
+}
+
+.plan-sections .segments button:hover:not([aria-pressed="true"]),
+.analytics-subnav .segments button:hover:not([aria-pressed="true"]) {
+  color: var(--ink);
+  border-bottom-color: var(--edge);
+}
+
+@media (max-width: 630px) {
+  .plan-sections .segments {
+    padding: 0 22px 0 0;
+    gap: 14px;
+  }
+
+  .analytics-subnav .segments {
+    display: grid;
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
+    gap: 4px;
+    padding: 0;
+  }
+
+  .analytics-subnav .segments button {
+    padding: 6px 4px 9px;
+    font-size: 12px;
+  }
+}
+
+/* Crisp KPI mono typography */
+.kpi > strong {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+/* Badge strip & locked/unlocked contrast */
+.badge-mini {
+  padding: 10px 8px 9px;
+  gap: 4px;
+}
+
+.badge-mini-art {
+  width: 72px;
+  height: 72px;
+}
+
+.badge-mini.is-unlocked {
+  border-color: var(--edge);
+  background: var(--surface);
+}
+
+.badge-mini.is-locked,
+.badge-card.is-locked {
+  border-color: var(--rule);
+  background: color-mix(in srgb, var(--inset) 70%, transparent);
+}
+
+@media (max-width: 630px) {
+  .badge-mini-art {
+    width: 58px;
+    height: 58px;
+  }
 }

@@ -671,7 +671,7 @@ export function AnalyticsView() {
   const acwrHeight = 180;
   const acwrPadL = 40;
   const acwrPadR = 16;
-  const acwrPadT = 16;
+  const acwrPadT = 20;
   const acwrPadB = 26;
   const acwrChartW = acwrWidth - acwrPadL - acwrPadR;
   const acwrChartH = acwrHeight - acwrPadT - acwrPadB;
@@ -1031,11 +1031,30 @@ export function AnalyticsView() {
                     />
                     <line x1={acwrPadL} y1={getAcwrY(0.8)} x2={acwrWidth - acwrPadR} y2={getAcwrY(0.8)} stroke="var(--edge)" strokeDasharray="3 3" />
                     <line x1={acwrPadL} y1={getAcwrY(1.3)} x2={acwrWidth - acwrPadR} y2={getAcwrY(1.3)} stroke="var(--edge)" strokeDasharray="3 3" />
-                    <text x={acwrWidth - acwrPadR - 4} y={getAcwrY(1.3) - 5} fontSize={11} textAnchor="end" fill="var(--muted)">
+                    <text
+                      x={acwrWidth - acwrPadR - 4}
+                      y={getAcwrY(1.3) - 5}
+                      fontSize={11}
+                      textAnchor="end"
+                      fill="var(--muted)"
+                      paintOrder="stroke"
+                      stroke="var(--surface)"
+                      strokeWidth={3}
+                      strokeLinejoin="round"
+                    >
                       理想上限 1.3
                     </text>
                     <line x1={acwrPadL} y1={getAcwrY(1.5)} x2={acwrWidth - acwrPadR} y2={getAcwrY(1.5)} stroke="var(--red)" strokeDasharray="4 2" strokeWidth={1.2} />
-                    <text x={acwrPadL + 4} y={getAcwrY(1.5) - 5} fontSize={11} fill="var(--red)">
+                    <text
+                      x={acwrPadL + 4}
+                      y={getAcwrY(1.5) - 5}
+                      fontSize={11}
+                      fill="var(--red)"
+                      paintOrder="stroke"
+                      stroke="var(--surface)"
+                      strokeWidth={3}
+                      strokeLinejoin="round"
+                    >
                       过载线 1.5
                     </text>
                     {acwrSeries.some((s) => typeof s.ewmaAcwr === "number") ? (
@@ -1394,9 +1413,8 @@ export function AnalyticsView() {
                     })()}
                   </>
                 ) : (
-                  <div className="empty">
-                    <strong>暂未收到心肺恢复样本</strong>
-                    <p>通过快捷指令同步静息心率、HRV、血氧或呼吸频率后展示准备度与心肺分析。</p>
+                  <div className="analytics-empty-inline">
+                    暂未收到 Apple Health 心肺恢复样本（HRV / 静息心率 / VO2 Max）
                   </div>
                 )}
               </section>
@@ -1421,7 +1439,7 @@ export function AnalyticsView() {
                   </header>
                   {data.planAdherence.hasPlan && data.planAdherence.scheduledSessions > 0 ? (
                     <>
-                      <div className="adherence-grid">
+                      <div className="adherence-grid is-four">
                         <div>
                           <span>计划应练</span>
                           <strong>{data.planAdherence.scheduledSessions} 场</strong>
