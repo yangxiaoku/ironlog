@@ -456,9 +456,9 @@ test("Apple 健康体成分 FFMI/WHtR 评估、心肺准备度基线切换与运
     assert.ok(bodyReport.metabolic.recompCutTargetKcal > 1500);
     assert.ok(bodyReport.metabolic.proteinTargetG >= 126);
     assert.equal(bodyReport.recomposition.targetWaistCm, 89);
-    assert.equal(bodyReport.recomposition.milestones.length, 2);
-    assert.equal(bodyReport.recomposition.milestones[0].targetFatPct, 20);
-    assert.equal(bodyReport.recomposition.milestones[0].weeklyFatRateKg, 0.48);
+    assert.equal(bodyReport.recomposition.milestones.length, 0);
+    assert.equal(bodyReport.ffmiStatus, null);
+    assert.equal(bodyReport.waistStatus, null);
     assert.equal(deltas.weightKg.delta, -1.45);
     assert.equal(analytics.appleDaily.weeklyComparison.hasPreviousBaseline, true);
     const wcWeight = analytics.appleDaily.weeklyComparison.metrics.find((m: any) => m.key === "weightKg");
@@ -490,8 +490,8 @@ test("Apple 健康体成分 FFMI/WHtR 评估、心肺准备度基线切换与运
     assert.equal(Date.parse(analytics.appleWorkouts.recent[0].startedAt), Date.parse(`${d1}T07:00:00+08:00`));
     assert.equal(Date.parse(analytics.appleWorkouts.recent[0].endedAt), Date.parse(`${d1}T07:30:00+08:00`));
     assert.equal(analytics.appleWorkouts.recent[0].durationKind, "workout_active");
-    assert.equal(analytics.appleWorkouts.hrZones.hrMaxSource, "default_190");
-    assert.equal(analytics.appleWorkouts.hrZones.zones.find((z: any) => z.key === "z3").count, 1);
+    assert.equal(analytics.appleWorkouts.hrZones, null);
+    assert.equal(analytics.appleWorkouts.realDeviceStats.hrZones, null);
 
     const statsRes = await (await call(`/api/web/statistics?days=30&through=${today}`, owner.token)).json() as any;
     assert.equal(statsRes.appleDailySummary.bodyReport.weightKg, 79.55);
@@ -501,6 +501,25 @@ test("Apple 健康体成分 FFMI/WHtR 评估、心肺准备度基线切换与运
     assert.equal(ctx.appleHealthDaily?.daysSynced, 4);
     assert.equal(ctx.appleHealthDaily?.body.weightKg, 79.55);
     assert.equal(ctx.appleHealthDaily?.recovery.readinessScore, recoveryReport.readinessScore);
+
+    const birthDate = `${Number(today.slice(0, 4)) - 30}-01-01`;
+    store.mutate(owner.userId, {
+      kind: "profile", id: "settings", opId: "analytics-heart-rate-profile", baseVersion: 0, deleted: false,
+      data: {
+        energyProfile: {
+          weightKg: 79.55, weightDate: today, heightCm: 178, sex: "male", birthDate,
+          context: "general", activityFactor: 1.6,
+        },
+      },
+    });
+    const withProfile = await (await call(`/api/web/analytics?days=30&through=${today}`, owner.token)).json() as any;
+    assert.equal(withProfile.appleWorkouts.avgBpm, 145);
+    assert.equal(withProfile.appleWorkouts.hrZones.hrMax, 187);
+    assert.equal(withProfile.appleWorkouts.hrZones.hrMaxSource, "tanaka_age");
+    assert.equal(withProfile.appleWorkouts.hrZones.zones.find((z: any) => z.key === "z3").count, 1);
+    assert.equal(withProfile.appleDaily.bodyReport.recomposition.milestones.length, 2);
+    assert.equal(withProfile.appleDaily.bodyReport.recomposition.milestones[0].targetFatPct, 20);
+    assert.equal(withProfile.appleDaily.bodyReport.recomposition.milestones[0].weeklyFatRateKg, 0.48);
   } finally {
     db.close();
   }

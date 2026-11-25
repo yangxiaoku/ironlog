@@ -58,6 +58,9 @@ export function openDatabase(path: string): Database.Database {
       revision INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(user_id, revision)
     );
     INSERT OR IGNORE INTO plan_activations SELECT user_id, plan_id, version, revision, updated_at FROM active_plans;
+    CREATE TABLE IF NOT EXISTS plan_revision_floor (
+      user_id TEXT PRIMARY KEY REFERENCES users(id), revision INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS apple_health_devices (
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
       token_hash TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
@@ -118,7 +121,7 @@ export function openDatabase(path: string): Database.Database {
       PRIMARY KEY(user_id, date)
     );
     CREATE INDEX IF NOT EXISTS body_measurements_user_date ON body_measurements(user_id, date DESC);
-    PRAGMA user_version = 4;
+    PRAGMA user_version = 5;
   `);
   return db;
 }

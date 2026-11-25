@@ -3,15 +3,22 @@ import type { SleepReport } from "@ironlog/shared";
 import type { AppleDailyEntry } from "../components/apple/AppleHealthModals";
 import { cachedApiFetch, peekQuery } from "../lib/query-cache";
 
-export const ANALYTICS_PERIODS = [14, 30, 60, 90] as const;
+export const ANALYTICS_PERIODS = [14, 30, 60, 90, 180, 365] as const;
 export type AnalyticsPeriod = typeof ANALYTICS_PERIODS[number];
+
+export interface RepMaxHit {
+  weight: number;
+  reps: number;
+  date: string;
+}
 
 interface AnalyticsResponse {
   today: string;
   through: string;
   period: AnalyticsPeriod;
-  userProfile: { weightKg: number; appleWeightKg: number | null; gender: string };
+  userProfile: { weightKg: number | null; appleWeightKg: number | null; gender: "male" | "female" | null };
   acwr: {
+    referenceWeightKg: number | null;
     current: {
       acwr: number;
       ewmaAcwr?: number;
@@ -132,14 +139,14 @@ interface AnalyticsResponse {
   };
   nutrition: {
     protein: {
-      status: "optimal" | "suboptimal" | "high";
+      status: "insufficient" | "optimal" | "suboptimal" | "high";
       statusLabel: string;
       averageGramsPerDay: number;
-      averageGramsPerKg: number;
+      averageGramsPerKg: number | null;
       leanMassGramsPerKg?: number | null;
-      daysMeetingTarget: number;
+      daysMeetingTarget: number | null;
       totalDaysLogged: number;
-      complianceRatePct: number;
+      complianceRatePct: number | null;
       advice: string;
     };
     energy?: {
@@ -161,6 +168,97 @@ interface AnalyticsResponse {
       tdeeConfidence: "high" | "moderate" | "insufficient";
       energyAdvice: string;
     };
+    dailySeries?: Array<{
+      date: string;
+      calories: number;
+      protein: number;
+      carbs: number;
+      fat: number;
+      mealsCount: number;
+      isTrainingDay: boolean;
+      waterMl: number | null;
+    }>;
+    hydration?: {
+      targetMl: number;
+      loggedDays: number;
+      averageMl: number;
+      daysMeetingTarget: number;
+      complianceRatePct: number;
+      totalDays: number;
+    };
+  };
+  planAdherence?: {
+    hasPlan: boolean;
+    planName: string | null;
+    scheduleMode: string | null;
+    from: string;
+    through: string;
+    scheduledSessions: number;
+    completedSessions: number;
+    missedSessions: number;
+    adherencePct: number | null;
+    byRoutine: Array<{
+      name: string;
+      scheduled: number;
+      completed: number;
+      missed: number;
+      adherencePct: number;
+    }>;
+  };
+  plateaus?: Array<{
+    id: string;
+    name: string;
+    muscle: string;
+    sessionsCount: number;
+    baseline1RM: number;
+    latest1RM: number;
+    deltaPct: number;
+    lastDate: string;
+    status: "plateau" | "regression";
+    advice: string;
+  }>;
+  repMaxBoard?: Array<{
+    id: string;
+    name: string;
+    muscle: string;
+    rm1?: RepMaxHit;
+    rm3?: RepMaxHit;
+    rm5?: RepMaxHit;
+    rm8?: RepMaxHit;
+    rm10?: RepMaxHit;
+  }>;
+  bodyMeasurements?: {
+    count: number;
+    latestDate: string | null;
+    latest: {
+      waistCm: number | null;
+      chestCm: number | null;
+      armCm: number | null;
+      thighCm: number | null;
+      hipCm: number | null;
+    };
+    deltas: {
+      waistCm: number | null;
+      chestCm: number | null;
+      armCm: number | null;
+      thighCm: number | null;
+      hipCm: number | null;
+    };
+    whr: number | null;
+    whtr: number | null;
+    avgE1rmPct: number | null;
+    recompSignal: {
+      status: "optimal" | "caution" | "neutral";
+      label: string;
+      detail: string;
+    } | null;
+  };
+  sleepTrainingImpact?: {
+    pairedDays: number;
+    goodSleep: { days: number; avgWorkSets: number | null; avgTonnageKg: number | null; fatiguedPct: number | null };
+    midSleep: { days: number; avgWorkSets: number | null; avgTonnageKg: number | null; fatiguedPct: number | null };
+    shortSleep: { days: number; avgWorkSets: number | null; avgTonnageKg: number | null; fatiguedPct: number | null };
+    insight: string | null;
   };
   bodyweight: {
     report?: {
@@ -286,6 +384,20 @@ interface AppleWorkoutsBucket {
     hrMaxSource: string;
     zones: Array<{ key: string; label: string; count: number; pct: number; durationSeconds: number }>;
   } | null;
+  whoCardio?: {
+    targetMinutes: number;
+    moderateMinutes: number;
+    vigorousMinutes: number;
+    equivalentMinutes: number;
+    completionPct: number;
+  };
+  paceTrend?: Array<{
+    date: string;
+    title: string;
+    distanceKm: number;
+    durationMinutes: number;
+    paceMinPerKm: number;
+  }>;
   recent: Array<{
     id: string;
     date: string;

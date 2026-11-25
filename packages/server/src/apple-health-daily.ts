@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { localDate, type Weight } from "@ironlog/shared";
 import { z } from "zod";
 import type { Db } from "./db.js";
+import type { SleepObservation, SleepStage } from "./sleep-observations.js";
 import { DomainError, type Store } from "./store.js";
 
 type Stmt = Database.Statement<unknown[], unknown>;
@@ -263,9 +264,7 @@ function parseMeasuredDate(raw: unknown): string | undefined {
   return flex ? localDate(Date.parse(flex)) : undefined;
 }
 
-type SleepStage = "deep" | "rem" | "core" | "asleep" | "awake" | "inBed";
 type Interval = [number, number];
-type SleepObservation = { stage: SleepStage; interval: Interval } | { stage: SleepStage; minutes: number };
 
 function isAsleepStage(stage: SleepStage) {
   return stage !== "awake" && stage !== "inBed";
@@ -1209,7 +1208,7 @@ function buildBodyCompositionReport(
   options: DailyHealthAnalyticsOptions,
   entries: DailyHealthSnapshot[] = [],
 ) {
-  const sex: "male" | "female" = options.sex === "female" ? "female" : "male";
+  const sex = options.sex ?? null;
   const weightKg = latestBody.weightKg?.value ?? null;
   const bodyFatPct = latestBody.bodyFatPct?.value ?? null;
   const directLean = latestBody.leanBodyMassKg?.value ?? null;
@@ -1251,6 +1250,8 @@ function buildBodyCompositionReport(
   if (leanBodyMassKg != null && heightM) {
     ffmi = roundTo(leanBodyMassKg / (heightM * heightM), 1);
     normalizedFfmi = roundTo(ffmi + 6.1 * (1.8 - heightM), 1);
+  }
+  if (ffmi != null && sex != null) {
     const thresholds = sex === "female" ? [14.5, 16.5, 18.0] : [18.0, 20.0, 22.0];
     ffmiStatus = ffmi < thresholds[0]!
       ? { label: "肌量偏薄", tone: "caution" }
@@ -1263,7 +1264,7 @@ function buildBodyCompositionReport(
 
   const waistCm = latestBody.waistCm?.value ?? null;
   let waistStatus: { label: string; tone: StatusTone } | null = null;
-  if (waistCm != null) {
+  if (waistCm != null && sex != null) {
     const highCut = sex === "female" ? 85 : 90;
     const midCut = sex === "female" ? 80 : 85;
     waistStatus = waistCm >= highCut
@@ -1290,9 +1291,9 @@ function buildBodyCompositionReport(
     if (weightKg != null && leanBodyMassKg != null && fatMassKg != null && bodyFatPct != null) {
       insights.push(`当前体重 ${weightKg} kg 中包含约 ${leanBodyMassKg} kg 瘦体重（${leanSharePct}%）与 ${fatMassKg} kg 体脂肪（${bodyFatPct}%）。`);
     }
-    if (ffmi != null && heightCm != null) {
+    if (ffmi != null && heightCm != null && ffmiStatus != null) {
       const srcNote = heightSource === "bmi_inferred" ? `按估算身高约 ${heightCm} cm ` : `按身高 ${heightCm} cm `;
-      insights.push(`${srcNote}对比你的瘦体重，肌肉储备处于「${ffmiStatus?.label}」水平。`);
+      insights.push(`${srcNote}对比你的瘦体重，肌肉储备处于「${ffmiStatus.label}」水平。`);
     }
     if (whtr != null && waistCm != null) {
       insights.push(
@@ -1300,7 +1301,7 @@ function buildBodyCompositionReport(
           ? `目前腰围 ${waistCm} cm（稍微偏圆一点），保持力量训练并适当少吃点热量，肚子会瘦得比较明显。`
           : `腰围 ${waistCm} cm，控制在很理想的范围内，内脏脂肪很少。`,
       );
-    } else if (bmi != null && bmi >= 24 && ffmi != null && ffmi >= 18.5) {
+    } else if (bmi != null && bmi >= 24 && ffmiStatus?.tone === "sweet") {
       insights.push(`虽然按身高体重算偏重一点，但你的肌肉底子很扎实，结合体脂率和腰围来看比单看体重准确得多。`);
     }
     if (deltas.weightKg?.delta != null) {
@@ -1361,7 +1362,7 @@ function buildBodyCompositionReport(
 
   const targetWaistCm = heightCm != null
     ? Math.floor(heightCm * 0.5)
-    : (sex === "female" ? 80 : 85);
+    : sex != null ? (sex === "female" ? 80 : 85) : null;
   const recompositionMilestones: {
     targetFatPct: number;
     label: string;
@@ -1370,7 +1371,7 @@ function buildBodyCompositionReport(
     estWeeks: number;
     weeklyFatRateKg: number;
   }[] = [];
-  if (leanBodyMassKg != null && weightKg != null && bodyFatPct != null) {
+  if (sex != null && leanBodyMassKg != null && weightKg != null && bodyFatPct != null) {
     // Helms (2014) bodyweight-scaled cut pacing (~0.6%/week) rather than a flat kg/week constant
     const weeklyFatRateKg = roundTo(Math.max(0.25, weightKg * 0.006), 2);
     const tiers = sex === "female"
@@ -1391,7 +1392,7 @@ function buildBodyCompositionReport(
       });
     }
   }
-  const recomposition = hasAny && (recompositionMilestones.length > 0 || waistCm != null)
+  const recomposition = hasAny && targetWaistCm != null && (recompositionMilestones.length > 0 || waistCm != null)
     ? {
         targetWaistCm,
         waistDeltaCm: waistCm != null ? roundTo(waistCm - targetWaistCm, 1) : null,

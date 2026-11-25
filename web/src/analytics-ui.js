@@ -80,7 +80,9 @@ function renderCoachSummaryStrip(data) {
   const parts = [];
   if (prot.totalDaysLogged > 0) {
     parts.push(
-      prot.status === "suboptimal"
+      prot.complianceRatePct == null
+        ? `日均蛋白 ${fmt(prot.averageGramsPerDay)} g · 待补体重`
+        : prot.status === "suboptimal"
         ? `每日蛋白偏低（均 ${fmt(prot.averageGramsPerDay)} g），多吃点瘦肉蛋奶`
         : `蛋白质吃得很够（均 ${fmt(prot.averageGramsPerDay)} g · 达标率 ${prot.complianceRatePct}%）`,
     );
@@ -128,7 +130,8 @@ export function renderAnalyticsView(data, state) {
 
   const optMuscles = muscles.audits.filter((m) => m.category === "optimal").length;
 
-  const appleWeightDiff = userProfile.appleWeightKg != null && Math.abs(userProfile.appleWeightKg - userProfile.weightKg) >= 0.1;
+  const { weightKg, appleWeightKg, gender } = userProfile;
+  const appleWeightDiff = appleWeightKg != null && weightKg != null && Math.abs(appleWeightKg - weightKg) >= 0.1;
 
   const hasApple = Boolean(
     state?.appleHealthConnected ||
@@ -186,7 +189,7 @@ export function renderAnalyticsView(data, state) {
     <div class="section-bar stats-header analytics-meta-bar">
       <div>
         <h2>近期状态一览</h2>
-        <p>截至 ${shortDate(data.through)} · 当前体重 ${fmt(userProfile.weightKg, 1)} kg${userProfile.appleWeightKg != null && Math.abs(userProfile.appleWeightKg - userProfile.weightKg) >= 0.05 ? ` · Apple 健康 ${fmt(userProfile.appleWeightKg, 2)} kg` : ""} (${userProfile.gender === "female" ? "女性" : "男性"})${appleWeightDiff ? ` <button type="button" class="quiet apple-inline-sync" data-action="adopt-apple-weight-analytics">同步为 ${fmt(userProfile.appleWeightKg, 2)} kg</button>` : ""}</p>
+        <p>截至 ${shortDate(data.through)} · ${weightKg == null ? "暂无体重" : `体重 ${fmt(weightKg, 1)} kg`}${gender != null ? `（${gender === "female" ? "女性" : "男性"}）` : ""}${appleWeightDiff ? ` · Apple 健康 ${fmt(appleWeightKg, 2)} kg <button type="button" class="quiet apple-inline-sync" data-action="adopt-apple-weight-analytics">同步为 ${fmt(appleWeightKg, 2)} kg</button>` : ""}</p>
       </div>
     </div>
 
@@ -300,6 +303,7 @@ function renderAcwrPanel(acwr) {
 
       <div class="sci-insight-box">
         <div class="sci-insight-head">${icon("bolt", 15)} <span>节奏建议</span></div>
+        ${acwr.referenceWeightKg != null ? `<p>缺少体重记录，徒手或辅助动作的负荷按 ${fmt(acwr.referenceWeightKg, 0)} kg 参考体重估算。</p>` : ""}
         <p>${esc((current.zone === "sweet_spot" ? "当前训练节奏非常合适，刺激足够又不容易练伤，照常推进即可。" : current.zone === "danger" ? "警告：近期训练量突然上涨太多，关节和体能容易吃不消，强烈建议安排 2–3 天休息或大幅减轻重量！" : current.zone === "caution" ? "最近训练量比平时略高，如果感觉累了记得多睡会儿、吃好碳水，别连续加码。" : "最近训练量比平时轻一些，如果是主动减载休整正好；想冲力量的话可以慢慢多练几组。") + ewmaAlert)}</p>
       </div>
     </section>
@@ -506,7 +510,9 @@ function renderIpfGlPanel(ipfGl, userProfile) {
   const { bench, total, components } = ipfGl;
   const bestTier = ((bench?.score ?? 0) >= (total?.score ?? 0) ? bench?.tierLabel : total?.tierLabel) ?? bench?.tierLabel ?? total?.tierLabel ?? "同体重评估";
   const tierShort = bestTier.replace(/\s*\([^)]*\)/, "");
-  const bwKg = Math.max(1, Number(userProfile.weightKg) || 0);
+  const bwKg = userProfile.weightKg;
+  const needsProfile = bwKg == null || userProfile.gender == null;
+  const formatLift = (liftKg) => `${fmt(liftKg)} kg${bwKg != null ? ` (${fmt(liftKg / bwKg, 2)}× 体重)` : ""}`;
 
   return `
     <section class="panel analytics-panel panel-ipf-gl" id="panel-ipf-gl">
@@ -522,25 +528,25 @@ function renderIpfGlPanel(ipfGl, userProfile) {
         <div class="ipf-score-box">
           <div class="ipf-score-top">
             <span class="ipf-title">平板卧推得分</span>
-            <span class="kpi-pill ${bench && bench.score >= 35 ? 'is-sweet' : ''}">${bench?.tierLabel ?? '需卧推数据'}</span>
+            <span class="kpi-pill ${bench && bench.score >= 35 ? 'is-sweet' : ''}">${bench?.tierLabel ?? (components.bench1RM && needsProfile ? '待补体重或性别' : '需卧推数据')}</span>
           </div>
           <div class="ipf-score-val">
             <strong>${bench ? fmt(bench.score, 1) : '—'}</strong>
             <span>分</span>
           </div>
-          <small>推算极限: ${components.bench1RM ? `${fmt(components.bench1RM)} kg (${fmt(components.bench1RM / bwKg, 2)}× 体重)` : '未记录'} · 体重 ${fmt(userProfile.weightKg)} kg</small>
+          <small>推算极限: ${components.bench1RM ? formatLift(components.bench1RM) : '未记录'}${bwKg != null ? ` · 体重 ${fmt(bwKg)} kg` : ""}</small>
         </div>
 
         <div class="ipf-score-box">
           <div class="ipf-score-top">
             <span class="ipf-title">三大项总分 (SBD)</span>
-            <span class="kpi-pill ${total && total.score >= 35 ? 'is-sweet' : ''}">${total?.tierLabel ?? '需深蹲/硬拉数据'}</span>
+            <span class="kpi-pill ${total && total.score >= 35 ? 'is-sweet' : ''}">${total?.tierLabel ?? (components.total3Lift && needsProfile ? '待补体重或性别' : '需三项训练数据')}</span>
           </div>
           <div class="ipf-score-val">
             <strong>${total ? fmt(total.score, 1) : '—'}</strong>
             <span>分</span>
           </div>
-          <small>卧推 ${fmt(components.bench1RM)} + 深蹲 ${fmt(components.squat1RM)} + ${esc(components.deadliftSourceName || '硬拉')} ${fmt(components.deadlift1RM)} = ${components.total3Lift ? `${fmt(components.total3Lift)} kg (${fmt(components.total3Lift / bwKg, 2)}× 体重)` : '待补齐'}</small>
+          <small>卧推 ${fmt(components.bench1RM)} + 深蹲 ${fmt(components.squat1RM)} + ${esc(components.deadliftSourceName || '硬拉')} ${fmt(components.deadlift1RM)} = ${components.total3Lift ? formatLift(components.total3Lift) : '待补齐'}</small>
         </div>
       </div>
 
@@ -581,11 +587,11 @@ function renderNutritionPhysioPanel(nutrition, bodyweight) {
             </div>
             <div>
               <span>每公斤体重</span>
-              <strong>${fmt(protein.averageGramsPerKg, 2)} <small>g/kg</small></strong>
+              <strong>${protein.averageGramsPerKg != null ? `${fmt(protein.averageGramsPerKg, 2)} <small>g/kg</small>` : "—"}</strong>
             </div>
             <div>
               <span>达标天数</span>
-              <strong>${protein.daysMeetingTarget} <small>/ ${protein.totalDaysLogged} 天 (${protein.complianceRatePct}%)</small></strong>
+              <strong>${protein.daysMeetingTarget != null ? `${protein.daysMeetingTarget} <small>/ ${protein.totalDaysLogged} 天 (${protein.complianceRatePct}%)</small>` : "—"}</strong>
             </div>
           </div>
           <p class="physio-advice">${esc(protein.advice)}</p>
@@ -1008,7 +1014,7 @@ function renderAppleReportsPanel(data, state, hasApple = true) {
         </div>
         <div class="apple-weekly-card">
           <span>当前体成分与目标基准</span>
-          <strong>${br?.weightKg != null ? `${fmt(br.weightKg, 2)} <small>kg</small>` : `${fmt(userProfile?.weightKg ?? 0, 1)} <small>kg</small>`}</strong>
+          <strong>${br?.weightKg != null ? `${fmt(br.weightKg, 2)} <small>kg</small>` : userProfile?.weightKg != null ? `${fmt(userProfile.weightKg, 1)} <small>kg</small>` : "—"}</strong>
           <small>${[
             br?.bodyFatPct != null ? `体脂 ${fmt(br.bodyFatPct, 1)}%` : null,
             br?.ffmi != null ? `FFMI ${fmt(br.ffmi, 1)}` : null,
@@ -1034,7 +1040,8 @@ function renderAppleReportsPanel(data, state, hasApple = true) {
 
   const onlyShortTriggers = workoutFilter === "device"
     && filteredRecent.length > 0
-    && !activeStats?.hrZones
+    && activeStats?.avgBpm == null
+    && activeStats?.maxBpm == null
     && (activeStats?.totalCaloriesKcal ?? 0) === 0
     && filteredRecent.every((r) => r.captureMethod === "trigger");
 
@@ -1067,7 +1074,7 @@ function renderAppleReportsPanel(data, state, hasApple = true) {
         ${activeStats.hrZones ? `<div class="apple-hr-zones">
           <div class="apple-hr-zone-head">
             <span>单场平均心率区间分布（按场次占比）</span>
-            <small>${activeStats.hrZones.hrMaxSource === "tanaka_age" ? "Tanaka 最大心率" : "默认最大心率"} ${activeStats.hrZones.hrMax} bpm · 非实时心率停留时长</small>
+            <small>Tanaka 估算最大心率 ${activeStats.hrZones.hrMax} bpm · 每场按平均值归类</small>
           </div>
           <div class="apple-hr-zone-bar" role="img" aria-label="单场平均心率区间分布">
             ${activeStats.hrZones.zones.filter((z) => z.pct > 0).map((z) => `<i class="hr-${z.key}" style="width:${z.pct}%" title="${esc(`${z.label} · ${z.count} 场（场次占 ${z.pct}%${z.durationSeconds > 0 ? ` · 共 ${duration(z.durationSeconds)}` : ""}）`)}"></i>`).join("")}
@@ -1075,7 +1082,7 @@ function renderAppleReportsPanel(data, state, hasApple = true) {
           <div class="apple-hr-zone-legend">
             ${activeStats.hrZones.zones.filter((z) => z.count > 0).map((z) => `<span><i class="hr-${z.key}"></i>${esc(z.label)} ${z.count} 场（场次 ${z.pct}%${z.durationSeconds > 0 ? ` · 共 ${duration(z.durationSeconds)}` : ""}）</span>`).join("")}
           </div>
-        </div>` : ""}
+        </div>` : activeStats.avgBpm != null ? "<p>已记录平均心率。年龄资料在 18–81 岁范围内时可查看估算区间。</p>" : ""}
         <div class="apple-table-scroll">
           <table class="apple-ledger-table">
             <thead><tr><th>日期</th><th>运动类型</th><th>时长</th><th>消耗 / 距离</th><th>平均 / 峰值心率</th><th>详情</th></tr></thead>
@@ -1244,7 +1251,7 @@ function renderBibliographyPanel(data) {
     ["ACWR 双模型与去耦合", `滚动 ${fmt(acwr.current.acwr, 2)} · EWMA ${fmt(acwr.current.ewmaAcwr ?? acwr.current.acwr, 2)}`, acwr.current.uncoupledAcwr != null ? `去耦合 ${fmt(acwr.current.uncoupledAcwr, 2)} · 7d/28d` : "Gabbett / Williams"],
     ["Monotony & Strain", `${fmt(monotony.current.monotony, 2)} / ${fmt(monotony.current.trainingStrain)}`, `SD ±${fmt(monotony.current.standardDeviation)} kg`],
     bw ? ["体重趋势回归", `${bw.weeklySlopeKg >= 0 ? "+" : ""}${fmt(bw.weeklySlopeKg, 2)} kg/周`, bw.trendMethod === "ols_regression" ? `OLS R²=${fmt(bw.rSquared ?? 0, 2)}` : "Two-Point"] : null,
-    prot?.totalDaysLogged ? ["蛋白 LBM 折算", prot.leanMassGramsPerKg != null ? `${fmt(prot.leanMassGramsPerKg, 2)} g/kg LBM` : `${fmt(prot.averageGramsPerKg, 2)} g/kg`, `达标率 ${prot.complianceRatePct}%`] : null,
+    prot?.totalDaysLogged ? ["蛋白摄入", prot.leanMassGramsPerKg != null ? `${fmt(prot.leanMassGramsPerKg, 2)} g/kg LBM` : prot.averageGramsPerKg != null ? `${fmt(prot.averageGramsPerKg, 2)} g/kg` : `${fmt(prot.averageGramsPerDay)} g/天`, prot.complianceRatePct != null ? `达标率 ${prot.complianceRatePct}%` : "待补体重"] : null,
     rec?.lnHrvBaseline ? ["ln(rMSSD) 自主神经基线", `${fmt(rec.lnHrvBaseline.latest, 2)}${rec.lnHrvBaseline.zScore != null ? ` (Z=${rec.lnHrvBaseline.zScore >= 0 ? "+" : ""}${fmt(rec.lnHrvBaseline.zScore, 2)})` : ""}`, `${rec.lnHrvBaseline.swcHalfSd != null ? `SWC ±${fmt(rec.lnHrvBaseline.swcHalfSd, 2)}` : "单日参考"}${rec.autonomicBalanceRatio != null ? ` · 平衡指数 ${fmt(rec.autonomicBalanceRatio, 2)}` : ""}`] : null,
     body?.metabolic?.measuredVsPredictedPct != null ? ["Katch-McArdle 实测比对", `${body.metabolic.appleRestingAvgKcal} kcal`, `偏差 ${body.metabolic.measuredVsPredictedPct >= 0 ? "+" : ""}${fmt(body.metabolic.measuredVsPredictedPct, 1)}%`] : null,
   ].filter(Boolean);

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import { fmt, guessMeal, today } from "../../lib/date";
 import {
@@ -6,6 +6,8 @@ import {
   shiftDateStr,
   type DietData,
   type MealKey,
+  type ProfileGoals,
+  type QuickFoodItem,
   type RecordEnvelope,
 } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
@@ -28,6 +30,53 @@ const DEFAULT_FOOD_PRESETS: RecentFoodPreset[] = [
   { name: "熟米饭 200g", calories: 232, protein: 5.2, carbs: 51.2, fat: 0.6 },
   { name: "乳清蛋白 1勺", calories: 120, protein: 24, carbs: 3, fat: 1.5 },
 ];
+
+interface ScaleBaseline {
+  baseName: string;
+  unit: string;
+  baseGrams: number;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
+function quickFoodsStorageKey(userId: string): string {
+  return userId ? `ironlog-web-quick-foods:${userId}` : "ironlog-web-quick-foods";
+}
+
+function parseBaselineFromName(rawName: string): { baseName: string; baseGrams: number; unit: string } {
+  const m = rawName.trim().match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)\s*$/i);
+  if (m) {
+    const grams = Number(m[2]);
+    if (Number.isFinite(grams) && grams > 0) {
+      const unitRaw = m[3]!.toLowerCase();
+      return {
+        baseName: m[1]!.trim(),
+        baseGrams: grams,
+        unit: unitRaw === "ml" || unitRaw === "毫升" ? "ml" : "g",
+      };
+    }
+  }
+  return { baseName: rawName.trim(), baseGrams: 100, unit: "g" };
+}
+
+function readLocalQuickFoods(userId: string): QuickFoodItem[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = JSON.parse(localStorage.getItem(quickFoodsStorageKey(userId)) ?? "[]");
+    return Array.isArray(raw) ? (raw as QuickFoodItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalQuickFoods(userId: string, items: QuickFoodItem[]): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(quickFoodsStorageKey(userId), JSON.stringify(items));
+  } catch {}
+}
 
 export function DietEditorModal({
   record,
@@ -57,6 +106,94 @@ export function DietEditorModal({
   const [fat, setFat] = useState<string>(record ? String(record.data.fat) : "0");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [quickFoods, setQuickFoods] = useState<QuickFoodItem[]>(() => readLocalQuickFoods(userId));
+  const [scaleBase, setScaleBase] = useState<ScaleBaseline | null>(null);
+  const [gramsInput, setGramsInput] = useState<string>("");
+  const [savingQuickFood, setSavingQuickFood] = useState(false);
+
+  useEffect(() => {
+    setQuickFoods(readLocalQuickFoods(userId));
+    if (!userId) return;
+    let active = true;
+    void apiFetch<{ profile?: ProfileGoals }>("/api/web/profile")
+      .then((res) => {
+        if (!active || !res?.profile) return;
+        const remote = res.profile.quickFoods ?? [];
+        setQuickFoods(remote);
+        writeLocalQuickFoods(userId, remote);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  const applyScaledGrams = (baseline: ScaleBaseline, nextGrams: number) => {
+    const g = Math.max(1, Math.round(nextGrams * 10) / 10);
+    const ratio = g / Math.max(1, baseline.baseGrams);
+    setGramsInput(String(g));
+    setName(`${baseline.baseName} ${g}${baseline.unit}`);
+    setCalories(String(Math.round(baseline.calories * ratio)));
+    setProtein(String(Math.round(baseline.protein * ratio * 10) / 10));
+    setCarbs(String(Math.round(baseline.carbs * ratio * 10) / 10));
+    setFat(String(Math.round(baseline.fat * ratio * 10) / 10));
+  };
+
+  const saveQuickFoodsRemote = async (nextList: QuickFoodItem[], toastMsg: string) => {
+    setQuickFoods(nextList);
+    writeLocalQuickFoods(userId, nextList);
+    if (!userId) {
+      notify(toastMsg);
+      return;
+    }
+    setSavingQuickFood(true);
+    try {
+      await apiFetch("/api/web/profile/quick-foods", {
+        method: "PUT",
+        body: { quickFoods: nextList },
+      });
+      bumpDataEpoch();
+      notify(toastMsg);
+    } catch (err) {
+      notify((err as Error)?.message || "保存个人单品失败，已暂存本地");
+    } finally {
+      setSavingQuickFood(false);
+    }
+  };
+
+  const handleSaveCurrentQuickFood = () => {
+    const cleanName = name.trim();
+    if (!cleanName || savingQuickFood) {
+      setError("请先填写食物名称和营养素后再收藏");
+      return;
+    }
+    const parsed = parseBaselineFromName(cleanName);
+    const typedGrams = Number(gramsInput);
+    const baseGrams =
+      Number.isFinite(typedGrams) && typedGrams > 0 ? Math.round(typedGrams * 10) / 10 : parsed.baseGrams;
+    const item: QuickFoodItem = {
+      id: `qf_${Date.now().toString(36)}`,
+      name: parsed.baseName || cleanName,
+      baseGrams,
+      unit: parsed.unit,
+      calories: Math.max(0, Number(calories) || 0),
+      protein: Math.max(0, Number(protein) || 0),
+      carbs: Math.max(0, Number(carbs) || 0),
+      fat: Math.max(0, Number(fat) || 0),
+    };
+    const nextList = [item, ...quickFoods.filter((q) => q.name !== item.name)].slice(0, 40);
+    setScaleBase({
+      baseName: item.name,
+      unit: item.unit,
+      baseGrams: item.baseGrams,
+      calories: item.calories,
+      protein: item.protein,
+      carbs: item.carbs,
+      fat: item.fat,
+    });
+    setGramsInput(String(item.baseGrams));
+    void saveQuickFoodsRemote(nextList, `已收藏「${item.name}」(${item.baseGrams}${item.unit})`);
+  };
 
   const pNum = Math.max(0, Number(protein) || 0);
   const cNum = Math.max(0, Number(carbs) || 0);
@@ -228,6 +365,49 @@ export function DietEditorModal({
         </div>
       </label>
 
+      {quickFoods.length ? (
+        <div className="diet-quick-presets">
+          <span className="preset-label">个人常用单品 · 点选可按克数换算</span>
+          <div className="preset-chips">
+            {quickFoods.map((q) => (
+              <span key={q.id} className="diet-quick-food-chip">
+                <button
+                  type="button"
+                  className={`preset-chip is-recent${scaleBase?.baseName === q.name ? " is-selected" : ""}`}
+                  onClick={() => {
+                    triggerHaptic("light");
+                    const baseline: ScaleBaseline = {
+                      baseName: q.name,
+                      unit: q.unit || "g",
+                      baseGrams: q.baseGrams,
+                      calories: q.calories,
+                      protein: q.protein,
+                      carbs: q.carbs,
+                      fat: q.fat,
+                    };
+                    setScaleBase(baseline);
+                    applyScaledGrams(baseline, q.baseGrams);
+                  }}
+                >
+                  {q.name} {q.baseGrams}{q.unit} <small>{fmt(q.calories, 0)} kcal</small>
+                </button>
+                <button
+                  type="button"
+                  className="diet-quick-food-del"
+                  aria-label={`移除常用单品 ${q.name}`}
+                  onClick={() => {
+                    const nextList = quickFoods.filter((x) => x.id !== q.id);
+                    void saveQuickFoodsRemote(nextList, `已移除「${q.name}」`);
+                  }}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {presets.length ? (
         <div className="diet-quick-presets">
           <span className="preset-label">{recentFoods.length ? "最近常吃" : "常见搭配快填"}</span>
@@ -239,14 +419,68 @@ export function DietEditorModal({
                 className={`preset-chip${recentFoods.length ? " is-recent" : ""}`}
                 onClick={() => {
                   triggerHaptic("light");
+                  const parsed = parseBaselineFromName(p.name);
+                  const baseline: ScaleBaseline = {
+                    baseName: parsed.baseName,
+                    unit: parsed.unit,
+                    baseGrams: parsed.baseGrams,
+                    calories: Math.round(p.calories),
+                    protein: Math.round(p.protein * 10) / 10,
+                    carbs: Math.round(p.carbs * 10) / 10,
+                    fat: Math.round(p.fat * 10) / 10,
+                  };
+                  setScaleBase(baseline);
+                  setGramsInput(String(parsed.baseGrams));
                   setName(p.name);
-                  setCalories(String(Math.round(p.calories)));
-                  setProtein(String(Math.round(p.protein * 10) / 10));
-                  setCarbs(String(Math.round(p.carbs * 10) / 10));
-                  setFat(String(Math.round(p.fat * 10) / 10));
+                  setCalories(String(baseline.calories));
+                  setProtein(String(baseline.protein));
+                  setCarbs(String(baseline.carbs));
+                  setFat(String(baseline.fat));
                 }}
               >
                 {p.name} <small>{fmt(p.calories, 0)} kcal</small>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {scaleBase ? (
+        <div className="diet-scaler-bar">
+          <label className="diet-scaler-input">
+            <span>实际克数</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={1}
+              max={10000}
+              step="any"
+              aria-label="食物克数换算"
+              value={gramsInput}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => {
+                const raw = e.target.value;
+                setGramsInput(raw);
+                const val = Number(raw);
+                if (Number.isFinite(val) && val > 0) {
+                  applyScaledGrams(scaleBase, val);
+                }
+              }}
+            />
+            <small>{scaleBase.unit}（基准 {scaleBase.baseGrams}{scaleBase.unit}）</small>
+          </label>
+          <div className="diet-scaler-mults">
+            {[0.5, 1, 1.5, 2].map((mult) => (
+              <button
+                key={mult}
+                type="button"
+                className="micro-chip"
+                onClick={() => {
+                  triggerHaptic("light");
+                  applyScaledGrams(scaleBase, scaleBase.baseGrams * mult);
+                }}
+              >
+                {mult}×
               </button>
             ))}
           </div>
@@ -373,16 +607,28 @@ export function DietEditorModal({
           <span className="macro-calc-hint">
             按三大营养素折算约 <strong>{fmt(estimatedKcal, 0)}</strong> kcal <small>(4·4·9)</small>
           </span>
-          <button
-            type="button"
-            className="quiet macro-calc-apply"
-            onClick={() => {
-              triggerHaptic("light");
-              setCalories(String(estimatedKcal));
-            }}
-          >
-            填入热量
-          </button>
+          <div className="diet-calc-actions">
+            {name.trim() ? (
+              <button
+                type="button"
+                className="quiet macro-calc-apply"
+                disabled={savingQuickFood}
+                onClick={handleSaveCurrentQuickFood}
+              >
+                {savingQuickFood ? "收藏中…" : "存为常用单品"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="quiet macro-calc-apply"
+              onClick={() => {
+                triggerHaptic("light");
+                setCalories(String(estimatedKcal));
+              }}
+            >
+              填入热量
+            </button>
+          </div>
         </div>
       ) : null}
 

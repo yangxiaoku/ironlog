@@ -2104,3 +2104,282 @@ dialog.workout-dialog .workout-inline-add-btn {
     padding: 20px;
   }
 }
+
+/* Feature & Analytics Pack: Diet Scaler, Exercise Cues, Deload Mode, Plan Adherence, Plateaus & Rep-Max */
+.diet-quick-food-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.diet-quick-food-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.diet-quick-food-del:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+
+.diet-scaler-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+}
+
+.diet-scaler-input {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.diet-scaler-input input {
+  width: 78px;
+  min-height: 34px;
+  padding: 4px 8px;
+  text-align: center;
+  font: 700 14px/1.2 var(--mono);
+}
+
+.diet-scaler-input small {
+  color: var(--muted);
+  font-size: 11.5px;
+}
+
+.diet-scaler-mults,
+.diet-calc-actions,
+.ex-last-actions,
+.acwr-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.ex-cue-row {
+  margin-bottom: 10px;
+}
+
+.ex-cue-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  border-radius: 9px;
+  border: 1px dashed var(--edge);
+  background: transparent;
+  color: var(--muted);
+  font: 500 12px/1.35 var(--font);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ex-cue-btn.has-note {
+  border-style: solid;
+  background: var(--inset);
+  color: var(--ink);
+}
+
+.ex-cue-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ex-cue-editor input {
+  flex: 1;
+  min-width: 0;
+  min-height: 34px;
+}
+
+.ex-apply-prog {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--red);
+  background: var(--red-wash);
+  color: var(--red);
+  font: 600 12px/1 var(--font);
+  cursor: pointer;
+}
+
+.deload-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--edge));
+  background: color-mix(in srgb, var(--red-wash) 45%, var(--surface));
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.deload-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.deload-card.is-active {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--edge));
+}
+
+.deload-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.deload-card-head strong {
+  display: block;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.deload-card-head small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.deload-card-ratios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+.deload-ratio-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.adherence-grid,
+.measurement-kpi-grid,
+.sleep-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.adherence-grid > div,
+.measurement-kpi-item,
+.sleep-impact-card {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rule);
+  background: var(--inset);
+  display: grid;
+  gap: 4px;
+}
+
+.adherence-grid span,
+.measurement-kpi-item span,
+.sleep-impact-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.adherence-grid strong,
+.measurement-kpi-item strong,
+.sleep-impact-card strong {
+  font: 700 18px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.measurement-kpi-item small,
+.sleep-impact-card small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.sleep-impact-meta {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.who-cardio-bar {
+  height: 8px;
+  margin: 12px 0;
+  border-radius: 999px;
+  background: var(--inset);
+  border: 1px solid var(--rule);
+  overflow: hidden;
+}
+
+.who-cardio-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--red);
+  transition: width 0.25s ease;
+}
+
+.plateau-list {
+  display: grid;
+  gap: 10px;
+}
+
+.plateau-item {
+  padding: 11px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--rule);
+  background: var(--inset);
+}
+
+.plateau-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.plateau-top strong {
+  display: block;
+  font-size: 14px;
+  color: var(--ink);
+}
+
+.plateau-top small {
+  font-size: 12px;
+  color: var(--muted);
+}

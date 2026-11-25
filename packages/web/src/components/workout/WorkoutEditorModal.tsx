@@ -357,6 +357,10 @@ export function WorkoutEditorModal({
   const [finishPanelOpen, setFinishPanelOpen] = useState(isHistoricalEdit);
   const [openSettingsIds, setOpenSettingsIds] = useState<Set<string>>(() => new Set());
   const [refsByExId, setRefsByExId] = useState<Map<string, ExerciseReferenceEntry["sets"]>>(() => new Map());
+  const [notesByExId, setNotesByExId] = useState<Record<string, { note: string }>>({});
+  const [editingNoteExId, setEditingNoteExId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingNote, setSavingNote] = useState(false);
 
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
@@ -609,6 +613,42 @@ export function WorkoutEditorModal({
       active = false;
     };
   }, [exIdsKey, date, record?.id, sessionStart]);
+
+  // Fetch persistent per-exercise training cues/notes
+  useEffect(() => {
+    let active = true;
+    void apiFetch<Record<string, { note: string }>>("/api/web/exercise-notes")
+      .then((map) => {
+        if (active && map && typeof map === "object") setNotesByExId(map);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  const handleSaveInlineNote = async (exerciseId: string) => {
+    if (savingNote) return;
+    setSavingNote(true);
+    try {
+      const res = await apiFetch<{ note: string }>(`/api/web/exercise-notes/${encodeURIComponent(exerciseId)}`, {
+        method: "PUT",
+        body: { note: noteDraft.trim() },
+      });
+      setNotesByExId((prev) => {
+        const next = { ...prev };
+        if (res.note) next[exerciseId] = { note: res.note };
+        else delete next[exerciseId];
+        return next;
+      });
+      setEditingNoteExId(null);
+      notify(res.note ? "动作要点已保存" : "动作要点已清除");
+    } catch (err) {
+      notify((err as Error)?.message || "保存动作要点失败");
+    } finally {
+      setSavingNote(false);
+    }
+  };
 
   const elapsedSeconds = elapsedAt(timing, nowMs);
   const { totalSets, doneSets, liveVolume } = useMemo(() => {
@@ -1804,6 +1844,16 @@ export function WorkoutEditorModal({
 
       {/* Main Exercise Scroll Stack */}
       <div className="workout-scroll" ref={workoutScrollRef}>
+        {prefs.deloadMode && !isHistoricalEdit ? (
+          <div className="deload-banner" role="status">
+            <span>
+              <strong>减载周模式</strong> · 目标按重量 {prefs.deloadWeightPct}% / 组数 {prefs.deloadSetsPct}% 缩放
+            </span>
+            <button type="button" className="quiet" onClick={() => updatePref("deloadMode", false)}>
+              退出减载
+            </button>
+          </div>
+        ) : null}
         {isHistoricalEdit && finishPanelOpen ? (
           <div className="finish-panel">
             <div className="fields">
@@ -2020,35 +2070,116 @@ export function WorkoutEditorModal({
                     ) : null}
                   </div>
 
+                  <div className="ex-cue-row" data-no-swipe="true">
+                    {editingNoteExId === row.exerciseId ? (
+                      <div className="ex-cue-editor">
+                        <input
+                          type="text"
+                          maxLength={500}
+                          value={noteDraft}
+                          placeholder="例如：座椅第 4 格、肘部内收 45°"
+                          onChange={(e) => setNoteDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              void handleSaveInlineNote(row.exerciseId);
+                            } else if (e.key === "Escape") {
+                              setEditingNoteExId(null);
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          disabled={savingNote}
+                          onClick={() => void handleSaveInlineNote(row.exerciseId)}
+                        >
+                          {savingNote ? "保存中" : "保存"}
+                        </button>
+                        <button type="button" className="quiet" onClick={() => setEditingNoteExId(null)}>
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className={`ex-cue-btn${notesByExId[row.exerciseId]?.note ? " has-note" : ""}`}
+                        onClick={() => {
+                          setEditingNoteExId(row.exerciseId);
+                          setNoteDraft(notesByExId[row.exerciseId]?.note ?? "");
+                        }}
+                      >
+                        <Icon name="bookmark" size={12} />
+                        <span>
+                          {notesByExId[row.exerciseId]?.note
+                            ? `要点：${notesByExId[row.exerciseId]!.note}`
+                            : "+ 动作要点（座椅格数 / 握距 / 提醒）"}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
                 {refText ? (
                   <div className="ex-context-stack">
                     <div className="ex-last-row">
                       <span>上次：{refText}</span>
                       {!isTimed ? (
-                        <button
-                          type="button"
-                          className="ex-apply-ref"
-                          onClick={() => {
-                            triggerHaptic("light");
-                            setExercises((prev) =>
-                              prev.map((ex, i) =>
-                                i === exIdx
-                                  ? {
-                                      ...ex,
-                                      sets: ex.sets.map((s, j) => {
-                                        const ref = refSets[j];
-                                        if (!ref || s.completed) return s;
-                                        return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
-                                      }),
-                                    }
-                                  : ex,
-                              ),
-                            );
-                            notify("已填入上次重量与次数");
-                          }}
-                        >
-                          沿用上次
-                        </button>
+                        <div className="ex-last-actions">
+                          <button
+                            type="button"
+                            className="ex-apply-ref"
+                            onClick={() => {
+                              triggerHaptic("light");
+                              setExercises((prev) =>
+                                prev.map((ex, i) =>
+                                  i === exIdx
+                                    ? {
+                                        ...ex,
+                                        sets: ex.sets.map((s, j) => {
+                                          const ref = refSets[j];
+                                          if (!ref || s.completed) return s;
+                                          return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
+                                        }),
+                                      }
+                                    : ex,
+                                ),
+                              );
+                              notify("已填入上次重量与次数");
+                            }}
+                          >
+                            沿用上次
+                          </button>
+                          <button
+                            type="button"
+                            className="ex-apply-prog"
+                            onClick={() => {
+                              triggerHaptic("light");
+                              setExercises((prev) =>
+                                prev.map((ex, i) =>
+                                  i === exIdx
+                                    ? {
+                                        ...ex,
+                                        sets: ex.sets.map((s, j) => {
+                                          const ref = refSets[j];
+                                          if (!ref || s.completed) return s;
+                                          return ref.weight > 0
+                                            ? {
+                                                ...s,
+                                                weight: round2(ref.weight + weightStepKg),
+                                                reps: ref.reps || s.reps,
+                                              }
+                                            : { ...s, reps: (ref.reps || s.reps) + 1 };
+                                        }),
+                                      }
+                                    : ex,
+                                ),
+                              );
+                              notify("已按渐进目标预填未完成组");
+                            }}
+                          >
+                            渐进填入
+                          </button>
+                        </div>
                       ) : null}
                     </div>
                     {prevBestE1rm > 0 ? (

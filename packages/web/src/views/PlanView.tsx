@@ -35,6 +35,11 @@ import {
 } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore, type PlanTab } from "../store/useUiStore";
+import {
+  WORKOUT_PREFS_EVENT,
+  readWorkoutPreferences,
+  writeWorkoutPreference,
+} from "../lib/workout-helpers";
 
 interface ActivePlanResponse {
   id: string;
@@ -98,6 +103,14 @@ export function PlanView() {
   );
   const [armedStarterId, setArmedStarterId] = useState("");
   const [adoptingId, setAdoptingId] = useState("");
+  const [workoutPrefs, setWorkoutPrefs] = useState(() => readWorkoutPreferences());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setWorkoutPrefs(readWorkoutPreferences());
+    window.addEventListener(WORKOUT_PREFS_EVENT, sync);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -481,6 +494,67 @@ export function PlanView() {
               </button>
             </section>
           ) : null}
+
+          <section className={`panel deload-card${workoutPrefs.deloadMode ? " is-active" : ""}`}>
+            <div className="deload-card-head">
+              <div>
+                <strong>减载周模式（Deload Week）</strong>
+                <small>开启后，从计划开练时自动按比例下调目标重量与组数，帮助消除累积疲劳</small>
+              </div>
+              <input
+                type="checkbox"
+                className="switch"
+                aria-label="开启减载周模式"
+                checked={workoutPrefs.deloadMode}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  writeWorkoutPreference("deloadMode", next);
+                  setWorkoutPrefs(readWorkoutPreferences());
+                  notify(next ? "已开启减载周模式" : "已恢复常规训练负荷");
+                }}
+              />
+            </div>
+            {workoutPrefs.deloadMode ? (
+              <div className="deload-card-ratios">
+                <div className="deload-ratio-group">
+                  <span>目标重量比例</span>
+                  <div className="segments">
+                    {[70, 75, 80].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        aria-pressed={workoutPrefs.deloadWeightPct === pct}
+                        onClick={() => {
+                          writeWorkoutPreference("deloadWeightPct", pct);
+                          setWorkoutPrefs(readWorkoutPreferences());
+                        }}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="deload-ratio-group">
+                  <span>目标组数比例</span>
+                  <div className="segments">
+                    {[50, 75].map((pct) => (
+                      <button
+                        key={pct}
+                        type="button"
+                        aria-pressed={workoutPrefs.deloadSetsPct === pct}
+                        onClick={() => {
+                          writeWorkoutPreference("deloadSetsPct", pct);
+                          setWorkoutPrefs(readWorkoutPreferences());
+                        }}
+                      >
+                        {pct}%
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </section>
 
           {planData && activePlan ? (
             <>

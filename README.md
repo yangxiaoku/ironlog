@@ -70,7 +70,7 @@ MCP 支持查询训练上下文与动作、管理计划草稿、应用计划、�
 docker compose up -d --build
 ```
 
-Compose 将 SQLite 持久化到宿主机的 `./data`。在容器内签发令牌时，在上文命令前使用 `docker compose exec ironlog`。网页中可在「统计后台 → 账号」导出自己的记录。部署者可通过 `node --env-file-if-exists=.env scripts/backup.mjs` 创建一致性 SQLite 备份。
+Compose 将 SQLite 持久化到宿主机的 `./data`。在容器内签发令牌时，在上文命令前使用 `docker compose exec ironlog`。网页中可在「统计后台 → 账号」导出自己的记录。新版 JSON 备份包含已同步的睡眠阶段和时段数据，可用于恢复作息报表。只包含睡眠汇总的旧备份仍可恢复汇总。部署者可通过 `node --env-file-if-exists=.env scripts/backup.mjs` 创建一致性 SQLite 备份。
 
 ## 项目结构
 

@@ -495,12 +495,12 @@ export function calculateIpfGlPoints(
 export interface ProteinAdequacyReport {
   targetGramsPerKg: number;
   averageGramsPerDay: number;
-  averageGramsPerKg: number;
+  averageGramsPerKg: number | null;
   leanMassGramsPerKg: number | null;
   totalDaysLogged: number;
-  daysMeetingTarget: number;
-  complianceRatePct: number;
-  status: "suboptimal" | "optimal" | "high";
+  daysMeetingTarget: number | null;
+  complianceRatePct: number | null;
+  status: "insufficient" | "suboptimal" | "optimal" | "high";
   statusLabel: string;
   advice: string;
 }
@@ -508,11 +508,10 @@ export interface ProteinAdequacyReport {
 /** Evaluates daily protein adequacy against Morton (2018) bodyweight and optional Helms (2014) lean-mass targets. */
 export function evaluateProteinAdequacy(
   dailyProteins: { date: string; proteinGrams: number }[],
-  bodyweightKg: number,
+  bodyweightKg: number | null,
   options?: { leanBodyMassKg?: number | null },
 ): ProteinAdequacyReport {
   const targetPerKg = 1.6;
-  const bw = Math.max(35, bodyweightKg);
   const valid = dailyProteins.filter((item) => item.proteinGrams > 0);
   const leanMass = options?.leanBodyMassKg != null && options.leanBodyMassKg > 20
     ? options.leanBodyMassKg
@@ -522,12 +521,12 @@ export function evaluateProteinAdequacy(
     return {
       targetGramsPerKg: targetPerKg,
       averageGramsPerDay: 0,
-      averageGramsPerKg: 0,
+      averageGramsPerKg: null,
       leanMassGramsPerKg: null,
       totalDaysLogged: 0,
-      daysMeetingTarget: 0,
-      complianceRatePct: 0,
-      status: "suboptimal",
+      daysMeetingTarget: null,
+      complianceRatePct: null,
+      status: "insufficient",
       statusLabel: "暂无记录",
       advice: "记录饮食后，会按体重自动帮你看每天蛋白质够不够吃（建议 ≥1.6 g/kg）。",
     };
@@ -535,10 +534,25 @@ export function evaluateProteinAdequacy(
 
   const totalProtein = valid.reduce((s, item) => s + item.proteinGrams, 0);
   const avgGrams = totalProtein / valid.length;
-  const avgPerKg = avgGrams / bw;
   const leanMassGramsPerKg = leanMass != null
     ? Math.round((avgGrams / leanMass) * 100) / 100
     : null;
+  if (bodyweightKg == null || !Number.isFinite(bodyweightKg) || bodyweightKg <= 0) {
+    return {
+      targetGramsPerKg: targetPerKg,
+      averageGramsPerDay: Math.round(avgGrams),
+      averageGramsPerKg: null,
+      leanMassGramsPerKg,
+      totalDaysLogged: valid.length,
+      daysMeetingTarget: null,
+      complianceRatePct: null,
+      status: "insufficient",
+      statusLabel: "待补体重",
+      advice: "记录体重后即可查看每公斤体重的蛋白质摄入和达标率。",
+    };
+  }
+  const bw = bodyweightKg;
+  const avgPerKg = avgGrams / bw;
   const meetingDays = valid.filter((item) => item.proteinGrams / bw >= targetPerKg).length;
   const compliance = Math.round((meetingDays / valid.length) * 100);
 

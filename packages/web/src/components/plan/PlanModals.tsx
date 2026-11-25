@@ -18,6 +18,7 @@ import { useUiStore } from "../../store/useUiStore";
 import { inferAppleFitnessKind } from "../../lib/apple-fitness";
 import {
   WORKOUT_PREFS_EVENT,
+  applyDeloadToTarget,
   readWorkoutPreferences,
   writeWorkoutPreference,
   type AppleFitnessLaunchMode,
@@ -1164,6 +1165,15 @@ export function RoutinePreviewModal({
   const [appleCardioLaunch, setAppleCardioLaunch] = useState<AppleFitnessLaunchMode>(
     () => readWorkoutPreferences().appleCardioLaunch,
   );
+  const [deloadPrefs, setDeloadPrefs] = useState(() => {
+    const p = readWorkoutPreferences();
+    return {
+      deloadMode: p.deloadMode,
+      deloadWeightPct: p.deloadWeightPct,
+      deloadSetsPct: p.deloadSetsPct,
+      weightStepKg: p.weightStepKg,
+    };
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -1174,6 +1184,12 @@ export function RoutinePreviewModal({
       setAppleAutoLaunch(nextPrefs.appleFitnessAutoLaunch);
       setAppleStrengthLaunch(nextPrefs.appleStrengthLaunch);
       setAppleCardioLaunch(nextPrefs.appleCardioLaunch);
+      setDeloadPrefs({
+        deloadMode: nextPrefs.deloadMode,
+        deloadWeightPct: nextPrefs.deloadWeightPct,
+        deloadSetsPct: nextPrefs.deloadSetsPct,
+        weightStepKg: nextPrefs.weightStepKg,
+      });
     };
     window.addEventListener(WORKOUT_PREFS_EVENT, sync);
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
@@ -1224,7 +1240,18 @@ export function RoutinePreviewModal({
   const todayKey = today();
   const isFuture = Boolean(date && date > todayKey);
   const allowEditSchedule = source === "scheduled" || isFuture;
-  const totalSets = result.exercises.reduce((sum, r) => sum + r.sets, 0);
+  const scaleRowTarget = (row: RoutinePreviewResponse["exercises"][number]) =>
+    deloadPrefs.deloadMode
+      ? applyDeloadToTarget(
+          row.sets,
+          row.weight,
+          row.snapshot.mode,
+          deloadPrefs.weightStepKg,
+          deloadPrefs.deloadWeightPct,
+          deloadPrefs.deloadSetsPct,
+        )
+      : { sets: row.sets, weight: row.weight };
+  const totalSets = result.exercises.reduce((sum, r) => sum + scaleRowTarget(r).sets, 0);
   const progCount = result.summary?.progressionCount ?? 0;
   const prCount = result.summary?.prOpportunityCount ?? 0;
   const deloadCount = result.summary?.deloadCount ?? 0;
@@ -1241,23 +1268,26 @@ export function RoutinePreviewModal({
   const appleLaunchPrefKey = previewFitnessKind === "cardio" ? "appleCardioLaunch" : "appleStrengthLaunch";
 
   const handleLaunch = () => {
-    const exercises = result.exercises.map((row) => ({
-      id: safeUuid(),
-      exerciseId: row.exerciseId,
-      targetIndex: row.targetIndex ?? null,
-      restSeconds: row.restSeconds,
-      supersetGroup: row.supersetGroup ?? null,
-      snapshot: row.snapshot,
-      sets: Array.from({ length: row.sets }, () => ({
+    const exercises = result.exercises.map((row) => {
+      const scaled = scaleRowTarget(row);
+      return {
         id: safeUuid(),
-        type: "normal" as const,
-        weight: row.weight,
-        reps: row.reps,
-        seconds: row.seconds,
-        completed: false,
-        rir: null,
-      })),
-    }));
+        exerciseId: row.exerciseId,
+        targetIndex: row.targetIndex ?? null,
+        restSeconds: row.restSeconds,
+        supersetGroup: row.supersetGroup ?? null,
+        snapshot: row.snapshot,
+        sets: Array.from({ length: scaled.sets }, () => ({
+          id: safeUuid(),
+          type: "normal" as const,
+          weight: scaled.weight,
+          reps: row.reps,
+          seconds: row.seconds,
+          completed: false,
+          rir: null,
+        })),
+      };
+    });
     onLaunchWorkout(
       {
         title: result.name,
@@ -1273,6 +1303,20 @@ export function RoutinePreviewModal({
 
   return (
     <div className="routine-preview dialog-form">
+      {deloadPrefs.deloadMode ? (
+        <div className="deload-banner">
+          <span>
+            <strong>减载周已开启</strong> · 组数 {deloadPrefs.deloadSetsPct}% · 重量 {deloadPrefs.deloadWeightPct}%
+          </span>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => writeWorkoutPreference("deloadMode", false)}
+          >
+            恢复常规负荷
+          </button>
+        </div>
+      ) : null}
       <div className="preview-meta">
         {date ? <span>{shortDate(date)}{isFuture ? " 排期" : ""}</span> : null}
         <span>{result.exercises.length} 个动作</span>
@@ -1311,13 +1355,14 @@ export function RoutinePreviewModal({
           const isProg = row.progression?.status === "progress_weight" || row.progression?.status === "progress_reps";
           const isDeload = row.progression?.status === "plateau_deload";
           const ssBadge = ssBadges[index];
+          const scaled = scaleRowTarget(row);
           const valText =
             row.snapshot.mode === "timed"
               ? `${fmt(row.seconds)} 秒`
               : row.snapshot.mode === "assisted"
-                ? `辅助 ${fmt(row.weight)} kg × ${fmt(row.reps)}`
-                : row.weight
-                  ? `${fmt(row.weight)} kg × ${fmt(row.reps)}`
+                ? `辅助 ${fmt(scaled.weight)} kg × ${fmt(row.reps)}`
+                : scaled.weight
+                  ? `${fmt(scaled.weight)} kg × ${fmt(row.reps)}`
                   : `${fmt(row.reps)} 次`;
 
           return (
@@ -1334,7 +1379,7 @@ export function RoutinePreviewModal({
                   </small>
                 </div>
                 <span className="preview-target">
-                  {row.sets} 组 <i>·</i> {valText}
+                  {scaled.sets} 组 <i>·</i> {valText}
                 </span>
               </div>
               {row.progression || row.pr ? (

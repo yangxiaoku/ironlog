@@ -19,6 +19,7 @@ import type Database from "better-sqlite3";
 import type { Db } from "./db.js";
 import { serverCatalogue } from "./catalogue.js";
 import { appleWorkoutIdentity } from "./apple-workout-identity.js";
+import { sleepObservationsSchema } from "./sleep-observations.js";
 
 interface Row {
   id: string;
@@ -50,6 +51,26 @@ function newerBackupRecord(incomingAt: string | null, existingAt: string) {
   if (!incomingAt) return false;
   const existing = backupInstant(existingAt);
   return existing == null || incomingAt > existing;
+}
+
+function backupRecordKey({ kind, id }: Pick<StoredRecord, "kind" | "id">) {
+  return `${kind}:${id}`;
+}
+
+function deletionIdentityData({ kind, id }: Pick<StoredRecord, "kind" | "id">) {
+  switch (kind) {
+    case "exercise":
+    case "template":
+      return { id };
+    case "weight":
+      return { date: id.slice("weight_".length) };
+    case "nutritionDay":
+      return { date: id.slice("nutritionDay_".length) };
+    case "scheduledDay":
+      return { date: id.slice("schedule_".length) };
+    default:
+      return {};
+  }
 }
 export class DomainError extends Error {
   constructor(
@@ -136,6 +157,8 @@ export class Store {
   private readonly stmtActivePlan: Stmt;
   private readonly stmtPlanVersion: Stmt;
   private readonly stmtPlanActivations: Stmt;
+  private readonly stmtPlanRevisionFloor: Stmt;
+  private readonly stmtSavePlanRevisionFloor: Stmt;
   private readonly stmtInsertPlanVersion: Stmt;
   private readonly stmtUpsertActivePlan: Stmt;
   private readonly stmtInsertPlanActivation: Stmt;
@@ -168,6 +191,11 @@ export class Store {
        FROM plan_activations a JOIN plan_versions v
          ON v.user_id=a.user_id AND v.id=a.plan_id AND v.version=a.version
        WHERE a.user_id=? ORDER BY a.revision`,
+    );
+    this.stmtPlanRevisionFloor = db.prepare("SELECT revision FROM plan_revision_floor WHERE user_id = ?");
+    this.stmtSavePlanRevisionFloor = db.prepare(
+      `INSERT INTO plan_revision_floor VALUES (?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET revision=MAX(plan_revision_floor.revision, excluded.revision)`,
     );
     this.stmtInsertPlanVersion = db.prepare("INSERT OR IGNORE INTO plan_versions VALUES (?,?,?,?,?)");
     this.stmtUpsertActivePlan = db.prepare(
@@ -267,7 +295,7 @@ export class Store {
           : schemas[mutation.kind].parse(mutation.data);
       if (mutation.kind === "exercise")
         data = { ...(data as Exercise), custom: true, source: undefined };
-      if (mutation.kind === "workout") {
+      if (mutation.kind === "workout" && !mutation.deleted) {
         const catalogueById = this.catalogueMap(userId, true);
         for (const item of (data as Workout).exercises) {
           const exercise = catalogueById.get(item.exerciseId);
@@ -405,6 +433,10 @@ export class Store {
     return { ...active, history: rows.map((row) => ({ ...row, data: JSON.parse(row.data) as Plan })) };
   }
 
+  private planRevisionFloor(userId: string) {
+    return (this.stmtPlanRevisionFloor.get(userId) as { revision: number } | undefined)?.revision ?? 0;
+  }
+
   applyPlan(
     userId: string,
     id: string,
@@ -431,9 +463,10 @@ export class Store {
       }
       this.validatePlan(data, this.catalogueMap(userId));
       const now = new Date().toISOString();
+      const revision = Math.max(expectedRevision, this.planRevisionFloor(userId)) + 1;
       this.stmtInsertPlanVersion.run(userId, id, version, JSON.stringify(data), now);
-      this.stmtUpsertActivePlan.run(userId, id, version, expectedRevision + 1, now);
-      this.stmtInsertPlanActivation.run(userId, id, version, expectedRevision + 1, now);
+      this.stmtUpsertActivePlan.run(userId, id, version, revision, now);
+      this.stmtInsertPlanActivation.run(userId, id, version, revision, now);
       return this.planSchedule(userId);
     })();
   }
@@ -479,8 +512,15 @@ export class Store {
     }[];
     const appleHealthDaily = appleDailyRows.map((row) => {
       const parsed = JSON.parse(row.data) as Record<string, unknown>;
-      const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations: _s, ...rest } = parsed;
-      return { ...rest, date: row.date, updatedAt: row.updatedAt };
+      const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations, ...rest } = parsed;
+      const observations = Array.isArray(syncedSleepObservations) ? syncedSleepObservations.flatMap((sample) => {
+        const parsed = sleepObservationsSchema.element.safeParse(sample);
+        return parsed.success ? [parsed.data] : [];
+      }) : [];
+      return {
+        ...rest, date: row.date, updatedAt: row.updatedAt,
+        ...(observations.length ? { sleepObservations: observations } : {}),
+      };
     });
     const appleWorkoutRows = this.stmtExportAppleWorkouts.all(userId) as {
       id: string;
@@ -555,6 +595,14 @@ export class Store {
     const rawAppleWorkouts = Array.isArray(parsedObj.appleHealthWorkouts) ? (parsedObj.appleHealthWorkouts as Record<string, unknown>[]) : [];
 
     const now = new Date().toISOString();
+    const dailyHealthRows = rawAppleDaily.flatMap((item) => {
+      if (typeof item?.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) return [];
+      const { date, updatedAt, sleepObservations, syncedSleepObservations: _s,
+        syncedWeightValue: _w, syncedBodyFatValue: _f, ...metrics } = item;
+      const observations = sleepObservationsSchema.safeParse(sleepObservations ?? []);
+      if (!observations.success) throw new DomainError(`备份中 ${date} 的睡眠样本格式无效`, 400);
+      return [{ date, updatedAt: backupInstant(updatedAt), metrics, observations: observations.data }];
+    });
 
     // Sort records so custom exercises are validated/restored first, then plans/templates, then workouts/others
     const kindOrder: Record<string, number> = {
@@ -587,6 +635,7 @@ export class Store {
     }
 
     const validRecords: PreparedRecord[] = [];
+    const seenRecords = new Set<string>();
     const previewCustomOverlay = new Map<string, Exercise>();
 
     for (const item of sortedRecords) {
@@ -597,8 +646,12 @@ export class Store {
         continue;
       }
       const kind = kindRes.data;
+      const key = backupRecordKey({ kind, id });
+      if (seenRecords.has(key)) throw new DomainError(`备份中记录 ${key} 重复`, 400);
+      seenRecords.add(key);
       const deleted = item.deleted === true || item.deleted === 1;
-      const version = typeof item.version === "number" && item.version >= 1 ? Math.floor(item.version) : 1;
+      const version = typeof item.version === "number" && Number.isSafeInteger(item.version)
+        && item.version >= 1 && item.version < Number.MAX_SAFE_INTEGER ? item.version : 1;
       const sourceUpdatedAt = backupInstant(item.updatedAt);
       const updatedAt = sourceUpdatedAt ?? now;
 
@@ -643,27 +696,21 @@ export class Store {
       customExercises: validRecords.filter((r) => r.kind === "exercise" && !r.deleted).length,
       measurements: rawMeasurements.length,
       exerciseNotes: rawNotes.length,
-      appleDaily: rawAppleDaily.length,
+      appleDaily: dailyHealthRows.length,
       appleWorkouts: rawAppleWorkouts.length,
       totalRecords: validRecords.length,
     };
 
-    let toImport = 0;
-    let toUpdate = 0;
-    let unchanged = 0;
-
-    for (const rec of validRecords) {
-      const existing = this.get(userId, rec.kind, rec.id);
-      if (!existing) {
-        toImport++;
-      } else if (strategy === "replace" || newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) {
-        toUpdate++;
-      } else {
-        unchanged++;
-      }
-    }
-
     if (mode === "preview") {
+      let toImport = 0;
+      let toUpdate = 0;
+      let unchanged = 0;
+      for (const rec of validRecords) {
+        const existing = this.get(userId, rec.kind, rec.id);
+        if (!existing) toImport++;
+        else if (strategy === "replace" || newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) toUpdate++;
+        else unchanged++;
+      }
       return {
         mode: "preview" as const,
         strategy,
@@ -679,7 +726,21 @@ export class Store {
     let skippedCount = 0;
 
     this.db.transaction(() => {
+      const writeRestored = (record: StoredRecord) => {
+        const args = [userId, record.kind, record.id, record.version, Number(record.deleted), JSON.stringify(record.data), record.updatedAt];
+        this.stmtUpsertRecord.run(...args);
+        this.stmtInsertChange.run(...args);
+        this.listCache.clear();
+      };
+      type RecordRevision = Pick<StoredRecord, "kind" | "id" | "version">;
+      const priorRecords = new Map<string, RecordRevision>();
       if (strategy === "replace") {
+        const activeRevision = this.activePlan(userId)?.revision ?? 0;
+        if (activeRevision > 0) this.stmtSavePlanRevisionFloor.run(userId, activeRevision);
+        const revisions = this.db.prepare("SELECT kind, id, version FROM records WHERE user_id = ?").all(userId) as RecordRevision[];
+        for (const record of revisions) {
+          priorRecords.set(backupRecordKey(record), record);
+        }
         this.db.prepare(
           "UPDATE apple_health_events SET workout_id = NULL WHERE device_id IN (SELECT id FROM apple_health_devices WHERE user_id = ?)",
         ).run(userId);
@@ -698,27 +759,29 @@ export class Store {
       }
 
       for (const rec of validRecords) {
-        const existing = this.get(userId, rec.kind, rec.id);
-        if (!existing) {
-          this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted);
-          const encoded = JSON.stringify(rec.data);
-          this.stmtUpsertRecord.run(userId, rec.kind, rec.id, rec.version, Number(rec.deleted), encoded, rec.updatedAt);
-          this.stmtInsertChange.run(userId, rec.kind, rec.id, rec.version, Number(rec.deleted), encoded, rec.updatedAt);
-          this.listCache.clear();
-          importedCount++;
-        } else {
-          if (!newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) {
-            skippedCount++;
-            continue;
-          }
-          this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted);
-          const nextVersion = Math.max(existing.version + 1, rec.version);
-          const encoded = JSON.stringify(rec.data);
-          this.stmtUpsertRecord.run(userId, rec.kind, rec.id, nextVersion, Number(rec.deleted), encoded, rec.updatedAt);
-          this.stmtInsertChange.run(userId, rec.kind, rec.id, nextVersion, Number(rec.deleted), encoded, rec.updatedAt);
-          this.listCache.clear();
-          updatedCount++;
+        const key = backupRecordKey(rec);
+        const existing = strategy === "merge" ? this.get(userId, rec.kind, rec.id) : null;
+        if (existing && !newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) {
+          skippedCount++;
+          continue;
         }
+        const previous = priorRecords.get(key) ?? existing;
+        priorRecords.delete(key);
+        this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted);
+        const version = strategy === "replace"
+          ? Math.max(previous?.version ?? 0, rec.version) + 1
+          : Math.max((previous?.version ?? 0) + 1, rec.version);
+        writeRestored({ ...rec, version });
+        if (previous) updatedCount++;
+        else importedCount++;
+      }
+
+      for (const previous of priorRecords.values()) {
+        // A deletion must still reach clients that synced before the replacement. Keep identity only.
+        writeRestored({
+          ...previous, version: previous.version + 1, deleted: true,
+          data: deletionIdentityData(previous), updatedAt: now,
+        });
       }
 
       // Restore planVersions
@@ -741,26 +804,30 @@ export class Store {
         if (parsedActiveData.success && (strategy === "replace" || !this.activePlan(userId))) {
           const aid = rawActivePlan.id;
           const aver = typeof rawActivePlan.version === "number" && rawActivePlan.version >= 1 ? Math.floor(rawActivePlan.version) : 1;
-          const arev = typeof rawActivePlan.revision === "number" && rawActivePlan.revision >= 1 ? Math.floor(rawActivePlan.revision) : 1;
-          const aupdated = typeof rawActivePlan.updatedAt === "string" ? rawActivePlan.updatedAt : now;
+          const rawRevision = rawActivePlan.revision;
+          const arev = typeof rawRevision === "number" && Number.isSafeInteger(rawRevision)
+            && rawRevision >= 1 && rawRevision < Number.MAX_SAFE_INTEGER ? rawRevision : 1;
+          const aupdated = backupInstant(rawActivePlan.updatedAt) ?? now;
           this.stmtInsertPlanVersion.run(userId, aid, aver, JSON.stringify(parsedActiveData.data), aupdated);
-          if (Array.isArray(rawActivePlan.history)) {
-            let hRev = 1;
-            for (const h of rawActivePlan.history as Record<string, unknown>[]) {
-              const hid = typeof h?.id === "string" ? h.id : "";
-              const hver = typeof h?.version === "number" ? Math.floor(h.version) : 1;
-              const hup = typeof h?.updatedAt === "string" ? h.updatedAt : aupdated;
-              const hParsed = planSchema.safeParse(h?.data);
-              if (hid && hParsed.success) {
-                this.stmtInsertPlanVersion.run(userId, hid, hver, JSON.stringify(hParsed.data), hup);
-                this.db.prepare("INSERT OR IGNORE INTO plan_activations VALUES (?,?,?,?,?)").run(userId, hid, hver, hRev++, hup);
-              }
-            }
-          }
-          const curMaxRev = (this.db.prepare("SELECT COALESCE(MAX(revision), 0) AS r FROM plan_activations WHERE user_id = ?").get(userId) as { r: number }).r;
-          const finalRev = Math.max(arev, curMaxRev + 1);
+          const history = (Array.isArray(rawActivePlan.history) ? rawActivePlan.history as Record<string, unknown>[] : [])
+            .flatMap((entry) => {
+              const id = typeof entry?.id === "string" ? entry.id : "";
+              const version = typeof entry?.version === "number" && Number.isSafeInteger(entry.version) && entry.version >= 1 ? entry.version : 1;
+              const data = planSchema.safeParse(entry?.data);
+              return id && data.success
+                ? [{ id, version, updatedAt: backupInstant(entry.updatedAt) ?? aupdated, data: data.data }]
+                : [];
+            });
+          const last = history.at(-1);
+          if (last?.id === aid && last.version === aver && last.updatedAt === aupdated) history.pop();
+          const floor = this.planRevisionFloor(userId);
+          const finalRev = Math.max(arev, history.length + 1, floor + 1);
+          history.forEach((entry, index) => {
+            this.stmtInsertPlanVersion.run(userId, entry.id, entry.version, JSON.stringify(entry.data), entry.updatedAt);
+            this.stmtInsertPlanActivation.run(userId, entry.id, entry.version, index + 1, entry.updatedAt);
+          });
           this.stmtUpsertActivePlan.run(userId, aid, aver, finalRev, aupdated);
-          this.db.prepare("INSERT OR IGNORE INTO plan_activations VALUES (?,?,?,?,?)").run(userId, aid, aver, finalRev, aupdated);
+          this.stmtInsertPlanActivation.run(userId, aid, aver, finalRev, aupdated);
         }
       }
 
@@ -805,17 +872,23 @@ export class Store {
       }
 
       // Restore appleHealthDaily
+      const stmtDailyByDate = this.db.prepare("SELECT updated_at, data FROM apple_health_daily WHERE user_id = ? AND date = ?");
       const stmtUpsertDaily = this.db.prepare(
         `INSERT INTO apple_health_daily VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id, date) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
-         WHERE ? AND (julianday(apple_health_daily.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(apple_health_daily.updated_at))`,
+         ON CONFLICT(user_id, date) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data`,
       );
-      for (const d of rawAppleDaily) {
-        const date = typeof d?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : "";
-        if (!date) continue;
-        const upAt = backupInstant(d.updatedAt);
-        const { updatedAt: _u, syncedSleepObservations: _s, syncedWeightValue: _w, syncedBodyFatValue: _f, ...restData } = d;
-        stmtUpsertDaily.run(userId, date, upAt ?? now, JSON.stringify({ ...restData, date }), Number(upAt != null));
+      for (const { date, updatedAt, metrics, observations } of dailyHealthRows) {
+        const existing = stmtDailyByDate.get(userId, date) as { updated_at: string; data: string } | undefined;
+        const saved = existing ? JSON.parse(existing.data) as Record<string, unknown> : {};
+        const savedSleep = sleepObservationsSchema.safeParse(saved.syncedSleepObservations);
+        const currentObservations = savedSleep.success ? savedSleep.data : [];
+        const useIncoming = !existing || newerBackupRecord(updatedAt, existing.updated_at);
+        const backfillSleep = !currentObservations.length && observations.length > 0;
+        if (!useIncoming && !backfillSleep) continue;
+        const next: Record<string, unknown> = useIncoming ? { ...saved, ...metrics, date } : { ...saved };
+        const samples = (useIncoming || backfillSleep) && observations.length > 0 ? observations : currentObservations;
+        if (samples.length) next.syncedSleepObservations = samples;
+        stmtUpsertDaily.run(userId, date, useIncoming ? updatedAt ?? now : existing!.updated_at, JSON.stringify(next));
       }
 
       // Restore appleHealthWorkouts

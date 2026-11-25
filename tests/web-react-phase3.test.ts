@@ -752,3 +752,35 @@ test("Mobile PWA ergonomics sync theme-color, auto-select numeric inputs, add pe
   assert.match(css, /@keyframes workoutCardIn/);
   assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });
+
+test("Complete feature & analytics pack connects 180/365d views, diet scaler, inline cues, progressive prefill, deload mode, and new dashboards", () => {
+  const useAnalyticsTs = readFileSync(resolve(process.cwd(), "packages/web/src/hooks/useAnalytics.ts"), "utf8");
+  const analyticsView = readFileSync(resolve(process.cwd(), "packages/web/src/views/AnalyticsView.tsx"), "utf8");
+  const dietModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/diet/DietEditorModal.tsx"), "utf8");
+  const workoutModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const planView = readFileSync(resolve(process.cwd(), "packages/web/src/views/PlanView.tsx"), "utf8");
+  const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+  const sleepPanel = readFileSync(resolve(process.cwd(), "packages/web/src/components/SleepReportPanel.tsx"), "utf8");
+
+  assert.match(useAnalyticsTs, /180,\s*365/);
+  assert.doesNotMatch(sleepPanel, /timeZone:\s*"Asia\/Hong_Kong"/);
+
+  assert.match(dietModal, /\/api\/web\/profile\/quick-foods/);
+  assert.match(dietModal, /className="diet-scaler-bar"/);
+  assert.match(dietModal, /存为常用单品/);
+
+  assert.match(workoutModal, /\/api\/web\/exercise-notes/);
+  assert.match(workoutModal, /className="ex-apply-prog"/);
+  assert.match(workoutModal, /className="deload-banner"/);
+
+  assert.match(planView, /deload-card/);
+  assert.match(planModals, /applyDeloadToTarget/);
+
+  assert.match(analyticsView, /panel-sleep-training/);
+  assert.match(analyticsView, /panel-plan-adherence/);
+  assert.match(analyticsView, /panel-who-cardio/);
+  assert.match(analyticsView, /panel-plateaus/);
+  assert.match(analyticsView, /panel-rep-max/);
+  assert.match(analyticsView, /panel-nutrition-daily/);
+  assert.match(analyticsView, /panel-body-measurements/);
+});

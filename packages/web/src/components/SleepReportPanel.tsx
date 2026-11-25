@@ -9,7 +9,6 @@ import "./sleep-report.css";
 
 const PAGE_SIZE = 7;
 const clock = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Hong_Kong",
   hour: "2-digit",
   minute: "2-digit",
   hourCycle: "h23",
@@ -176,7 +175,7 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
       <details className="sleep-report-method">
         <summary>统计口径与参考</summary>
         <ul>
-          <li>按睡眠结束所在日期归档（UTC+8），总时长可能包括小睡。缺测日不计入平均，上期与本期各覆盖至少一半日期才比较。</li>
+          <li>按睡眠结束所在日期归档（UTC+8），起止时间按设备本地时区显示，总时长可能包括小睡。缺测日不计入平均，上期与本期各覆盖至少一半日期才比较。</li>
           <li>作息使用当日最长的睡眠区间，须有至少 3 小时实际睡眠。把起止时间的中点按 24 小时取最短差，显示相邻日期差值的中位数。至少需要 3 对相邻日期。</li>
           <li>7 小时线来自一般成人的时长共识。穿戴设备分期用于观察个人趋势。 <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC4434546/" target="_blank" rel="noreferrer">睡眠时长共识</a> · <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC5940440/" target="_blank" rel="noreferrer">穿戴设备立场声明</a></li>
         </ul>

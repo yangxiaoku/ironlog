@@ -8,6 +8,7 @@ import {
   DEFAULT_APPLE_HUB_SHORTCUT,
   DEFAULT_APPLE_STRENGTH_SHORTCUT,
   DEFAULT_WORKOUT_PREFERENCES,
+  applyDeloadToTarget,
   applyRemoteWorkoutPreferences,
   applySetFieldUpdate,
   buildWarmupSetsPlan,
@@ -783,5 +784,41 @@ test("apple-fitness builds Shortcut/Fitness deep-links, classifies workouts accu
     else Reflect.deleteProperty(globalThis, "navigator");
     if (prevDoc) Object.defineProperty(globalThis, "document", prevDoc);
     else Reflect.deleteProperty(globalThis, "document");
+  }
+});
+
+test("applyDeloadToTarget scales sets and weight cleanly and deload prefs round-trip via storage", () => {
+  const prevStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const mem = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    writable: true,
+    value: {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => { mem.set(k, v); },
+      removeItem: (k: string) => { mem.delete(k); },
+    },
+  });
+  try {
+    assert.deepEqual(applyDeloadToTarget(4, 100, "reps", 2.5, 80, 50), { sets: 2, weight: 80 });
+    assert.deepEqual(applyDeloadToTarget(3, 65, "reps", 2.5, 75, 50), { sets: 2, weight: 50 });
+    assert.deepEqual(applyDeloadToTarget(4, 0, "timed", 2.5, 75, 50), { sets: 2, weight: 0 });
+
+    resetLocalWorkoutPreferences();
+    assert.equal(readWorkoutPreferences().deloadMode, false);
+    assert.equal(readWorkoutPreferences().deloadWeightPct, 80);
+    writeWorkoutPreference("deloadMode", true);
+    writeWorkoutPreference("deloadWeightPct", 75);
+    writeWorkoutPreference("deloadSetsPct", 75);
+    const updated = readWorkoutPreferences();
+    assert.equal(updated.deloadMode, true);
+    assert.equal(updated.deloadWeightPct, 75);
+    assert.equal(updated.deloadSetsPct, 75);
+
+    resetLocalWorkoutPreferences();
+    assert.equal(readWorkoutPreferences().deloadMode, false);
+  } finally {
+    if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
   }
 });

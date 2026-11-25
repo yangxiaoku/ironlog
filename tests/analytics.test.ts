@@ -138,6 +138,10 @@ test("数据分析接口鉴权、空账户默认值、多维度指标与文献�
     assert.equal(emptyRes.status, 200);
     const emptyData = (await emptyRes.json()) as ReturnType<typeof getWebAnalytics>;
     assert.ok(emptyData.today);
+    assert.equal(emptyData.userProfile.weightKg, null);
+    assert.equal(emptyData.userProfile.gender, null);
+    assert.equal(emptyData.nutrition.protein.averageGramsPerKg, null);
+    assert.equal(emptyData.acwr.referenceWeightKg, null);
     assert.equal(emptyData.acwr.current.acwr, 0);
     assert.equal(emptyData.muscles.audits.length, 6);
     assert.ok(emptyData.citations.gabbett2016);
@@ -225,6 +229,16 @@ test("数据分析接口鉴权、空账户默认值、多维度指标与文献�
       });
     }
 
+    // A profile weight recorded today cannot be used for a report ending yesterday.
+    const historical = await (await call(`/api/web/analytics?days=30&through=${shiftDay(today, -1)}`)).json() as ReturnType<typeof getWebAnalytics>;
+    assert.equal(historical.userProfile.weightKg, null);
+    assert.equal(historical.acwr.referenceWeightKg, 75);
+    assert.equal(historical.ipfGl.bench, null);
+    assert.ok(historical.ipfGl.components.bench1RM > 0);
+    assert.equal(historical.nutrition.protein.averageGramsPerDay, 130);
+    assert.equal(historical.nutrition.protein.averageGramsPerKg, null);
+    assert.equal(historical.nutrition.protein.complianceRatePct, null);
+
     // Populate weights
     save("weight", `weight_${shiftDay(today, -28)}`, { date: shiftDay(today, -28), weight: 76.5 });
     save("weight", `weight_${today}`, { date: today, weight: 75.0 });
@@ -240,6 +254,7 @@ test("数据分析接口鉴权、空账户默认值、多维度指标与文献�
     // 1. User profile
     assert.equal(data.userProfile.weightKg, 75);
     assert.equal(data.userProfile.gender, "male");
+    assert.equal(data.acwr.referenceWeightKg, null);
 
     // 2. ACWR
     assert.ok(data.acwr.series.length > 0);
@@ -766,4 +781,222 @@ test("体重变化斜率同日去重与 Huber IRLS 抗极端水肿噪点", () =>
   assert.ok(spikedCut);
   assert.ok(spikedCut.weeklySlopeKg < -0.35, `expected slope < -0.35, got ${spikedCut.weeklySlopeKg}`);
   assert.equal(spikedCut.category, "optimal_cut");
+});
+
+test("全套升级：个人单品/减载偏好接口、180/365天窗口、平台期、Rep-Max、计划执行率、睡眠对照、围度、饮水与WHO有氧", async () => {
+  const { db, call, save, owner } = fixture();
+  try {
+    const today = localDate();
+
+    // 1. Profile quick-foods & deloadMode persistence
+    save("profile", "settings", {
+      calories: 2200,
+      protein: 150,
+      carbs: 220,
+      fat: 60,
+      daysPerWeek: 4,
+      energyProfile: {
+        weightKg: 75,
+        heightCm: 175,
+        sex: "male",
+        birthDate: "1995-05-10",
+        weightDate: today,
+        activityFactor: 1.55,
+        context: "general",
+      },
+    });
+
+    const qfRes = await call("/api/web/profile/quick-foods", {
+      method: "PUT",
+      body: {
+        quickFoods: [
+          { id: "qf1", name: "鸡胸肉", baseGrams: 100, unit: "g", calories: 132, protein: 24, carbs: 0, fat: 3 },
+        ],
+      },
+    });
+    assert.equal(qfRes.status, 200);
+    const profAfterQf = await (await call("/api/web/profile")).json();
+    assert.equal(profAfterQf.profile.quickFoods.length, 1);
+    assert.equal(profAfterQf.profile.quickFoods[0].name, "鸡胸肉");
+
+    const deloadPrefRes = await call("/api/web/profile/workout-prefs", {
+      method: "PUT",
+      body: { deloadMode: true, deloadWeightPct: 75, deloadSetsPct: 50 },
+    });
+    assert.equal(deloadPrefRes.status, 200);
+    const deloadPrefJson = await deloadPrefRes.json();
+    assert.equal(deloadPrefJson.workoutPrefs.deloadMode, true);
+    assert.equal(deloadPrefJson.workoutPrefs.deloadWeightPct, 75);
+
+    // 2. Scheduled days for Plan Adherence + Weighted Pull-up + Plateau regression + Sleep correlation
+    const d1 = shiftDay(today, -10);
+    const d2 = shiftDay(today, -5);
+    const d3 = today;
+
+    // Create & apply active plan via starter plan adopt endpoint
+    const starters = await (await call("/api/web/starter-plans")).json();
+    const applyRes = await call(`/api/web/starter-plans/${starters[0].id}/adopt`, {
+      method: "POST",
+      body: { mode: "apply" },
+    });
+    assert.equal(applyRes.status, 201);
+
+    // Explicit scheduled day override
+    await call(`/api/web/schedule/${d1}`, {
+      method: "PUT",
+      body: { mode: "workout", title: "推力日", exercises: [{ exerciseId: "bench-press", sets: 3, repsMin: 5, repsMax: 8, weight: 80, seconds: 0, restSeconds: 90 }] },
+    });
+    await call(`/api/web/schedule/${d2}`, {
+      method: "PUT",
+      body: { mode: "workout", title: "推力日", exercises: [{ exerciseId: "bench-press", sets: 3, repsMin: 5, repsMax: 8, weight: 80, seconds: 0, restSeconds: 90 }] },
+    });
+
+    // Workouts: declining bench 100->95->90 (regression) + weighted pull-up (+20kg x 8 reps => 75+20=95kg 8RM)
+    const mkWorkout = (date: string, benchW: number, includePullup = false): Workout => ({
+      title: "推力日",
+      date,
+      startedAt: `${date}T10:00:00.000Z`,
+      endedAt: `${date}T11:00:00.000Z`,
+      status: "completed",
+      notes: "",
+      feeling: date === d2 ? "fatigued" : "balanced",
+      source: "manual",
+      rawPrompt: "",
+      planId: null,
+      planVersion: null,
+      routineId: null,
+      targetSnapshot: null,
+      restEndsAt: null,
+      adjustments: [],
+      exercises: [
+        {
+          id: `ex-bp-${date}`,
+          exerciseId: "bench-press",
+          restSeconds: 90,
+          snapshot: null,
+          sets: [
+            { id: `s1-${date}`, type: "normal", weight: benchW, reps: 5, completed: true, seconds: 0, rir: null },
+            { id: `s2-${date}`, type: "normal", weight: benchW, reps: 5, completed: true, seconds: 0, rir: null },
+          ],
+        },
+        ...(includePullup
+          ? [
+              {
+                id: `ex-pu-${date}`,
+                exerciseId: "pull-up",
+                restSeconds: 90,
+                snapshot: null,
+                sets: [
+                  { id: `sp1-${date}`, type: "normal" as const, weight: 20, reps: 8, completed: true, seconds: 0, rir: null },
+                ],
+              },
+            ]
+          : []),
+      ],
+    });
+    save("workout", "w-d1", mkWorkout(d1, 100, true));
+    save("workout", "w-d2", mkWorkout(d2, 95, false));
+    save("workout", "w-d3", mkWorkout(d3, 90, false));
+
+    // Measurements + weights
+    await call("/api/web/measurements", {
+      method: "PUT",
+      body: { date: d1, waistCm: 84, chestCm: 100, armCm: 36, hipCm: 96, notes: "" },
+    });
+    await call("/api/web/measurements", {
+      method: "PUT",
+      body: { date: d3, waistCm: 82, chestCm: 100.5, armCm: 36.2, hipCm: 95, notes: "" },
+    });
+    save("weight", `weight_${d1}`, { date: d1, weight: 76.0 });
+    save("weight", `weight_${d3}`, { date: d3, weight: 74.8 });
+
+    // Sleep (via apple_health_daily) + Water + Diet
+    db.prepare(
+      `INSERT INTO apple_health_daily (user_id, date, updated_at, data) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, date) DO UPDATE SET data=excluded.data`,
+    ).run(owner.userId, d2, new Date().toISOString(), JSON.stringify({ date: d2, updatedAt: new Date().toISOString(), source: "apple-health", sleepMinutes: 330 }));
+    db.prepare(
+      `INSERT INTO apple_health_daily (user_id, date, updated_at, data) VALUES (?, ?, ?, ?)
+       ON CONFLICT(user_id, date) DO UPDATE SET data=excluded.data`,
+    ).run(owner.userId, d3, new Date().toISOString(), JSON.stringify({ date: d3, updatedAt: new Date().toISOString(), source: "apple-health", sleepMinutes: 460 }));
+    await call("/api/web/water", { method: "POST", body: { date: d1, setMl: 2400 } });
+    await call("/api/web/water", { method: "POST", body: { date: d3, setMl: 2100 } });
+
+    save("diet", "d-1", { date: d1, meal: "lunch", name: "午餐", calories: 1900, protein: 150, carbs: 190, fat: 55, source: "manual" });
+    save("diet", "d-3", { date: d3, meal: "lunch", name: "午餐", calories: 2000, protein: 160, carbs: 200, fat: 60, source: "manual" });
+
+    // Apple Health cardio run with distance + HR
+    const appleDev = (await (await call("/api/integrations/apple-health/tokens", {
+      method: "POST",
+      body: { label: "跑步手表" },
+    })).json()) as { token: string };
+    const awRes = await call("/api/integrations/apple-health/workouts", {
+      method: "POST",
+      token: appleDev.token,
+      body: {
+        schemaVersion: 1,
+        captureMethod: "workout",
+        externalWorkoutId: "aw-run-1",
+        activityType: "running",
+        environment: "outdoor",
+        startedAt: `${d3}T07:00:00+08:00`,
+        endedAt: `${d3}T07:30:00+08:00`,
+        timeZone: "Asia/Shanghai",
+        durationSeconds: 1800,
+        durationKind: "workout_active",
+        distanceMeters: 5000,
+        activeEnergyKcal: 360,
+        heartRate: { avgBpm: 162, maxBpm: 178 },
+      },
+    });
+    assert.ok(awRes.status === 200 || awRes.status === 201);
+
+    // Verify 180d & 365d endpoints work
+    const res180 = await call(`/api/web/analytics?days=180&through=${today}`);
+    assert.equal(res180.status, 200);
+    const data180 = (await res180.json()) as any;
+    assert.equal(data180.nutrition.dailySeries.length, 180);
+    assert.equal(data180.nutrition.hydration.loggedDays, 2);
+    assert.equal(data180.nutrition.hydration.complianceRatePct, 100);
+
+    const res365 = await call(`/api/web/analytics?days=365&through=${today}`);
+    assert.equal(res365.status, 200);
+    const data365 = (await res365.json()) as any;
+    assert.equal(data365.nutrition.dailySeries.length, 365);
+
+    // Verify Plateau regression detected for bench-press
+    const bpPlateau = data180.plateaus.find((p: any) => p.id === "bench-press");
+    assert.ok(bpPlateau, "bench-press regression should be flagged in plateaus");
+    assert.equal(bpPlateau.status, "regression");
+
+    // Verify Rep-Max Matrix includes weighted pull-up (74.8kg latest bw + 20kg = 94.8kg @ 8RM)
+    const puRm = data180.repMaxBoard.find((r: any) => r.id === "pull-up");
+    assert.ok(puRm, "weighted pull-up should appear in repMaxBoard");
+    assert.equal(puRm.rm8.weight, 94.8);
+    assert.equal(puRm.rm5.weight, 94.8);
+
+    // Verify Plan Adherence populated
+    assert.equal(data180.planAdherence.hasPlan, true);
+    assert.ok(data180.planAdherence.scheduledSessions >= 2);
+    assert.ok(data180.planAdherence.completedSessions >= 2);
+
+    // Verify Measurements WHR, WHtR & deltas
+    assert.equal(data180.bodyMeasurements.latest.waistCm, 82);
+    assert.equal(data180.bodyMeasurements.deltas.waistCm, -2);
+    assert.ok(data180.bodyMeasurements.whr != null);
+    assert.ok(data180.bodyMeasurements.whtr != null);
+
+    // Verify Sleep × Training pairing
+    assert.equal(data180.sleepTrainingImpact.pairedDays, 2);
+    assert.equal(data180.sleepTrainingImpact.goodSleep.days, 1);
+    assert.equal(data180.sleepTrainingImpact.shortSleep.days, 1);
+
+    // Verify WHO Cardio & Pace Trend
+    assert.ok(data180.appleWorkouts.whoCardio.vigorousMinutes >= 30);
+    assert.ok(data180.appleWorkouts.whoCardio.equivalentMinutes >= 60);
+    assert.equal(data180.appleWorkouts.paceTrend.length, 1);
+    assert.equal(data180.appleWorkouts.paceTrend[0].paceMinPerKm, 6);
+  } finally {
+    db.close();
+  }
 });

@@ -13,6 +13,7 @@ import type { EquipmentKey, ProfileGoals, RecordEnvelope, WeightData } from "../
 import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
+import { WORKOUT_PREFS_EVENT, readWorkoutPreferences, writeWorkoutPreference } from "../lib/workout-helpers";
 
 const analyticsSections = [
   ["load", "负荷恢复"],
@@ -249,6 +250,15 @@ export function AnalyticsView() {
   const [dailyExpanded, setDailyExpanded] = useState(false);
   const [acwrActiveIdx, setAcwrActiveIdx] = useState<number | null>(null);
   const [busyAction, setBusyAction] = useState("");
+  const [nutritionChartMetric, setNutritionChartMetric] = useState<"calories" | "protein" | "waterMl">("calories");
+  const [deloadMode, setDeloadMode] = useState(() => readWorkoutPreferences().deloadMode);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setDeloadMode(readWorkoutPreferences().deloadMode);
+    window.addEventListener(WORKOUT_PREFS_EVENT, sync);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
+  }, []);
 
   const { data, loading, error } = useAnalytics(period, through, userId, dataEpoch);
   useEffect(() => {
@@ -333,8 +343,10 @@ export function AnalyticsView() {
           : "is-deload";
 
   const optMuscles = muscles.audits.filter((m) => m.category === "optimal").length;
-  const appleWeightDiff =
-    userProfile.appleWeightKg != null && Math.abs(userProfile.appleWeightKg - userProfile.weightKg) >= 0.1;
+  const { weightKg, appleWeightKg, gender } = userProfile;
+  const appleWeightDiff = appleWeightKg != null && weightKg != null && Math.abs(appleWeightKg - weightKg) >= 0.1;
+  const needsStrengthProfile = weightKg == null || gender == null;
+  const formatLift = (liftKg: number) => `${fmt(liftKg)} kg${weightKg != null ? ` (${fmt(liftKg / weightKg, 2)}× 体重)` : ""}`;
 
   const rec = appleDaily?.recoveryReport;
   const body = appleDaily?.bodyReport;
@@ -365,7 +377,9 @@ export function AnalyticsView() {
   const bodyParts: string[] = [];
   if (nutrition.protein.totalDaysLogged > 0) {
     bodyParts.push(
-      nutrition.protein.status === "suboptimal"
+      nutrition.protein.complianceRatePct == null
+        ? `日均蛋白 ${fmt(nutrition.protein.averageGramsPerDay)} g · 待补体重`
+        : nutrition.protein.status === "suboptimal"
         ? `每日蛋白偏低（均 ${fmt(nutrition.protein.averageGramsPerDay)} g），多吃点瘦肉蛋奶`
         : `蛋白质吃得很够（均 ${fmt(nutrition.protein.averageGramsPerDay)} g · 达标率 ${nutrition.protein.complianceRatePct}%）`,
     );
@@ -727,7 +741,8 @@ export function AnalyticsView() {
   const onlyShortTriggers =
     appleWorkoutFilter === "device" &&
     filteredWorkouts.length > 0 &&
-    !activeWorkoutBucket?.hrZones &&
+    activeWorkoutBucket?.avgBpm == null &&
+    activeWorkoutBucket?.maxBpm == null &&
     (activeWorkoutBucket?.totalCaloriesKcal ?? 0) === 0 &&
     filteredWorkouts.every((r) => r.captureMethod === "trigger");
 
@@ -783,11 +798,9 @@ export function AnalyticsView() {
         <div>
           <h2>近期状态一览</h2>
           <p>
-            截至 {shortDate(data.through)} · 当前体重 {fmt(userProfile.weightKg, 1)} kg
-            {userProfile.appleWeightKg != null && Math.abs(userProfile.appleWeightKg - userProfile.weightKg) >= 0.05
-              ? ` · Apple 健康 ${fmt(userProfile.appleWeightKg, 2)} kg`
-              : ""}{" "}
-            ({userProfile.gender === "female" ? "女性" : "男性"})
+            截至 {shortDate(data.through)} · {weightKg == null ? "暂无体重" : `体重 ${fmt(weightKg, 1)} kg`}
+            {gender != null ? `（${gender === "female" ? "女性" : "男性"}）` : ""}
+            {appleWeightDiff ? ` · Apple 健康 ${fmt(appleWeightKg, 2)} kg` : ""}
             {appleWeightDiff ? (
               <>
                 {" "}
@@ -871,7 +884,9 @@ export function AnalyticsView() {
                   </>
                 ) : nutrition.protein.totalDaysLogged > 0 ? (
                   <>
-                    {fmt(nutrition.protein.averageGramsPerKg, 2)} <small>g/kg</small>
+                    {nutrition.protein.averageGramsPerKg != null
+                      ? <>{fmt(nutrition.protein.averageGramsPerKg, 2)} <small>g/kg</small></>
+                      : <>{fmt(nutrition.protein.averageGramsPerDay)} <small>g/天</small></>}
                   </>
                 ) : (
                   "—"
@@ -894,7 +909,7 @@ export function AnalyticsView() {
             </div>
             <span className="kpi-sub">
               {nutrition.protein.totalDaysLogged > 0
-                ? `日均蛋白 ${fmt(nutrition.protein.averageGramsPerDay)} g · 达标 ${nutrition.protein.complianceRatePct}%`
+                ? `日均蛋白 ${fmt(nutrition.protein.averageGramsPerDay)} g${nutrition.protein.complianceRatePct != null ? ` · 达标 ${nutrition.protein.complianceRatePct}%` : ""}`
                 : "记饮食与称重后追踪代谢走势"}
             </span>
           </button>
@@ -935,7 +950,9 @@ export function AnalyticsView() {
               ? "三大项同体型排名分"
               : ipfGl.bench
                 ? "卧推同体型排名分"
-                : "完成深蹲/卧推/硬拉后评估"}
+                : needsStrengthProfile
+                  ? "按体重和性别资料计算"
+                  : "完成深蹲/卧推/硬拉后评估"}
           </span>
         </button>
       </div>
@@ -954,15 +971,52 @@ export function AnalyticsView() {
 
       <div className="analytics-deck">
         {activeSection === "sleep" ? (
-          data.sleepReport ? (
-            <SleepReportPanel key={`${userId}:${data.sleepReport.current.from}:${data.sleepReport.current.through}`} report={data.sleepReport} />
-          ) : (
-            <div className="empty" role="status">
-              <strong>后台版本暂未提供睡眠报表</strong>
-              <p>更新后台后即可读取报表。</p>
-              <button type="button" className="quiet" onClick={bumpDataEpoch}>重试</button>
-            </div>
-          )
+          <>
+            {data.sleepReport ? (
+              <SleepReportPanel key={`${userId}:${data.sleepReport.current.from}:${data.sleepReport.current.through}`} report={data.sleepReport} />
+            ) : (
+              <div className="empty" role="status">
+                <strong>后台版本暂未提供睡眠报表</strong>
+                <p>更新后台后即可读取报表。</p>
+                <button type="button" className="quiet" onClick={bumpDataEpoch}>重试</button>
+              </div>
+            )}
+            {data.sleepTrainingImpact && data.sleepTrainingImpact.pairedDays > 0 ? (
+              <section className="panel analytics-panel panel-sleep-training" id="panel-sleep-training">
+                <header className="panel-head">
+                  <div>
+                    <h2>睡眠时长 × 次日训练表现</h2>
+                    <p>对照不同睡眠时长下当天的训练组数、总吨位与疲惫体感（已配对 {data.sleepTrainingImpact.pairedDays} 天）</p>
+                  </div>
+                  <span className="atlas-pill">{data.sleepTrainingImpact.pairedDays} 个配对日</span>
+                </header>
+                <div className="sleep-impact-grid">
+                  {(
+                    [
+                      ["充沛睡眠 (≥7h)", data.sleepTrainingImpact.goodSleep, "is-sweet"],
+                      ["中等睡眠 (6–7h)", data.sleepTrainingImpact.midSleep, ""],
+                      ["睡眠偏少 (<6h)", data.sleepTrainingImpact.shortSleep, "is-caution"],
+                    ] as const
+                  ).map(([label, b, tone]) => (
+                    <div key={label} className={`sleep-impact-card ${tone}`}>
+                      <span className="sleep-impact-label">{label}</span>
+                      <strong>
+                        {b.days} <small>个训练日</small>
+                      </strong>
+                      <div className="sleep-impact-meta">
+                        <span>均组数：{b.avgWorkSets != null ? `${fmt(b.avgWorkSets, 1)} 组` : "—"}</span>
+                        <span>均吨位：{b.avgTonnageKg != null ? `${fmt(b.avgTonnageKg, 0)} kg` : "—"}</span>
+                        <span>疲惫感：{b.fatiguedPct != null ? `${b.fatiguedPct}%` : "—"}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                {data.sleepTrainingImpact.insight ? (
+                  <p className="physio-advice">{data.sleepTrainingImpact.insight}</p>
+                ) : null}
+              </section>
+            ) : null}
+          </>
         ) : null}
 
         {/* LOAD & RECOVERY SECTION */}
@@ -974,9 +1028,25 @@ export function AnalyticsView() {
                   <h2>最近训练量是否过载</h2>
                   <p>把近 7 天训练量和平时 1 个月对比，预防练太猛受伤</p>
                 </div>
-                <span className="atlas-pill">
-                  {plainAcwrStatus(currAcwr.zone)} ({fmt(currAcwr.acwr, 2)})
-                </span>
+                <div className="acwr-head-actions">
+                  {(currAcwr.zone === "danger" || currAcwr.zone === "caution" || deloadMode) ? (
+                    <button
+                      type="button"
+                      className={deloadMode ? "secondary-button is-deload-on" : "secondary-button"}
+                      onClick={() => {
+                        const next = !deloadMode;
+                        writeWorkoutPreference("deloadMode", next);
+                        setDeloadMode(next);
+                        notify(next ? "已开启减载周模式，开练将自动缩放重量与组数" : "已关闭减载周模式");
+                      }}
+                    >
+                      {deloadMode ? "减载周已开启 · 关闭" : "一键开启减载周"}
+                    </button>
+                  ) : null}
+                  <span className="atlas-pill">
+                    {plainAcwrStatus(currAcwr.zone)} ({fmt(currAcwr.acwr, 2)})
+                  </span>
+                </div>
               </header>
 
               <div className="acwr-gauge-strip">
@@ -1102,6 +1172,9 @@ export function AnalyticsView() {
                   <Icon name="bolt" size={15} /> <span>节奏建议</span>
                 </div>
                 <p>{acwrAdviceText}</p>
+                {acwr.referenceWeightKg != null ? (
+                  <p>缺少体重记录，徒手或辅助动作的负荷按 {acwr.referenceWeightKg} kg 参考体重估算。</p>
+                ) : null}
               </div>
             </section>
 
@@ -1409,6 +1482,123 @@ export function AnalyticsView() {
                 )}
               </section>
             ) : null}
+
+              {data.planAdherence ? (
+                <section className="panel analytics-panel panel-plan-adherence" id="panel-plan-adherence">
+                  <header className="panel-head">
+                    <div>
+                      <h2>计划执行率与缺练追踪</h2>
+                      <p>
+                        {data.planAdherence.hasPlan
+                          ? `对照「${data.planAdherence.planName}」(${shortDate(data.planAdherence.from)}–${shortDate(data.planAdherence.through)}) 排期兑现情况`
+                          : "启用训练计划后自动统计实际完成率与各分部缺练情况"}
+                      </p>
+                    </div>
+                    {data.planAdherence.adherencePct != null ? (
+                      <span className={`atlas-pill${data.planAdherence.adherencePct >= 80 ? " is-sweet" : ""}`}>
+                        兑现率 {data.planAdherence.adherencePct}%
+                      </span>
+                    ) : null}
+                  </header>
+                  {data.planAdherence.hasPlan && data.planAdherence.scheduledSessions > 0 ? (
+                    <>
+                      <div className="adherence-grid">
+                        <div>
+                          <span>计划应练</span>
+                          <strong>{data.planAdherence.scheduledSessions} 场</strong>
+                        </div>
+                        <div>
+                          <span>实际完成</span>
+                          <strong>{data.planAdherence.completedSessions} 场</strong>
+                        </div>
+                        <div>
+                          <span>漏练 / 顺延</span>
+                          <strong>{data.planAdherence.missedSessions} 场</strong>
+                        </div>
+                        <div>
+                          <span>完成率</span>
+                          <strong>{data.planAdherence.adherencePct ?? 0}%</strong>
+                        </div>
+                      </div>
+                      <div className="who-cardio-bar" role="progressbar" aria-valuenow={data.planAdherence.adherencePct ?? 0} aria-valuemin={0} aria-valuemax={100}>
+                        <i style={{ width: `${data.planAdherence.adherencePct ?? 0}%` }} />
+                      </div>
+                      {data.planAdherence.byRoutine.length > 0 ? (
+                        <div className="apple-table-scroll">
+                          <table className="apple-ledger-table">
+                            <thead>
+                              <tr>
+                                <th>分化 / 课表</th>
+                                <th>应练</th>
+                                <th>已完成</th>
+                                <th>完成率</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {data.planAdherence.byRoutine.map((r) => (
+                                <tr key={r.name}>
+                                  <td><b>{r.name}</b></td>
+                                  <td>{r.scheduled} 场</td>
+                                  <td>{r.completed} 场</td>
+                                  <td>
+                                    <span className={`kpi-pill ${r.adherencePct >= 80 ? "is-sweet" : r.adherencePct >= 50 ? "is-caution" : "is-danger"}`}>
+                                      {r.adherencePct}%
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <div className="empty">
+                      <strong>暂无可评估的排期窗口</strong>
+                      <p>在「计划」页选用方案并完成训练后，系统会统计每个训练日的兑现率。</p>
+                    </div>
+                  )}
+                </section>
+              ) : null}
+
+              {appleWorkouts?.whoCardio && appleWorkouts.totalCount > 0 ? (
+                <section className="panel analytics-panel panel-who-cardio" id="panel-who-cardio">
+                  <header className="panel-head">
+                    <div>
+                      <h2>WHO 每周有氧达标与配速走势</h2>
+                      <p>按近 7 天中等强度 + 2×高强度换算，推荐每周 ≥ 150 分钟有氧当量</p>
+                    </div>
+                    <span className={`atlas-pill${appleWorkouts.whoCardio.completionPct >= 100 ? " is-sweet" : ""}`}>
+                      {appleWorkouts.whoCardio.equivalentMinutes} / {appleWorkouts.whoCardio.targetMinutes} 分 ({appleWorkouts.whoCardio.completionPct}%)
+                    </span>
+                  </header>
+                  <div className="adherence-grid">
+                    <div>
+                      <span>中等强度</span>
+                      <strong>{appleWorkouts.whoCardio.moderateMinutes} 分</strong>
+                    </div>
+                    <div>
+                      <span>高强度 (≥80% HRmax)</span>
+                      <strong>{appleWorkouts.whoCardio.vigorousMinutes} 分</strong>
+                    </div>
+                    <div>
+                      <span>折算有氧当量</span>
+                      <strong>{appleWorkouts.whoCardio.equivalentMinutes} 分</strong>
+                    </div>
+                  </div>
+                  <div className="who-cardio-bar" role="progressbar" aria-valuenow={appleWorkouts.whoCardio.completionPct} aria-valuemin={0} aria-valuemax={100}>
+                    <i style={{ width: `${appleWorkouts.whoCardio.completionPct}%` }} />
+                  </div>
+                  {appleWorkouts.paceTrend && appleWorkouts.paceTrend.length >= 2 ? (
+                    <SimpleTrendChart
+                      points={appleWorkouts.paceTrend.map((p) => ({ date: p.date, value: p.paceMinPerKm }))}
+                      label="平均配速"
+                      unit="min/km"
+                      digits={2}
+                    />
+                  ) : null}
+                </section>
+              ) : null}
           </>
         ) : null}
 
@@ -1560,7 +1750,7 @@ export function AnalyticsView() {
                   <div className="ipf-score-top">
                     <span className="ipf-title">平板卧推得分</span>
                     <span className={`kpi-pill ${ipfGl.bench && ipfGl.bench.score >= 35 ? "is-sweet" : ""}`}>
-                      {ipfGl.bench?.tierLabel ?? "需卧推数据"}
+                      {ipfGl.bench?.tierLabel ?? (ipfGl.components.bench1RM && needsStrengthProfile ? "待补体重或性别" : "需卧推数据")}
                     </span>
                   </div>
                   <div className="ipf-score-val">
@@ -1570,9 +1760,9 @@ export function AnalyticsView() {
                   <small>
                     推算极限:{" "}
                     {ipfGl.components.bench1RM
-                      ? `${fmt(ipfGl.components.bench1RM)} kg (${fmt(ipfGl.components.bench1RM / Math.max(1, userProfile.weightKg), 2)}× 体重)`
+                      ? formatLift(ipfGl.components.bench1RM)
                       : "未记录"}{" "}
-                    · 体重 {fmt(userProfile.weightKg)} kg
+                    {weightKg != null ? ` · 体重 ${fmt(weightKg)} kg` : ""}
                   </small>
                 </div>
 
@@ -1580,7 +1770,7 @@ export function AnalyticsView() {
                   <div className="ipf-score-top">
                     <span className="ipf-title">三大项总分 (SBD)</span>
                     <span className={`kpi-pill ${ipfGl.total && ipfGl.total.score >= 35 ? "is-sweet" : ""}`}>
-                      {ipfGl.total?.tierLabel ?? "需深蹲/硬拉数据"}
+                      {ipfGl.total?.tierLabel ?? (ipfGl.components.total3Lift && needsStrengthProfile ? "待补体重或性别" : "需三项训练数据")}
                     </span>
                   </div>
                   <div className="ipf-score-val">
@@ -1591,7 +1781,7 @@ export function AnalyticsView() {
                     卧推 {fmt(ipfGl.components.bench1RM)} + 深蹲 {fmt(ipfGl.components.squat1RM)} +{" "}
                     {ipfGl.components.deadliftSourceName || "硬拉"} {fmt(ipfGl.components.deadlift1RM)} ={" "}
                     {ipfGl.components.total3Lift
-                      ? `${fmt(ipfGl.components.total3Lift)} kg (${fmt(ipfGl.components.total3Lift / Math.max(1, userProfile.weightKg), 2)}× 体重)`
+                      ? formatLift(ipfGl.components.total3Lift)
                       : "待补齐"}
                   </small>
                 </div>
@@ -1603,6 +1793,94 @@ export function AnalyticsView() {
                 <div className="ipf-level"><span className="dot is-danger" /><b>精英</b>≥63 分</div>
               </div>
             </section>
+
+            {data.plateaus ? (
+              <section className="panel analytics-panel panel-plateaus" id="panel-plateaus">
+                <header className="panel-head">
+                  <div>
+                    <h2>动作平台期与退步预警</h2>
+                    <p>追踪近 3 次推算 1RM 停滞或回落的动作，及时介入微调组数/次数</p>
+                  </div>
+                  <span className={`atlas-pill${data.plateaus.length === 0 ? " is-sweet" : ""}`}>
+                    {data.plateaus.length ? `${data.plateaus.length} 项提醒` : "全线推进中"}
+                  </span>
+                </header>
+                {data.plateaus.length > 0 ? (
+                  <div className="plateau-list">
+                    {data.plateaus.map((item) => (
+                      <div key={item.id} className="plateau-item">
+                        <div className="plateau-top">
+                          <div>
+                            <strong>{item.name}</strong>
+                            <small>
+                              近 3 次 1RM：{fmt(item.baseline1RM, 1)} → {fmt(item.latest1RM, 1)} kg · 最近 {shortDate(item.lastDate)}
+                            </small>
+                          </div>
+                          <span className={`kpi-pill ${item.status === "regression" ? "is-danger" : "is-caution"}`}>
+                            {item.status === "regression" ? "略回落" : "平台期"} ({item.deltaPct > 0 ? "+" : ""}
+                            {item.deltaPct}%)
+                          </span>
+                        </div>
+                        <p className="muscle-dose-advice">{item.advice}</p>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="apple-baseline-note">
+                    <Icon name="trending" size={15} />
+                    <span>当前高频训练动作近 3 次均保持稳步推进或刚进入周期，暂未触发平台期预警。</span>
+                  </div>
+                )}
+              </section>
+            ) : null}
+
+            {data.repMaxBoard && data.repMaxBoard.length > 0 ? (
+              <section className="panel analytics-panel panel-rep-max" id="panel-rep-max">
+                <header className="panel-head">
+                  <div>
+                    <h2>Rep-Max 个人纪录矩阵 (1 / 3 / 5 / 8 / 10RM)</h2>
+                    <p>按真实完成过的最高重量统计，不依赖公式反推（含负重引体/双杠自重叠加）</p>
+                  </div>
+                  <span className="atlas-pill">{data.repMaxBoard.length} 个主打动作</span>
+                </header>
+                <div className="apple-table-scroll">
+                  <table className="apple-ledger-table rep-max-table">
+                    <thead>
+                      <tr>
+                        <th>动作</th>
+                        <th>1RM</th>
+                        <th>3RM</th>
+                        <th>5RM</th>
+                        <th>8RM</th>
+                        <th>10RM</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.repMaxBoard.map((row) => (
+                        <tr key={row.id}>
+                          <td><b>{row.name}</b></td>
+                          {(["rm1", "rm3", "rm5", "rm8", "rm10"] as const).map((k) => {
+                            const hit = row[k];
+                            return (
+                              <td key={k}>
+                                {hit ? (
+                                  <span title={`${hit.weight}kg × ${hit.reps} (${hit.date})`}>
+                                    <b>{fmt(hit.weight, 1)} kg</b>
+                                    <small className="apple-cell-sub">{shortDate(hit.date)}</small>
+                                  </span>
+                                ) : (
+                                  <span className="muted">—</span>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            ) : null}
           </>
         ) : null}
 
@@ -1635,16 +1913,19 @@ export function AnalyticsView() {
                     <div>
                       <span>每公斤体重</span>
                       <strong>
-                        {fmt(nutrition.protein.averageGramsPerKg, 2)} <small>g/kg</small>
+                        {nutrition.protein.averageGramsPerKg != null
+                          ? <>{fmt(nutrition.protein.averageGramsPerKg, 2)} <small>g/kg</small></>
+                          : "—"}
                       </strong>
                     </div>
                     <div>
                       <span>达标天数</span>
                       <strong>
-                        {nutrition.protein.daysMeetingTarget}{" "}
-                        <small>
-                          / {nutrition.protein.totalDaysLogged} 天 ({nutrition.protein.complianceRatePct}%)
-                        </small>
+                        {nutrition.protein.daysMeetingTarget != null ? (
+                          <>{nutrition.protein.daysMeetingTarget}{" "}
+                            <small>/ {nutrition.protein.totalDaysLogged} 天 ({nutrition.protein.complianceRatePct}%)</small>
+                          </>
+                        ) : "—"}
                       </strong>
                     </div>
                   </div>
@@ -1750,6 +2031,148 @@ export function AnalyticsView() {
                 ) : null}
               </div>
             </section>
+
+            {nutrition.dailySeries && nutrition.dailySeries.length > 0 ? (
+              <section className="panel analytics-panel panel-nutrition-daily" id="panel-nutrition-daily">
+                <header className="panel-head">
+                  <div>
+                    <h2>逐日饮食摄入与饮水走势</h2>
+                    <p>随当前统计窗口（{data.period} 天）联动展示每日热量、蛋白与饮水完成度</p>
+                  </div>
+                  <div className="segments">
+                    {(
+                      [
+                        ["calories", "热量 kcal"],
+                        ["protein", "蛋白 g"],
+                        ["waterMl", "饮水 ml"],
+                      ] as const
+                    ).map(([k, lbl]) => (
+                      <button
+                        key={k}
+                        type="button"
+                        aria-pressed={nutritionChartMetric === k}
+                        onClick={() => setNutritionChartMetric(k)}
+                      >
+                        {lbl}
+                      </button>
+                    ))}
+                  </div>
+                </header>
+                {(() => {
+                  const pts = nutrition.dailySeries
+                    .filter((d) => {
+                      if (nutritionChartMetric === "calories") return d.calories > 0;
+                      if (nutritionChartMetric === "protein") return d.protein > 0;
+                      return typeof d.waterMl === "number" && d.waterMl > 0;
+                    })
+                    .map((d) => ({
+                      date: d.date,
+                      value:
+                        nutritionChartMetric === "calories"
+                          ? d.calories
+                          : nutritionChartMetric === "protein"
+                            ? d.protein
+                            : (d.waterMl ?? 0),
+                    }));
+                  const spec =
+                    nutritionChartMetric === "calories"
+                      ? { label: "每日热量", unit: "kcal", digits: 0 }
+                      : nutritionChartMetric === "protein"
+                        ? { label: "每日蛋白", unit: "g", digits: 1 }
+                        : { label: "每日饮水", unit: "ml", digits: 0 };
+                  return pts.length >= 2 ? (
+                    <SimpleTrendChart points={pts} label={spec.label} unit={spec.unit} digits={spec.digits} />
+                  ) : (
+                    <div className="apple-baseline-note">
+                      <Icon name="diet" size={14} />
+                      <span>在所选周期内记录至少 2 天{spec.label}后自动绘制趋势曲线。</span>
+                    </div>
+                  );
+                })()}
+                {nutrition.hydration ? (
+                  <div className="adherence-grid" style={{ marginTop: 12 }}>
+                    <div>
+                      <span>日均饮水</span>
+                      <strong>{nutrition.hydration.loggedDays > 0 ? `${fmt(nutrition.hydration.averageMl, 0)} ml` : "—"}</strong>
+                    </div>
+                    <div>
+                      <span>饮水记录天数</span>
+                      <strong>{nutrition.hydration.loggedDays} / {nutrition.hydration.totalDays} 天</strong>
+                    </div>
+                    <div>
+                      <span>达标 ≥ {nutrition.hydration.targetMl} ml</span>
+                      <strong>{nutrition.hydration.daysMeetingTarget} 天 ({nutrition.hydration.complianceRatePct}%)</strong>
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
+            {data.bodyMeasurements && (data.bodyMeasurements.count > 0 || data.bodyMeasurements.recompSignal) ? (
+              <section className="panel analytics-panel panel-body-measurements" id="panel-body-measurements">
+                <header className="panel-head">
+                  <div>
+                    <h2>自建围度档案与减脂保肌信号</h2>
+                    <p>
+                      {data.bodyMeasurements.latestDate
+                        ? `最近围度更新：${shortDate(data.bodyMeasurements.latestDate)} · 对照体重与推算力量判断身体重塑走向`
+                        : "结合体重走势与主项力量变化判断减脂保肌或干净增肌状态"}
+                    </p>
+                  </div>
+                  {data.bodyMeasurements.recompSignal ? (
+                    <span
+                      className={`atlas-pill${
+                        data.bodyMeasurements.recompSignal.status === "optimal" ? " is-sweet" : ""
+                      }`}
+                    >
+                      {data.bodyMeasurements.recompSignal.label}
+                    </span>
+                  ) : null}
+                </header>
+                {data.bodyMeasurements.count > 0 ? (
+                  <div className="measurement-kpi-grid">
+                    {(
+                      [
+                        ["腰围", data.bodyMeasurements.latest.waistCm, data.bodyMeasurements.deltas.waistCm],
+                        ["胸围", data.bodyMeasurements.latest.chestCm, data.bodyMeasurements.deltas.chestCm],
+                        ["臂围", data.bodyMeasurements.latest.armCm, data.bodyMeasurements.deltas.armCm],
+                        ["腿围", data.bodyMeasurements.latest.thighCm, data.bodyMeasurements.deltas.thighCm],
+                        ["臀围", data.bodyMeasurements.latest.hipCm, data.bodyMeasurements.deltas.hipCm],
+                      ] as const
+                    ).map(([lbl, val, delta]) =>
+                      val != null ? (
+                        <div key={lbl} className="measurement-kpi-item">
+                          <span>{lbl}</span>
+                          <strong>{fmt(val, 1)} cm</strong>
+                          {delta != null && delta !== 0 ? (
+                            <small>
+                              变化 {delta > 0 ? "+" : ""}
+                              {fmt(delta, 1)} cm
+                            </small>
+                          ) : null}
+                        </div>
+                      ) : null,
+                    )}
+                    {data.bodyMeasurements.whtr != null ? (
+                      <div className="measurement-kpi-item">
+                        <span>腰身高比 WHtR</span>
+                        <strong>{fmt(data.bodyMeasurements.whtr, 2)}</strong>
+                        <small>{data.bodyMeasurements.whtr < 0.5 ? "健康范围 (<0.50)" : "偏高 (建议 <0.50)"}</small>
+                      </div>
+                    ) : null}
+                    {data.bodyMeasurements.whr != null ? (
+                      <div className="measurement-kpi-item">
+                        <span>腰臀比 WHR</span>
+                        <strong>{fmt(data.bodyMeasurements.whr, 2)}</strong>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+                {data.bodyMeasurements.recompSignal ? (
+                  <p className="physio-advice">{data.bodyMeasurements.recompSignal.detail}</p>
+                ) : null}
+              </section>
+            ) : null}
 
             {hasApple ? (
               <section className="panel analytics-panel panel-apple-body" id="panel-apple-body">
@@ -2418,8 +2841,7 @@ export function AnalyticsView() {
                           <div className="apple-hr-zone-head">
                             <span>单场平均心率区间分布（按场次占比）</span>
                             <small>
-                              {activeWorkoutBucket.hrZones.hrMaxSource === "tanaka_age" ? "Tanaka 最大心率" : "默认最大心率"}{" "}
-                              {activeWorkoutBucket.hrZones.hrMax} bpm · 非实时心率停留时长
+                              Tanaka 估算最大心率 {activeWorkoutBucket.hrZones.hrMax} bpm · 每场按平均值归类
                             </small>
                           </div>
                           <div className="apple-hr-zone-bar" role="img" aria-label="单场平均心率区间分布">
@@ -2440,6 +2862,8 @@ export function AnalyticsView() {
                               ))}
                           </div>
                         </div>
+                      ) : activeWorkoutBucket.avgBpm != null ? (
+                        <p>已记录平均心率。年龄资料在 18–81 岁范围内时可查看估算区间。</p>
                       ) : null}
 
                       <div className="apple-table-scroll">

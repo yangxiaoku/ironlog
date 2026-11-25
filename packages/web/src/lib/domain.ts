@@ -183,6 +183,17 @@ export interface FavoriteData {
   exerciseId: string;
 }
 
+export interface QuickFoodItem {
+  id: string;
+  name: string;
+  baseGrams: number;
+  unit: string;
+  calories: number;
+  protein: number;
+  carbs: number;
+  fat: number;
+}
+
 export interface ProfileGoals {
   calories: number;
   protein: number;
@@ -225,7 +236,11 @@ export interface ProfileGoals {
     appleHubShortcutName?: string;
     appleStrengthShortcutName?: string;
     appleCardioShortcutName?: string;
+    deloadMode?: boolean;
+    deloadWeightPct?: number;
+    deloadSetsPct?: number;
   };
+  quickFoods?: QuickFoodItem[];
 }
 
 export interface OverviewStatsResponse {

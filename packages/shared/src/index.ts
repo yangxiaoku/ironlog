@@ -253,6 +253,9 @@ const workoutPrefsBase = {
   appleHubShortcutName: z.string().trim().min(1).max(80),
   appleStrengthShortcutName: z.string().trim().min(1).max(80),
   appleCardioShortcutName: z.string().trim().min(1).max(80),
+  deloadMode: z.boolean(),
+  deloadWeightPct: z.number().int().min(50).max(95),
+  deloadSetsPct: z.number().int().min(25).max(100),
 };
 
 export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
@@ -281,8 +284,23 @@ export const workoutPrefsSchema = z.object({
   appleHubShortcutName: workoutPrefsBase.appleHubShortcutName.default("铁记-通用-Apple健康全能联动"),
   appleStrengthShortcutName: workoutPrefsBase.appleStrengthShortcutName.default("铁记开始力量"),
   appleCardioShortcutName: workoutPrefsBase.appleCardioShortcutName.default("铁记开始有氧"),
+  deloadMode: workoutPrefsBase.deloadMode.default(false),
+  deloadWeightPct: workoutPrefsBase.deloadWeightPct.default(80),
+  deloadSetsPct: workoutPrefsBase.deloadSetsPct.default(50),
 });
 export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
+
+export const quickFoodSchema = z.object({
+  id: z.string().trim().min(1).max(100),
+  name: shortText,
+  baseGrams: z.number().finite().positive().max(10000).default(100),
+  unit: z.string().trim().min(1).max(16).default("g"),
+  calories: nonnegative,
+  protein: nonnegative,
+  carbs: nonnegative,
+  fat: nonnegative,
+});
+export type QuickFood = z.infer<typeof quickFoodSchema>;
 
 export const profileSchema = z.object({
   calories: z.number().min(1).max(20000).default(2200),
@@ -304,6 +322,7 @@ export const profileSchema = z.object({
   calorieEstimate: calorieEstimateSchema.nullable().default(null),
   goalHistory: z.array(goalSnapshotSchema).optional(),
   workoutPrefs: workoutPrefsSchema.optional(),
+  quickFoods: z.array(quickFoodSchema).max(60).optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;
 

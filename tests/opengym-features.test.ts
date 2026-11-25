@@ -1280,6 +1280,15 @@ test("同日同名早晚训练 CSV 往返保留两场、全量导出含 Apple �
     assert.equal(Array.isArray(exportJson.appleHealthWorkouts), true);
     assert.equal(exportJson.appleHealthWorkouts.length, 2);
 
+    store.mutate(owner.userId, {
+      kind: "profile", id: "settings", opId: "heart-rate-zone-profile", baseVersion: 0, deleted: false,
+      data: {
+        energyProfile: {
+          weightKg: 75, weightDate: day, heightCm: 175, sex: "male",
+          birthDate: `${Number(day.slice(0, 4)) - 30}-01-01`, activityFactor: 1.6, context: "general",
+        },
+      },
+    });
     const analytics = (await (await call(`/api/web/analytics?days=14&through=${day}`)).json()) as any;
     assert.equal(analytics.appleWorkouts.hrZones.basis, "session_avg_hr");
     const nonEmptyZones = analytics.appleWorkouts.hrZones.zones.filter((z: any) => z.count > 0);
@@ -1402,6 +1411,145 @@ test("智能合并保留更新记录，恢复 Apple 训练到另一个账号后�
     const restored = await (await call("/api/export", { token: other.token })).json();
     assert.equal(restored.appleHealthWorkouts.length, 1);
     assert.notEqual(restored.appleHealthWorkouts[0].id, backup.appleHealthWorkouts[0].id);
+  } finally {
+    db.close();
+  }
+});
+
+test("覆盖恢复发布删除变更并使新旧设备上的过期记录版本失效", async () => {
+  const { db, store, call, owner, other } = fixture();
+  try {
+    const date = localDate();
+    const id = `weight_${date}`;
+    const weight = (value: number, baseVersion: number, opId: string) => ({
+      kind: "weight" as const, id, opId, baseVersion, data: { date, weight: value }, deleted: false,
+    });
+    const ownerWeight = (value: number, baseVersion: number, opId: string) =>
+      call("/api/records", { method: "POST", body: weight(value, baseVersion, opId) });
+    assert.equal((await ownerWeight(70, 0, "backup-weight")).status, 200);
+    const backup = await (await call("/api/export")).json();
+    assert.equal((await ownerWeight(75, 1, "recent-weight")).status, 200);
+    const extra = { kind: "diet" as const, id: "only-on-current", opId: "current-meal", baseVersion: 0, deleted: false,
+      data: { date, meal: "lunch", name: "被移除的记录", calories: 420, carbs: 65, fat: 9, protein: 20 } };
+    store.mutate(owner.userId, extra);
+    store.mutate(other.userId, { ...extra, opId: "other-meal" });
+
+    const sync = async (cursor: number) => (await call("/api/sync", {
+      method: "POST", body: { cursor, mutations: [] },
+    })).json();
+    const before = await sync(0);
+    assert.equal((await call("/api/web/restore-backup", {
+      method: "POST", body: { backup, mode: "commit", strategy: "replace" },
+    })).status, 200);
+    const after = await sync(before.cursor);
+    assert.ok(after.cursor > before.cursor);
+    const records = after.records as Array<{ id: string; deleted: boolean; version: number; data: unknown; updatedAt: string }>;
+    const restoredWeight = records.find((row) => row.id === id);
+    assert.equal(restoredWeight?.version, 3);
+    assert.equal((restoredWeight?.data as { weight: number }).weight, 70);
+    const deleted = records.find((row) => row.id === extra.id);
+    assert.ok(deleted?.updatedAt);
+    assert.deepEqual(deleted, {
+      id: extra.id, kind: "diet", version: 2, deleted: true, data: {}, updatedAt: deleted.updatedAt,
+    });
+    assert.equal(store.list(owner.userId, "diet").length, 0);
+    assert.equal(store.list(other.userId, "diet").length, 1);
+    assert.equal((await ownerWeight(72, 1, "stale-before-backup")).status, 409);
+    assert.equal((await ownerWeight(75, 2, "stale-after-backup")).status, 409);
+    assert.equal((await call("/api/records", { method: "POST", body: { ...extra, opId: "stale-meal", baseVersion: 1 } })).status, 409);
+    assert.equal((await ownerWeight(71, 3, "fresh-weight")).status, 200);
+  } finally {
+    db.close();
+  }
+});
+
+test("覆盖恢复保留计划历史且拒绝旧修订，包括恢复为空计划的情况", async () => {
+  const { db, store, call, owner, other } = fixture();
+  try {
+    const userId = owner.userId;
+    const empty = store.export(userId);
+    const first = store.createDraft(userId, starterPlans[0]!.plan).record!;
+    const second = store.createDraft(userId, starterPlans[1]!.plan).record!;
+    store.applyPlan(userId, first.id, first.version, 0);
+    const older = store.export(userId);
+    store.applyPlan(userId, second.id, second.version, 1);
+    store.applyPlan(userId, first.id, first.version, 2);
+
+    const replace = (backup: typeof empty) => call("/api/web/restore-backup", {
+      method: "POST", body: { mode: "commit", strategy: "replace", backup },
+    });
+    assert.equal((await replace(older)).status, 200);
+    const restored = store.planSchedule(userId)!;
+    assert.ok(restored.revision > 3);
+    assert.equal(restored.id, first.id);
+    assert.deepEqual(restored.history, older.activePlan?.history);
+    assert.throws(() => store.applyPlan(userId, second.id, second.version, 3), /已变化/);
+
+    assert.equal((await replace(empty)).status, 200);
+    assert.equal(store.activePlan(userId), null);
+    const next = store.createDraft(userId, starterPlans[0]!.plan).record!;
+    store.applyPlan(userId, next.id, next.version, 0);
+    assert.ok(store.activePlan(userId)!.revision > restored.revision);
+    assert.throws(() => store.applyPlan(userId, next.id, next.version, 1), /已变化/);
+
+    const otherPlan = store.createDraft(other.userId, starterPlans[0]!.plan).record!;
+    store.applyPlan(other.userId, otherPlan.id, otherPlan.version, 0);
+    assert.equal(store.activePlan(other.userId)?.revision, 1);
+  } finally {
+    db.close();
+  }
+});
+
+test("健康 JSON 备份可复原睡眠时段，兼容旧备份且拒绝损坏的样本", async () => {
+  const { db, call, owner, other } = fixture();
+  try {
+    const through = shiftDay(localDate(), -1);
+    const seconds = (clock: string, day: string) => `${day}T${clock}:00+08:00`;
+    const token = (await (await call("/api/integrations/apple-health/tokens", {
+      method: "POST", body: { label: "backup sleep fixture" },
+    })).json()).token as string;
+    for (let i = 3; i >= 0; i--) {
+      const date = shiftDay(through, -i);
+      const evening = shiftDay(date, -1);
+      const start = seconds(`22:${20 + i * 10}`, evening);
+      const split = seconds("01:00", date);
+      const end = seconds("05:45", date);
+      assert.equal((await call("/api/integrations/apple-health/daily", {
+        token, method: "POST", body: {
+          date, steps: 1200, sleepSamples: [`Core|${start}|${split}`, `REM|${split}|${end}`],
+        },
+      })).status, 200);
+    }
+
+    const path = `/api/web/analytics?days=14&through=${through}`;
+    const original = (await (await call(path)).json()).sleepReport;
+    assert.equal(original.timing.adjacentPairs, 3);
+    const backup = await (await call("/api/export")).json();
+    assert.equal(backup.appleHealthDaily[0].sleepObservations.length, 2);
+    const legacy = { ...backup, appleHealthDaily: backup.appleHealthDaily.map((row: Record<string, unknown>) => {
+      const { sleepObservations: _samples, ...summary } = row;
+      return { ...summary, steps: 1900, updatedAt: new Date(Date.now() + 60_000).toISOString() };
+    }) };
+    const restore = (payload: unknown, strategy = "merge", mode = "commit") =>
+      call("/api/web/restore-backup", { token: other.token, method: "POST", body: { backup: payload, strategy, mode } });
+    assert.equal((await restore(legacy)).status, 200);
+    assert.equal((await (await call(path, { token: other.token })).json()).sleepReport.timing.measuredDays, 0);
+    assert.equal((await restore(backup)).status, 200);
+    const recovered = await (await call(path, { token: other.token })).json();
+    assert.deepEqual(recovered.sleepReport, original);
+    assert.equal(recovered.appleDaily.series.at(-1).steps, 1900);
+    assert.equal((await restore(legacy)).status, 200);
+    assert.deepEqual((await (await call(path, { token: other.token })).json()).sleepReport, original);
+    assert.equal((await restore(backup, "replace")).status, 200);
+    assert.deepEqual((await (await call(path, { token: other.token })).json()).sleepReport, original);
+
+    const invalid = { ...backup, appleHealthDaily: [{ ...backup.appleHealthDaily[0],
+      sleepObservations: [{ stage: "deep", interval: [Date.now(), 10] }] }] };
+    assert.equal((await restore(invalid, "replace", "preview")).status, 400);
+    assert.equal((await restore(invalid, "replace")).status, 400);
+    assert.deepEqual((await (await call(path, { token: other.token })).json()).sleepReport, original);
+    const publicDaily = await (await call(`/api/integrations/apple-health/daily?from=${through}&through=${through}`, { token: owner.token })).text();
+    assert.equal(publicDaily.includes("SleepObservations") || publicDaily.includes("sleepObservations"), false);
   } finally {
     db.close();
   }

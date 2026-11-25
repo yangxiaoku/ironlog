@@ -22,6 +22,9 @@ export const weightStepPreference = "ironlog-web-weight-step-kg";
 export const hapticsPreference = "ironlog-web-haptics";
 export const plateMathPreference = "ironlog-web-show-plate-math";
 export const warmupSchemePreference = "ironlog-web-warmup-scheme";
+export const deloadModePreference = "ironlog-web-deload-mode";
+export const deloadWeightPctPreference = "ironlog-web-deload-weight-pct";
+export const deloadSetsPctPreference = "ironlog-web-deload-sets-pct";
 
 export const WORKOUT_PREFS_EVENT = "ironlog:workout-prefs-changed";
 export const PROFILE_VERSION_EVENT = "ironlog:profile-version";
@@ -116,6 +119,9 @@ export interface WorkoutPreferences {
   appleHubShortcutName: string;
   appleStrengthShortcutName: string;
   appleCardioShortcutName: string;
+  deloadMode: boolean;
+  deloadWeightPct: number;
+  deloadSetsPct: number;
 }
 
 export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
@@ -142,6 +148,9 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   appleHubShortcutName: DEFAULT_APPLE_HUB_SHORTCUT,
   appleStrengthShortcutName: DEFAULT_APPLE_STRENGTH_SHORTCUT,
   appleCardioShortcutName: DEFAULT_APPLE_CARDIO_SHORTCUT,
+  deloadMode: false,
+  deloadWeightPct: 80,
+  deloadSetsPct: 50,
 };
 
 function readBoolPrefValue(key: string, defaultOn: boolean): boolean {
@@ -240,6 +249,17 @@ function readShortcutNamePref(key: string, fallback: string): string {
   return fallback;
 }
 
+function readIntRangePref(key: string, min: number, max: number, fallback: number): number {
+  if (typeof localStorage === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return fallback;
+    const n = Math.round(Number(raw));
+    return Number.isFinite(n) && n >= min && n <= max ? n : fallback;
+  } catch {}
+  return fallback;
+}
+
 /**
  * Safely reads unified in-session workout preferences with validated defaults.
  */
@@ -297,6 +317,19 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     appleCardioShortcutName: readShortcutNamePref(
       appleCardioShortcutPreference,
       DEFAULT_APPLE_CARDIO_SHORTCUT,
+    ),
+    deloadMode: readBoolPrefValue(deloadModePreference, DEFAULT_WORKOUT_PREFERENCES.deloadMode),
+    deloadWeightPct: readIntRangePref(
+      deloadWeightPctPreference,
+      50,
+      95,
+      DEFAULT_WORKOUT_PREFERENCES.deloadWeightPct,
+    ),
+    deloadSetsPct: readIntRangePref(
+      deloadSetsPctPreference,
+      25,
+      100,
+      DEFAULT_WORKOUT_PREFERENCES.deloadSetsPct,
     ),
   };
 }
@@ -423,6 +456,21 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
           sanitizeShortcutName(value, DEFAULT_APPLE_CARDIO_SHORTCUT),
         );
         break;
+      case "deloadMode":
+        localStorage.setItem(deloadModePreference, value ? "on" : "off");
+        break;
+      case "deloadWeightPct":
+        localStorage.setItem(
+          deloadWeightPctPreference,
+          String(Math.max(50, Math.min(95, Math.round(Number(value) || 80)))),
+        );
+        break;
+      case "deloadSetsPct":
+        localStorage.setItem(
+          deloadSetsPctPreference,
+          String(Math.max(25, Math.min(100, Math.round(Number(value) || 50)))),
+        );
+        break;
     }
   } catch {}
 }
@@ -460,6 +508,7 @@ export function applyRemoteWorkoutPreferences(
     "autoAdvanceExercise",
     "showPlateMath",
     "appleFitnessAutoLaunch",
+    "deloadMode",
   ] as const;
   for (const key of boolKeys) {
     if (typeof remote[key] === "boolean") persistSinglePreference(key, remote[key]!);
@@ -515,6 +564,14 @@ export function applyRemoteWorkoutPreferences(
     const cleaned = remote.appleCardioShortcutName.trim().slice(0, 80);
     if (cleaned) persistSinglePreference("appleCardioShortcutName", cleaned);
   }
+  if (typeof remote.deloadWeightPct === "number" && Number.isFinite(remote.deloadWeightPct)) {
+    const clamped = Math.max(50, Math.min(95, Math.round(remote.deloadWeightPct)));
+    persistSinglePreference("deloadWeightPct", clamped);
+  }
+  if (typeof remote.deloadSetsPct === "number" && Number.isFinite(remote.deloadSetsPct)) {
+    const clamped = Math.max(25, Math.min(100, Math.round(remote.deloadSetsPct)));
+    persistSinglePreference("deloadSetsPct", clamped);
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
@@ -546,6 +603,9 @@ const ALL_WORKOUT_PREF_KEYS = [
   appleHubShortcutPreference,
   appleStrengthShortcutPreference,
   appleCardioShortcutPreference,
+  deloadModePreference,
+  deloadWeightPctPreference,
+  deloadSetsPctPreference,
 ] as const;
 
 /**
@@ -786,4 +846,26 @@ export function snapWarmupWeight(
   }
   const step = target < 15 ? 1 : 2.5;
   return Math.max(step, Math.round(target / step) * step);
+}
+
+/**
+ * Scales routine target sets and weights cleanly for Deload Week mode.
+ */
+export function applyDeloadToTarget(
+  sets: number,
+  weight: number,
+  mode: string,
+  weightStepKg = 2.5,
+  weightPct = 80,
+  setsPct = 50,
+): { sets: number; weight: number } {
+  const scaledSets = Math.max(1, Math.round((sets * Math.max(25, Math.min(100, setsPct))) / 100));
+  if (mode === "timed" || weight <= 0) {
+    return { sets: scaledSets, weight };
+  }
+  const step = weightStepKg > 0 ? weightStepKg : 2.5;
+  const ratio = Math.max(50, Math.min(95, weightPct)) / 100;
+  const rawWeight = weight * ratio;
+  const snapped = Math.max(0, Math.round(rawWeight / step) * step);
+  return { sets: scaledSets, weight: round2(snapped) };
 }
