@@ -175,13 +175,11 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "is.workflow.actions.setvariable",
     "WFStringSubstitutableState",
     "<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>",
-    "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>",
     "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>",
-    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>",
+    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>",
     "<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>",
     "<key>WFContentItemLimitNumber</key>\n\t\t\t\t<integer>1</integer>",
     "<string>Steps</string>",
-    "<string>count</string>",
     "<string>Active Calories</string>",
     "<string>Resting Calories</string>",
     "<string>Walking + Running Distance</string>",
@@ -209,9 +207,10 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     assert.ok(daily.xml.includes(needle), `Expected generated daily shortcut XML to contain ${needle}`);
   }
 
-  // Must use canonical HealthKit keys, Operator 1002 ("is today") for dailySum (Hour for Steps, Day for others),
-  // and relative 1-day Operator 1001 for sleep/latest metrics
+  // Must use canonical HealthKit keys and relative 1-day Operator 1001 (`Number=<string>1</string>`, `Unit=16`)
+  // matching real iOS 5203.0.1 export (Hour GroupBy for Steps, Day GroupBy + Limit 1 for other dailySum metrics)
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
+  assert.ok(!daily.xml.includes("<integer>1002</integer>"));
   assert.ok(!daily.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
   assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Hour</string>"));
   assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));

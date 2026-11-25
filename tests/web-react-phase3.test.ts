@@ -152,10 +152,10 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   });
   makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
   assert.ok(dailyNoCreds.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
-  assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>"));
-  assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>"));
+  assert.ok(!dailyNoCreds.xml.includes("<integer>1002</integer>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>VO2 Max</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(dailyNoCreds.xml.includes("<string>Oxygen Saturation</string>"));
@@ -211,10 +211,10 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.equal(hubUniversal.windowMinutes, 45);
   assert.equal(hubUniversal.metricCount, 6);
   assert.ok(hubUniversal.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
-  assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>"));
-  assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>"));
+  assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
   assert.ok(hubUniversal.xml.includes("<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>"));
+  assert.ok(!hubUniversal.xml.includes("<integer>1002</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Hour</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Resting Calories</string>"));
   assert.ok(!hubUniversal.xml.includes("<string>Resting Energy</string>"));
@@ -259,7 +259,7 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   const openEndedCount = (hubUniversal.xml.match(/<key>isOpenEnded<\/key>\n\t\t\t\t<true\/>/g) ?? []).length;
   assert.equal(openEndedCount, 16, `expected isOpenEnded=true in all 16 Start Workout actions, got ${openEndedCount}`);
   assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>"));
-  assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringFillMissing</key>\n\t\t\t\t<false/>"));
+  assert.ok(hubUniversal.xml.includes("[v2026.11.25-r8]"));
   assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>coreTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));

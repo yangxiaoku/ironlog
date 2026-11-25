@@ -78,11 +78,11 @@ export const APPLE_HEALTH_DAILY_GROUPS: HealthDailyGroupDef[] = [
     label: "日常活动与消耗",
     description: "步数、活动能量、静息能量、步行 + 跑步距离、已爬楼层",
     metrics: [
-      { key: "steps", typeLabel: "步数", typeLabelEn: "Steps", unit: "count", mode: "dailySum", jsonKey: "steps" },
+      { key: "steps", typeLabel: "步数", typeLabelEn: "Steps", unit: null, mode: "dailySum", jsonKey: "steps" },
       { key: "activeEnergyKcal", typeLabel: "活动能量", typeLabelEn: "Active Calories", unit: "kcal", mode: "dailySum", jsonKey: "activeEnergyKcal" },
       { key: "restingEnergyKcal", typeLabel: "静息能量", typeLabelEn: "Resting Calories", unit: "kcal", mode: "dailySum", jsonKey: "restingEnergyKcal", emptyHint: "凌晨易空" },
       { key: "distanceKm", typeLabel: "步行 + 跑步距离", typeLabelEn: "Walking + Running Distance", unit: "km", mode: "dailySum", jsonKey: "distanceKm" },
-      { key: "flightsClimbed", typeLabel: "已爬楼层", typeLabelEn: "Flights Climbed", unit: "count", mode: "dailySum", jsonKey: "flightsClimbed" },
+      { key: "flightsClimbed", typeLabel: "已爬楼层", typeLabelEn: "Flights Climbed", unit: null, mode: "dailySum", jsonKey: "flightsClimbed" },
     ],
   },
   {
@@ -821,7 +821,7 @@ function findHealthSampleActionXml({
   unit?: string | null;
   groupBy?: "Minute" | "Hour" | "Day" | "Week" | "Month" | "Year" | null;
   dateFilter: DateFilterSpec;
-  sortOrder?: "Latest First" | "Oldest First";
+  sortOrder?: "Latest First" | "Oldest First" | null;
   limit?: number | null;
 }): string {
   let dateTemplate: string[];
@@ -892,7 +892,7 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
       "\t\t\t\t\t\t\t\t\t<dict>",
       "\t\t\t\t\t\t\t\t\t\t<key>Number</key>",
-      `\t\t\t\t\t\t\t\t\t\t<integer>${Math.max(1, Math.round(amount))}</integer>`,
+      `\t\t\t\t\t\t\t\t\t\t<string>${Math.max(1, Math.round(amount))}</string>`,
       "\t\t\t\t\t\t\t\t\t\t<key>Unit</key>",
       `\t\t\t\t\t\t\t\t\t\t<integer>${unitCode}</integer>`,
       "\t\t\t\t\t\t\t\t\t</dict>",
@@ -939,12 +939,16 @@ function findHealthSampleActionXml({
     "\t\t\t\t\t<key>WFSerializationType</key>",
     "\t\t\t\t\t<string>WFContentPredicateTableTemplate</string>",
     "\t\t\t\t</dict>",
-    "\t\t\t\t<key>WFContentItemSortOrder</key>",
-    `\t\t\t\t<string>${escapeXml(sortOrder)}</string>`,
-    "\t\t\t\t<key>WFContentItemSortProperty</key>",
-    "\t\t\t\t<string>Start Date</string>",
   ];
 
+  if (sortOrder) {
+    params.push(
+      "\t\t\t\t<key>WFContentItemSortOrder</key>",
+      `\t\t\t\t<string>${escapeXml(sortOrder)}</string>`,
+      "\t\t\t\t<key>WFContentItemSortProperty</key>",
+      "\t\t\t\t<string>Start Date</string>",
+    );
+  }
   if (limit != null) {
     params.push(
       "\t\t\t\t<key>WFContentItemLimitEnabled</key>",
@@ -952,14 +956,10 @@ function findHealthSampleActionXml({
       "\t\t\t\t<key>WFContentItemLimitNumber</key>",
       `\t\t\t\t<integer>${limit}</integer>`,
     );
-  } else {
-    params.push("\t\t\t\t<key>WFContentItemLimitEnabled</key>", "\t\t\t\t<false/>");
   }
   if (unit) params.push("\t\t\t\t<key>WFHKSampleFilteringUnit</key>", `\t\t\t\t<string>${escapeXml(unit)}</string>`);
   if (groupBy) {
     params.push(
-      "\t\t\t\t<key>WFHKSampleFilteringFillMissing</key>",
-      "\t\t\t\t<false/>",
       "\t\t\t\t<key>WFHKSampleFilteringGroupBy</key>",
       `\t\t\t\t<string>${escapeXml(groupBy)}</string>`,
     );
@@ -1850,11 +1850,11 @@ function buildDailyHealthCollectionActions({
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
 
-  // For dailySum metrics, use native "Start Date is today" (`Operator: 1002`, `Values: { Number: "7", Unit: 16 }`,
-  // `WFContentPredicateBoundedDate: false`, verified against real iOS 26.2 Find Health Samples exports):
-  // - Steps groups by Hour (at most 24 buckets for today, no Limit cap, summed via Calculate Statistics)
-  // - Other dailySum metrics group by Day (1 bucket for today)
-  // For sleep & latest point-in-time vitals/body metrics, use relative 1-day (24h) `Operator: 1001`.
+  // Matched byte-for-byte against real iPhone Shortcuts (client 5203.0.1) Find Health Samples export:
+  // Operator 1001 ("is in the last") with Number="<string>1</string>", Unit=<integer>16</integer>, BoundedDate=false.
+  // - Steps: Group by Hour, no Limit/Sort/Unit (exact match with user iPhone plist b0f20dfa...)
+  // - Other dailySum: Group by Day, Latest First, Limit 1 (returns today's single day bucket)
+  // - Sleep & latest vitals: Operator 1001 (last 1 day), latest uses Limit 1
   for (const metric of selectedMetrics) {
     const findUuid = uuidFactory();
     const variableName = `v_${metric.key}`;
@@ -1867,11 +1867,9 @@ function buildDailyHealthCollectionActions({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
-      dateFilter: isDailySum
-        ? { kind: "today" }
-        : { kind: "lastDays", days: 1, byEndDate: isSleep },
-      sortOrder: isSleep ? "Oldest First" : "Latest First",
-      limit: latest ? 1 : null,
+      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
+      sortOrder: isSteps ? null : isSleep ? "Oldest First" : "Latest First",
+      limit: latest || (isDailySum && !isSteps) ? 1 : null,
     }));
 
     let bodyActions: string[];
@@ -2046,7 +2044,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     : "铁记-Apple健康全能联动.shortcut";
 
   const commentText = [
-    `铁记（Ironlog）Apple 健康全能智能联动（1 个快捷指令覆盖全流程）`,
+    `铁记（Ironlog）Apple 健康全能智能联动 [v2026.11.25-r8]（1 个快捷指令覆盖全流程）`,
     `默认运动：${sportLabel}（${resolvedEnv}）；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
     `  • strength / strength:functional / strength:core：上报对应力量开始事件，自动开始对应体能训练并打开 Apple「健身」App`,

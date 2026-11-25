@@ -49,11 +49,11 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
     label: "日常活动与消耗",
     description: "步数、活动能量、静息能量、步行 + 跑步距离、已爬楼层",
     metrics: [
-      { key: "steps", typeLabel: "步数", typeLabelEn: "Steps", unit: "count", mode: "dailySum", jsonKey: "steps" },
+      { key: "steps", typeLabel: "步数", typeLabelEn: "Steps", unit: null, mode: "dailySum", jsonKey: "steps" },
       { key: "activeEnergyKcal", typeLabel: "活动能量", typeLabelEn: "Active Calories", unit: "kcal", mode: "dailySum", jsonKey: "activeEnergyKcal" },
       { key: "restingEnergyKcal", typeLabel: "静息能量", typeLabelEn: "Resting Calories", unit: "kcal", mode: "dailySum", jsonKey: "restingEnergyKcal", emptyHint: "凌晨易空" },
       { key: "distanceKm", typeLabel: "步行 + 跑步距离", typeLabelEn: "Walking + Running Distance", unit: "km", mode: "dailySum", jsonKey: "distanceKm" },
-      { key: "flightsClimbed", typeLabel: "已爬楼层", typeLabelEn: "Flights Climbed", unit: "count", mode: "dailySum", jsonKey: "flightsClimbed" },
+      { key: "flightsClimbed", typeLabel: "已爬楼层", typeLabelEn: "Flights Climbed", unit: null, mode: "dailySum", jsonKey: "flightsClimbed" },
     ],
   },
   {
@@ -531,7 +531,7 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
       "\t\t\t\t\t\t\t\t\t<dict>",
       "\t\t\t\t\t\t\t\t\t\t<key>Number</key>",
-      `\t\t\t\t\t\t\t\t\t\t<integer>${Math.max(1, Math.round(amount))}</integer>`,
+      `\t\t\t\t\t\t\t\t\t\t<string>${Math.max(1, Math.round(amount))}</string>`,
       "\t\t\t\t\t\t\t\t\t\t<key>Unit</key>",
       `\t\t\t\t\t\t\t\t\t\t<integer>${unitCode}</integer>`,
       "\t\t\t\t\t\t\t\t\t</dict>",
@@ -578,12 +578,16 @@ function findHealthSampleActionXml({
     "\t\t\t\t\t<key>WFSerializationType</key>",
     "\t\t\t\t\t<string>WFContentPredicateTableTemplate</string>",
     "\t\t\t\t</dict>",
-    "\t\t\t\t<key>WFContentItemSortOrder</key>",
-    `\t\t\t\t<string>${escapeXml(sortOrder)}</string>`,
-    "\t\t\t\t<key>WFContentItemSortProperty</key>",
-    "\t\t\t\t<string>Start Date</string>",
   ];
 
+  if (sortOrder) {
+    params.push(
+      "\t\t\t\t<key>WFContentItemSortOrder</key>",
+      `\t\t\t\t<string>${escapeXml(sortOrder)}</string>`,
+      "\t\t\t\t<key>WFContentItemSortProperty</key>",
+      "\t\t\t\t<string>Start Date</string>",
+    );
+  }
   if (limit != null) {
     params.push(
       "\t\t\t\t<key>WFContentItemLimitEnabled</key>",
@@ -591,14 +595,10 @@ function findHealthSampleActionXml({
       "\t\t\t\t<key>WFContentItemLimitNumber</key>",
       `\t\t\t\t<integer>${limit}</integer>`,
     );
-  } else {
-    params.push("\t\t\t\t<key>WFContentItemLimitEnabled</key>", "\t\t\t\t<false/>");
   }
   if (unit) params.push("\t\t\t\t<key>WFHKSampleFilteringUnit</key>", `\t\t\t\t<string>${escapeXml(unit)}</string>`);
   if (groupBy) {
     params.push(
-      "\t\t\t\t<key>WFHKSampleFilteringFillMissing</key>",
-      "\t\t\t\t<false/>",
       "\t\t\t\t<key>WFHKSampleFilteringGroupBy</key>",
       `\t\t\t\t<string>${escapeXml(groupBy)}</string>`,
     );
@@ -1238,11 +1238,9 @@ export function buildIronlogDailyHealthShortcut({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
-      dateFilter: isDailySum
-        ? { kind: "today" }
-        : { kind: "lastDays", days: 1, byEndDate: isSleep },
-      sortOrder: isSleep ? "Oldest First" : "Latest First",
-      limit: latest ? 1 : null,
+      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
+      sortOrder: isSteps ? null : isSleep ? "Oldest First" : "Latest First",
+      limit: latest || (isDailySum && !isSteps) ? 1 : null,
     }));
 
     let bodyActions;
