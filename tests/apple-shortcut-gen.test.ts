@@ -13,6 +13,10 @@ import {
   buildMacSignCommand,
   normalizeServerOrigin,
 } from "../web/src/shortcut-gen.js";
+import {
+  buildIronlogDailyHealthShortcut as buildWebDailyHealthShortcut,
+  buildIronlogUnifiedAppleHubShortcut,
+} from "../packages/web/src/lib/shortcut-gen.js";
 
 /** Verify basic XML plist structural integrity (<plist><dict>, balanced tags, alternating <key>/value inside <dict>). */
 function assertValidPlistStructure(xml: string) {
@@ -151,7 +155,41 @@ test("normalizeServerOrigin 与 assessServerOrigin 正确识别本地地址与�
   assert.ok("en" in APPLE_SHORTCUT_HEALTH_LOCALES);
 });
 
-test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档所需的日期", () => {
+test("各快捷指令入口的步数查询均按小时分组并回看最近三天", () => {
+  const config = {
+    serverOrigin: "https://ironlog.example.com",
+    token: "ih_dailyToken_123456",
+    metrics: ["steps", "activeEnergyKcal", "heartRateBpm"],
+  };
+  const shortcuts = [
+    buildIronlogDailyHealthShortcut(config),
+    buildWebDailyHealthShortcut({ ...config, useImportQuestions: true }),
+    buildIronlogUnifiedAppleHubShortcut({ ...config, useImportQuestions: true }),
+  ];
+
+  for (const { xml, filename } of shortcuts) {
+    assert.ok(xml.includes("<key>WFWorkflowClientVersion</key>\n\t<string>5203.0.1</string>"), filename);
+    const actions = xml.split(/\n\t\t<dict>\n/);
+    const stepIdx = actions.findIndex(
+      (action) =>
+        action.includes("<string>is.workflow.actions.filter.health.quantity</string>") &&
+        action.includes("<string>Steps</string>"),
+    );
+    assert.ok(stepIdx > 0, filename);
+    const prevAction = actions[stepIdx - 1]!;
+    assert.ok(prevAction.includes("<string>is.workflow.actions.nothing</string>"), `${filename} should isolate Steps from prior Date output`);
+    assert.ok(!prevAction.includes("<string>is.workflow.actions.date</string>"), filename);
+    const query = actions[stepIdx]!;
+    assert.match(query, /<key>Operator<\/key>\s*<integer>1001<\/integer>\s*<key>Property<\/key>\s*<string>Start Date<\/string>/);
+    assert.match(query, /<key>Number<\/key>\s*<string>3<\/string>\s*<key>Unit<\/key>\s*<integer>16<\/integer>/);
+    assert.match(query, /<key>WFContentItemSortOrder<\/key>\s*<string>Latest First<\/string>/);
+    assert.match(query, /<key>WFContentItemSortProperty<\/key>\s*<string>Start Date<\/string>/);
+    assert.match(query, /<key>WFHKSampleFilteringGroupBy<\/key>\s*<string>Hour<\/string>/);
+    assert.doesNotMatch(query, /<key>WFContentItemLimitNumber<\/key>/);
+  }
+});
+
+test("buildIronlogDailyHealthShortcut 生成带日期的最近三天活动数据", () => {
   let seq = 0;
   const daily = buildIronlogDailyHealthShortcut({
     serverOrigin: "https://ironlog.example.com",
@@ -169,7 +207,6 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   for (const needle of [
     "is.workflow.actions.filter.health.quantity",
     "is.workflow.actions.properties.health.quantity",
-    "is.workflow.actions.statistics",
     "is.workflow.actions.conditional",
     "is.workflow.actions.repeat.each",
     "is.workflow.actions.setvariable",
@@ -207,8 +244,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     assert.ok(daily.xml.includes(needle), `Expected generated daily shortcut XML to contain ${needle}`);
   }
 
-  // Must use canonical HealthKit keys and relative 1-day Operator 1001 (`Number=<string>1</string>`, `Unit=16`)
-  // matching real iOS 5203.0.1 export (Hour GroupBy for Steps, Day GroupBy + Limit 1 for other dailySum metrics)
+  // Preserve the native predicate encoding and the dates of the returned buckets.
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
   assert.ok(!daily.xml.includes("<integer>1002</integer>"));
   assert.ok(!daily.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
@@ -221,8 +257,9 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   assert.ok(!daily.xml.includes("<string>Blood Oxygen</string>"));
   assert.ok(!daily.xml.includes("<string>Resting Energy</string>"));
   assert.ok(!daily.xml.includes("<string>Dietary Energy</string>"));
-  assert.ok(!daily.xml.includes("stepsSamples"));
-  assert.ok(!daily.xml.includes("activeEnergyKcalSamples"));
+  assert.ok(daily.xml.includes("<string>stepsSamples</string>"));
+  assert.ok(daily.xml.includes("<string>activeEnergyKcalSamples</string>"));
+  assert.ok(daily.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
 
   // Optional English locale remains valid and emits identical canonical keys
   const english = buildIronlogDailyHealthShortcut({

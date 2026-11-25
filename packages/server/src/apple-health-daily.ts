@@ -79,6 +79,7 @@ export interface DailyHealthSnapshot {
   syncedWeightValue?: number;
   syncedBodyFatValue?: number;
   syncedSleepObservations?: SleepObservation[];
+  stepsSampledAt?: string;
 }
 
 const CUMULATIVE_KEYS: Array<keyof DailyHealthSnapshot> = [
@@ -710,6 +711,7 @@ export function upsertDailyHealth(
   const sourceParse = sourceEnum.safeParse(input.source);
   const source: DailyHealthSnapshot["source"] = sourceParse.success ? sourceParse.data : "shortcut";
   const nowIso = new Date().toISOString();
+  const sampledAt = parseFlexibleInstant(input.occurredAt) ?? nowIso;
 
   // Extract & validate all domains tolerantly
   const parsed: Partial<DailyHealthSnapshot> = {
@@ -740,7 +742,10 @@ export function upsertDailyHealth(
     parsed[key] = parseTolerantNumber(input[key], metric.label, metric);
     if (!threeDaySync) continue;
     for (const [sampleDate, total] of shortcutTotalsByDate(input[`${key}Samples`], firstDate, date, metric.label, metric.max)) {
-      if (total <= metric.max) patchForDate(sampleDate)[key] = parseTolerantNumber(total, metric.label, metric);
+      if (total > metric.max) continue;
+      const patch = patchForDate(sampleDate);
+      patch[key] = parseTolerantNumber(total, metric.label, metric);
+      if (key === "steps") patch.stepsSampledAt = sampledAt;
     }
   }
   if (parsed.distanceKm === undefined) {
@@ -826,7 +831,15 @@ export function upsertDailyHealth(
 
     for (const [k, value] of Object.entries(effectivePatch)) {
       if (value === undefined) continue;
-      if (!replaceDay && existing && CUMULATIVE_KEYS.includes(k as keyof DailyHealthSnapshot) && typeof value === "number") {
+      if (k === "stepsSampledAt") continue;
+      if (k === "steps" && typeof value === "number" && effectivePatch.stepsSampledAt) {
+        if (replaceDay || !existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt) {
+          next.steps = value;
+          next.stepsSampledAt = effectivePatch.stepsSampledAt;
+        }
+      } else if (k === "steps" && !replaceDay && existing?.stepsSampledAt) {
+        continue;
+      } else if (!replaceDay && existing && CUMULATIVE_KEYS.includes(k as keyof DailyHealthSnapshot) && typeof value === "number") {
         const prev = existing[k as keyof DailyHealthSnapshot];
         (next as unknown as Record<string, unknown>)[k] = typeof prev === "number" ? Math.max(prev, value) : value;
       } else if (!replaceDay && existing && k === "sleepStartAt" && typeof value === "string" && typeof existing.sleepStartAt === "string") {
@@ -916,7 +929,7 @@ export function upsertDailyHealth(
 }
 
 export function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthSnapshot {
-  const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations: _s, ...rest } = snapshot;
+  const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations: _s, stepsSampledAt: _steps, ...rest } = snapshot;
   return rest;
 }
 

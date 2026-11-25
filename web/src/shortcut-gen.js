@@ -353,6 +353,17 @@ function currentDateActionXml({ uuid }) {
   ].join("\n"));
 }
 
+function nothingActionXml() {
+  return [
+    "\t\t<dict>",
+    "\t\t\t<key>WFWorkflowActionIdentifier</key>",
+    "\t\t\t<string>is.workflow.actions.nothing</string>",
+    "\t\t\t<key>WFWorkflowActionParameters</key>",
+    "\t\t\t<dict/>",
+    "\t\t</dict>",
+  ].join("\n");
+}
+
 function downloadJsonActionXml({ uuid, endpoint, token, bodyItems = null, method = "POST" }) {
   const headerItems = [{ key: "Authorization", value: `Bearer ${token}` }];
   if (method !== "GET" && bodyItems) headerItems.push({ key: "Content-Type", value: "application/json" });
@@ -781,12 +792,16 @@ function wrapShortcutPlist(actionBlocks) {
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
     "<dict>",
+    "\t<key>WFQuickActionSurfaces</key>",
+    "\t<array/>",
     "\t<key>WFWorkflowActions</key>",
     "\t<array>",
     ...actionBlocks,
     "\t</array>",
     "\t<key>WFWorkflowClientVersion</key>",
-    "\t<string>2700.0.4</string>",
+    "\t<string>5203.0.1</string>",
+    "\t<key>WFWorkflowHasOutputFallback</key>",
+    "\t<false/>",
     "\t<key>WFWorkflowHasShortcutInputVariables</key>",
     "\t<false/>",
     "\t<key>WFWorkflowIcon</key>",
@@ -1220,7 +1235,7 @@ export function buildIronlogDailyHealthShortcut({
   // Format Current Date inline via WFDateFormatVariableAggrandizement instead of calling
   // is.workflow.actions.format.date, which can evaluate to "" on some iOS builds.
   const rawNowUuid = uuidFactory();
-  actions.push(currentDateActionXml({ uuid: rawNowUuid }));
+  actions.push(nothingActionXml());
   jsonBodyItems.push({
     key: "occurredAt",
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
@@ -1238,9 +1253,9 @@ export function buildIronlogDailyHealthShortcut({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
-      sortOrder: isSteps ? null : isSleep ? "Oldest First" : "Latest First",
-      limit: latest || (isDailySum && !isSteps) ? 1 : null,
+      dateFilter: { kind: "lastDays", days: isDailySum ? 3 : 1, byEndDate: isSleep },
+      sortOrder: isSleep ? "Oldest First" : "Latest First",
+      limit: latest ? 1 : null,
     }));
 
     let bodyActions;
@@ -1260,14 +1275,10 @@ export function buildIronlogDailyHealthShortcut({
         { key: dateKey, varAttachment: { name: dateVariable, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
       );
     } else if (isDailySum) {
-      const valueUuid = uuidFactory();
-      const sumUuid = uuidFactory();
-      bodyActions = [
-        getHealthDetailActionXml({ uuid: valueUuid, propertyName: "Value", inputUuid: findUuid }),
-        calculateStatisticsActionXml({ uuid: sumUuid, operation: "Sum", inputUuid: valueUuid, inputName: "Value" }),
-        setVariableActionXml({ variableName, inputUuid: sumUuid, inputName: "Sum" }),
-      ];
-      jsonBodyItems.push({ key: metric.jsonKey, varAttachment: variableName });
+      bodyActions = healthSampleRowsActions({
+        uuidFactory, inputUuid: findUuid, variableName, columns: ["Start Date", "Value"],
+      });
+      jsonBodyItems.push({ key: `${metric.jsonKey}Samples`, varAttachment: variableName });
     } else {
       bodyActions = healthSampleRowsActions({
         uuidFactory,
@@ -1285,6 +1296,7 @@ export function buildIronlogDailyHealthShortcut({
     }));
   }
 
+  actions.push(currentDateActionXml({ uuid: rawNowUuid }));
   actions.push(downloadJsonActionXml({
     uuid: uuidFactory(),
     endpoint,

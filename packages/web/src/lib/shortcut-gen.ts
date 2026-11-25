@@ -448,6 +448,17 @@ function currentDateActionXml({ uuid }: { uuid: string }): string {
   ].join("\n"));
 }
 
+function nothingActionXml(): string {
+  return [
+    "\t\t<dict>",
+    "\t\t\t<key>WFWorkflowActionIdentifier</key>",
+    "\t\t\t<string>is.workflow.actions.nothing</string>",
+    "\t\t\t<key>WFWorkflowActionParameters</key>",
+    "\t\t\t<dict/>",
+    "\t\t</dict>",
+  ].join("\n");
+}
+
 function textActionXml({
   uuid,
   text = "",
@@ -1328,12 +1339,16 @@ function wrapShortcutPlist(
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
     '<plist version="1.0">',
     "<dict>",
+    "\t<key>WFQuickActionSurfaces</key>",
+    "\t<array/>",
     "\t<key>WFWorkflowActions</key>",
     "\t<array>",
     ...actionBlocks,
     "\t</array>",
     "\t<key>WFWorkflowClientVersion</key>",
-    "\t<string>2700.0.4</string>",
+    "\t<string>5203.0.1</string>",
+    "\t<key>WFWorkflowHasOutputFallback</key>",
+    "\t<false/>",
     "\t<key>WFWorkflowHasShortcutInputVariables</key>",
     hasInputVarsTag,
     "\t<key>WFWorkflowIcon</key>",
@@ -1844,17 +1859,14 @@ function buildDailyHealthCollectionActions({
     { key: "source", value: "shortcut" },
   ];
   const rawNowUuid = uuidFactory();
-  actions.push(currentDateActionXml({ uuid: rawNowUuid }));
+  actions.push(nothingActionXml());
   jsonBodyItems.push({
     key: "occurredAt",
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
 
-  // Matched byte-for-byte against real iPhone Shortcuts (client 5203.0.1) Find Health Samples export:
-  // Operator 1001 ("is in the last") with Number="<string>1</string>", Unit=<integer>16</integer>, BoundedDate=false.
-  // - Steps: Group by Hour, no Limit/Sort/Unit (exact match with user iPhone plist b0f20dfa...)
-  // - Other dailySum: Group by Day, Latest First, Limit 1 (returns today's single day bucket)
-  // - Sleep & latest vitals: Operator 1001 (last 1 day), latest uses Limit 1
+  // Send dated buckets for three rolling days. The server accepts today and the prior
+  // two calendar days, dropping the potentially partial older day.
   for (const metric of selectedMetrics) {
     const findUuid = uuidFactory();
     const variableName = `v_${metric.key}`;
@@ -1867,9 +1879,9 @@ function buildDailyHealthCollectionActions({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
-      sortOrder: isSteps ? null : isSleep ? "Oldest First" : "Latest First",
-      limit: latest || (isDailySum && !isSteps) ? 1 : null,
+      dateFilter: { kind: "lastDays", days: isDailySum ? 3 : 1, byEndDate: isSleep },
+      sortOrder: isSleep ? "Oldest First" : "Latest First",
+      limit: latest ? 1 : null,
     }));
 
     let bodyActions: string[];
@@ -1889,14 +1901,10 @@ function buildDailyHealthCollectionActions({
         { key: dateKey, varAttachment: { name: dateVariable, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
       );
     } else if (isDailySum) {
-      const valueUuid = uuidFactory();
-      const sumUuid = uuidFactory();
-      bodyActions = [
-        getHealthDetailActionXml({ uuid: valueUuid, propertyName: "Value", inputUuid: findUuid }),
-        calculateStatisticsActionXml({ uuid: sumUuid, operation: "Sum", inputUuid: valueUuid, inputName: "Value" }),
-        setVariableActionXml({ variableName, inputUuid: sumUuid, inputName: "Sum" }),
-      ];
-      jsonBodyItems.push({ key: metric.jsonKey, varAttachment: variableName });
+      bodyActions = healthSampleRowsActions({
+        uuidFactory, inputUuid: findUuid, variableName, columns: ["Start Date", "Value"],
+      });
+      jsonBodyItems.push({ key: `${metric.jsonKey}Samples`, varAttachment: variableName });
     } else {
       bodyActions = healthSampleRowsActions({
         uuidFactory,
@@ -1914,6 +1922,7 @@ function buildDailyHealthCollectionActions({
     }));
   }
 
+  actions.push(currentDateActionXml({ uuid: rawNowUuid }));
   actions.push(downloadJsonActionXml({
     uuid: uuidFactory(),
     endpoint,
@@ -2044,7 +2053,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     : "铁记-Apple健康全能联动.shortcut";
 
   const commentText = [
-    `铁记（Ironlog）Apple 健康全能智能联动 [v2026.11.25-r8]（1 个快捷指令覆盖全流程）`,
+    `铁记（Ironlog）Apple 健康全能智能联动 [v2026.11.25-r10]（1 个快捷指令覆盖全流程）`,
     `默认运动：${sportLabel}（${resolvedEnv}）；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
     `  • strength / strength:functional / strength:core：上报对应力量开始事件，自动开始对应体能训练并打开 Apple「健身」App`,
@@ -2062,14 +2071,16 @@ export function buildIronlogUnifiedAppleHubShortcut({
     ];
   };
 
-  const makeStartWorkoutAndOpenFitness = (workoutName: string) => {
+  const makeStartWorkoutActions = (workoutName: string) => {
     const nameUuid = uuidFactory();
     return [
       textActionXml({ uuid: nameUuid, text: workoutName }),
       startWorkoutActionXml({ uuid: uuidFactory(), workoutNameUuid: nameUuid }),
-      openAppActionXml("com.apple.Fitness", "Fitness"),
     ];
   };
+  const makeStartWorkoutAndOpenFitness = (workoutName: string) => [
+    ...makeStartWorkoutActions(workoutName), openAppActionXml("com.apple.Fitness", "Fitness"),
+  ];
 
   const extInputTextUuid = uuidFactory();
   const resolveModeActions = conditionalBlock({
@@ -2232,6 +2243,8 @@ export function buildIronlogUnifiedAppleHubShortcut({
       equalsText: `cardio:${route.id}`,
       bodyActions: [
         currentDateActionXml({ uuid: startDateUuid }),
+        commentActionXml(`【${route.label}】开始「${workoutName}」后再上报开始时间`),
+        ...makeStartWorkoutActions(workoutName),
         downloadJsonActionXml({
           uuid: uuidFactory(),
           endpoint: eventsEndpoint,
@@ -2247,8 +2260,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
             { key: "occurredAt", outputAttachment: { name: "Date", uuid: startDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
           ],
         }),
-        commentActionXml(`【${route.label}】自动开始「${workoutName}」体能训练并打开「健身」App`),
-        ...makeStartWorkoutAndOpenFitness(workoutName),
+        openAppActionXml("com.apple.Fitness", "Fitness"),
       ],
     });
   });
