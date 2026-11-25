@@ -250,8 +250,7 @@ export function CardioLauncherModal({
                 <code className="cardio-setup-name">{hubParam}</code>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                全能快捷指令内置对应分支（自动上报开始事件）；在该分支末尾把「打开 Fitness」换成
-                <strong>「开始体能训练 → {selected.appleWorkoutLabel}」</strong>即可 1 步直开。
+                新版全能快捷指令已直接内置全部 16 项原生<strong>「开始体能训练 → {selected.appleWorkoutLabel}」</strong>（开放式目标，无需再手动逐个修改分支）；如仍是旧版快捷指令，点下方重新导出安装即可。
               </p>
               <div className="cardio-setup-actions">
                 {onOpenDeviceSetup ? (

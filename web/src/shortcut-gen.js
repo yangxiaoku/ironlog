@@ -51,7 +51,7 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
     metrics: [
       { key: "steps", typeLabel: "步数", typeLabelEn: "Steps", unit: "count", mode: "dailySum", jsonKey: "steps" },
       { key: "activeEnergyKcal", typeLabel: "活动能量", typeLabelEn: "Active Calories", unit: "kcal", mode: "dailySum", jsonKey: "activeEnergyKcal" },
-      { key: "restingEnergyKcal", typeLabel: "静息能量", typeLabelEn: "Resting Energy", unit: "kcal", mode: "dailySum", jsonKey: "restingEnergyKcal", emptyHint: "凌晨易空" },
+      { key: "restingEnergyKcal", typeLabel: "静息能量", typeLabelEn: "Resting Calories", unit: "kcal", mode: "dailySum", jsonKey: "restingEnergyKcal", emptyHint: "凌晨易空" },
       { key: "distanceKm", typeLabel: "步行 + 跑步距离", typeLabelEn: "Walking + Running Distance", unit: "km", mode: "dailySum", jsonKey: "distanceKm" },
       { key: "flightsClimbed", typeLabel: "已爬楼层", typeLabelEn: "Flights Climbed", unit: "count", mode: "dailySum", jsonKey: "flightsClimbed" },
     ],
@@ -95,7 +95,7 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
     description: "Apple 健康记录的每日水、膳食能量、蛋白质、碳水化合物及总脂肪",
     metrics: [
       { key: "waterMl", typeLabel: "水", typeLabelEn: "Water", unit: "mL", mode: "dailySum", jsonKey: "waterMl", emptyHint: "需手录" },
-      { key: "dietaryEnergyKcal", typeLabel: "膳食能量", typeLabelEn: "Dietary Energy", unit: "kcal", mode: "dailySum", jsonKey: "dietaryEnergyKcal", emptyHint: "需手录" },
+      { key: "dietaryEnergyKcal", typeLabel: "膳食能量", typeLabelEn: "Dietary Calories", unit: "kcal", mode: "dailySum", jsonKey: "dietaryEnergyKcal", emptyHint: "需手录" },
       { key: "dietaryProteinG", typeLabel: "蛋白质", typeLabelEn: "Protein", unit: "g", mode: "dailySum", jsonKey: "dietaryProteinG", emptyHint: "需手录" },
       { key: "dietaryCarbsG", typeLabel: "碳水化合物", typeLabelEn: "Carbohydrates", unit: "g", mode: "dailySum", jsonKey: "dietaryCarbsG", emptyHint: "需手录" },
       { key: "dietaryFatG", typeLabel: "总脂肪", typeLabelEn: "Total Fat", unit: "g", mode: "dailySum", jsonKey: "dietaryFatG", emptyHint: "需手录" },

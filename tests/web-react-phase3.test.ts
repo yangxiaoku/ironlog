@@ -189,18 +189,22 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
     token: secretToken,
     activityType: "traditionalStrengthTraining",
     windowMinutes: 45,
-    metrics: ["steps", "sleepSamples", "hrvMs", "vo2Max", "bloodOxygenPct"],
+    metrics: ["steps", "restingEnergyKcal", "dietaryEnergyKcal", "sleepSamples", "hrvMs", "vo2Max", "bloodOxygenPct"],
     useImportQuestions: true,
   });
 
   assert.equal(hubUniversal.filename, `${DEFAULT_APPLE_HUB_SHORTCUT_NAME}.shortcut`);
   assert.equal(hubUniversal.shortcutName, DEFAULT_APPLE_HUB_SHORTCUT_NAME);
   assert.equal(hubUniversal.windowMinutes, 45);
-  assert.equal(hubUniversal.metricCount, 5);
+  assert.equal(hubUniversal.metricCount, 7);
   assert.ok(hubUniversal.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
   assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>"));
   assert.ok(!hubUniversal.xml.includes("<integer>1001</integer>"));
+  assert.ok(hubUniversal.xml.includes("<string>Resting Calories</string>"));
+  assert.ok(!hubUniversal.xml.includes("<string>Resting Energy</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>Dietary Calories</string>"));
+  assert.ok(!hubUniversal.xml.includes("<string>Dietary Energy</string>"));
   assert.ok(hubUniversal.xml.includes("<string>VO2 Max</string>"));
   assert.ok(!hubUniversal.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Oxygen Saturation</string>"));
@@ -235,6 +239,13 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
     );
   }
   assert.ok(hubUniversal.xml.includes("【传统力量训练】"));
+  assert.ok(hubUniversal.xml.includes("<string>is.workflow.actions.workout.start</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>IntentAppDefinition</key>"));
+  assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>workoutName</key>"));
+  for (const workoutName of ["传统力量训练", "功能性力量训练", "核心训练", "户外跑步", "室内跑步", "踏步机", "划船机", "泳池游泳", "高强度间歇训练"]) {
+    assert.ok(hubUniversal.xml.includes(`<string>${workoutName}</string>`), `contains Start Workout name ${workoutName}`);
+  }
   assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>coreTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));
@@ -246,6 +257,18 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.ok(!hubUniversal.xml.includes("fitnessapp://"));
   assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
   assert.ok(hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>45</string>"));
+
+  const hubEnglish = buildIronlogUnifiedAppleHubShortcut({
+    serverOrigin: secretOrigin,
+    token: secretToken,
+    metrics: ["steps"],
+    locale: "en",
+    useImportQuestions: true,
+  });
+  assertBalancedPlistContainers(hubEnglish.xml);
+  for (const workoutNameEn of ["Traditional Strength Training", "Functional Strength Training", "Outdoor Run", "Stair Stepper", "Rower", "Pool Swim"]) {
+    assert.ok(hubEnglish.xml.includes(`<string>${workoutNameEn}</string>`), `contains EN Start Workout name ${workoutNameEn}`);
+  }
 
   // Magic variable endpoints & headers
   assert.ok(hubUniversal.xml.includes("<string>Bearer &#xFFFC;</string>"));

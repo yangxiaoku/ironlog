@@ -181,7 +181,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "<string>Steps</string>",
     "<string>count</string>",
     "<string>Active Calories</string>",
-    "<string>Resting Energy</string>",
+    "<string>Resting Calories</string>",
     "<string>Walking + Running Distance</string>",
     "<string>Flights Climbed</string>",
     "<string>Sleep</string>",
@@ -195,6 +195,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "<string>VO2 Max</string>",
     "<string>Oxygen Saturation</string>",
     "<string>Water</string>",
+    "<string>Dietary Calories</string>",
     "<string>Protein</string>",
     "v_sleepSamples",
     "v_steps",
@@ -215,6 +216,8 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   assert.ok(!daily.xml.includes("<string>体重</string>"));
   assert.ok(!daily.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(!daily.xml.includes("<string>Blood Oxygen</string>"));
+  assert.ok(!daily.xml.includes("<string>Resting Energy</string>"));
+  assert.ok(!daily.xml.includes("<string>Dietary Energy</string>"));
   assert.ok(!daily.xml.includes("stepsSamples"));
   assert.ok(!daily.xml.includes("activeEnergyKcalSamples"));
 
@@ -226,7 +229,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   });
   assert.equal(english.locale, "en");
   assertValidPlistStructure(english.xml);
-  for (const needle of ["<string>Steps</string>", "<string>Water</string>", "<string>Protein</string>", "<string>Resting Energy</string>"]) {
+  for (const needle of ["<string>Steps</string>", "<string>Water</string>", "<string>Protein</string>", "<string>Resting Calories</string>", "<string>Dietary Calories</string>"]) {
     assert.ok(english.xml.includes(needle), `Expected English shortcut XML to contain ${needle}`);
   }
 
