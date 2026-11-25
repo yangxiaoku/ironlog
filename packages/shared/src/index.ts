@@ -281,7 +281,7 @@ export const workoutPrefsSchema = z.object({
   soundStyle: workoutPrefsBase.soundStyle.default("chime"),
   appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(true),
   appleStrengthLaunch: workoutPrefsBase.appleStrengthLaunch.default("hub"),
-  appleCardioLaunch: workoutPrefsBase.appleCardioLaunch.default("fitness_app"),
+  appleCardioLaunch: workoutPrefsBase.appleCardioLaunch.default("hub"),
   appleHubShortcutName: workoutPrefsBase.appleHubShortcutName.default("铁记-通用-Apple健康全能联动"),
   appleStrengthShortcutName: workoutPrefsBase.appleStrengthShortcutName.default("铁记开始力量"),
   appleCardioShortcutName: workoutPrefsBase.appleCardioShortcutName.default("铁记开始有氧"),

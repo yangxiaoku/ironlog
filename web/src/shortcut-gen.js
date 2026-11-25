@@ -79,12 +79,11 @@ export const APPLE_HEALTH_DAILY_GROUPS = [
   {
     id: "vitals",
     label: "心肺与恢复体征",
-    description: "静息心率、心率、心率变异性、最大摄氧量、血氧、呼吸频率",
+    description: "静息心率、心率、心率变异性、血氧、呼吸频率",
     metrics: [
       { key: "restingHeartRateBpm", typeLabel: "静息心率", typeLabelEn: "Resting Heart Rate", unit: null, mode: "latest", jsonKey: "restingHeartRateBpm" },
       { key: "heartRateBpm", typeLabel: "心率", typeLabelEn: "Heart Rate", unit: null, mode: "latest", jsonKey: "heartRateBpm" },
       { key: "hrvMs", typeLabel: "心率变异性", typeLabelEn: "Heart Rate Variability", unit: "ms", mode: "latest", jsonKey: "hrvMs" },
-      { key: "vo2Max", typeLabel: "最大摄氧量", typeLabelEn: "VO2 Max", unit: null, mode: "latest", jsonKey: "vo2Max" },
       { key: "bloodOxygenPct", typeLabel: "血氧", typeLabelEn: "Oxygen Saturation", unit: null, mode: "latest", jsonKey: "bloodOxygenPct", emptyHint: "需测过" },
       { key: "respiratoryRate", typeLabel: "呼吸频率", typeLabelEn: "Respiratory Rate", unit: null, mode: "latest", jsonKey: "respiratoryRate" },
     ],
@@ -127,7 +126,6 @@ export const APPLE_HEALTH_AUTO_METRICS = [
   "restingHeartRateBpm",
   "heartRateBpm",
   "hrvMs",
-  "vo2Max",
   "respiratoryRate",
 ];
 

@@ -982,10 +982,10 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 Watch 8项
               </button>
               <button type="button" className="secondary-button shortcut-preset-btn" onClick={() => applyPreset("auto")}>
-                自动体征 14项
+                自动体征 13项
               </button>
               <button type="button" className="secondary-button shortcut-preset-btn" onClick={() => applyPreset("all")}>
-                全选 22项
+                全选 21项
               </button>
             </div>
 
@@ -1039,7 +1039,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                   </select>
                 </label>
                 <small className="muted">
-                  ⚠️ 若某项在 iPhone「健康」中为 0 条记录或未授权会提示「未找到样本」，建议先用「自动体征 14项」。
+                  ⚠️ 若某项在 iPhone「健康」中为 0 条记录或未授权会提示「未找到样本」，建议先用「自动体征 13项」。
                 </small>
                 <div className="shortcut-check-grid">
                   {APPLE_HEALTH_DAILY_GROUPS.map((group) => (
@@ -1610,9 +1610,9 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 打开 iPhone <b>「健康」App → 右上角头像 → 隐私 → App → 快捷指令</b>，将需要的指标权限打开（建议「全部打开」）；
               </li>
               <li>
-                新版快捷指令的步数/热量已改为<b>「今天 + 原生按日求和」</b>（秒级执行、不会回退成 7 天），指标内部名已全部对齐苹果底层标准（<code>Resting Calories</code> / <code>Dietary Calories</code> / <code>VO2 Max</code> / <code>Oxygen Saturation</code>）；
+                新版快捷指令的步数/热量已改为<b>「今天 00:00 至现在 + 原生按日求和」</b>（秒级执行、不会回退成 7 天），已关闭最大摄氧量并对齐 <code>Resting Calories</code> / <code>Dietary Calories</code> / <code>Oxygen Saturation</code>；
               </li>
-              <li>若某项提示「未找到样本」，说明今日暂未测得该项（可回到第 2 步换「基础 4项」或「自动体征 14项」）。</li>
+              <li>若某项提示「未找到样本」，说明今日暂未测得该项（可回到第 2 步换「基础 4项」或「自动体征 13项」）。</li>
             </ol>
           </div>
 
@@ -1666,7 +1666,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                   <b>每日定时健康同步</b>：新建自动化 <b>特定时间（如 23:30 亮屏/充电）→ 立即运行</b> → ① <b>「文本」填 <code>daily</code></b> → ② <b>「运行快捷指令」选 <code>{DEFAULT_APPLE_HUB_SHORTCUT_NAME}</code></b>（输入选文本）。
                 </li>
                 <li>
-                  <b>全 16 项力量/有氧直开已内置</b>：新版全能快捷指令的 <code>strength*</code> 与全部 <code>cardio:*</code> 分支已直接内置苹果原生 <b>开始体能训练</b>（<code>com.apple.SessionTrackerApp</code>，开放式目标），无需再逐个手填；若某项冷门运动首次无法启动，先在 Apple Watch「体能训练」App 底部点一次「添加体能训练」即可。
+                  <b>开练一键打开健身 App</b>：新版全能快捷指令的 <code>strength*</code> 与全部 <code>cardio:*</code> 分支会在上报开练事件后直接调用「打开 Fitness」拉起 Apple「健身」App，点选对应项目即可开练。
                 </li>
               </ol>
             </div>

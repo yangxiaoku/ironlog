@@ -27,8 +27,8 @@ import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
 const LAUNCH_MODES: ReadonlyArray<readonly [AppleFitnessLaunchMode, string]> = [
-  ["shortcut", "按项目直开"],
   ["hub", "全能联动"],
+  ["shortcut", "按项目直开"],
   ["fitness_app", "仅开健身App"],
 ];
 
@@ -250,7 +250,7 @@ export function CardioLauncherModal({
                 <code className="cardio-setup-name">{hubParam}</code>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                新版全能快捷指令已直接内置全部 16 项原生<strong>「开始体能训练 → {selected.appleWorkoutLabel}」</strong>（开放式目标，无需再手动逐个修改分支）；如仍是旧版快捷指令，点下方重新导出安装即可。
+                全能快捷指令已内置对应分支：点击上方项目后会自动上报 <strong>{selected.label}</strong> 开练事件并立即拉起 Apple「健身」App。
               </p>
               <div className="cardio-setup-actions">
                 {onOpenDeviceSetup ? (

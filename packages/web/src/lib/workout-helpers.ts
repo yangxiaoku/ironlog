@@ -146,7 +146,7 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   soundStyle: "chime",
   appleFitnessAutoLaunch: true,
   appleStrengthLaunch: "hub",
-  appleCardioLaunch: "fitness_app",
+  appleCardioLaunch: "hub",
   appleHubShortcutName: DEFAULT_APPLE_HUB_SHORTCUT,
   appleStrengthShortcutName: DEFAULT_APPLE_STRENGTH_SHORTCUT,
   appleCardioShortcutName: DEFAULT_APPLE_CARDIO_SHORTCUT,

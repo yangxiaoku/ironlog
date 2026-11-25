@@ -108,12 +108,11 @@ export const APPLE_HEALTH_DAILY_GROUPS: HealthDailyGroupDef[] = [
   {
     id: "vitals",
     label: "心肺与恢复体征",
-    description: "静息心率、心率、心率变异性、最大摄氧量、血氧、呼吸频率",
+    description: "静息心率、心率、心率变异性、血氧、呼吸频率",
     metrics: [
       { key: "restingHeartRateBpm", typeLabel: "静息心率", typeLabelEn: "Resting Heart Rate", unit: null, mode: "latest", jsonKey: "restingHeartRateBpm" },
       { key: "heartRateBpm", typeLabel: "心率", typeLabelEn: "Heart Rate", unit: null, mode: "latest", jsonKey: "heartRateBpm" },
       { key: "hrvMs", typeLabel: "心率变异性", typeLabelEn: "Heart Rate Variability", unit: "ms", mode: "latest", jsonKey: "hrvMs" },
-      { key: "vo2Max", typeLabel: "最大摄氧量", typeLabelEn: "VO2 Max", unit: null, mode: "latest", jsonKey: "vo2Max" },
       { key: "bloodOxygenPct", typeLabel: "血氧", typeLabelEn: "Oxygen Saturation", unit: null, mode: "latest", jsonKey: "bloodOxygenPct", emptyHint: "需测过" },
       { key: "respiratoryRate", typeLabel: "呼吸频率", typeLabelEn: "Respiratory Rate", unit: null, mode: "latest", jsonKey: "respiratoryRate" },
     ],
@@ -156,7 +155,6 @@ export const APPLE_HEALTH_AUTO_METRICS = [
   "restingHeartRateBpm",
   "heartRateBpm",
   "hrvMs",
-  "vo2Max",
   "respiratoryRate",
 ];
 
@@ -626,83 +624,6 @@ function delayActionXml(seconds = 5): string {
     "is.workflow.actions.delay",
     `\t\t\t\t<key>WFDelayTime</key>\n\t\t\t\t<integer>${seconds}</integer>`,
   );
-}
-
-/**
- * Native Apple Watch / Fitness "Start Workout" action (`is.workflow.actions.workout.start`)
- * targeting `com.apple.SessionTrackerApp` with Open Goal (no `WorkoutGoal` cap) and dynamic
- * `workoutName` bound via `WFTextTokenAttachment` from a preceding Text action.
- */
-function startWorkoutActionXml({
-  uuid,
-  workoutNameUuid,
-  workoutNameOutputName = "Text",
-}: {
-  uuid: string;
-  workoutNameUuid: string;
-  workoutNameOutputName?: string;
-}): string {
-  return actionBlockXml("is.workflow.actions.workout.start", [
-    "\t\t\t\t<key>IntentAppDefinition</key>",
-    "\t\t\t\t<dict>",
-    "\t\t\t\t\t<key>BundleIdentifier</key>",
-    "\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>",
-    "\t\t\t\t</dict>",
-    "\t\t\t\t<key>UUID</key>",
-    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
-    "\t\t\t\t<key>workoutName</key>",
-    actionOutputAttachmentXml({ outputUuid: workoutNameUuid, outputName: workoutNameOutputName, indent: 4 }),
-  ].join("\n"));
-}
-
-function resolveAppleWorkoutName(
-  activityType: string,
-  environment: ShortcutEnvironment,
-  locale: ShortcutLocale,
-): string {
-  const en = locale === "en";
-  switch (activityType) {
-    case "traditionalStrengthTraining":
-      return en ? "Traditional Strength Training" : "传统力量训练";
-    case "functionalStrengthTraining":
-      return en ? "Functional Strength Training" : "功能性力量训练";
-    case "coreTraining":
-      return en ? "Core Training" : "核心训练";
-    case "running":
-      return environment === "indoor"
-        ? (en ? "Indoor Run" : "室内跑步")
-        : (en ? "Outdoor Run" : "户外跑步");
-    case "cycling":
-      return environment === "indoor"
-        ? (en ? "Indoor Cycle" : "室内单车")
-        : (en ? "Outdoor Cycle" : "户外单车");
-    case "walking":
-      return environment === "indoor"
-        ? (en ? "Indoor Walk" : "室内步行")
-        : (en ? "Outdoor Walk" : "户外步行");
-    case "stairClimbing":
-      return en ? "Stair Stepper" : "踏步机";
-    case "elliptical":
-      return en ? "Elliptical" : "椭圆机";
-    case "rowing":
-      return en ? "Rower" : "划船机";
-    case "swimming":
-      return environment === "outdoor"
-        ? (en ? "Open Water Swim" : "开放水域游泳")
-        : (en ? "Pool Swim" : "泳池游泳");
-    case "highIntensityIntervalTraining":
-      return en ? "High Intensity Interval Training" : "高强度间歇训练";
-    case "jumpRope":
-      return en ? "Jump Rope" : "跳绳";
-    case "hiking":
-      return en ? "Hiking" : "徒步";
-    case "mixedCardio":
-      return en ? "Mixed Cardio" : "混合有氧";
-    case "crossTraining":
-      return en ? "Cross Training" : "交叉训练";
-    default:
-      return en ? "Other" : "其他";
-  }
 }
 
 function getDictionaryValueActionXml({
@@ -2061,8 +1982,8 @@ export function buildIronlogUnifiedAppleHubShortcut({
     `铁记（Ironlog）Apple 健康全能智能联动（1 个快捷指令覆盖全流程）`,
     `默认运动：${sportLabel}（${resolvedEnv}），兜底窗口 ${resolvedMinutes} 分钟；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
-    `  • strength / strength:functional / strength:core：上报力量开始事件并直接调用「开始体能训练」开启对应力量训练（开放式目标）`,
-    `  • cardio / cardio:<方式>：按所选有氧方式上报开始事件并直接调用「开始体能训练」开启对应有氧项目（无需手动逐个修改）`,
+    `  • strength / strength:functional / strength:core：上报对应力量开始事件并立即打开 Apple「健身」App`,
+    `  • cardio / cardio:<方式>：按所选有氧方式上报开始事件并立即打开 Apple「健身」App`,
     `  • end：等待 5 秒并回传活动能量、心率与对应距离（自动匹配网页或手表刚开启的训练，并可绑定 Apple Watch「体能训练结束时 → 文本 end → 运行本快捷指令」实现免动手全自动闭环）`,
     `  • daily：同步今日选定 Apple 健康指标`,
     `在手机上直接点击运行（无入参）时，会自动弹出 4 合 1 菜单。`,
@@ -2073,14 +1994,6 @@ export function buildIronlogUnifiedAppleHubShortcut({
     return [
       textActionXml({ uuid: valUuid, text: modeValue }),
       setVariableActionXml({ variableName: "v_mode", inputUuid: valUuid, inputName: "Text" }),
-    ];
-  };
-
-  const makeStartWorkoutActions = (workoutName: string) => {
-    const nameUuid = uuidFactory();
-    return [
-      textActionXml({ uuid: nameUuid, text: workoutName }),
-      startWorkoutActionXml({ uuid: uuidFactory(), workoutNameUuid: nameUuid }),
     ];
   };
 
@@ -2105,9 +2018,8 @@ export function buildIronlogUnifiedAppleHubShortcut({
     }),
   });
 
-  // Branch 1: strength -> report start event + directly start corresponding Apple Watch Workout
+  // Branch 1: strength -> report start event + open Apple Fitness app reliably on iPhone
   const strengthDateUuid = uuidFactory();
-  const defaultStrengthWorkoutName = resolveAppleWorkoutName(activityType, resolvedEnv, resolvedLocale);
   const strengthBranch = conditionalBlock({
     groupUuid: uuidFactory(),
     input: { kind: "variable", variableName: "v_mode" },
@@ -2130,32 +2042,26 @@ export function buildIronlogUnifiedAppleHubShortcut({
           { key: "occurredAt", outputAttachment: { name: "Date", uuid: strengthDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
         ],
       }),
-      commentActionXml(`【${sportLabel}】已内置原生「开始体能训练 → ${defaultStrengthWorkoutName}」（开放式目标）`),
-      ...makeStartWorkoutActions(defaultStrengthWorkoutName),
+      commentActionXml(`【${sportLabel}】已上报开始事件，打开「健身」App 开始记录`),
+      openAppActionXml("com.apple.Fitness", "Fitness"),
     ],
   });
 
   const strengthRoutes: ReadonlyArray<{
     mode: string;
     label: string;
-    appleWorkoutLabel: string;
-    appleWorkoutLabelEn: string;
     activityType: string;
     environment: ShortcutEnvironment;
   }> = [
     {
       mode: "strength:functional",
       label: "功能性力量",
-      appleWorkoutLabel: "功能性力量训练",
-      appleWorkoutLabelEn: "Functional Strength Training",
       activityType: "functionalStrengthTraining",
       environment: "indoor",
     },
     {
       mode: "strength:core",
       label: "核心训练",
-      appleWorkoutLabel: "核心训练",
-      appleWorkoutLabelEn: "Core Training",
       activityType: "coreTraining",
       environment: "indoor",
     },
@@ -2163,7 +2069,6 @@ export function buildIronlogUnifiedAppleHubShortcut({
 
   const strengthRouteBranches = strengthRoutes.flatMap((route) => {
     const startDateUuid = uuidFactory();
-    const workoutName = resolvedLocale === "en" ? route.appleWorkoutLabelEn : route.appleWorkoutLabel;
     return conditionalBlock({
       groupUuid: uuidFactory(),
       input: { kind: "variable", variableName: "v_mode" },
@@ -2186,8 +2091,8 @@ export function buildIronlogUnifiedAppleHubShortcut({
             { key: "occurredAt", outputAttachment: { name: "Date", uuid: startDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
           ],
         }),
-        commentActionXml(`【${route.label}】已内置原生「开始体能训练 → ${workoutName}」（开放式目标）`),
-        ...makeStartWorkoutActions(workoutName),
+        commentActionXml(`【${route.label}】已上报开始事件，打开「健身」App 开始记录`),
+        openAppActionXml("com.apple.Fitness", "Fitness"),
       ],
     });
   });
@@ -2195,24 +2100,22 @@ export function buildIronlogUnifiedAppleHubShortcut({
   const cardioRoutes: ReadonlyArray<{
     id: string;
     label: string;
-    appleWorkoutLabel: string;
-    appleWorkoutLabelEn: string;
     activityType: string;
     environment: ShortcutEnvironment;
   }> = [
-    { id: "outdoor_run", label: "户外跑步", appleWorkoutLabel: "户外跑步", appleWorkoutLabelEn: "Outdoor Run", activityType: "running", environment: "outdoor" },
-    { id: "indoor_run", label: "室内跑步", appleWorkoutLabel: "室内跑步", appleWorkoutLabelEn: "Indoor Run", activityType: "running", environment: "indoor" },
-    { id: "outdoor_cycle", label: "户外骑行", appleWorkoutLabel: "户外单车", appleWorkoutLabelEn: "Outdoor Cycle", activityType: "cycling", environment: "outdoor" },
-    { id: "indoor_cycle", label: "室内单车", appleWorkoutLabel: "室内单车", appleWorkoutLabelEn: "Indoor Cycle", activityType: "cycling", environment: "indoor" },
-    { id: "stair_climbing", label: "爬楼机", appleWorkoutLabel: "踏步机", appleWorkoutLabelEn: "Stair Stepper", activityType: "stairClimbing", environment: "indoor" },
-    { id: "elliptical", label: "椭圆机", appleWorkoutLabel: "椭圆机", appleWorkoutLabelEn: "Elliptical", activityType: "elliptical", environment: "indoor" },
-    { id: "rowing", label: "划船机", appleWorkoutLabel: "划船机", appleWorkoutLabelEn: "Rower", activityType: "rowing", environment: "indoor" },
-    { id: "swimming", label: "游泳", appleWorkoutLabel: "泳池游泳", appleWorkoutLabelEn: "Pool Swim", activityType: "swimming", environment: "indoor" },
-    { id: "hiit", label: "HIIT", appleWorkoutLabel: "高强度间歇训练", appleWorkoutLabelEn: "High Intensity Interval Training", activityType: "highIntensityIntervalTraining", environment: "indoor" },
-    { id: "jump_rope", label: "跳绳", appleWorkoutLabel: "跳绳", appleWorkoutLabelEn: "Jump Rope", activityType: "jumpRope", environment: "indoor" },
-    { id: "outdoor_walk", label: "户外步行", appleWorkoutLabel: "户外步行", appleWorkoutLabelEn: "Outdoor Walk", activityType: "walking", environment: "outdoor" },
-    { id: "hiking", label: "徒步", appleWorkoutLabel: "徒步", appleWorkoutLabelEn: "Hiking", activityType: "hiking", environment: "outdoor" },
-    { id: "mixed_cardio", label: "混合有氧", appleWorkoutLabel: "混合有氧", appleWorkoutLabelEn: "Mixed Cardio", activityType: "mixedCardio", environment: "indoor" },
+    { id: "outdoor_run", label: "户外跑步", activityType: "running", environment: "outdoor" },
+    { id: "indoor_run", label: "室内跑步", activityType: "running", environment: "indoor" },
+    { id: "outdoor_cycle", label: "户外骑行", activityType: "cycling", environment: "outdoor" },
+    { id: "indoor_cycle", label: "室内单车", activityType: "cycling", environment: "indoor" },
+    { id: "stair_climbing", label: "爬楼机", activityType: "stairClimbing", environment: "indoor" },
+    { id: "elliptical", label: "椭圆机", activityType: "elliptical", environment: "indoor" },
+    { id: "rowing", label: "划船机", activityType: "rowing", environment: "indoor" },
+    { id: "swimming", label: "游泳", activityType: "swimming", environment: "indoor" },
+    { id: "hiit", label: "HIIT", activityType: "highIntensityIntervalTraining", environment: "indoor" },
+    { id: "jump_rope", label: "跳绳", activityType: "jumpRope", environment: "indoor" },
+    { id: "outdoor_walk", label: "户外步行", activityType: "walking", environment: "outdoor" },
+    { id: "hiking", label: "徒步", activityType: "hiking", environment: "outdoor" },
+    { id: "mixed_cardio", label: "混合有氧", activityType: "mixedCardio", environment: "indoor" },
   ];
 
   // Branch 2: cardio -> interactive menu of cardio modalities, setting v_mode to cardio:<id>
@@ -2234,10 +2137,9 @@ export function buildIronlogUnifiedAppleHubShortcut({
     }),
   });
 
-  // Branch 2b..n: cardio:<id> -> log modality start event + directly start corresponding Apple Watch Workout
+  // Branch 2b..n: cardio:<id> -> log modality start event + open Apple Fitness app reliably on iPhone
   const cardioRouteBranches = cardioRoutes.flatMap((route) => {
     const startDateUuid = uuidFactory();
-    const workoutName = resolvedLocale === "en" ? route.appleWorkoutLabelEn : route.appleWorkoutLabel;
     return conditionalBlock({
       groupUuid: uuidFactory(),
       input: { kind: "variable", variableName: "v_mode" },
@@ -2260,8 +2162,8 @@ export function buildIronlogUnifiedAppleHubShortcut({
             { key: "occurredAt", outputAttachment: { name: "Date", uuid: startDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
           ],
         }),
-        commentActionXml(`【${route.label}】已内置原生「开始体能训练 → ${workoutName}」（开放式目标）`),
-        ...makeStartWorkoutActions(workoutName),
+        commentActionXml(`【${route.label}】已上报开始事件，打开「健身」App 开始记录`),
+        openAppActionXml("com.apple.Fitness", "Fitness"),
       ],
     });
   });

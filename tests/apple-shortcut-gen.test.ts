@@ -162,7 +162,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   assert.equal(daily.filename, "铁记-每日全量健康同步.shortcut");
   assert.equal(daily.endpoint, "https://ironlog.example.com/api/integrations/apple-health/daily");
   assert.equal(daily.locale, "zh-Hans");
-  assert.equal(daily.metricCount, 22);
+  assert.equal(daily.metricCount, 21);
   assertValidPlistStructure(daily.xml);
 
   // Health filters and date-stamped HealthKit samples.
@@ -192,7 +192,6 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "<string>Waist Circumference</string>",
     "<string>Resting Heart Rate</string>",
     "<string>Heart Rate Variability</string>",
-    "<string>VO2 Max</string>",
     "<string>Oxygen Saturation</string>",
     "<string>Water</string>",
     "<string>Dietary Calories</string>",
@@ -216,6 +215,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   assert.ok(!daily.xml.includes("<string>步数</string>"));
   assert.ok(!daily.xml.includes("<string>体重</string>"));
   assert.ok(!daily.xml.includes("<string>Cardio Fitness</string>"));
+  assert.ok(!daily.xml.includes("<string>VO2 Max</string>"));
   assert.ok(!daily.xml.includes("<string>Blood Oxygen</string>"));
   assert.ok(!daily.xml.includes("<string>Resting Energy</string>"));
   assert.ok(!daily.xml.includes("<string>Dietary Energy</string>"));
@@ -436,10 +436,11 @@ test("buildIronlogDailyHealthShortcut 支持按单指标精确筛选生成以避
 test("默认防弹窗预设与自动体征全项预设排除高易空手录/凌晨空指标", () => {
   assert.equal(APPLE_HEALTH_DEFAULT_METRICS.length, 4);
   assert.ok(!APPLE_HEALTH_DEFAULT_METRICS.includes("restingEnergyKcal"));
-  assert.equal(APPLE_HEALTH_AUTO_METRICS.length, 14);
+  assert.equal(APPLE_HEALTH_AUTO_METRICS.length, 13);
   const excluded = [
     "restingEnergyKcal",
     "waistCm",
+    "vo2Max",
     "bloodOxygenPct",
     "waterMl",
     "dietaryEnergyKcal",
@@ -455,6 +456,6 @@ test("默认防弹窗预设与自动体征全项预设排除高易空手录/凌�
     token: "ih_autoToken_123456",
     metrics: APPLE_HEALTH_AUTO_METRICS,
   });
-  assert.equal(autoBuilt.metricCount, 14);
+  assert.equal(autoBuilt.metricCount, 13);
   assertValidPlistStructure(autoBuilt.xml);
 });
