@@ -370,6 +370,7 @@ export function WorkoutEditorModal({
   const restAlarmFiredForRef = useRef<number | null>(null);
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const cardRefs = useRef<Record<string, HTMLElement | null>>({});
+  const jumpRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const workoutScrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -388,6 +389,10 @@ export function WorkoutEditorModal({
       setActiveExIdx(exercises.length - 1);
     }
   }, [exercises.length, activeExIdx]);
+
+  useEffect(() => {
+    jumpRefs.current[safeExIdx]?.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+  }, [safeExIdx, exercises.length]);
 
   const goToExercise = (idx: number) => {
     if (!exercises.length) return;
@@ -1732,12 +1737,17 @@ export function WorkoutEditorModal({
           <div className="exercise-jump" role="navigation" aria-label="动作快捷跳转">
             {exercises.map((row, idx) => {
               const allDone = row.sets.length > 0 && row.sets.every((s) => s.completed);
+              const isCurrent = safeExIdx === idx;
               return (
                 <button
                   key={row.id}
+                  ref={(el) => {
+                    jumpRefs.current[idx] = el;
+                  }}
                   type="button"
-                  className={`jump-circle${allDone ? " finished" : ""}`}
-                  aria-pressed={safeExIdx === idx}
+                  className={`jump-circle${allDone ? " finished" : ""}${isCurrent ? " is-active" : ""}`}
+                  aria-pressed={isCurrent}
+                  aria-current={isCurrent ? "step" : undefined}
                   title={row.snapshot?.name ?? row.exerciseId}
                   onClick={() => goToExercise(idx)}
                 >

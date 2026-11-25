@@ -1729,3 +1729,65 @@ dialog.workout-dialog .workout-inline-add-btn {
     font-size: 13px;
   }
 }
+
+/* Active & completed states for top exercise jump circles */
+.exercise-jump {
+  padding: 6px 4px;
+}
+
+.workout-dialog .exercise-jump button.jump-circle,
+.exercise-jump button.jump-circle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  font: 700 13px/1 var(--mono);
+  transition:
+    transform 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    color 0.15s ease;
+}
+
+.workout-dialog .exercise-jump button.jump-circle.finished,
+.exercise-jump button.jump-circle.finished {
+  background: color-mix(in srgb, var(--workout-accent) 22%, var(--inset));
+  border-color: color-mix(in srgb, var(--workout-accent) 65%, transparent);
+  color: var(--workout-accent);
+}
+
+.workout-dialog .exercise-jump button.jump-circle.is-active,
+.workout-dialog .exercise-jump button.jump-circle[aria-pressed="true"],
+.exercise-jump button.jump-circle.is-active,
+.exercise-jump button.jump-circle[aria-pressed="true"] {
+  background: var(--red);
+  border: 1.5px solid var(--red);
+  color: #ffffff;
+  font-weight: 800;
+  transform: scale(1.08);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--red) 34%, transparent),
+    0 4px 12px color-mix(in srgb, var(--red) 35%, transparent);
+  z-index: 1;
+}
+
+.workout-dialog .exercise-jump button.jump-circle.finished.is-active,
+.workout-dialog .exercise-jump button.jump-circle.finished[aria-pressed="true"],
+.exercise-jump button.jump-circle.finished.is-active,
+.exercise-jump button.jump-circle.finished[aria-pressed="true"] {
+  background: var(--workout-accent);
+  border: 1.5px solid var(--workout-accent);
+  color: var(--workout-accent-ink);
+  font-weight: 800;
+  transform: scale(1.08);
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4.5px var(--workout-accent);
+  z-index: 1;
+}

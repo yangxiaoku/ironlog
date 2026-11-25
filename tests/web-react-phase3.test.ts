@@ -559,3 +559,17 @@ test("PWA uses autoUpdate, apiFetch surfaces Zod details, and WorkoutEditorModal
   assert.match(editor, /takeUniqueId/);
   assert.match(planModals, /function safeUuid/);
 });
+
+test("WorkoutEditorModal highlights active jump circle, preserves finished active ring, and auto-scrolls dot", () => {
+  const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(editor, /is-active/);
+  assert.match(editor, /aria-current=\{isCurrent \? "step" : undefined\}/);
+  assert.match(editor, /jumpRefs\.current\[safeExIdx\]\?\.scrollIntoView/);
+
+  assert.match(css, /\.jump-circle\.is-active/);
+  assert.match(css, /\.jump-circle\.finished\.is-active/);
+  assert.match(css, /justify-content:\s*center;/);
+  assert.match(css, /background:\s*var\(--red\);/);
+});
