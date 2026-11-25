@@ -136,7 +136,7 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   showPlateMath: true,
   warmupScheme: "standard",
   soundStyle: "chime",
-  appleFitnessAutoLaunch: false,
+  appleFitnessAutoLaunch: true,
   appleStrengthLaunch: "hub",
   appleCardioLaunch: "fitness_app",
   appleHubShortcutName: DEFAULT_APPLE_HUB_SHORTCUT,

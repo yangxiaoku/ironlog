@@ -80,6 +80,19 @@ export function buildAppleFitnessLaunchUrl(
   return `shortcuts://run-shortcut?name=${encodeURIComponent(name)}`;
 }
 
+function launchIosUrlScheme(url: string): void {
+  if (typeof document !== "undefined" && document.body) {
+    const link = document.createElement("a");
+    link.href = url;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+  window.location.href = url;
+}
+
 /**
  * Launches Apple Fitness (or a matching iOS Shortcut) synchronously on iOS inside a user gesture.
  */
@@ -106,7 +119,7 @@ export function triggerAppleFitnessLaunch(
     }
     return { launched: false, url };
   }
-  window.location.href = url;
+  launchIosUrlScheme(url);
   return { launched: true, url };
 }
 
@@ -129,7 +142,7 @@ export function triggerAppleHubAction(
     }
     return { launched: false, url };
   }
-  window.location.href = url;
+  launchIosUrlScheme(url);
   return { launched: true, url };
 }
 

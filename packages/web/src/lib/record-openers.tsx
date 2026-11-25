@@ -113,7 +113,10 @@ export function openWorkoutEditor(
     const prefs = readWorkoutPreferences();
     if (prefs.appleFitnessAutoLaunch) {
       const kind = inferAppleFitnessKind(seed?.exercises, seed?.title);
-      triggerAppleFitnessLaunch(kind, { prefs, silentNonIos: true });
+      const res = triggerAppleFitnessLaunch(kind, { prefs, silentNonIos: true });
+      if (res.launched) {
+        ui.notify("已拉起 Apple 健身 / 快捷指令");
+      }
     }
   }
 }

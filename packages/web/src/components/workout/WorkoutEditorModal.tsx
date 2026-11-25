@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import { inferAppleFitnessKind, triggerAppleFitnessLaunch, triggerAppleHubAction } from "../../lib/apple-fitness";
 import { fmt, today } from "../../lib/date";
@@ -66,6 +66,10 @@ import { ExercisePickerModal } from "./ExercisePickerModal";
 
 const SET_TYPE_ORDER: SetType[] = ["normal", "warmup", "failure", "drop", "rest_pause"];
 const REST_PRESETS = [30, 60, 90, 120, 180];
+
+function normalizeWorkoutSource(raw?: string): "manual" | "ai" | "agent" {
+  return raw === "ai" || raw === "agent" ? raw : "manual";
+}
 
 function newId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -141,7 +145,7 @@ export function WorkoutEditorModal({
               exercises: parsed.exercises,
               timing: parsed.timing ?? baseData?.timing ?? { elapsedSeconds: 0, runningSince: new Date().toISOString() },
               rest: normalizeRestTimer(parsed.rest ?? null),
-              source: parsed.source ?? baseData?.source ?? "manual",
+              source: normalizeWorkoutSource(parsed.source ?? baseData?.source),
               rawPrompt: parsed.rawPrompt ?? baseData?.rawPrompt,
               planId: parsed.planId ?? baseData?.planId ?? null,
               planVersion: parsed.planVersion ?? baseData?.planVersion ?? null,
@@ -176,7 +180,7 @@ export function WorkoutEditorModal({
           ? { elapsedSeconds: 0, runningSince: null }
           : { elapsedSeconds: 0, runningSince: new Date().toISOString() }),
       rest: baseRest,
-      source: seed?.source ?? baseData?.source ?? (seed?.planId || seed?.routineId ? "plan" : "manual"),
+      source: normalizeWorkoutSource(seed?.source ?? baseData?.source),
       rawPrompt: seed?.rawPrompt ?? baseData?.rawPrompt,
       planId: seed?.planId ?? baseData?.planId ?? null,
       planVersion: seed?.planVersion ?? baseData?.planVersion ?? null,
@@ -195,7 +199,7 @@ export function WorkoutEditorModal({
   const [workoutId] = useState<string>(() => record?.id ?? newId());
   const [sessionStart] = useState<string>(() => record?.data.startedAt ?? new Date().toISOString());
   const sessionMetaRef = useRef({
-    source: initialSnapshot.source ?? "manual",
+    source: normalizeWorkoutSource(initialSnapshot.source),
     rawPrompt: initialSnapshot.rawPrompt,
     planId: initialSnapshot.planId ?? null,
     planVersion: initialSnapshot.planVersion ?? null,
@@ -250,6 +254,7 @@ export function WorkoutEditorModal({
   }, []);
 
   const [activeExIdx, setActiveExIdx] = useState(0);
+  const [viewMode, setViewMode] = useState<"single" | "all">(() => (isHistoricalEdit ? "all" : "single"));
   const [openMenu, setOpenMenu] = useState(false);
   const [finishPanelOpen, setFinishPanelOpen] = useState(isHistoricalEdit);
   const [openSettingsIds, setOpenSettingsIds] = useState<Set<string>>(() => new Set());
@@ -258,6 +263,7 @@ export function WorkoutEditorModal({
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [swipeOffsetX, setSwipeOffsetX] = useState(0);
 
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
@@ -285,6 +291,115 @@ export function WorkoutEditorModal({
   }, []);
 
   const isWorkoutTop = useUiStore((s) => s.modals.at(-1)?.layout === "workout");
+  const safeExIdx = exercises.length ? Math.min(Math.max(0, activeExIdx), exercises.length - 1) : 0;
+
+  useEffect(() => {
+    if (exercises.length > 0 && activeExIdx >= exercises.length) {
+      setActiveExIdx(exercises.length - 1);
+    }
+  }, [exercises.length, activeExIdx]);
+
+  const goToExercise = (idx: number) => {
+    if (!exercises.length) return;
+    const clamped = Math.max(0, Math.min(exercises.length - 1, idx));
+    triggerHaptic("light");
+    setActiveExIdx(clamped);
+    if (viewMode === "single") {
+      workoutScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    } else {
+      const targetId = exercises[clamped]?.id;
+      if (targetId) cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const swipeRef = useRef({
+    active: false,
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    locked: "none" as "none" | "x" | "y",
+  });
+
+  const handleStageTouchStart = (e: TouchEvent<HTMLDivElement>) => {
+    if (viewMode !== "single" || isHistoricalEdit || exercises.length <= 1 || e.touches.length !== 1) return;
+    if (openMenu || finishPanelOpen) return;
+    const target = e.target as Element | null;
+    if (target?.closest("input, textarea, select, [data-no-swipe]")) return;
+    const t = e.touches[0];
+    if (!t) return;
+    swipeRef.current = { active: true, startX: t.clientX, startY: t.clientY, startTime: Date.now(), locked: "none" };
+  };
+
+  const handleStageTouchMove = (e: TouchEvent<HTMLDivElement>) => {
+    const st = swipeRef.current;
+    if (!st.active || e.touches.length !== 1) return;
+    const t = e.touches[0];
+    if (!t) return;
+    const dx = t.clientX - st.startX;
+    const dy = t.clientY - st.startY;
+    if (st.locked === "none") {
+      if (Math.abs(dy) > 12 && Math.abs(dy) >= Math.abs(dx)) {
+        st.locked = "y";
+        st.active = false;
+        setSwipeOffsetX(0);
+        return;
+      }
+      if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.35) {
+        st.locked = "x";
+      } else {
+        return;
+      }
+    }
+    if (st.locked === "x") {
+      const atEdge = (dx > 0 && safeExIdx === 0) || (dx < 0 && safeExIdx === exercises.length - 1);
+      const factor = atEdge ? 0.22 : 0.55;
+      setSwipeOffsetX(Math.max(-110, Math.min(110, dx * factor)));
+    }
+  };
+
+  const handleStageTouchEnd = (e: TouchEvent<HTMLDivElement>) => {
+    const st = swipeRef.current;
+    swipeRef.current.active = false;
+    const locked = st.locked;
+    st.locked = "none";
+    setSwipeOffsetX(0);
+    if (locked !== "x") return;
+    const t = e.changedTouches[0];
+    if (!t) return;
+    const dx = t.clientX - st.startX;
+    const dt = Date.now() - st.startTime;
+    if (Math.abs(dx) >= 56 || (Math.abs(dx) >= 32 && dt < 220)) {
+      if (dx < 0 && safeExIdx < exercises.length - 1) goToExercise(safeExIdx + 1);
+      else if (dx > 0 && safeExIdx > 0) goToExercise(safeExIdx - 1);
+    }
+  };
+
+  const handleStageTouchCancel = () => {
+    swipeRef.current.active = false;
+    swipeRef.current.locked = "none";
+    setSwipeOffsetX(0);
+  };
+
+  useEffect(() => {
+    if (viewMode !== "single" || isHistoricalEdit || exercises.length <= 1 || openMenu || finishPanelOpen || !isWorkoutTop) {
+      return;
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) return;
+      if (e.key === "ArrowLeft" && safeExIdx > 0) {
+        e.preventDefault();
+        goToExercise(safeExIdx - 1);
+      } else if (e.key === "ArrowRight" && safeExIdx < exercises.length - 1) {
+        e.preventDefault();
+        goToExercise(safeExIdx + 1);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
 
   // Sync `.is-live-workout` on parent <dialog> while live session runs
   useEffect(() => {
@@ -619,11 +734,22 @@ export function WorkoutEditorModal({
           ? afterIdx
           : exercises.findIndex((ex, idx) => idx < exIdx && ex.sets.some((s) => !s.completed));
       if (nextIdx >= 0) {
-        const targetId = exercises[nextIdx]!.id;
+        const targetEx = exercises[nextIdx]!;
+        const targetId = targetEx.id;
         autoAdvanceTimerRef.current = window.setTimeout(() => {
           autoAdvanceTimerRef.current = null;
           setActiveExIdx(nextIdx);
-          cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+          if (viewMode === "single") {
+            workoutScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+            notify(`已完成本动作，切换至「${targetEx.snapshot?.name ?? "下一项"}」`);
+          } else {
+            cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+        }, 320);
+      } else if (exercises.every((ex, idx) => idx === exIdx || ex.sets.every((s) => s.completed))) {
+        autoAdvanceTimerRef.current = window.setTimeout(() => {
+          autoAdvanceTimerRef.current = null;
+          notify("全部动作已完成，可点击底部「完成并结束训练」");
         }, 320);
       }
     }
@@ -651,23 +777,32 @@ export function WorkoutEditorModal({
     notify(`已加入 ${warmups.length} 组递增热身`);
   };
 
-  const buildWorkoutPayload = (targetStatus: "active" | "completed") => {
+  const buildWorkoutPayload = (
+    targetStatus: "active" | "completed",
+    options?: { exercisesOverride?: WorkoutExercise[] },
+  ) => {
     const curRec = savedRecordRef.current;
-    const cleanTitle = title.trim() || "自由训练";
+    const cleanTitle = (title.trim() || "自由训练").slice(0, 120);
     const nowDate = new Date();
+    const startMs = Date.parse(sessionStart);
     const endedAt =
       targetStatus === "active"
         ? null
         : curRec?.data.endedAt && date === curRec.data.date
           ? curRec.data.endedAt
           : date === todayStr
-            ? nowDate.toISOString()
-            : new Date(Date.parse(sessionStart) + Math.max(0, elapsedSeconds) * 1000).toISOString();
+            ? new Date(Math.max(Number.isFinite(startMs) ? startMs : 0, nowDate.getTime())).toISOString()
+            : new Date((Number.isFinite(startMs) ? startMs : nowDate.getTime()) + Math.max(0, elapsedSeconds) * 1000).toISOString();
 
-    const pausedTiming = pauseAt(timing, nowDate.getTime());
+    const pausedRaw = pauseAt(timing, nowDate.getTime());
+    const pausedTiming: WorkoutTiming = {
+      elapsedSeconds: Math.max(0, Math.round(pausedRaw.elapsedSeconds)),
+      runningSince: pausedRaw.runningSince,
+    };
     const resting = targetStatus === "active" && rest?.pausedLeftMs == null && (rest?.end ?? 0) > nowDate.getTime();
+    const sourceExercises = options?.exercisesOverride ?? exercises;
 
-    const sanitizedExercises = exercises.map((ex) => ({
+    const sanitizedExercises = sourceExercises.map((ex) => ({
       ...ex,
       restSeconds: Math.max(0, Math.min(900, Math.round(ex.restSeconds ?? 90))),
       sets: ex.sets.map((s) => ({
@@ -679,6 +814,12 @@ export function WorkoutEditorModal({
     }));
 
     const curMeta = sessionMetaRef.current;
+    const rawPlanVersion = curRec?.data.planVersion ?? curMeta.planVersion;
+    const planVersion =
+      typeof rawPlanVersion === "number" && Number.isFinite(rawPlanVersion) && rawPlanVersion > 0
+        ? Math.round(rawPlanVersion)
+        : null;
+
     const workoutData: WorkoutData = {
       title: cleanTitle,
       date,
@@ -688,10 +829,10 @@ export function WorkoutEditorModal({
       durationUnknown: curRec?.data.durationUnknown,
       notes: notes.trim(),
       feeling,
-      source: curRec?.data.source ?? curMeta.source ?? "manual",
+      source: normalizeWorkoutSource(curRec?.data.source ?? curMeta.source),
       rawPrompt: curRec?.data.rawPrompt ?? curMeta.rawPrompt,
       planId: curRec?.data.planId ?? curMeta.planId ?? null,
-      planVersion: curRec?.data.planVersion ?? curMeta.planVersion ?? null,
+      planVersion,
       routineId: curRec?.data.routineId ?? curMeta.routineId ?? null,
       targetSnapshot: curRec?.data.targetSnapshot ?? curMeta.targetSnapshot,
       adjustments: curRec?.data.adjustments ?? curMeta.adjustments,
@@ -738,22 +879,56 @@ export function WorkoutEditorModal({
     return saved;
   };
 
-  const submitWorkout = async (targetStatus: "active" | "completed") => {
+  const submitWorkout = async (
+    targetStatus: "active" | "completed",
+    options?: { completeAllPending?: boolean },
+  ) => {
     if (!exercises.length && targetStatus === "completed") {
       setError("请至少添加一个动作后再结束训练");
       return;
     }
 
+    let exercisesForSave = exercises;
+    if (options?.completeAllPending) {
+      const doneAt = new Date().toISOString();
+      exercisesForSave = exercises.map((ex) => ({
+        ...ex,
+        sets: ex.sets.map((s) => (s.completed ? s : { ...s, completed: true, completedAt: s.completedAt ?? doneAt })),
+      }));
+      setExercises(exercisesForSave);
+    }
+
     setSaving(true);
     setError("");
-    const curRec = savedRecordRef.current;
-    const { cleanTitle, workoutData, body } = buildWorkoutPayload(targetStatus);
+    let curRec = savedRecordRef.current;
+    let payloadPack = buildWorkoutPayload(targetStatus, { exercisesOverride: exercisesForSave });
 
     try {
-      const res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
-        method: "POST",
-        body,
-      });
+      let res: { record?: RecordEnvelope<WorkoutData> };
+      try {
+        res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
+          method: "POST",
+          body: payloadPack.body,
+        });
+      } catch (firstErr) {
+        const msg = (firstErr as Error)?.message ?? "";
+        const status = (firstErr as { status?: number })?.status;
+        if (status === 409 || /冲突|conflict|version/i.test(msg)) {
+          const latest = await apiFetch<RecordEnvelope<WorkoutData>>(
+            `/api/web/records/workout/${encodeURIComponent(workoutId)}`,
+          );
+          savedRecordRef.current = latest;
+          setSavedRecord(latest);
+          curRec = latest;
+          payloadPack = buildWorkoutPayload(targetStatus, { exercisesOverride: exercisesForSave });
+          res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
+            method: "POST",
+            body: payloadPack.body,
+          });
+        } else {
+          throw firstErr;
+        }
+      }
       if (draftStorageKey && typeof localStorage !== "undefined") {
         localStorage.removeItem(draftStorageKey);
       }
@@ -765,7 +940,7 @@ export function WorkoutEditorModal({
         version: (curRec?.version ?? 0) + 1,
         deleted: false,
         updatedAt: new Date().toISOString(),
-        data: workoutData,
+        data: payloadPack.workoutData,
       };
       savedRecordRef.current = saved;
       setSavedRecord(saved);
@@ -778,11 +953,11 @@ export function WorkoutEditorModal({
     } catch (err) {
       if (isNetworkError(err) && userId && typeof localStorage !== "undefined") {
         enqueueMutation(localStorage, userId, {
-          opId: body.opId,
+          opId: payloadPack.body.opId,
           path: "/api/records",
           method: "POST",
-          body,
-          label: `训练：${cleanTitle}`,
+          body: payloadPack.body,
+          label: `训练：${payloadPack.cleanTitle}`,
         });
         refreshPendingCount(userId);
         if (draftStorageKey) localStorage.removeItem(draftStorageKey);
@@ -878,25 +1053,12 @@ export function WorkoutEditorModal({
               </button>
               <button
                 type="button"
-                className="workout-finish-pill secondary-button"
-                disabled={saving}
-                onClick={() => void submitWorkout("active")}
-              >
-                草稿
-              </button>
-              <button
-                type="button"
                 className="workout-finish-pill"
                 disabled={saving}
                 onClick={() => {
                   triggerHaptic("light");
-                  setFinishPanelOpen((v) => {
-                    const next = !v;
-                    if (next) {
-                      workoutScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                    }
-                    return next;
-                  });
+                  setError("");
+                  setFinishPanelOpen(true);
                 }}
               >
                 结束
@@ -1260,6 +1422,17 @@ export function WorkoutEditorModal({
               <button
                 type="button"
                 className="secondary-button"
+                disabled={saving}
+                onClick={() => {
+                  setOpenMenu(false);
+                  void submitWorkout("active");
+                }}
+              >
+                <Icon name="upload" size={15} /> 保存云端草稿
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
                 onClick={() =>
                   openAiAdaptWorkoutModal({
                     ensureSavedWorkout: ensureSavedDraft,
@@ -1299,6 +1472,113 @@ export function WorkoutEditorModal({
         </div>
       ) : null}
 
+      {/* Live Dedicated Finish Overlay */}
+      {!isHistoricalEdit && finishPanelOpen ? (
+        <div className="session-menu-overlay workout-finish-overlay" role="dialog" aria-label="结束训练确认">
+          <div className="picker-overlay-head">
+            <strong>结束本次训练</strong>
+            <button type="button" className="secondary-button picker-close-btn" onClick={() => setFinishPanelOpen(false)}>
+              继续练
+            </button>
+          </div>
+          <div className="session-menu-body">
+            <div className="finish-summary-strip">
+              <div>
+                <span>已用时</span>
+                <strong>{formatClock(elapsedSeconds)}</strong>
+              </div>
+              <div>
+                <span>已完成组</span>
+                <strong>
+                  {doneSets}/{totalSets}
+                </strong>
+              </div>
+              <div>
+                <span>总容量</span>
+                <strong>{fmt(liveVolume, 0)} kg</strong>
+              </div>
+            </div>
+
+            {doneSets === 0 && totalSets > 0 ? (
+              <div className="finish-zero-tip">
+                <p>当前尚未勾选完成任何组；若所有计划组均已完成，可直接一键勾选并结束。</p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={saving}
+                  onClick={() => void submitWorkout("completed", { completeAllPending: true })}
+                >
+                  一键勾选全部组并结束
+                </button>
+              </div>
+            ) : null}
+
+            <div className="finish-panel">
+              <fieldset>
+                <legend>本次训练体感</legend>
+                <div className="feeling-choices">
+                  {(Object.entries(FEELINGS) as Array<[FeelingKey, string]>).map(([k, lbl]) => (
+                    <label key={k}>
+                      <input
+                        type="radio"
+                        name="feeling"
+                        checked={feeling === k}
+                        onChange={() => {
+                          triggerHaptic("light");
+                          setFeeling(k);
+                        }}
+                      />
+                      <span>{lbl}</span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+
+              <label className="field">
+                <span>训练备注（选填）</span>
+                <input
+                  maxLength={400}
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  placeholder="例如：握距偏窄、左肩微紧"
+                />
+              </label>
+
+              {activeLaunchMode !== "off" ? (
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    triggerHaptic("light");
+                    triggerAppleHubAction("end", { prefs, notify });
+                  }}
+                >
+                  <Icon name="upload" size={14} /> 同步 Apple 心率/热量
+                </button>
+              ) : null}
+            </div>
+
+            <p className="form-error" role="alert" hidden={!error}>
+              {error}
+            </p>
+          </div>
+
+          <div className="dialog-foot">
+            <button type="button" className="quiet" onClick={() => setFinishPanelOpen(false)}>
+              继续练
+            </button>
+            <button
+              type="button"
+              className="primary-button"
+              disabled={saving}
+              onClick={() => void submitWorkout("completed")}
+            >
+              {saving ? "保存中…" : `完成并保存训练 · ${doneSets} 组`}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {/* Exercise Jump Bar */}
       <div className="session-control-stack">
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -1310,12 +1590,9 @@ export function WorkoutEditorModal({
                   key={row.id}
                   type="button"
                   className={`jump-circle${allDone ? " finished" : ""}`}
-                  aria-pressed={activeExIdx === idx}
+                  aria-pressed={safeExIdx === idx}
                   title={row.snapshot?.name ?? row.exerciseId}
-                  onClick={() => {
-                    setActiveExIdx(idx);
-                    cardRefs.current[row.id]?.scrollIntoView({ behavior: "smooth", block: "start" });
-                  }}
+                  onClick={() => goToExercise(idx)}
                 >
                   {idx + 1}
                   {row.supersetGroup ? <i className="jump-ss-sup">{row.supersetGroup}</i> : null}
@@ -1324,6 +1601,20 @@ export function WorkoutEditorModal({
             })}
           </div>
           <div className="exercise-bar-right">
+            {!isHistoricalEdit && exercises.length > 1 ? (
+              <button
+                type="button"
+                className="quiet workout-view-toggle"
+                aria-pressed={viewMode === "all"}
+                title={viewMode === "single" ? "切换为纵向总览所有动作" : "切换为一页单个动作专注模式"}
+                onClick={() => {
+                  triggerHaptic("light");
+                  setViewMode((m) => (m === "single" ? "all" : "single"));
+                }}
+              >
+                {viewMode === "single" ? "总览" : "单动作"}
+              </button>
+            ) : null}
             <button type="button" className="secondary-button" onClick={openAddExercisePicker}>
               <Icon name="plus" size={14} /> 加动作
             </button>
@@ -1333,26 +1624,24 @@ export function WorkoutEditorModal({
 
       {/* Main Exercise Scroll Stack */}
       <div className="workout-scroll" ref={workoutScrollRef}>
-        {finishPanelOpen ? (
+        {isHistoricalEdit && finishPanelOpen ? (
           <div className="finish-panel">
-            {isHistoricalEdit ? (
-              <div className="fields">
-                <label className="field">
-                  <span>训练名称</span>
-                  <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
-                </label>
-                <label className="field">
-                  <span>训练日期</span>
-                  <input
-                    type="date"
-                    value={date}
-                    min="1902-01-01"
-                    max={todayStr}
-                    onChange={(e) => setDate(e.target.value)}
-                  />
-                </label>
-              </div>
-            ) : null}
+            <div className="fields">
+              <label className="field">
+                <span>训练名称</span>
+                <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>训练日期</span>
+                <input
+                  type="date"
+                  value={date}
+                  min="1902-01-01"
+                  max={todayStr}
+                  onChange={(e) => setDate(e.target.value)}
+                />
+              </label>
+            </div>
 
             <fieldset>
               <legend>本次训练体感</legend>
@@ -1388,22 +1677,16 @@ export function WorkoutEditorModal({
               {error}
             </p>
             <div className="dialog-foot">
-              {!isHistoricalEdit ? (
-                <button type="button" className="quiet" onClick={() => setFinishPanelOpen(false)}>
-                  继续练
-                </button>
-              ) : (
-                <button type="button" className="danger" onClick={handleDeleteWorkout}>
-                  删除
-                </button>
-              )}
+              <button type="button" className="danger" onClick={handleDeleteWorkout}>
+                删除
+              </button>
               <button
                 type="button"
                 className="primary-button"
                 disabled={saving}
                 onClick={() => void submitWorkout("completed")}
               >
-                {saving ? "保存中…" : isHistoricalEdit ? "保存修改" : `完成训练 · ${doneSets} 组`}
+                {saving ? "保存中…" : "保存修改"}
               </button>
             </div>
           </div>
@@ -1418,98 +1701,144 @@ export function WorkoutEditorModal({
             </button>
           </div>
         ) : (
-          exercises.map((row, exIdx) => {
-            const snap = row.snapshot;
-            const mode: ExerciseMode = snap?.mode ?? "reps";
-            const isTimed = mode === "timed";
-            const isBarbell = snap?.equipment === "barbell";
-            const exDoneCount = row.sets.filter((s) => s.completed).length;
-            const settingsExpanded = openSettingsIds.has(row.id);
-            const refSets = refsByExId.get(row.exerciseId) ?? [];
-            const validRefs = refSets.filter((r): r is NonNullable<typeof r> => Boolean(r));
-            const refText = validRefs
-              .slice(0, 4)
-              .map((r) => (isTimed ? `${r.seconds}s` : `${r.weight}×${r.reps}`))
-              .join(", ");
+          <div
+            className="workout-swipe-stage"
+            onTouchStart={handleStageTouchStart}
+            onTouchMove={handleStageTouchMove}
+            onTouchEnd={handleStageTouchEnd}
+            onTouchCancel={handleStageTouchCancel}
+            style={
+              swipeOffsetX !== 0
+                ? { transform: `translate3d(${swipeOffsetX}px, 0, 0)`, transition: "none" }
+                : { transform: "translate3d(0, 0, 0)", transition: "transform 0.18s ease" }
+            }
+          >
+            {(viewMode === "single" && !isHistoricalEdit
+              ? exercises[safeExIdx]
+                ? [{ row: exercises[safeExIdx]!, exIdx: safeExIdx }]
+                : []
+              : exercises.map((row, exIdx) => ({ row, exIdx }))
+            ).map(({ row, exIdx }) => {
+              const snap = row.snapshot;
+              const mode: ExerciseMode = snap?.mode ?? "reps";
+              const isTimed = mode === "timed";
+              const isBarbell = snap?.equipment === "barbell";
+              const exDoneCount = row.sets.filter((s) => s.completed).length;
+              const exVolume = summarizeWorkoutRecord({
+                date,
+                title,
+                startedAt: sessionStart,
+                endedAt: null,
+                status: "active",
+                exercises: [row],
+              }).volume;
+              const nextIncompleteSetIdx = row.sets.findIndex((s) => !s.completed);
+              const settingsExpanded = openSettingsIds.has(row.id);
+              const refSets = refsByExId.get(row.exerciseId) ?? [];
+              const validRefs = refSets.filter((r): r is NonNullable<typeof r> => Boolean(r));
+              const refText = validRefs
+                .slice(0, 4)
+                .map((r) => (isTimed ? `${r.seconds}s` : `${r.weight}×${r.reps}`))
+                .join(", ");
 
-            const prevBestE1rm = !isTimed
-              ? Math.max(0, ...validRefs.map((r) => estimated1RM(r.weight, r.reps)))
-              : 0;
-            const prevTopWeight = !isTimed
-              ? Math.max(0, ...validRefs.map((r) => r.weight))
-              : 0;
-            const todayBestE1rm = !isTimed
-              ? Math.max(
-                  0,
-                  ...row.sets
-                    .filter((s) => s.completed && s.type !== "warmup")
-                    .map((s) => estimated1RM(s.weight, s.reps)),
-                )
-              : 0;
-            const e1rmGain = prevBestE1rm > 0 && todayBestE1rm > prevBestE1rm ? todayBestE1rm - prevBestE1rm : 0;
+              const prevBestE1rm = !isTimed
+                ? Math.max(0, ...validRefs.map((r) => estimated1RM(r.weight, r.reps)))
+                : 0;
+              const prevTopWeight = !isTimed ? Math.max(0, ...validRefs.map((r) => r.weight)) : 0;
+              const todayBestE1rm = !isTimed
+                ? Math.max(
+                    0,
+                    ...row.sets
+                      .filter((s) => s.completed && s.type !== "warmup")
+                      .map((s) => estimated1RM(s.weight, s.reps)),
+                  )
+                : 0;
+              const e1rmGain = prevBestE1rm > 0 && todayBestE1rm > prevBestE1rm ? todayBestE1rm - prevBestE1rm : 0;
 
-            return (
-              <section
-                key={row.id}
-                ref={(el) => {
-                  cardRefs.current[row.id] = el;
-                }}
-                className={`exercise-editor${isTimed ? " timed-exercise" : ""} has-delete-cols`}
-              >
-                <div className="ex-hero-head">
-                  <button
-                    type="button"
-                    className="ex-hero-thumb is-fallback"
-                    aria-label="替换动作"
-                    onClick={() => openSwapExercisePicker(exIdx)}
-                  >
-                    <Icon name="workout" size={22} />
-                    <span className="ex-thumb-badge">
-                      <Icon name="swap" size={10} />
-                    </span>
-                  </button>
-
-                  <div className="ex-hero-title-col">
-                    <div className="ex-hero-title-row">
-                      <button
-                        type="button"
-                        className="ex-title-btn"
-                        title="查看动作百科图解与个人历史曲线"
-                        onClick={() => openExerciseDetailModal(row.exerciseId, snap?.name ?? row.exerciseId)}
-                      >
-                        <h3>{snap?.name ?? row.exerciseId}</h3>
-                        <Icon name="book" size={14} />
-                      </button>
-                      <span className="ex-set-ratio">
-                        {exDoneCount}/{row.sets.length} 组
+              return (
+                <section
+                  key={row.id}
+                  ref={(el) => {
+                    cardRefs.current[row.id] = el;
+                  }}
+                  className={`exercise-editor${isTimed ? " timed-exercise" : ""} has-delete-cols`}
+                >
+                  <div className="ex-hero-head">
+                    <button
+                      type="button"
+                      className="ex-hero-thumb is-fallback"
+                      aria-label="替换动作"
+                      onClick={() => openSwapExercisePicker(exIdx)}
+                    >
+                      <Icon name="workout" size={22} />
+                      <span className="ex-thumb-badge">
+                        <Icon name="swap" size={10} />
                       </span>
+                    </button>
+
+                    <div className="ex-hero-title-col">
+                      <div className="ex-hero-title-row">
+                        <button
+                          type="button"
+                          className="ex-title-btn"
+                          title="查看动作百科图解与个人历史曲线"
+                          onClick={() => openExerciseDetailModal(row.exerciseId, snap?.name ?? row.exerciseId)}
+                        >
+                          <h3>{snap?.name ?? row.exerciseId}</h3>
+                          <Icon name="book" size={14} />
+                        </button>
+                        <span className="ex-set-ratio">
+                          {exDoneCount}/{row.sets.length} 组
+                        </span>
+                      </div>
+                      <div className="ex-hero-tags">
+                        {snap?.muscle ? <span className="ex-tag">{MUSCLES[snap.muscle] ?? snap.muscle}</span> : null}
+                        {snap?.equipment ? (
+                          <span className="ex-tag">{EQUIPMENT[snap.equipment] ?? snap.equipment}</span>
+                        ) : null}
+                        {row.supersetGroup ? <span className="superset-pill">超级组 {row.supersetGroup}</span> : null}
+                      </div>
                     </div>
-                    <div className="ex-hero-tags">
-                      {snap?.muscle ? <span className="ex-tag">{MUSCLES[snap.muscle] ?? snap.muscle}</span> : null}
-                      {snap?.equipment ? (
-                        <span className="ex-tag">{EQUIPMENT[snap.equipment] ?? snap.equipment}</span>
-                      ) : null}
-                      {row.supersetGroup ? <span className="superset-pill">超级组 {row.supersetGroup}</span> : null}
-                    </div>
+
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label="动作管理与休息时长"
+                      aria-expanded={settingsExpanded}
+                      onClick={() => {
+                        setOpenSettingsIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(row.id)) next.delete(row.id);
+                          else next.add(row.id);
+                          return next;
+                        });
+                      }}
+                    >
+                      <Icon name="settings" size={16} />
+                    </button>
                   </div>
 
-                  <button
-                    type="button"
-                    className="icon-button"
-                    aria-label="动作管理与休息时长"
-                    aria-expanded={settingsExpanded}
-                    onClick={() => {
-                      setOpenSettingsIds((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(row.id)) next.delete(row.id);
-                        else next.add(row.id);
-                        return next;
-                      });
-                    }}
-                  >
-                    <Icon name="settings" size={16} />
-                  </button>
-                </div>
+                  <div className="ex-quick-bar">
+                    <span className="ex-quick-stat">
+                      容量 <strong>{fmt(exVolume, 0)} kg</strong>
+                    </span>
+                    <span className="ex-quick-stat">休息 {row.restSeconds ?? 90}s</span>
+                    {!isHistoricalEdit ? (
+                      <button
+                        type="button"
+                        className="ex-quick-rest-btn"
+                        onClick={() => {
+                          const sec = Math.max(15, row.restSeconds ?? 90);
+                          triggerHaptic("light");
+                          audio.unlock();
+                          restAlarmFiredForRef.current = null;
+                          setRest(createRestTimer(sec, row.id));
+                        }}
+                      >
+                        <Icon name="clock" size={12} /> 开始休息 {row.restSeconds ?? 90}s
+                      </button>
+                    ) : null}
+                  </div>
 
                 {refText ? (
                   <div className="ex-context-stack">
@@ -1603,13 +1932,14 @@ export function WorkoutEditorModal({
                             type="button"
                             className="quiet"
                             disabled={exIdx === 0}
-                            onClick={() =>
+                            onClick={() => {
                               setExercises((prev) => {
                                 const next = [...prev];
                                 [next[exIdx - 1], next[exIdx]] = [next[exIdx]!, next[exIdx - 1]!];
                                 return next;
-                              })
-                            }
+                              });
+                              if (activeExIdx === exIdx) setActiveExIdx(exIdx - 1);
+                            }}
                           >
                             上移
                           </button>
@@ -1617,13 +1947,14 @@ export function WorkoutEditorModal({
                             type="button"
                             className="quiet"
                             disabled={exIdx === exercises.length - 1}
-                            onClick={() =>
+                            onClick={() => {
                               setExercises((prev) => {
                                 const next = [...prev];
                                 [next[exIdx], next[exIdx + 1]] = [next[exIdx + 1]!, next[exIdx]!];
                                 return next;
-                              })
-                            }
+                              });
+                              if (activeExIdx === exIdx) setActiveExIdx(exIdx + 1);
+                            }}
                           >
                             下移
                           </button>
@@ -1667,7 +1998,11 @@ export function WorkoutEditorModal({
 
                     return (
                       <div key={s.id} className="set-block">
-                        <div className={`set-row${s.completed ? " is-complete" : ""}`}>
+                        <div
+                          className={`set-row${s.completed ? " is-complete" : ""}${
+                            !isHistoricalEdit && setIdx === nextIncompleteSetIdx ? " is-next" : ""
+                          }`}
+                        >
                           <button
                             type="button"
                             className="set-num-btn"
@@ -1943,22 +2278,75 @@ export function WorkoutEditorModal({
                   </div>
                 </div>
               </section>
-            );
-          })
+              );
+            })}
+            {viewMode === "single" && !isHistoricalEdit && exercises.length > 1 ? (
+              <p className="workout-swipe-hint">
+                ← 左右滑动切换动作 · {safeExIdx + 1} / {exercises.length} →
+              </p>
+            ) : null}
+          </div>
         )}
 
-        <button
-          type="button"
-          className="secondary-button workout-inline-add-btn"
-          onClick={openAddExercisePicker}
-        >
-          <Icon name="plus" size={16} /> 添加动作
-        </button>
+        {viewMode === "all" || isHistoricalEdit ? (
+          <button
+            type="button"
+            className="secondary-button workout-inline-add-btn"
+            onClick={openAddExercisePicker}
+          >
+            <Icon name="plus" size={16} /> 添加动作
+          </button>
+        ) : null}
 
         <p className="form-error" role="alert" hidden={!error}>
           {error}
         </p>
       </div>
+
+      {!isHistoricalEdit && exercises.length > 0 && viewMode === "single" ? (
+        <div className="workout-pager-bar">
+          <button
+            type="button"
+            className="secondary-button workout-pager-prev"
+            disabled={safeExIdx <= 0}
+            onClick={() => goToExercise(safeExIdx - 1)}
+          >
+            ← 上一个
+          </button>
+          <div className="workout-pager-meta">
+            <strong>
+              {safeExIdx + 1} / {exercises.length}
+            </strong>
+            <small>
+              {safeExIdx < exercises.length - 1
+                ? `下一项：${exercises[safeExIdx + 1]?.snapshot?.name ?? "下一动作"}`
+                : "最后一项动作"}
+            </small>
+          </div>
+          {safeExIdx < exercises.length - 1 ? (
+            <button
+              type="button"
+              className="primary-button workout-pager-next"
+              onClick={() => goToExercise(safeExIdx + 1)}
+            >
+              下一个动作 →
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="primary-button workout-pager-next is-finish"
+              disabled={saving}
+              onClick={() => {
+                triggerHaptic("light");
+                setError("");
+                setFinishPanelOpen(true);
+              }}
+            >
+              完成并结束
+            </button>
+          )}
+        </div>
+      ) : null}
 
       {/* Bottom Rest Timer Dock */}
       {rest && restInfo ? (

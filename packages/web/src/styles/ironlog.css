@@ -438,13 +438,13 @@ dialog::backdrop {
 }
 
 dialog.workout-dialog .workout-scroll {
-  padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px)) !important;
 }
 
 dialog.workout-dialog .workout-scroll::after {
   content: "";
   display: block;
-  height: calc(24px + env(safe-area-inset-bottom, 0px));
+  height: 12px;
 }
 
 dialog.workout-dialog .workout-inline-add-btn {
@@ -1468,5 +1468,245 @@ dialog.workout-dialog .workout-inline-add-btn {
   .shortcut-wizard-foot > button:last-child {
     flex: 1;
     justify-content: center;
+  }
+}
+
+/* Single-exercise workout pager, swipe stage, quick bars & finish overlay */
+.session-control-stack {
+  flex: none;
+  padding: 6px 16px 6px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--bg);
+}
+
+:root[data-theme="light"] .session-control-stack {
+  background: var(--surface);
+}
+
+.workout-view-toggle {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.workout-view-toggle[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.workout-swipe-stage {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  touch-action: pan-y;
+  will-change: transform;
+}
+
+.workout-swipe-hint {
+  margin: 2px 0 0;
+  text-align: center;
+  font: 500 11.5px/1.4 var(--mono);
+  color: var(--muted);
+  user-select: none;
+}
+
+.ex-quick-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  border-radius: 11px;
+  border: 1px solid var(--rule);
+  background: var(--inset);
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.ex-quick-stat {
+  font-variant-numeric: tabular-nums;
+}
+
+.ex-quick-stat strong {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.ex-quick-rest-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--ink);
+  font: 600 11.5px/1 var(--font);
+  cursor: pointer;
+}
+
+.set-row.is-next {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--edge));
+  background: color-mix(in srgb, var(--red-wash) 45%, var(--surface));
+}
+
+.workout-pager-bar {
+  flex: none;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px max(12px, env(safe-area-inset-bottom, 0px));
+  background: var(--surface);
+  border-top: 1px solid var(--edge);
+}
+
+.workout-form:has(.session-dock) .workout-pager-bar {
+  padding-bottom: 10px;
+}
+
+.workout-pager-prev,
+.workout-pager-next {
+  min-height: 42px;
+  padding: 0 14px;
+  white-space: nowrap;
+}
+
+.workout-pager-next.is-finish {
+  background: var(--red);
+  border-color: var(--red);
+  color: #fff;
+}
+
+.workout-pager-meta {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  text-align: center;
+  gap: 2px;
+}
+
+.workout-pager-meta strong {
+  font: 700 13px/1.2 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.workout-pager-meta small {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.workout-finish-overlay {
+  z-index: 8;
+}
+
+.workout-finish-overlay .dialog-foot {
+  flex: none;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+}
+
+.finish-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.finish-summary-strip > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  text-align: center;
+}
+
+.finish-summary-strip span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.finish-summary-strip strong {
+  font: 700 15px/1.2 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.finish-zero-tip {
+  display: grid;
+  gap: 8px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--edge));
+  background: var(--red-wash);
+}
+
+.finish-zero-tip p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink);
+}
+
+.preview-apple-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  margin-top: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+}
+
+.preview-apple-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.preview-apple-text strong {
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.preview-apple-text small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+@media (max-width: 630px) {
+  .session-control-stack {
+    padding: 6px 12px;
+  }
+
+  .workout-pager-bar {
+    padding: 8px 12px max(10px, env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+  }
+
+  .workout-pager-prev,
+  .workout-pager-next {
+    min-height: 40px;
+    padding: 0 11px;
+    font-size: 13px;
   }
 }

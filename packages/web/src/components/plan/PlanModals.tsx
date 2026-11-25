@@ -15,6 +15,7 @@ import {
   type WorkoutData,
 } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
+import { readWorkoutPreferences, writeWorkoutPreference } from "../../lib/workout-helpers";
 import { Icon } from "../Icon";
 import { exportPlanAsJson } from "../settings/DataModals";
 import {
@@ -1143,6 +1144,8 @@ export function RoutinePreviewModal({
   const [result, setResult] = useState<RoutinePreviewResponse | null>(null);
   const [goals, setGoals] = useState<ProfileGoals | null>(null);
   const [muscleStatus, setMuscleStatus] = useState<NonNullable<OverviewStatsResponse["muscleStatus"]>>([]);
+  const [appleAutoLaunch, setAppleAutoLaunch] = useState(() => readWorkoutPreferences().appleFitnessAutoLaunch);
+  const [appleLaunchMode] = useState(() => readWorkoutPreferences().appleStrengthLaunch);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -1322,6 +1325,33 @@ export function RoutinePreviewModal({
           );
         })}
       </ol>
+
+      <div className="preview-apple-row">
+        <div className="preview-apple-text">
+          <strong>开练同步拉起 Apple 健身</strong>
+          <small>
+            模式：
+            {appleLaunchMode === "hub"
+              ? "全能联动快捷指令"
+              : appleLaunchMode === "fitness_app"
+                ? "直接打开健身 App"
+                : appleLaunchMode === "shortcut"
+                  ? "独立快捷指令"
+                  : "已关闭"}
+          </small>
+        </div>
+        <input
+          type="checkbox"
+          className="switch"
+          aria-label="开练同步拉起 Apple 健身"
+          checked={appleAutoLaunch}
+          onChange={(e) => {
+            const next = e.target.checked;
+            setAppleAutoLaunch(next);
+            writeWorkoutPreference("appleFitnessAutoLaunch", next);
+          }}
+        />
+      </div>
 
       <footer className="dialog-foot">
         {allowEditSchedule ? (

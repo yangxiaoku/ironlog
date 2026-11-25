@@ -496,3 +496,27 @@ test("DeviceSetupModal implements a 5-step guided setup wizard without removing 
   assert.match(css, /\.shortcut-cred-card\s*\{/);
   assert.match(css, /\.shortcut-verify-status\s*\{/);
 });
+
+test("WorkoutEditorModal fixes plan source validation, implements single-exercise swipe pager, and ensures Apple launch", () => {
+  const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const appleFitness = readFileSync(resolve(process.cwd(), "packages/web/src/lib/apple-fitness.ts"), "utf8");
+  const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(editor, /function normalizeWorkoutSource/);
+  assert.ok(!editor.includes('source: "plan"'), "must never emit invalid workout source 'plan'");
+  assert.match(editor, /useState<"single" \| "all">/);
+  assert.match(editor, /className="workout-swipe-stage"/);
+  assert.match(editor, /className="workout-pager-bar"/);
+  assert.match(editor, /下一个动作/);
+  assert.match(editor, /className="session-menu-overlay workout-finish-overlay"/);
+  assert.match(editor, /completeAllPending/);
+
+  assert.match(appleFitness, /function launchIosUrlScheme/);
+  assert.match(planModals, /className="preview-apple-row"/);
+
+  assert.match(css, /\.workout-pager-bar\s*\{/);
+  assert.match(css, /\.workout-finish-overlay\s/);
+  assert.match(css, /\.workout-swipe-stage\s*\{/);
+  assert.match(css, /\.set-row\.is-next\s*\{/);
+});
