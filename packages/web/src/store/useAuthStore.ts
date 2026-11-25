@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { apiFetch } from "../lib/api";
+import { ApiError, apiFetch } from "../lib/api";
 import { invalidateQueryCache } from "../lib/query-cache";
 import { resetLocalWorkoutPreferences } from "../lib/workout-helpers";
 import { useUiStore } from "./useUiStore";
@@ -33,6 +33,8 @@ export interface AuthState {
   logout: () => Promise<void>;
   clearUser: () => void;
 }
+
+const browserSession = { token: "", accountId: "" };
 
 function initialAuthMode(): AuthMode {
   if (typeof localStorage === "undefined") return "register";
@@ -68,24 +70,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   async bootstrap() {
-    let demo = false;
-    let demoToken = "";
     try {
-      if (typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)) {
-        const res = await apiFetch<{ token?: string }>("/auth/web-demo", { token: "" });
-        if (res.token) {
-          demo = true;
-          demoToken = res.token;
-          set({ demo, demoToken });
-        }
-      }
-    } catch {}
-
-    try {
-      const account = await apiFetch<MeResponse>("/api/me");
+      const account = await apiFetch<MeResponse>("/api/me", browserSession);
+      set({ demo: false, demoToken: "" });
       get().applyAccountMeta(account);
-    } catch {
-      // Guests see the auth screen cleanly
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 401
+        && typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)) {
+        try {
+          const { token } = await apiFetch<{ token?: string }>("/auth/web-demo", browserSession);
+          if (token) {
+            const account = await apiFetch<MeResponse>("/api/me", { ...browserSession, token });
+            set({ demo: true, demoToken: token });
+            get().applyAccountMeta(account);
+          }
+        } catch { /* Show the sign-in screen when there is no demo session. */ }
+      }
     } finally {
       set({ booted: true });
     }
@@ -95,17 +95,18 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     set({ authenticating: true });
     try {
       await apiFetch("/auth/web/" + mode, {
+        ...browserSession,
         method: "POST",
         body: { username, password },
       });
-      const account = await apiFetch<MeResponse>("/api/me").catch((err) => {
+      const account = await apiFetch<MeResponse>("/api/me", browserSession).catch((err) => {
         if ((err as { status?: number })?.status === 401) {
           throw new Error("浏览器未保存登录状态，请允许本站使用 Cookie 后重新登录");
         }
         throw err;
       });
+      set({ demo: false, demoToken: "", authMode: "login" });
       get().applyAccountMeta(account);
-      set({ authMode: "login" });
       try {
         localStorage.setItem("ironlog-web-account-seen", "1");
       } catch {}

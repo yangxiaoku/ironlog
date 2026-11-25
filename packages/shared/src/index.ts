@@ -427,3 +427,4 @@ export interface MutationResult {
   record: StoredRecord | null;
 }
 export * from "./starter-plans.js";
+export type { SleepReport, SleepReportDay } from "./sleep-report.js";

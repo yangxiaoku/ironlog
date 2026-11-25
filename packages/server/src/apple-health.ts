@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { parseFlexibleInstant, parseTolerantNumber } from "./apple-health-daily.js";
+import { appleWorkoutIdentity } from "./apple-workout-identity.js";
 export { parseFlexibleInstant };
 import type { Db } from "./db.js";
 import { DomainError } from "./store.js";
@@ -326,7 +327,7 @@ export class AppleHealth {
 
   ingest(device: Device, workout: AppleWorkoutInput, key?: string) {
     this.checkFuture(workout.endedAt);
-    return this.db.transaction(() => this.save(device.userId, this.workoutIdentity(workout, device.id), workout, key)).immediate();
+    return this.db.transaction(() => this.save(device.userId, appleWorkoutIdentity(workout, device.id), workout, key)).immediate();
   }
 
   importWorkouts(userId: string, workouts: AppleWorkoutInput[]) {
@@ -335,18 +336,11 @@ export class AppleHealth {
     return this.db.transaction(() => {
       for (const workout of workouts) {
         this.checkFuture(workout.endedAt);
-        const identity = this.workoutIdentity(workout);
+        const identity = appleWorkoutIdentity(workout);
         totals[this.save(userId, identity, workout).ingestStatus]++;
       }
       return totals;
     }).immediate();
-  }
-
-  private workoutIdentity(workout: AppleWorkoutInput, deviceId?: string) {
-    const type = workout.activityType.toLowerCase();
-    return workout.externalWorkoutId ? `workout:${workout.externalWorkoutId.toLowerCase()}`
-      : deviceId && workout.clientSessionId ? `session:${deviceId}:${workout.clientSessionId}`
-        : `time:${type}:${workout.startedAt}:${workout.endedAt}`;
   }
 
   activeEvent(device: Device, rawActivityType?: string) {

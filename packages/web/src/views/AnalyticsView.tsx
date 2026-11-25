@@ -2,317 +2,29 @@ import { useEffect, useId, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotMeter } from "../components/Meters";
+import { SleepReportPanel } from "../components/SleepReportPanel";
 import type { AppleDailyEntry, AppleWorkoutAgendaItem } from "../components/apple/AppleHealthModals";
 import { formatSleepMinutes } from "../components/apple/AppleHealthModals";
 import { downloadClientFile } from "../components/settings/DataModals";
+import { ANALYTICS_PERIODS, useAnalytics, type AnalyticsPeriod } from "../hooks/useAnalytics";
 import { apiFetch } from "../lib/api";
 import { duration, fmt, shortDate, today } from "../lib/date";
 import type { EquipmentKey, ProfileGoals, RecordEnvelope, WeightData } from "../lib/domain";
-import { cachedApiFetch, peekQuery } from "../lib/query-cache";
 import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
-type AnalyticsPeriod = 14 | 30 | 60 | 90;
-type AnalyticsSection = "load" | "strength" | "body" | "reports";
+const analyticsSections = [
+  ["load", "负荷恢复"],
+  ["strength", "肌群力量"],
+  ["body", "体态饮食"],
+  ["sleep", "睡眠"],
+  ["reports", "周期报表"],
+] as const;
+type AnalyticsSection = typeof analyticsSections[number][0];
 type ReportCategory = "all" | "training" | "progress" | "apple";
 type BodyChartKey = "weightKg" | "bodyFatPct" | "waistCm";
 type RecoveryChartKey = "restingHeartRateBpm" | "hrvMs" | "bloodOxygenPct" | "steps" | "distanceKm" | "activeEnergyKcal";
-
-interface AnalyticsResponse {
-  today: string;
-  through: string;
-  period: AnalyticsPeriod;
-  userProfile: { weightKg: number; appleWeightKg: number | null; gender: string };
-  acwr: {
-    current: {
-      acwr: number;
-      ewmaAcwr?: number;
-      uncoupledAcwr?: number | null;
-      zone: "deload" | "sweet_spot" | "caution" | "danger";
-      ewmaZone?: string;
-      acuteLoad: number;
-      chronicLoad: number;
-    };
-    series: Array<{ date: string; acwr: number; ewmaAcwr?: number; zone: string }>;
-  };
-  monotony: {
-    current: {
-      monotony: number;
-      monotonyLevel: "high" | "moderate" | "low";
-      meanDailyLoad: number;
-      standardDeviation: number;
-      trainingStrain: number;
-      monotonyAdvice: string;
-    };
-    previous: { trainingStrain: number };
-  };
-  muscles: {
-    audits: Array<{
-      muscleName: string;
-      sets: number;
-      avg4WeekSets: number;
-      freqPerWeek?: number;
-      category: "optimal" | "overreaching" | "maintenance";
-      categoryLabel: string;
-      advice: string;
-    }>;
-    symmetry?: {
-      pushSets: number;
-      pullSets: number;
-      pushPullRatio: number | null;
-      pushPullStatus: "balanced" | "push_dominant" | "pull_dominant" | "no_data";
-      pushPullLabel: string;
-      upperSets: number;
-      lowerSets: number;
-      upperLowerRatio: number | null;
-      advice: string;
-    };
-  };
-  effortSpectrum?: {
-    totalWorkSets: number;
-    repZones: {
-      strength: { sets: number; pct: number };
-      hypertrophy: { sets: number; pct: number };
-      metabolic: { sets: number; pct: number };
-    };
-    rirDistribution: {
-      loggedCount: number;
-      avgRir: number | null;
-      nearFailure: { sets: number; pct: number };
-      optimal: { sets: number; pct: number };
-      reserveHigh: { sets: number; pct: number };
-    };
-    stimulatingSets: number;
-    advice: string;
-  };
-  periodComparison?: {
-    current: { sessions: number; activeDays: number; workSets: number; tonnageKg: number; durationMinutes: number; dietDaysLogged: number };
-    previous: { sessions: number; activeDays: number; workSets: number; tonnageKg: number; durationMinutes: number; dietDaysLogged: number };
-    deltas: { sessionsPct: number | null; workSetsPct: number | null; tonnagePct: number | null };
-  };
-  weeklyBreakdown?: Array<{
-    weekIndex: number;
-    from: string;
-    through: string;
-    sessions: number;
-    activeDays: number;
-    workSets: number;
-    hardSets: number;
-    tonnageKg: number;
-    durationMinutes: number;
-    load: number;
-  }>;
-  exerciseProgress?: Array<{
-    id: string;
-    name: string;
-    muscle: string;
-    mode: string;
-    sessions: number;
-    workSets: number;
-    tonnageKg: number;
-    first1RM: number;
-    last1RM: number;
-    best1RM: number;
-    delta1RM: number;
-  }>;
-  inol: {
-    lifts: Array<{
-      name: string;
-      oneRepMax: number;
-      sessionDate?: string;
-      category: string;
-      categoryLabel: string;
-      sessionInol: number;
-      weeklyInol: number;
-      totalSets: number;
-      totalReps: number;
-      advice: string;
-    }>;
-  };
-  ipfGl: {
-    bench?: { score: number; tierLabel: string } | null;
-    total?: { score: number; tierLabel: string } | null;
-    components: {
-      bench1RM: number;
-      squat1RM: number;
-      deadlift1RM: number;
-      deadliftSourceName?: string;
-      total3Lift: number;
-    };
-  };
-  nutrition: {
-    protein: {
-      status: "optimal" | "suboptimal" | "high";
-      statusLabel: string;
-      averageGramsPerDay: number;
-      averageGramsPerKg: number;
-      leanMassGramsPerKg?: number | null;
-      daysMeetingTarget: number;
-      totalDaysLogged: number;
-      complianceRatePct: number;
-      advice: string;
-    };
-    energy?: {
-      daysLogged: number;
-      trainingDaysLogged: number;
-      restDaysLogged: number;
-      avgCalories: number;
-      avgProtein: number;
-      avgCarbs: number;
-      avgFat: number;
-      macroPct: { protein: number; carbs: number; fat: number };
-      calorieTarget: number;
-      calorieAdherencePct: number | null;
-      trainingDayAvgKcal: number | null;
-      restDayAvgKcal: number | null;
-      trainingDayAvgProtein: number | null;
-      restDayAvgProtein: number | null;
-      estimatedTdeeKcal: number | null;
-      tdeeConfidence: "high" | "moderate" | "insufficient";
-      energyAdvice: string;
-    };
-  };
-  bodyweight: {
-    report?: {
-      category: string;
-      categoryLabel: string;
-      changeRatePerWeekPct: number;
-      weeklySlopeKg: number;
-      deltaKg: number;
-      weeksSpan: number;
-      trendMethod?: string;
-      rSquared?: number | null;
-      advice: string;
-    } | null;
-  };
-  trainingSummary?: { sessions: number; workSets: number; tonnageKg: number; activeDays: number; dietDaysLogged: number };
-  citations: Record<string, { authors: string; year: number; journal: string; title: string; takeaway: string }>;
-  appleDaily?: {
-    series?: AppleDailyEntry[];
-    averages?: { sleepMinutes?: number | null; restingHeartRateBpm?: number | null; hrvMs?: number | null };
-    latestBody?: { weightKg?: { value: number; date: string } | null; bodyFatPct?: { value: number } | null };
-    bodyReport?: {
-      hasData: boolean;
-      weightKg?: number | null;
-      bodyFatPct?: number | null;
-      fatMassKg?: number | null;
-      leanBodyMassKg?: number | null;
-      leanSharePct?: number | null;
-      bmi?: number | null;
-      bmiStatus?: { label: string } | null;
-      ffmi?: number | null;
-      ffmiStatus?: { label: string } | null;
-      waistCm?: number | null;
-      whtr?: number | null;
-      whtrStatus?: { label: string } | null;
-      waistStatus?: { label: string } | null;
-      heightCm?: number | null;
-      heightSource?: string;
-      measuredAt?: { weightDate?: string } | null;
-      insights?: string[];
-      metabolic?: {
-        appleRestingAvgKcal?: number | null;
-        bmrKatchMcArdleKcal: number;
-        sedentaryTdeeKcal: number;
-        trainingTdeeKcal: number;
-        recompCutTargetKcal: number;
-        proteinTargetG: number;
-        measuredVsPredictedPct?: number | null;
-      } | null;
-      recomposition?: {
-        targetWaistCm: number;
-        waistDeltaCm?: number | null;
-        milestones: Array<{ label: string; targetWeightKg: number; fatToLoseKg: number; estWeeks: number }>;
-      } | null;
-    } | null;
-    recoveryReport?: {
-      hasData: boolean;
-      readinessScore?: number | null;
-      readinessTone?: string;
-      readinessLabel: string;
-      baselineMode?: string;
-      signals?: Array<{
-        key: string;
-        label: string;
-        value: number;
-        unit: string;
-        statusLabel: string;
-        tone: string;
-        detail: string;
-        rangeBand?: { min: number; max: number; optMin: number; optMax: number };
-      }>;
-      heartRateLatest?: { value: number; spreadFromRhr?: number | null; date: string } | null;
-      vo2MaxLatest?: { value: number; date: string } | null;
-      insights?: string[];
-      lnHrvBaseline?: { latest: number; zScore?: number | null; swcHalfSd?: number | null } | null;
-      autonomicBalanceRatio?: number | null;
-    } | null;
-    activityReport?: {
-      hasData: boolean;
-      latestSteps?: number | null;
-      latestDistanceKm?: number | null;
-      latestActiveEnergyKcal?: number | null;
-      latestFlightsClimbed?: number | null;
-      avgSteps?: number | null;
-      avgDistanceKm?: number | null;
-      strideCm?: number | null;
-      activityTierLabel?: string;
-    } | null;
-    correlations?: Array<{ label: string; r: number; sampleDays: number; note: string }>;
-    weeklyComparison?: {
-      recentWindow: { from: string; through: string };
-      previousWindow: { daysWithData: number };
-      hasPreviousBaseline: boolean;
-      metrics: Array<{ key: string; label: string; unit: string; current: number | null; delta: number | null }>;
-    } | null;
-    coverageSummary?: {
-      syncedCount: number;
-      totalCount: number;
-      categoryProgress?: Array<{ category: string; synced: number; total: number }>;
-      syncedMetrics: Array<{ label: string }>;
-      missingMetrics?: Array<{ category: string; label: string }>;
-    } | null;
-  } | null;
-  appleWorkouts?: AppleWorkoutsBucket & {
-    realDeviceCount: number;
-    demoCount: number;
-    realDeviceStats?: AppleWorkoutsBucket | null;
-  };
-}
-
-interface AppleWorkoutsBucket {
-  totalCount: number;
-  realDeviceCount?: number;
-  linkedManualCount?: number;
-  totalDurationSeconds: number;
-  totalCaloriesKcal: number;
-  totalDistanceKm: number;
-  avgBpm: number | null;
-  maxBpm: number | null;
-  byActivity: Array<{ title: string; count: number; durationSeconds: number; caloriesKcal: number; avgBpm: number | null }>;
-  hrZones?: {
-    hrMax: number;
-    hrMaxSource: string;
-    zones: Array<{ key: string; label: string; count: number; pct: number; durationSeconds: number }>;
-  } | null;
-  recent: Array<{
-    id: string;
-    date: string;
-    title: string;
-    activityType: string;
-    isDemo?: boolean;
-    captureMethod?: string;
-    startedAt?: string;
-    endedAt?: string;
-    manualWorkoutId?: string | null;
-    durationKind?: string;
-    durationSeconds: number;
-    activeEnergyKcal?: number | null;
-    distanceMeters?: number | null;
-    heartRate?: { avgBpm?: number | null; maxBpm?: number | null } | null;
-  }>;
-}
 
 const BODY_CHART_METRICS: Record<BodyChartKey, { label: string; unit: string; digits: number }> = {
   weightKg: { label: "体重", unit: "kg", digits: 2 },
@@ -340,21 +52,9 @@ function plainAcwrStatus(zone: string): string {
   return "练太猛了";
 }
 
-function formatHumanCorrelation(c: { label: string; r: number; sampleDays: number; note: string }): string {
-  const daysNote = `（近 ${c.sampleDays} 天规律）`;
-  if (c.label.includes("睡眠") && c.label.includes("HRV")) {
-    return `${c.r > 0 ? "睡得越久，身体恢复活力往往越好" : "睡眠时长和恢复指标近期走势相反"}${daysNote}。`;
-  }
-  if (c.label.includes("睡眠") && c.label.includes("静息心率")) {
-    return `${c.r < 0 ? "睡得越足，早上静息心率通常越低越稳" : "睡眠时长与静息心率同步变动"}${daysNote}。`;
-  }
-  if (c.label.includes("步数") && c.label.includes("消耗")) {
-    return `走动越多、越活跃的日子，额外消耗的热量也明显更高${daysNote}。`;
-  }
-  if (c.label.includes("体重") && c.label.includes("腰围")) {
-    return `${c.r > 0 ? "体重下降的时候，腰围也在稳步变小" : "体重和腰围近期变化步调不完全一致"}${daysNote}。`;
-  }
-  return `${c.label}近期呈现稳定${c.r > 0 ? "同向" : "反向"}趋势${daysNote}。`;
+function formatHumanCorrelation(c: { label: string; r: number; sampleDays: number }): string {
+  const metrics = c.label.replace(" vs ", "与").replace("HRV 恢复", "HRV");
+  return `${metrics}在 ${c.sampleDays} 个配对记录日中呈${c.r > 0 ? "正" : "负"}相关（r = ${c.r}）。`;
 }
 
 function pickAvailableChartMetric<K extends string>(
@@ -550,61 +250,67 @@ export function AnalyticsView() {
   const [acwrActiveIdx, setAcwrActiveIdx] = useState<number | null>(null);
   const [busyAction, setBusyAction] = useState("");
 
-  const initAnalyticsPath = `/api/web/analytics?${new URLSearchParams({ days: String(period), through }).toString()}`;
-  const cachedAnalytics = peekQuery<AnalyticsResponse>(initAnalyticsPath, userId)?.data ?? null;
-  const [data, setData] = useState<AnalyticsResponse | null>(cachedAnalytics);
-  const [loading, setLoading] = useState(() => !cachedAnalytics);
-  const [error, setError] = useState("");
-
+  const { data, loading, error } = useAnalytics(period, through, userId, dataEpoch);
   useEffect(() => {
-    let active = true;
-    const query = new URLSearchParams({ days: String(period), through });
-    const reqPath = `/api/web/analytics?${query.toString()}`;
-    const stale = peekQuery<AnalyticsResponse>(reqPath, userId)?.data;
-    if (stale) {
-      setData(stale);
-      setLoading(false);
-    } else {
-      setLoading(true);
-    }
-    setError("");
     setAcwrActiveIdx(null);
-    void cachedApiFetch<AnalyticsResponse>(reqPath, { epoch: dataEpoch, userId })
-      .then((res) => {
-        if (active) setData(res);
-      })
-      .catch((err) => {
-        if (active) setError((err as Error)?.message || "加载数据分析失败");
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
-    return () => {
-      active = false;
-    };
   }, [userId, period, through, dataEpoch]);
 
-  if (loading && !data) {
-    return (
-      <div className="empty loading" role="status">
-        正在计算负荷、恢复与力量分析…
+  const controls = (
+    <>
+      <div className="page-heading masthead-analytics">
+        <div>
+          <h1>数据分析</h1>
+          <p>训练、睡眠、饮食与体重趋势</p>
+        </div>
+        <div className="period-controls">
+          <label aria-label="数据分析截止日期">
+            <input
+              type="date"
+              min="1902-01-01"
+              max={data?.today ?? today()}
+              value={through}
+              onChange={(e) => {
+                if (e.target.validity.valid && e.target.value) setThrough(e.target.value);
+              }}
+            />
+          </label>
+          <div className="segments">
+            {ANALYTICS_PERIODS.map((days) => (
+              <button key={days} type="button" aria-pressed={period === days} onClick={() => setPeriod(days)}>
+                {days} 天
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
+      <nav className="analytics-subnav" aria-label="统计分类">
+        <div className="segments analytics-section-tabs">
+          {analyticsSections.map(([key, label]) => (
+            <button key={key} type="button" aria-pressed={section === key} onClick={() => setSection(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </nav>
+    </>
+  );
+
+  if (!data) {
+    return (
+      <>
+        {controls}
+        {loading ? (
+          <div className="empty loading" role="status">正在加载所选周期的数据…</div>
+        ) : (
+          <div className="empty" role="alert">
+            <strong>数据分析加载失败</strong>
+            <p>{error}</p>
+            <button type="button" className="primary-button" onClick={bumpDataEpoch}>重试</button>
+          </div>
+        )}
+      </>
     );
   }
-
-  if (error && !data) {
-    return (
-      <div className="empty">
-        <strong>数据分析加载失败</strong>
-        <p>{error}</p>
-        <button type="button" className="primary-button" onClick={bumpDataEpoch}>
-          重试
-        </button>
-      </div>
-    );
-  }
-
-  if (!data) return null;
 
   const { acwr, monotony, muscles, inol, ipfGl, nutrition, bodyweight, appleDaily, appleWorkouts, userProfile } = data;
   const hasApple = Boolean(
@@ -967,6 +673,7 @@ export function AnalyticsView() {
       energyNutrition: nutrition.energy,
       appleDaily: data.appleDaily,
       appleWorkouts: data.appleWorkouts,
+      sleepReport: data.sleepReport,
     };
     downloadClientFile(
       JSON.stringify(payload, null, 2),
@@ -1057,37 +764,7 @@ export function AnalyticsView() {
 
   return (
     <>
-      <div className="page-heading masthead-analytics">
-        <div>
-          <h1>数据分析</h1>
-          <p>
-            {hasApple
-              ? "负荷、恢复、力量和饮食，一页看清近期状态与建议。"
-              : "负荷、力量、肌群分布和饮食，一页看清近期训练节奏与建议。"}
-          </p>
-        </div>
-        <div className="period-controls">
-          <label aria-label="数据分析截止日期">
-            <input
-              type="date"
-              min="1902-01-01"
-              max={data.today}
-              value={through}
-              onChange={(e) => {
-                if (e.target.validity.valid && e.target.value) setThrough(e.target.value);
-              }}
-            />
-          </label>
-          <div className="segments">
-            {([14, 30, 60, 90] as const).map((d) => (
-              <button key={d} type="button" aria-pressed={period === d} onClick={() => setPeriod(d)}>
-                {d} 天
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
+      {controls}
       {error ? (
         <div
           className="panel"
@@ -1101,6 +778,7 @@ export function AnalyticsView() {
         </div>
       ) : null}
 
+      {activeSection !== "sleep" && activeSection !== "reports" ? <>
       <div className="section-bar stats-header analytics-meta-bar">
         <div>
           <h2>近期状态一览</h2>
@@ -1272,38 +950,21 @@ export function AnalyticsView() {
           <li>{muscleTip}</li>
         </ul>
       </section>
-
-      <div className="analytics-subnav" role="navigation" aria-label="统计分类切换">
-        <div className="segments">
-          {(
-            [
-              ["load", "负荷恢复"],
-              ["strength", "肌群力量"],
-              ["body", "体态饮食"],
-              ["reports", "周期报表"],
-            ] as ReadonlyArray<readonly [AnalyticsSection, string]>
-          ).map(([k, label]) => (
-            <button key={k} type="button" aria-pressed={activeSection === k} onClick={() => setSection(k)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <span className="analytics-subnav-meta">
-          {activeSection === "load"
-            ? hasApple
-              ? "负荷比、练休起伏、次数/RIR 强度与 Apple 恢复准备度"
-              : "负荷比、练休起伏与次数/RIR 强度谱"
-            : activeSection === "strength"
-              ? "各部位周组数、推拉/上下肢对称、核心大重量压力与相对力量档位"
-              : activeSection === "body"
-                ? hasApple
-                  ? "每日蛋白达标、抗噪体重斜率、自适应 TDEE 与体成分热量建议"
-                  : "每日蛋白达标、抗噪体重斜率与热量结构/自适应 TDEE"
-                : "周期对照、按周训练分解、动作 1RM 进步榜与数据导出"}
-        </span>
-      </div>
+      </> : null}
 
       <div className="analytics-deck">
+        {activeSection === "sleep" ? (
+          data.sleepReport ? (
+            <SleepReportPanel key={`${userId}:${data.sleepReport.current.from}:${data.sleepReport.current.through}`} report={data.sleepReport} />
+          ) : (
+            <div className="empty" role="status">
+              <strong>后台版本暂未提供睡眠报表</strong>
+              <p>更新后台后即可读取报表。</p>
+              <button type="button" className="quiet" onClick={bumpDataEpoch}>重试</button>
+            </div>
+          )
+        ) : null}
+
         {/* LOAD & RECOVERY SECTION */}
         {activeSection === "load" ? (
           <>
@@ -2351,8 +2012,13 @@ export function AnalyticsView() {
               {showTrainingReport && data.periodComparison ? (
                 <div className="apple-report-subblock">
                   <div className="apple-report-subhead">
-                    <strong>周期对照报表（近 {data.period} 天 vs 上一 {data.period} 天）</strong>
-                    <small>训练频次、工作组数、总吨位与饮食打卡对比</small>
+                    <strong>周期对照 · {data.period} 天</strong>
+                    {data.periodComparison.currentRange && data.periodComparison.previousRange ? (
+                      <small>
+                        本期 {shortDate(data.periodComparison.currentRange.from)}–{shortDate(data.periodComparison.currentRange.through)}
+                        {" · 上期 "}{shortDate(data.periodComparison.previousRange.from)}–{shortDate(data.periodComparison.previousRange.through)}
+                      </small>
+                    ) : null}
                   </div>
                   <div className="health-metrics apple-workout-kpis">
                     <div>
@@ -2393,12 +2059,19 @@ export function AnalyticsView() {
                       </small>
                     </div>
                     <div>
-                      <span>累计训练 / 饮食天</span>
+                      <span>累计训练时长</span>
                       <strong>
                         {fmt(data.periodComparison.current.durationMinutes, 0)} <small>分</small>
                       </strong>
+                      <small>上期 {fmt(data.periodComparison.previous.durationMinutes, 0)} 分</small>
+                    </div>
+                    <div>
+                      <span>饮食记录覆盖</span>
+                      <strong>
+                        {data.periodComparison.current.dietDaysLogged} <small>/ {data.period} 天</small>
+                      </strong>
                       <small>
-                        饮食打卡 {data.periodComparison.current.dietDaysLogged} 天（上期 {data.periodComparison.previous.dietDaysLogged} 天）
+                        上期 {data.periodComparison.previous.dietDaysLogged} / {data.period} 天
                       </small>
                     </div>
                   </div>

@@ -24,6 +24,10 @@ const DAY_MS = 86_400_000;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MISSING_TOKENS = new Set(["", "null", "undefined", "unknown", "unavailable", "none", "n/a", "nan", "—", "-"]);
 
+export function isEnabledHealthFlag(value: unknown) {
+  return value === true || value === 1 || value === "true" || value === "1";
+}
+
 export interface DailyHealthSnapshot {
   date: string;
   updatedAt: string;
@@ -262,6 +266,10 @@ function parseMeasuredDate(raw: unknown): string | undefined {
 type SleepStage = "deep" | "rem" | "core" | "asleep" | "awake" | "inBed";
 type Interval = [number, number];
 type SleepObservation = { stage: SleepStage; interval: Interval } | { stage: SleepStage; minutes: number };
+
+function isAsleepStage(stage: SleepStage) {
+  return stage !== "awake" && stage !== "inBed";
+}
 // Raw values from HKCategoryValueSleepAnalysis.
 const healthKitSleepStages: readonly SleepStage[] = ["inBed", "asleep", "awake", "core", "deep", "rem"];
 
@@ -311,6 +319,11 @@ export interface SleepSummary {
   sleepStartAt?: string;
   sleepEndAt?: string;
 }
+
+const SLEEP_SUMMARY_KEYS: ReadonlyArray<keyof SleepSummary> = [
+  "sleepMinutes", "sleepDeepMinutes", "sleepRemMinutes", "sleepCoreMinutes", "sleepAwakeMinutes",
+  "sleepInBedMinutes", "sleepEfficiencyPct", "sleepStartAt", "sleepEndAt",
+];
 
 /**
  * Parse a sleep sample duration extracted from Apple Shortcuts "Duration" property
@@ -431,32 +444,70 @@ function readSleepObservations(raw: unknown): SleepObservation[] {
 }
 
 const SLEEP_SESSION_GAP_MS = 2 * 3_600_000;
+const MIN_MAIN_SLEEP_MINUTES = 180;
 
-function splitTimedSleepByDate(observations: SleepObservation[]) {
+function timedSleepSessions(observations: SleepObservation[]) {
   const timed = observations
     .filter((observation): observation is Extract<SleepObservation, { interval: Interval }> => "interval" in observation)
     .sort((first, second) => first.interval[0] - second.interval[0]);
-  const byDate = new Map<string, SleepObservation[]>();
-  let session: SleepObservation[] = [];
-  let sessionEnd = -Infinity;
-  const flush = () => {
-    if (!session.length) return;
-    const wakeDate = localDate(sessionEnd);
-    const list = byDate.get(wakeDate) ?? [];
-    list.push(...session);
-    byDate.set(wakeDate, list);
-  };
+  const sessions: { observations: typeof timed; start: number; end: number }[] = [];
   for (const observation of timed) {
-    if (session.length > 0 && observation.interval[0] > sessionEnd + SLEEP_SESSION_GAP_MS) {
-      flush();
-      session = [];
-      sessionEnd = -Infinity;
+    const [start, end] = observation.interval;
+    const session = sessions.at(-1);
+    if (!session || start > session.end + SLEEP_SESSION_GAP_MS) {
+      sessions.push({ observations: [observation], start, end });
+    } else {
+      session.observations.push(observation);
+      session.end = Math.max(session.end, end);
     }
-    session.push(observation);
-    sessionEnd = Math.max(sessionEnd, observation.interval[1]);
   }
-  flush();
+  return sessions;
+}
+
+function splitTimedSleepByDate(observations: SleepObservation[]) {
+  const byDate = new Map<string, SleepObservation[]>();
+  for (const session of timedSleepSessions(observations)) {
+    const lastAsleepEnd = session.observations.reduce(
+      (end, { stage, interval }) => isAsleepStage(stage) ? Math.max(end, interval[1]) : end,
+      -Infinity,
+    );
+    const wakeDate = localDate(Number.isFinite(lastAsleepEnd) ? lastAsleepEnd : session.end);
+    const list = byDate.get(wakeDate) ?? [];
+    byDate.set(wakeDate, list.concat(session.observations));
+  }
   return byDate;
+}
+
+export function timedSleepProfile(entry: DailyHealthSnapshot) {
+  const asleep = (entry.syncedSleepObservations ?? []).filter(
+    (item): item is Extract<SleepObservation, { interval: Interval }> =>
+      "interval" in item && isAsleepStage(item.stage)
+      && Number.isFinite(item.interval[0]) && Number.isFinite(item.interval[1])
+      && item.interval[1] > item.interval[0],
+  );
+  if (asleep.length === 0) return null;
+  const minutes = mergeIntervalsMinutes(asleep.map(({ interval }) => interval));
+  const main = timedSleepSessions(asleep)
+    .filter(({ end }) => localDate(end) === entry.date)
+    .map((session) => ({
+      ...session,
+      minutes: mergeIntervalsMinutes(session.observations.map(({ interval }) => interval)),
+    }))
+    .filter(({ minutes }) => minutes >= MIN_MAIN_SLEEP_MINUTES)
+    .sort((a, b) => b.minutes - a.minutes || a.start - b.start)[0];
+  const summary = summarizeSleep(asleep);
+  const stages = {
+    core: summary.sleepCoreMinutes ?? null,
+    deep: summary.sleepDeepMinutes ?? null,
+    rem: summary.sleepRemMinutes ?? null,
+  };
+  const staged = mergeIntervalsMinutes(asleep.filter(({ stage }) => stage !== "asleep").map(({ interval }) => interval));
+  const stageTotal = (stages.core ?? 0) + (stages.deep ?? 0) + (stages.rem ?? 0);
+  return {
+    minutes,
+    window: main ? { startAt: new Date(main.start).toISOString(), endAt: new Date(main.end).toISOString() } : null,
+    stages: stageTotal > staged + 1 ? null : stages,
+  };
 }
 
 export function parseSleepSamples(raw: unknown, date?: string): SleepSummary {
@@ -656,7 +707,7 @@ export function upsertDailyHealth(
     if (!historical.has(day)) historical.set(day, {});
     return historical.get(day)!;
   }
-  const replace = Boolean(input.replace);
+  const replace = isEnabledHealthFlag(input.replace);
   const sourceParse = sourceEnum.safeParse(input.source);
   const source: DailyHealthSnapshot["source"] = sourceParse.success ? sourceParse.data : "shortcut";
   const nowIso = new Date().toISOString();
@@ -756,18 +807,6 @@ export function upsertDailyHealth(
     if (weightDate) parsed.weightDate = weightDate;
     if (bodyFatDate) parsed.bodyFatDate = bodyFatDate;
   }
-
-  const SLEEP_KEYS: Array<keyof DailyHealthSnapshot> = [
-    "sleepMinutes",
-    "sleepDeepMinutes",
-    "sleepRemMinutes",
-    "sleepCoreMinutes",
-    "sleepAwakeMinutes",
-    "sleepInBedMinutes",
-    "sleepEfficiencyPct",
-    "sleepStartAt",
-    "sleepEndAt",
-  ];
 
   const computeMerged = (existing: DailyHealthSnapshot | null, forDate: string, patch: Partial<DailyHealthSnapshot>,
     replaceDay = replace): DailyHealthSnapshot => {
@@ -877,7 +916,7 @@ export function upsertDailyHealth(
   }).immediate();
 }
 
-function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthSnapshot {
+export function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthSnapshot {
   const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations: _s, ...rest } = snapshot;
   return rest;
 }
@@ -888,9 +927,49 @@ export function getDailyHealth(db: Db, userId: string, date: string): DailyHealt
 }
 
 export function listDailyHealth(db: Db, userId: string, from: string, through: string): DailyHealthSnapshot[] {
+  return listDailyHealthSnapshots(db, userId, from, through).map(publicDailySnapshot);
+}
+
+export function listDailyHealthSnapshots(db: Db, userId: string, from: string, through: string): DailyHealthSnapshot[] {
   const rows = dailyStatements(db).list.all(userId, from, through) as { date: string; updatedAt: string; data: string }[];
-  return rows.map(({ date, updatedAt, data }) =>
-    publicDailySnapshot({ ...(JSON.parse(data) as DailyHealthSnapshot), date, updatedAt }));
+  return rows.map(({ date, updatedAt, data }) => ({ ...(JSON.parse(data) as DailyHealthSnapshot), date, updatedAt }));
+}
+
+export function alignSleepSnapshots(snapshots: DailyHealthSnapshot[]): DailyHealthSnapshot[] {
+  const byDate = new Map(snapshots.map((snapshot) => [snapshot.date, snapshot]));
+  const moved = new Map<string, { observations: SleepObservation[]; source: DailyHealthSnapshot }>();
+
+  const withSleep = (snapshot: DailyHealthSnapshot, observations: SleepObservation[]) => {
+    const next = { ...snapshot, syncedSleepObservations: observations };
+    for (const key of SLEEP_SUMMARY_KEYS) delete next[key];
+    return Object.assign(next, summarizeSleep(observations));
+  };
+
+  // Old uploads could assign a night to the date when its awake or in-bed sample ended.
+  for (const snapshot of snapshots) {
+    const groups = splitTimedSleepByDate(snapshot.syncedSleepObservations ?? []);
+    let movedSleep = false;
+    for (const [date, observations] of groups) {
+      if (date === snapshot.date || !observations.some(({ stage }) => isAsleepStage(stage))) continue;
+      const group = moved.get(date);
+      if (group) group.observations.push(...observations);
+      else moved.set(date, { observations: [...observations], source: snapshot });
+      movedSleep = true;
+    }
+    if (movedSleep) {
+      const remaining = withSleep(snapshot, groups.get(snapshot.date) ?? []);
+      const { date, updatedAt, source, syncedSleepObservations, ...metrics } = remaining;
+      if (Object.values(metrics).some((value) => value != null)) byDate.set(date, remaining);
+      else byDate.delete(date);
+    }
+  }
+
+  for (const [date, { observations, source }] of moved) {
+    const existing = byDate.get(date) ?? { date, updatedAt: source.updatedAt, source: source.source };
+    const merged = mergeSleepObservationLists(existing.syncedSleepObservations, observations);
+    byDate.set(date, withSleep(existing, merged));
+  }
+  return [...byDate.values()].sort((first, second) => first.date.localeCompare(second.date));
 }
 
 export interface MetricSummary {

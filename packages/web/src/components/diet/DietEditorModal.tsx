@@ -9,7 +9,7 @@ import {
   type RecordEnvelope,
 } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
-import { enqueueMutation, isNetworkError } from "../../lib/offline-queue";
+import { enqueueMutation, getOfflineStorage, isNetworkError } from "../../lib/offline-queue";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -108,14 +108,18 @@ export function DietEditorModal({
       closeAllModals();
       notify(record ? "饮食记录已更新" : "饮食已记录");
     } catch (err) {
-      if (isNetworkError(err) && userId && typeof localStorage !== "undefined") {
-        enqueueMutation(localStorage, userId, {
+      if (isNetworkError(err) && userId) {
+        const queued = enqueueMutation(getOfflineStorage(), userId, {
           opId: payload.opId,
           path: "/api/records",
           method: "POST",
           body: payload,
           label: `饮食：${cleanName}`,
         });
+        if (queued == null) {
+          setError("浏览器无法暂存离线记录。请保留此页面，联网后重新保存");
+          return;
+        }
         refreshPendingCount(userId);
         closeAllModals();
         notify("离线状态：已保存在本地，恢复网络后自动同步");

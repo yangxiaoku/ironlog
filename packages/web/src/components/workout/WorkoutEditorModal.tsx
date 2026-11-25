@@ -45,7 +45,7 @@ import {
   type RestTimerState,
   type WorkoutTiming,
 } from "../../lib/haptics-audio";
-import { enqueueMutation, isNetworkError } from "../../lib/offline-queue";
+import { enqueueMutation, getOfflineStorage, isNetworkError } from "../../lib/offline-queue";
 import {
   ALL_PLATES,
   applySetFieldUpdate,
@@ -360,6 +360,7 @@ export function WorkoutEditorModal({
 
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
   const [error, setError] = useState("");
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
 
@@ -1043,6 +1044,7 @@ export function WorkoutEditorModal({
     targetStatus: "active" | "completed",
     options?: { completeAllPending?: boolean },
   ) => {
+    if (savingRef.current) return;
     if (!exercises.length && targetStatus === "completed") {
       setError("请至少添加一个动作后再结束训练");
       return;
@@ -1058,40 +1060,18 @@ export function WorkoutEditorModal({
       setExercises(exercisesForSave);
     }
 
+    const curRec = savedRecordRef.current;
+    const payloadPack = buildWorkoutPayload(targetStatus, { exercisesOverride: exercisesForSave });
+    savingRef.current = true;
     setSaving(true);
     setError("");
-    let curRec = savedRecordRef.current;
-    let payloadPack = buildWorkoutPayload(targetStatus, { exercisesOverride: exercisesForSave });
 
     try {
-      let res: { record?: RecordEnvelope<WorkoutData> };
-      try {
-        res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
-          method: "POST",
-          body: payloadPack.body,
-        });
-      } catch (firstErr) {
-        const msg = (firstErr as Error)?.message ?? "";
-        const status = (firstErr as { status?: number })?.status;
-        if (status === 409 || /冲突|conflict|version/i.test(msg)) {
-          const latest = await apiFetch<RecordEnvelope<WorkoutData>>(
-            `/api/web/records/workout/${encodeURIComponent(workoutId)}`,
-          );
-          savedRecordRef.current = latest;
-          setSavedRecord(latest);
-          curRec = latest;
-          payloadPack = buildWorkoutPayload(targetStatus, { exercisesOverride: exercisesForSave });
-          res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
-            method: "POST",
-            body: payloadPack.body,
-          });
-        } else {
-          throw firstErr;
-        }
-      }
-      if (draftStorageKey && typeof localStorage !== "undefined") {
-        localStorage.removeItem(draftStorageKey);
-      }
+      const res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
+        method: "POST",
+        body: payloadPack.body,
+      });
+      try { if (draftStorageKey) getOfflineStorage()?.removeItem(draftStorageKey); } catch {}
       triggerHaptic("success");
       bumpDataEpoch();
       const saved: RecordEnvelope<WorkoutData> = res.record ?? {
@@ -1111,22 +1091,30 @@ export function WorkoutEditorModal({
         notify(targetStatus === "active" ? "训练草稿已保存至云端" : "训练已保存");
       }
     } catch (err) {
-      if (isNetworkError(err) && userId && typeof localStorage !== "undefined") {
-        enqueueMutation(localStorage, userId, {
+      if (isNetworkError(err) && userId) {
+        const storage = getOfflineStorage();
+        const queued = enqueueMutation(storage, userId, {
           opId: payloadPack.body.opId,
           path: "/api/records",
           method: "POST",
           body: payloadPack.body,
           label: `训练：${payloadPack.cleanTitle}`,
         });
+        if (queued == null) {
+          setError("浏览器无法暂存离线记录。请保留此页面，联网后重新保存");
+          return;
+        }
         refreshPendingCount(userId);
-        if (draftStorageKey) localStorage.removeItem(draftStorageKey);
+        try { if (draftStorageKey) storage?.removeItem(draftStorageKey); } catch {}
         closeAllModals();
         notify("离线状态：训练已暂存，联网后自动同步");
         return;
       }
-      setError((err as Error)?.message || "保存训练失败");
+      setError((err as { status?: number })?.status === 409
+        ? "这场训练已在其他设备更新。请核对该设备的记录后再保存，本机输入仍保留"
+        : (err as Error)?.message || "保存训练失败");
     } finally {
+      savingRef.current = false;
       setSaving(false);
     }
   };
@@ -2178,6 +2166,7 @@ export function WorkoutEditorModal({
 
                   {row.sets.map((s, setIdx) => {
                     const prevSet = setIdx > 0 ? row.sets[setIdx - 1] : null;
+                    const setRef = refSets[setIdx];
                     const deltaHint =
                       showPlateMath && isBarbell && prevSet && s.weight > barWeight
                         ? plateDeltaLabel(prevSet.weight, s.weight, barWeight, enabledPlates)
@@ -2233,6 +2222,7 @@ export function WorkoutEditorModal({
                                   min={0}
                                   max={5000}
                                   value={s.weight}
+                                  onFocus={(e) => e.currentTarget.select()}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
                                       weight: Math.max(0, Number(e.target.value) || 0),
@@ -2274,6 +2264,7 @@ export function WorkoutEditorModal({
                                   min={0}
                                   max={1000}
                                   value={s.reps}
+                                  onFocus={(e) => e.currentTarget.select()}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
                                       reps: Math.max(0, Math.round(Number(e.target.value) || 0)),
@@ -2315,6 +2306,7 @@ export function WorkoutEditorModal({
                                 min={0}
                                 max={86400}
                                 value={s.seconds}
+                                onFocus={(e) => e.currentTarget.select()}
                                 onChange={(e) =>
                                   updateSetAndCascade(exIdx, setIdx, {
                                     seconds: Math.max(0, Math.round(Number(e.target.value) || 0)),
@@ -2384,15 +2376,37 @@ export function WorkoutEditorModal({
                           </button>
                         </div>
 
-                        {platesInfo?.valid ? (
+                        {platesInfo?.valid || (setRef && !s.completed) ? (
                           <div className="set-inline-meta">
-                            <div className="set-inline-top">
-                              <span className="set-plate-line">
-                                {barWeight}kg杆 每侧 {platesInfo.plates.length ? platesInfo.plates.join(" + ") : "空杆"}
-                                {!platesInfo.achievable && platesInfo.remainder > 0 ? ` (余 ${platesInfo.remainder}kg)` : ""}
-                              </span>
-                              {deltaHint ? <span className="set-plate-delta">{deltaHint}</span> : null}
-                            </div>
+                            {platesInfo?.valid ? (
+                              <div className="set-inline-top">
+                                <span className="set-plate-line">
+                                  {barWeight}kg杆 每侧 {platesInfo.plates.length ? platesInfo.plates.join(" + ") : "空杆"}
+                                  {!platesInfo.achievable && platesInfo.remainder > 0 ? ` (余 ${platesInfo.remainder}kg)` : ""}
+                                </span>
+                                {deltaHint ? <span className="set-plate-delta">{deltaHint}</span> : null}
+                              </div>
+                            ) : null}
+                            {setRef && !s.completed ? (
+                              <div className="set-inline-top">
+                                <button
+                                  type="button"
+                                  className="set-ref-chip"
+                                  onClick={() => {
+                                    triggerHaptic("light");
+                                    updateSetAndCascade(
+                                      exIdx,
+                                      setIdx,
+                                      isTimed
+                                        ? { seconds: setRef.seconds }
+                                        : { weight: setRef.weight, reps: setRef.reps || s.reps },
+                                    );
+                                  }}
+                                >
+                                  上次 {isTimed ? `${setRef.seconds}s` : `${setRef.weight}×${setRef.reps}`} · 填入
+                                </button>
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>

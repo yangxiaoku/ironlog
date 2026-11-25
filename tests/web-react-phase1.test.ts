@@ -117,7 +117,7 @@ test("packages/web/dist Vite + PWA build outputs index, manifest, sw, and rewrit
   assert.equal(existsSync(resolve(distDir, "sw.js")), true, "expected Workbox sw.js");
 
   const assetFiles = await readdir(assetsDir);
-  const cssFile = assetFiles.find((name) => name.endsWith(".css"));
+  const cssFile = assetFiles.find((name) => /^index-.*\.css$/.test(name));
   assert.ok(cssFile, "expected built CSS bundle in packages/web/dist/assets");
   const css = await readFile(resolve(assetsDir, cssFile), "utf8");
   assert.equal(css.includes("./athlete-halftone.jpg"), false, "expected relative ./ asset URLs to be rewritten");

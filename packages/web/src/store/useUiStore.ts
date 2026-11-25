@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { create } from "zustand";
-import { apiFetch } from "../lib/api";
-import { flushQueue, readQueue } from "../lib/offline-queue";
+import { ApiError, apiFetch } from "../lib/api";
+import { copyText } from "../lib/clipboard";
+import { flushQueue, getOfflineStorage, readQueue } from "../lib/offline-queue";
 import { parseHashView, type ViewId } from "../lib/routes";
+import { useAuthStore } from "./useAuthStore";
 
 export type ThemeMode = "dark" | "light";
 export type ModalLayout = "" | "menu" | "workout" | "report" | "badge" | "exercise" | "onboarding";
@@ -82,7 +84,7 @@ export function applyThemeToDom(theme: ThemeMode): void {
   if (typeof document === "undefined") return;
   document.documentElement.dataset.theme = theme;
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (meta) meta.content = theme === "light" ? "#f4f4f1" : "#000000";
+  if (meta) meta.content = theme === "light" ? "#f6f6f3" : "#09090b";
   try {
     localStorage.setItem("ironlog-web-theme", theme);
   } catch {}
@@ -163,34 +165,48 @@ export const useUiStore = create<UiState>((set, get) => ({
   },
 
   refreshPendingCount(userId) {
-    if (typeof localStorage === "undefined" || !userId) {
-      set({ pendingSyncCount: 0 });
-      return;
-    }
-    set({ pendingSyncCount: readQueue(localStorage, userId).length });
+    set({ pendingSyncCount: readQueue(getOfflineStorage(), userId).length });
   },
 
   async syncOfflineQueue(userId, { silent = false } = {}) {
     if (!userId || get().flushingQueue || (typeof navigator !== "undefined" && !navigator.onLine)) return;
-    if (typeof localStorage === "undefined") return;
-    if (readQueue(localStorage, userId).length === 0) {
-      set({ pendingSyncCount: 0 });
-      return;
-    }
+    const { demoToken } = useAuthStore.getState();
+    const isCurrentAccount = () => {
+      const current = useAuthStore.getState();
+      return current.userId === userId && current.demoToken === demoToken;
+    };
+    if (!isCurrentAccount()) return;
+    const storage = getOfflineStorage();
+    if (!storage) return;
+    const before = readQueue(storage, userId);
     set({ flushingQueue: true });
     try {
-      const res = await flushQueue(localStorage, userId, (path, opts) => apiFetch(path, opts));
+      const res = await flushQueue(storage, userId, (path, opts) => {
+        if (!isCurrentAccount()) throw new ApiError("账号已切换", 401);
+        return apiFetch(path, { ...opts, accountId: userId, token: demoToken, skipMutateHook: true });
+      });
+      if (!isCurrentAccount()) return;
       get().refreshPendingCount(userId);
-      if (res.synced > 0) {
-        get().bumpDataEpoch();
+      if (res.synced > 0) get().bumpDataEpoch();
+      if (res.storageError) {
+        if (!silent || before.length > 0) get().notify("浏览器暂时无法读取或更新离线记录");
+      } else if (res.blocked.length > 0 && (!silent || res.blocked.length > before.filter((item) => item.failure).length)) {
+        get().notify(`${res.blocked.length} 条离线记录待处理，原内容保存在本机`, {
+          label: "复制记录",
+          onClick: async () => {
+            if (!isCurrentAccount()) return;
+            const copied = await copyText(JSON.stringify(res.blocked, null, 2));
+            get().notify(copied ? "待处理的记录已复制" : "浏览器无法复制，记录仍保存在本机");
+          },
+        });
+      } else if (res.synced > 0) {
         get().notify(`已自动同步 ${res.synced} 条离线记录`);
       } else if (!silent && res.stoppedOffline) {
         get().notify("网络仍不稳定，待恢复后继续自动同步");
       } else if (!silent && res.authRequired) {
         get().notify("登录已过期，请重新登录后同步离线记录");
-      }
-      if (res.dropped.length > 0) {
-        get().notify(`${res.dropped.length} 条离线记录与服务端冲突，已保留最新服务端版本`);
+      } else if (!silent && res.remaining > 0) {
+        get().notify("服务器暂时无法接收，稍后可重试同步");
       }
     } finally {
       set({ flushingQueue: false });

@@ -25,8 +25,9 @@ import {
 } from "@ironlog/shared";
 import type { Store } from "./store.js";
 import { DomainError } from "./store.js";
-import { listDailyHealth, summarizeDailyHealth } from "./apple-health-daily.js";
+import { alignSleepSnapshots, listDailyHealthSnapshots, publicDailySnapshot, summarizeDailyHealth } from "./apple-health-daily.js";
 import { projectAppleTraining } from "./apple-training-agenda.js";
+import { buildSleepReport } from "./sleep-report.js";
 import { shiftDay } from "./web-statistics.js";
 
 export const webAnalyticsQuery = z.object({
@@ -51,7 +52,22 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const profile = profileSchema.parse(profileRecord?.deleted ? {} : profileRecord?.data ?? {});
   const catalogue = store.catalogueMap(userId, true);
   const userGender: "male" | "female" = profile.energyProfile?.sex === "female" ? "female" : "male";
-  const dailyHealthEntries = listDailyHealth(store.db, userId, displayStart, through);
+  const healthSnapshots = alignSleepSnapshots(listDailyHealthSnapshots(store.db, userId, prevPeriodStart, shiftDay(through, 1)))
+    .filter(({ date }) => date >= prevPeriodStart && date <= through);
+  const sleepReport = buildSleepReport(healthSnapshots, displayStart, through, displayPeriod);
+  const sleepByDate = new Map(sleepReport.series.map((day) => [day.date, day]));
+  const dailyHealthEntries = healthSnapshots.filter(({ date }) => date >= displayStart).map((snapshot) => {
+    const day = sleepByDate.get(snapshot.date);
+    const sleepMinutes = day?.minutes ?? undefined;
+    return {
+      ...publicDailySnapshot(snapshot),
+      sleepMinutes,
+      sleepCoreMinutes: day?.stages?.core ?? undefined,
+      sleepDeepMinutes: day?.stages?.deep ?? undefined,
+      sleepRemMinutes: day?.stages?.rem ?? undefined,
+      sleepEfficiencyPct: sleepMinutes != null && sleepMinutes === snapshot.sleepMinutes ? snapshot.sleepEfficiencyPct : undefined,
+    };
+  });
   const appleDailySummary = summarizeDailyHealth(dailyHealthEntries, {
     heightCm: profile.energyProfile?.heightCm ?? null,
     sex: userGender,
@@ -571,9 +587,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   });
 
   const pctDelta = (curr: number, prev: number) =>
-    prev > 0 ? Math.round(((curr - prev) / prev) * 100) : curr > 0 ? 100 : null;
+    prev > 0 ? Math.round(((curr - prev) / prev) * 100) : null;
 
   const periodComparison = {
+    currentRange: { from: displayStart, through },
+    previousRange: { from: prevPeriodStart, through: prevPeriodEnd },
     current: {
       sessions: periodSessions,
       activeDays: periodTrainingDays.size,
@@ -653,6 +671,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       dietDaysLogged: periodDietDays.size,
     },
     appleDaily: appleDailySummary,
+    sleepReport,
     appleWorkouts: appleWorkoutsSummary,
     acwr: {
       current: currentAcwr,

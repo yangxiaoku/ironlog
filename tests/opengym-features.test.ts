@@ -1352,6 +1352,61 @@ test("同日同名早晚训练 CSV 往返保留两场、全量导出含 Apple �
   }
 });
 
+test("智能合并保留更新记录，恢复 Apple 训练到另一个账号后可正常去重", async () => {
+  const { db, store, call, owner, other } = fixture();
+  try {
+    const date = shiftDay(localDate(), -1);
+    const id = `weight_${date}`;
+    store.mutate(owner.userId, { kind: "weight", id, opId: "recent-weight", baseVersion: 0, data: { date, weight: 78 }, deleted: false });
+    await call("/api/web/exercise-notes/bench-press", { method: "PUT", body: { note: "新握距" } });
+    await call("/api/web/measurements", { method: "PUT", body: { date, waistCm: 81 } });
+    const device = async (token: string) => (
+      await (await call("/api/integrations/apple-health/tokens", {
+        token, method: "POST", body: { label: "fixture-watch" },
+      })).json()
+    ).token as string;
+    const appleWorkout = {
+      schemaVersion: 1, captureMethod: "workout", activityType: "running", externalWorkoutId: "fixture-backup-run",
+      startedAt: `${date}T08:00:00+08:00`, endedAt: `${date}T08:30:00+08:00`,
+    };
+    const postWorkout = (token: string) => call("/api/integrations/apple-health/workouts", {
+      token, method: "POST", body: appleWorkout,
+    });
+    assert.equal((await postWorkout(await device(owner.token))).status, 201);
+    const backup = await (await call("/api/export")).json();
+    const old = "2000-01-01T00:00:00.000Z";
+    const older = {
+      ...backup,
+      records: backup.records.map((record: Record<string, unknown>) => ({
+        ...record, updatedAt: old, data: { date, weight: 70 },
+      })),
+      exerciseNotes: [{ exerciseId: "bench-press", note: "旧握距", updatedAt: old }],
+      bodyMeasurements: [{ date, waistCm: 75, updatedAt: old }],
+    };
+    const restore = (payload: unknown, token: string, strategy = "merge", mode = "commit") =>
+      call("/api/web/restore-backup", { token, method: "POST", body: { backup: payload, mode, strategy } });
+    assert.equal((await restore({ format: "ironlog" }, owner.token, "replace")).status, 400);
+    assert.equal((await restore("null", owner.token)).status, 400);
+    const preview = await (await restore(older, owner.token, "merge", "preview")).json();
+    assert.equal(preview.diff.toUpdate, 0);
+    const same = await (await restore(older, owner.token)).json();
+    assert.equal(same.updated, 0);
+    assert.equal((store.get(owner.userId, "weight", id)?.data as { weight: number }).weight, 78);
+    const exportAfter = await (await call("/api/export")).json();
+    assert.equal(exportAfter.exerciseNotes[0].note, "新握距");
+    assert.equal(exportAfter.bodyMeasurements[0].waistCm, 81);
+
+    assert.equal((await restore(backup, other.token)).status, 200);
+    assert.equal((await restore(backup, other.token)).status, 200);
+    assert.equal((await postWorkout(await device(other.token))).status, 200);
+    const restored = await (await call("/api/export", { token: other.token })).json();
+    assert.equal(restored.appleHealthWorkouts.length, 1);
+    assert.notEqual(restored.appleHealthWorkouts[0].id, backup.appleHealthWorkouts[0].id);
+  } finally {
+    db.close();
+  }
+});
+
 test("Pre-launch: full JSON backup restore, web password change, and MCP/API token management", async () => {
   const { db, store, auth, call, owner, app } = fixture();
   try {

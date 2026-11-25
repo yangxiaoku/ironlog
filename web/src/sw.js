@@ -1,4 +1,4 @@
-const SHELL_CACHE = "ironlog-shell-103";
+const SHELL_CACHE = "ironlog-shell-104";
 const MEDIA_CACHE = "ironlog-media-v1";
 const shellAssets = [
   "./", "./styles.css", "./app.js", "./analytics-ui.js", "./charts.js", "./ui.js",

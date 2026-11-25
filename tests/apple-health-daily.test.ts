@@ -82,6 +82,63 @@ test("parseSleepSamples 精确合并重叠阶段区间，不重复计算深睡�
   assert.equal(mixedDurationSleep.sleepMinutes, 200);
 });
 
+test("体征上传的 false 标志保留已有数据，睡眠归到实际睡眠结束日", async () => {
+  const { db, owner, call, issue } = setup();
+  try {
+    const today = localDate();
+    const yesterday = shiftDay(today, -1);
+    const path = "/api/integrations/apple-health/daily";
+    const device = await issue();
+    const upload = (body: object) => call(path, device.token, "POST", body);
+    const post = async (body: object) => {
+      const response = await upload(body);
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+
+    await post({ date: today, steps: 1400 });
+    const updated = await post({ date: today, dryRun: "false", replace: "false", restingHeartRateBpm: 60 });
+    assert.equal(updated.dryRun, false);
+    assert.equal(updated.daily.steps, 1400);
+    const preview = await post({ date: today, dryRun: "true", replace: "true", steps: 20 });
+    assert.equal(preview.dryRun, true);
+    assert.equal(preview.daily.steps, 20);
+
+    await post({
+      date: today,
+      sleepSamples: [
+        `Core|${yesterday}T19:00:00+08:00|${yesterday}T23:55:00+08:00`,
+        `In Bed|${yesterday}T18:30:00+08:00|${today}T00:30:00+08:00`,
+        `Awake|${yesterday}T23:55:00+08:00|${today}T00:15:00+08:00`,
+      ],
+    });
+    const daily = await (await call(`${path}?from=${yesterday}&through=${today}`, owner.token)).json();
+    assert.deepEqual(daily.entries.map((row: { date: string; sleepMinutes?: number; steps?: number }) =>
+      [row.date, row.sleepMinutes, row.steps]), [[yesterday, 295, undefined], [today, undefined, 1400]]);
+
+    const start = Date.parse(`${yesterday}T19:00:00+08:00`);
+    const end = Date.parse(`${yesterday}T23:55:00+08:00`);
+    const afterMidnight = Date.parse(`${today}T00:30:00+08:00`);
+    // Reproduce the earlier archive layout alongside the same night after it was synced again.
+    const stored = db.prepare("UPDATE apple_health_daily SET data = ? WHERE user_id = ? AND date = ?");
+    stored.run(JSON.stringify({ source: "shortcut", steps: 1400, sleepMinutes: 295, syncedSleepObservations: [
+      { stage: "core", interval: [start, end] },
+      { stage: "inBed", interval: [start, afterMidnight] },
+    ] }), owner.userId, today);
+    const stats = await (await call(`/api/web/analytics?days=14&through=${today}`, owner.token)).json();
+    assert.deepEqual(stats.sleepReport.series.slice(-2).map((row: { minutes: number | null }) => row.minutes), [295, null]);
+    assert.equal(stats.sleepReport.current.recordedDays, 1);
+    assert.equal(stats.appleDaily.series.at(-1).steps, 1400);
+    const historical = await (await call(`/api/web/analytics?days=14&through=${yesterday}`, owner.token)).json();
+    assert.equal(historical.sleepReport.series.at(-1).minutes, 295);
+    assert.equal(historical.appleDaily.series.at(-1).steps, undefined);
+    const originals = await (await call(`${path}?from=${today}&through=${today}`, owner.token)).json();
+    assert.equal(originals.entries[0].sleepMinutes, 295);
+  } finally {
+    db.close();
+  }
+});
+
 test("v2 快捷指令单次上传包含昨晨与今晨两晚睡眠时，服务端自动按醒来日期拆分并保留夜间隔微断档", async () => {
   const { db, owner, call, issue } = setup();
   try {

@@ -1,9 +1,12 @@
 node_modules
 /data
 .env
+.env.*
+!.env.example
 .git
 *.jpg
 !web/assets/visuals/*.jpg
 web/dist
-packages/web/dist
+packages/*/dist
 packages/web/public
+design

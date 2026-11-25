@@ -4,6 +4,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { Hono } from "hono";
 import { mountWebAssets } from "../packages/server/src/web-assets.ts";
+import { configureApi } from "../packages/web/src/lib/api.ts";
 import { filterVisibleBadges, selectOverviewBadges, type BadgeItem, type BadgeSummary } from "../packages/web/src/lib/badges.ts";
 import {
   cachedQuery,
@@ -23,6 +24,9 @@ import {
   encodeShortcutXmlToBase64,
   normalizeServerOrigin,
 } from "../packages/web/src/lib/shortcut-gen.ts";
+import { useAuthStore } from "../packages/web/src/store/useAuthStore.ts";
+import { useUiStore } from "../packages/web/src/store/useUiStore.ts";
+import { enqueueMutation, readQueue } from "../packages/web/src/lib/offline-queue.ts";
 
 test("packages/web/src/lib/shortcut-gen generates valid Apple Shortcut plists and assesses origins", () => {
   assert.equal(APPLE_SHORTCUT_SPORTS.length, 16);
@@ -394,6 +398,115 @@ test("packages/web/src/lib/query-cache deduplicates in-flight fetches, honors ep
   assert.equal(peekQuery("/api/web/test-stats", "u_cache"), undefined);
 });
 
+test("query-cache invalidation detaches old requests and preserves unrelated requests", async () => {
+  invalidateQueryCache();
+  const options = { userId: "audit-owner", epoch: 1 };
+  const key = "/api/web/analytics?days=30";
+  let finishOld!: (value: string) => void;
+  let finishNew!: (value: string) => void;
+  let finishOther!: (value: string) => void;
+  const old = cachedQuery(key, () => new Promise((resolve) => { finishOld = resolve; }), options);
+  const other = cachedQuery("/api/web/other", () => new Promise((resolve) => { finishOther = resolve; }), options);
+
+  invalidateQueryCache(options.userId, "/api/web/analytics");
+  const latest = cachedQuery(key, () => new Promise((resolve) => { finishNew = resolve; }), options);
+  finishOld("old");
+  assert.equal(await old, "old");
+  assert.equal(peekQuery(key, options.userId), undefined);
+  const deduplicated = cachedQuery(key, async () => "duplicate", options);
+  finishNew("latest");
+  finishOther("other");
+  assert.equal(await latest, "latest");
+  assert.equal(await deduplicated, "latest");
+  assert.equal(await other, "other");
+  assert.equal(peekQuery(key, options.userId)?.data, "latest");
+  assert.equal(peekQuery("/api/web/other", options.userId)?.data, "other");
+});
+
+test("browser login takes priority over the local demo and survives reload", async (t) => {
+  const locationDescriptor = Object.getOwnPropertyDescriptor(globalThis, "location");
+  Object.defineProperty(globalThis, "location", { configurable: true, value: { hostname: "127.0.0.1" } });
+  t.after(() => {
+    if (locationDescriptor) Object.defineProperty(globalThis, "location", locationDescriptor);
+    else Reflect.deleteProperty(globalThis, "location");
+    configureApi({});
+    useAuthStore.setState(useAuthStore.getInitialState(), true);
+  });
+  configureApi({
+    getDemoToken: () => useAuthStore.getState().demoToken,
+    getUserId: () => useAuthStore.getState().userId,
+  });
+  let hasSession = true;
+  const requests: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string, options?: RequestInit) => {
+    requests.push(input);
+    const headers = new Headers(options?.headers);
+    assert.equal(headers.get("X-Ironlog-Account"), null);
+    if (input === "/auth/web/login") {
+      assert.equal(headers.get("Authorization"), null);
+      hasSession = true;
+      return Response.json({ userId: "owner-account" });
+    }
+    if (input === "/auth/web-demo") return Response.json({ token: "fixture-demo-token" });
+    assert.equal(input, "/api/me");
+    if (headers.get("Authorization") === "Bearer fixture-demo-token") return Response.json({ userId: "demo-account" });
+    return hasSession ? Response.json({ userId: "owner-account" }) : Response.json({ error: "请先登录" }, { status: 401 });
+  });
+
+  await useAuthStore.getState().bootstrap();
+  assert.deepEqual(requests, ["/api/me"]);
+  assert.equal(useAuthStore.getState().userId, "owner-account");
+  assert.equal(useAuthStore.getState().demo, false);
+
+  useAuthStore.setState(useAuthStore.getInitialState(), true);
+  hasSession = false;
+  await useAuthStore.getState().bootstrap();
+  assert.equal(useAuthStore.getState().userId, "demo-account");
+  assert.equal(useAuthStore.getState().demo, true);
+  await useAuthStore.getState().authenticate("login", "owner", "example1234");
+  assert.equal(useAuthStore.getState().userId, "owner-account");
+  assert.equal(useAuthStore.getState().demoToken, "");
+});
+
+test("offline replay stops before sending another item after switching accounts", async (t) => {
+  const localDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const onlineDescriptor = Object.getOwnPropertyDescriptor(navigator, "onLine");
+  const data = new Map<string, string>();
+  const storage = {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => { data.set(key, value); },
+    removeItem: (key: string) => { data.delete(key); },
+  };
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, value: storage });
+  Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+  t.after(() => {
+    if (localDescriptor) Object.defineProperty(globalThis, "localStorage", localDescriptor);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+    if (onlineDescriptor) Object.defineProperty(navigator, "onLine", onlineDescriptor);
+    else Reflect.deleteProperty(navigator, "onLine");
+    useAuthStore.setState(useAuthStore.getInitialState(), true);
+    useUiStore.setState(useUiStore.getInitialState(), true);
+  });
+  useAuthStore.setState({ userId: "old-account", demoToken: "" });
+  enqueueMutation(storage, "old-account", { opId: "item-one", path: "/api/records", body: { id: "old" } });
+  enqueueMutation(storage, "old-account", { opId: "item-two", path: "/api/records", body: { id: "unsent" } });
+  let release!: () => void;
+  const pending = new Promise<void>((resolve) => { release = resolve; });
+  const sent: string[] = [];
+  t.mock.method(globalThis, "fetch", async (_path: string, opts?: RequestInit) => {
+    sent.push(new Headers(opts?.headers).get("X-Ironlog-Account") ?? "");
+    await pending;
+    return Response.json({ ok: true });
+  });
+  const flushing = useUiStore.getState().syncOfflineQueue("old-account");
+  useAuthStore.setState({ userId: "new-account" });
+  release();
+  await flushing;
+  assert.deepEqual(sent, ["old-account"]);
+  assert.equal(readQueue(storage, "old-account")[0]?.opId, "item-two");
+  assert.deepEqual(readQueue(storage, "new-account"), []);
+});
+
 test("packages/web/src/styles/ironlog.css fixes mobile MoreSheet horizontal overflow and 2x2 footer clipping", () => {
   const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
   assert.match(css, /\.more-sheet-body[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\);/);
@@ -419,15 +532,16 @@ test("packages/web/src/styles/ironlog.css defines cohesive Settings accordions, 
   assert.match(css, /\.analytics-subnav\s+\.segments\s*\{[\s\S]*?grid-auto-flow:\s*column;/);
 });
 
-test("AnalyticsView and OverviewView organize statistics into 4 clear categories with balanced grids", () => {
+test("AnalyticsView and OverviewView expose statistics categories and a dedicated sleep report", () => {
   const analytics = readFileSync(resolve(process.cwd(), "packages/web/src/views/AnalyticsView.tsx"), "utf8");
   const overview = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
   const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
 
-  assert.match(analytics, /type AnalyticsSection = "load" \| "strength" \| "body" \| "reports";/);
+  assert.match(analytics, /\["sleep", "睡眠"\]/);
+  assert.match(analytics, /<SleepReportPanel\b/);
   assert.match(analytics, /type ReportCategory = "all" \| "training" \| "progress" \| "apple";/);
   assert.match(analytics, /className=\{`kpi-card kpi-card-btn/);
-  for (const label of ["负荷恢复", "肌群力量", "体态饮食", "周期报表"]) {
+  for (const label of ["负荷恢复", "肌群力量", "体态饮食", "睡眠", "周期报表"]) {
     assert.ok(analytics.includes(label), `expected analytics category ${label}`);
   }
   const bodyIdx = analytics.indexOf('{activeSection === "body" ? (');
@@ -618,4 +732,23 @@ test("De-AI refinement removes viewfinder brackets & OpenGym label, isolates gue
   assert.match(diet, /aiReady \?/);
   assert.match(overview, /MatrixText/);
   assert.match(diet, /MatrixText/);
+});
+
+test("Mobile PWA ergonomics sync theme-color, auto-select numeric inputs, add per-set ref chip, and animate swipe card", () => {
+  const html = readFileSync(resolve(process.cwd(), "packages/web/index.html"), "utf8");
+  const viteConfig = readFileSync(resolve(process.cwd(), "packages/web/vite.config.ts"), "utf8");
+  const uiStore = readFileSync(resolve(process.cwd(), "packages/web/src/store/useUiStore.ts"), "utf8");
+  const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(html, /meta name="theme-color" content="#09090b"/);
+  assert.match(viteConfig, /background_color:\s*"#09090b"/);
+  assert.match(viteConfig, /theme_color:\s*"#09090b"/);
+  assert.match(uiStore, /theme === "light" \? "#f6f6f3" : "#09090b"/);
+
+  assert.match(editor, /e\.currentTarget\.select\(\)/);
+  assert.match(editor, /className="set-ref-chip"/);
+  assert.match(css, /\.set-ref-chip\s*\{/);
+  assert.match(css, /@keyframes workoutCardIn/);
+  assert.match(css, /prefers-reduced-motion:\s*reduce/);
 });

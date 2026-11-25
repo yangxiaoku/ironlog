@@ -72,7 +72,11 @@ export function makeEditor({ api, dialog, open, refresh, notify, owner, onDraft,
     } catch (problem) {
       if (isNetworkError(problem) && queueOfflineRecord && owner?.()) {
         const typeLabel = kind === "workout" ? "训练记录" : kind === "diet" ? "饮食记录" : "体重记录";
-        queueOfflineRecord(payload, mutation.deleted ? `删除${typeLabel}` : typeLabel);
+        if (queueOfflineRecord(payload, mutation.deleted ? `删除${typeLabel}` : typeLabel) == null) {
+          error.textContent = "浏览器无法暂存离线记录。请保留此页面，联网后重新保存";
+          error.hidden = false;
+          return;
+        }
         if (keepOpen && kind === "diet" && !mutation.deleted) {
           resetKeepOpenDietForm(form, `当前离线，已暂存「${mutation.data.name}」，联网后自动同步`);
           return;

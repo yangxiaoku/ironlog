@@ -35,7 +35,7 @@ import { Auth } from "./auth.js";
 import { AiService, type AiConfig } from "./ai.js";
 import { serverCatalogue } from "./catalogue.js";
 import { AppleHealth, appleEventInput, appleWorkoutInput } from "./apple-health.js";
-import { listDailyHealth, upsertDailyHealth } from "./apple-health-daily.js";
+import { isEnabledHealthFlag, listDailyHealth, upsertDailyHealth } from "./apple-health-daily.js";
 import { readHealthDataExport } from "./health-data-export.js";
 import { catalogueETag, catalogueLookup, catalogueQuery, CloudCatalogue, exerciseFrame } from "./cloud-catalogue.js";
 import { DomainError, Store } from "./store.js";
@@ -294,8 +294,8 @@ export function createApp(
         }),
       );
     }
-    const dryRunQuery = c.req.query("dryRun");
-    const dryRun = dryRunQuery === "1" || dryRunQuery === "true" || Boolean((payload as Record<string, unknown>)?.dryRun);
+    const dryRun = isEnabledHealthFlag(c.req.query("dryRun"))
+      || isEnabledHealthFlag((payload as Record<string, unknown>)?.dryRun);
     return c.json(upsertDailyHealth(store, device.userId, payload, { dryRun }));
   });
   app.post(healthExportWebhook, async (c, next) => {

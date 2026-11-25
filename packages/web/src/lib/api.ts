@@ -36,6 +36,7 @@ export interface ApiFetchOptions {
   method?: string;
   body?: unknown;
   token?: string;
+  accountId?: string;
   timeout?: number;
   skipMutateHook?: boolean;
 }
@@ -46,14 +47,14 @@ export async function apiFetch<T = unknown>(
     method = "GET",
     body = undefined,
     token = apiHooks.getDemoToken?.() ?? "",
+    accountId = apiHooks.getUserId?.() ?? "",
     timeout = 15000,
     skipMutateHook = false,
   }: ApiFetchOptions = {},
 ): Promise<T> {
-  const userId = apiHooks.getUserId?.() ?? "";
   const headers: Record<string, string> = {};
   if (token) headers.Authorization = `Bearer ${token}`;
-  if (userId) headers["X-Ironlog-Account"] = userId;
+  if (accountId) headers["X-Ironlog-Account"] = accountId;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
   const response = await fetch(path, {

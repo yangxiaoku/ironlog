@@ -18,6 +18,7 @@ import {
 import type Database from "better-sqlite3";
 import type { Db } from "./db.js";
 import { serverCatalogue } from "./catalogue.js";
+import { appleWorkoutIdentity } from "./apple-workout-identity.js";
 
 interface Row {
   id: string;
@@ -37,6 +38,18 @@ function decode(row: Row): StoredRecord {
     data: JSON.parse(row.data),
     updatedAt: row.updated_at,
   };
+}
+
+function backupInstant(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const stamp = Date.parse(value);
+  return Number.isFinite(stamp) ? new Date(stamp).toISOString() : null;
+}
+
+function newerBackupRecord(incomingAt: string | null, existingAt: string) {
+  if (!incomingAt) return false;
+  const existing = backupInstant(existingAt);
+  return existing == null || incomingAt > existing;
 }
 export class DomainError extends Error {
   constructor(
@@ -504,21 +517,31 @@ export class Store {
   ) {
     const mode = options.mode ?? "preview";
     const strategy = options.strategy ?? "merge";
-    let parsedObj: Record<string, unknown>;
+    let parsed: unknown = rawPayload;
     if (typeof rawPayload === "string") {
       try {
-        parsedObj = JSON.parse(rawPayload) as Record<string, unknown>;
+        parsed = JSON.parse(rawPayload);
       } catch {
         throw new DomainError("备份文件不是有效的 JSON 格式", 400);
       }
-    } else if (rawPayload && typeof rawPayload === "object" && !Array.isArray(rawPayload)) {
-      parsedObj = rawPayload as Record<string, unknown>;
-    } else {
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new DomainError("备份文件格式无效", 400);
     }
+    const parsedObj = parsed as Record<string, unknown>;
 
-    if (parsedObj.format !== "ironlog" && !Array.isArray(parsedObj.records)) {
-      throw new DomainError("这不是铁记导出的全量 JSON 备份文件（缺少 format: \"ironlog\" 或 records）", 400);
+    if (!Array.isArray(parsedObj.records) || (parsedObj.format != null && parsedObj.format !== "ironlog")) {
+      throw new DomainError("备份文件缺少铁记记录清单", 400);
+    }
+    if (parsedObj.schemaVersion != null && parsedObj.schemaVersion !== 1) {
+      throw new DomainError("暂不支持此版本的铁记备份", 400);
+    }
+    if (strategy === "replace" && (parsedObj.format !== "ironlog" || parsedObj.schemaVersion !== 1)) {
+      throw new DomainError("覆盖恢复需要铁记导出的完整备份", 400);
+    }
+    if (strategy === "replace" && ["planVersions", "exerciseNotes", "bodyMeasurements", "appleHealthDaily", "appleHealthWorkouts"]
+      .some((key) => !Array.isArray(parsedObj[key]))) {
+      throw new DomainError("覆盖恢复需要包含全部数据分类的完整备份", 400);
     }
 
     const rawRecords = Array.isArray(parsedObj.records) ? (parsedObj.records as Record<string, unknown>[]) : [];
@@ -560,21 +583,24 @@ export class Store {
       deleted: boolean;
       data: unknown;
       updatedAt: string;
+      sourceUpdatedAt: string | null;
     }
 
     const validRecords: PreparedRecord[] = [];
     const previewCustomOverlay = new Map<string, Exercise>();
 
     for (const item of sortedRecords) {
-      if (!item || typeof item !== "object") continue;
-      const kindRes = entityKindSchema.safeParse(item.kind);
-      if (!kindRes.success) continue;
+      const kindRes = entityKindSchema.safeParse(item?.kind);
+      const id = typeof item?.id === "string" ? item.id.trim() : "";
+      if (!id || !kindRes.success) {
+        if (strategy === "replace") throw new DomainError("备份中含有无效记录，无法覆盖恢复", 400);
+        continue;
+      }
       const kind = kindRes.data;
-      const id = typeof item.id === "string" ? item.id.trim() : "";
-      if (!id) continue;
-      const deleted = Boolean(item.deleted);
+      const deleted = item.deleted === true || item.deleted === 1;
       const version = typeof item.version === "number" && item.version >= 1 ? Math.floor(item.version) : 1;
-      const updatedAt = typeof item.updatedAt === "string" && item.updatedAt ? item.updatedAt : now;
+      const sourceUpdatedAt = backupInstant(item.updatedAt);
+      const updatedAt = sourceUpdatedAt ?? now;
 
       const parsedData = schemas[kind].safeParse(item.data);
       if (!parsedData.success && !deleted) {
@@ -605,7 +631,7 @@ export class Store {
         }
       }
 
-      validRecords.push({ id, kind, version, deleted, data, updatedAt });
+      validRecords.push({ id, kind, version, deleted, data, updatedAt, sourceUpdatedAt });
     }
 
     const counts = {
@@ -630,13 +656,7 @@ export class Store {
       const existing = this.get(userId, rec.kind, rec.id);
       if (!existing) {
         toImport++;
-      } else if (
-        strategy === "replace" ||
-        rec.updatedAt > existing.updatedAt ||
-        (existing.deleted && !rec.deleted) ||
-        JSON.stringify(existing.data) !== JSON.stringify(rec.data) ||
-        existing.deleted !== rec.deleted
-      ) {
+      } else if (strategy === "replace" || newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) {
         toUpdate++;
       } else {
         unchanged++;
@@ -687,12 +707,7 @@ export class Store {
           this.listCache.clear();
           importedCount++;
         } else {
-          const changed =
-            rec.updatedAt > existing.updatedAt ||
-            (existing.deleted && !rec.deleted) ||
-            JSON.stringify(existing.data) !== JSON.stringify(rec.data) ||
-            existing.deleted !== rec.deleted;
-          if (!changed) {
+          if (!newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) {
             skippedCount++;
             continue;
           }
@@ -752,13 +767,14 @@ export class Store {
       // Restore exerciseNotes
       const stmtUpsertNote = this.db.prepare(
         `INSERT INTO exercise_notes VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id, exercise_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at`,
+         ON CONFLICT(user_id, exercise_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at
+         WHERE ? AND (julianday(exercise_notes.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(exercise_notes.updated_at))`,
       );
       for (const noteItem of rawNotes) {
         const exId = typeof noteItem?.exerciseId === "string" ? noteItem.exerciseId.trim() : "";
         const note = typeof noteItem?.note === "string" ? noteItem.note : "";
-        const upAt = typeof noteItem?.updatedAt === "string" ? noteItem.updatedAt : now;
-        if (exId && note) stmtUpsertNote.run(userId, exId, note, upAt);
+        const upAt = backupInstant(noteItem?.updatedAt);
+        if (exId && note) stmtUpsertNote.run(userId, exId, note, upAt ?? now, Number(upAt != null));
       }
 
       // Restore bodyMeasurements
@@ -766,12 +782,14 @@ export class Store {
         `INSERT INTO body_measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, date) DO UPDATE SET
            waist_cm = excluded.waist_cm, chest_cm = excluded.chest_cm, arm_cm = excluded.arm_cm,
-           thigh_cm = excluded.thigh_cm, hip_cm = excluded.hip_cm, notes = excluded.notes, updated_at = excluded.updated_at`,
+           thigh_cm = excluded.thigh_cm, hip_cm = excluded.hip_cm, notes = excluded.notes, updated_at = excluded.updated_at
+         WHERE ? AND (julianday(body_measurements.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(body_measurements.updated_at))`,
       );
       const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
       for (const m of rawMeasurements) {
         const date = typeof m?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.date) ? m.date : "";
         if (!date) continue;
+        const upAt = backupInstant(m.updatedAt);
         stmtUpsertMeas.run(
           userId,
           date,
@@ -781,42 +799,58 @@ export class Store {
           numOrNull(m.thighCm),
           numOrNull(m.hipCm),
           typeof m.notes === "string" ? m.notes : "",
-          typeof m.updatedAt === "string" ? m.updatedAt : now,
+          upAt ?? now,
+          Number(upAt != null),
         );
       }
 
       // Restore appleHealthDaily
       const stmtUpsertDaily = this.db.prepare(
         `INSERT INTO apple_health_daily VALUES (?, ?, ?, ?)
-         ON CONFLICT(user_id, date) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data`,
+         ON CONFLICT(user_id, date) DO UPDATE SET updated_at = excluded.updated_at, data = excluded.data
+         WHERE ? AND (julianday(apple_health_daily.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(apple_health_daily.updated_at))`,
       );
       for (const d of rawAppleDaily) {
         const date = typeof d?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d.date) ? d.date : "";
         if (!date) continue;
-        const upAt = typeof d.updatedAt === "string" ? d.updatedAt : now;
-        const { updatedAt: _u, ...restData } = d;
-        stmtUpsertDaily.run(userId, date, upAt, JSON.stringify({ ...restData, date }));
+        const upAt = backupInstant(d.updatedAt);
+        const { updatedAt: _u, syncedSleepObservations: _s, syncedWeightValue: _w, syncedBodyFatValue: _f, ...restData } = d;
+        stmtUpsertDaily.run(userId, date, upAt ?? now, JSON.stringify({ ...restData, date }), Number(upAt != null));
       }
 
       // Restore appleHealthWorkouts
-      const stmtUpsertAppleWorkout = this.db.prepare(
-        `INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)
-         ON CONFLICT(user_id, identity_key) DO UPDATE SET
-           ended_at = excluded.ended_at, received_at = excluded.received_at, data = excluded.data`,
-      );
+      const stmtAppleById = this.db.prepare("SELECT id, received_at FROM apple_health_workouts WHERE user_id = ? AND id = ?");
+      const stmtAppleByIdentity = this.db.prepare("SELECT id, received_at FROM apple_health_workouts WHERE user_id = ? AND identity_key = ?");
+      const stmtAppleIdInUse = this.db.prepare("SELECT 1 FROM apple_health_workouts WHERE id = ?");
+      const stmtInsertApple = this.db.prepare("INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)");
+      const stmtUpdateApple = this.db.prepare("UPDATE apple_health_workouts SET ended_at = ?, received_at = ?, data = ? WHERE user_id = ? AND id = ?");
       for (const w of rawAppleWorkouts) {
         if (!w || typeof w !== "object") continue;
-        const wid = typeof w.id === "string" && w.id ? w.id : randomUUID();
-        const endedAt = typeof w.endedAt === "string" && w.endedAt
-          ? w.endedAt
-          : typeof w.date === "string" ? `${w.date}T12:00:00.000Z` : now;
-        const receivedAt = typeof w.receivedAt === "string" && w.receivedAt ? w.receivedAt : now;
-        const extId = typeof w.externalId === "string" && w.externalId ? w.externalId : null;
-        const actType = typeof w.activityType === "string" && w.activityType ? w.activityType : "other";
-        const startedAt = typeof w.startedAt === "string" && w.startedAt ? w.startedAt : endedAt;
-        const identityKey = extId ? `ext:${extId}` : `window:${actType}:${startedAt}:${endedAt}`;
+        const inputId = typeof w.id === "string" ? w.id.trim() : "";
+        const endedAt = backupInstant(w.endedAt);
+        const startedAt = backupInstant(w.startedAt);
+        if (!endedAt || !startedAt || startedAt >= endedAt || typeof w.activityType !== "string" || !w.activityType.trim()) continue;
+        const receivedAt = backupInstant(w.receivedAt);
+        const externalId = w.externalWorkoutId ?? w.externalId;
+        const identity = {
+          externalWorkoutId: typeof externalId === "string" && externalId.trim() ? externalId.trim() : null,
+          activityType: w.activityType,
+          startedAt,
+          endedAt,
+        };
+        const identityKey = appleWorkoutIdentity(identity);
+        const existing = (stmtAppleByIdentity.get(userId, identityKey) ?? (
+          inputId ? stmtAppleById.get(userId, inputId) : undefined
+        )) as { id: string; received_at: string } | undefined;
         const { id: _id, receivedAt: _rec, ...workoutPayload } = w;
-        stmtUpsertAppleWorkout.run(wid, userId, identityKey, endedAt, receivedAt, JSON.stringify(workoutPayload));
+        const data = JSON.stringify({ ...workoutPayload, ...identity });
+        if (existing) {
+          if (newerBackupRecord(receivedAt, existing.received_at))
+            stmtUpdateApple.run(endedAt, receivedAt, data, userId, existing.id);
+        } else {
+          const id = inputId && !stmtAppleIdInUse.get(inputId) ? inputId : randomUUID();
+          stmtInsertApple.run(id, userId, identityKey, endedAt, receivedAt ?? now, data);
+        }
       }
 
       this.listCache.clear();

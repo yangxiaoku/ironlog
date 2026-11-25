@@ -233,6 +233,9 @@ test("数据分析接口鉴权、空账户默认值、多维度指标与文献�
     const res = await call(`/api/web/analytics?days=30&through=${today}`);
     assert.equal(res.status, 200);
     const data = (await res.json()) as ReturnType<typeof getWebAnalytics>;
+    assert.ok(data.periodComparison.current.sessions > 0);
+    assert.equal(data.periodComparison.previous.sessions, 0);
+    assert.equal(data.periodComparison.deltas.sessionsPct, null);
 
     // 1. User profile
     assert.equal(data.userProfile.weightKg, 75);
@@ -283,6 +286,75 @@ test("数据分析接口鉴权、空账户默认值、多维度指标与文献�
     assert.equal(data.citations.zourdos2016.year, 2016);
     assert.equal(data.citations.hall2008.year, 2008);
     assert.equal(Object.keys(data.citations).length, 12);
+  } finally {
+    db.close();
+  }
+});
+
+test("睡眠报表区分缺测与汇总，按相邻夜晚比较睡眠中点并隔离账号", async () => {
+  const { db, call, owner, other } = fixture();
+  try {
+    const through = shiftDay(localDate(), -2);
+    const date = (offset: number) => shiftDay(through, offset);
+    const putDaily = db.prepare("INSERT INTO apple_health_daily VALUES (?, ?, ?, ?)");
+    const put = (offset: number, data: object) =>
+      putDaily.run(owner.userId, date(offset), new Date().toISOString(), JSON.stringify({ source: "shortcut", ...data }));
+    const time = (offset: number, label: string) => Date.parse(`${date(offset)}T${label}:00+08:00`);
+    const timed = (offset: number, start: string) => [time(offset - 1, start), time(offset, "04:00")];
+    const first = timed(-13, "20:00");
+    put(-13, {
+      sleepMinutes: 900,
+      syncedSleepObservations: [
+        { stage: "asleep", interval: first },
+        { stage: "core", interval: [first[0], time(-13, "03:00")] },
+        { stage: "deep", interval: [time(-13, "02:00"), first[1]] },
+        { stage: "awake", interval: [first[1], time(-13, "04:15")] },
+        { stage: "asleep", interval: [time(-13, "14:00"), time(-13, "14:30")] },
+        { stage: "rem", minutes: 75 },
+      ],
+    });
+    for (const [offset, start] of [[-12, "20:40"], [-11, "19:40"], [-10, "20:00"]] as const) {
+      put(offset, { syncedSleepObservations: [{ stage: "asleep", interval: timed(offset, start) }] });
+    }
+    put(-9, { sleepMinutes: 0, steps: 1000 });
+    put(-8, { sleepMinutes: 410, sleepCoreMinutes: 260, sleepDeepMinutes: 70 });
+    put(-6, { sleepMinutes: 420 });
+    put(-3, { sleepMinutes: 390 });
+    put(1, { sleepMinutes: 540 });
+    for (let offset = -20; offset <= -14; offset++) put(offset, { sleepMinutes: 400 });
+
+    const path = `/api/web/analytics?days=14&through=${through}`;
+    const result = await call(path);
+    assert.equal(result.status, 200);
+    const data = await result.json() as ReturnType<typeof getWebAnalytics>;
+    const { sleepReport } = data;
+    assert.equal(sleepReport.series.length, 14);
+    assert.equal(sleepReport.series.at(-1)?.date, through);
+    assert.equal(sleepReport.current.recordedDays, 7);
+    assert.equal(sleepReport.current.averageMinutes, 450);
+    assert.equal(sleepReport.current.referenceDays, 5);
+    assert.equal(sleepReport.previous.recordedDays, 7);
+    assert.equal(sleepReport.averageChangeMinutes, 50);
+    assert.deepEqual(sleepReport.timing, { measuredDays: 4, adjacentPairs: 3, medianShiftMinutes: 20 });
+    assert.equal(sleepReport.series[0]?.minutes, 510);
+    assert.equal(sleepReport.series[0]?.window?.endAt, new Date(first[1]!).toISOString());
+    assert.equal(sleepReport.series[0]?.source, "intervals");
+    assert.equal(sleepReport.series[0]?.stages, null);
+    assert.equal(sleepReport.series[4]?.minutes, null);
+    assert.deepEqual(sleepReport.series[5]?.stages, { core: 260, deep: 70, rem: null });
+    assert.equal(sleepReport.series[5]?.source, "summary");
+    assert.equal(sleepReport.series[5]?.window, null);
+    assert.equal(data.appleDaily.averages.sleepMinutes, sleepReport.current.averageMinutes);
+    assert.equal(data.appleDaily.series[0]?.sleepMinutes, sleepReport.series[0]?.minutes);
+    assert.equal(JSON.stringify(data).includes("syncedSleepObservations"), false);
+
+    db.prepare("DELETE FROM apple_health_daily WHERE user_id = ? AND date = ?").run(owner.userId, date(-12));
+    const sparse = await (await call(path)).json() as ReturnType<typeof getWebAnalytics>;
+    assert.equal(sparse.sleepReport.averageChangeMinutes, null);
+    assert.deepEqual(sparse.sleepReport.timing, { measuredDays: 3, adjacentPairs: 1, medianShiftMinutes: null });
+    const isolated = await (await call(path, { token: other.token })).json() as ReturnType<typeof getWebAnalytics>;
+    assert.equal(isolated.sleepReport.current.recordedDays, 0);
+    assert.equal(isolated.sleepReport.current.averageMinutes, null);
   } finally {
     db.close();
   }

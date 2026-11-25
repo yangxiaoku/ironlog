@@ -43,7 +43,7 @@ test("离线写队列支持 FIFO 入队、按 opId 去重与按序完整回放",
     sent.push({ path, id: opts.body.id, seq: opts.body.seq });
   });
 
-  assert.deepEqual(result, { synced: 2, remaining: 0, stoppedOffline: false, authRequired: false, dropped: [] });
+  assert.deepEqual(result, { synced: 2, remaining: 0, stoppedOffline: false, authRequired: false, blocked: [], storageError: false });
   assert.deepEqual(sent, [
     { path: "/api/records", id: "r2", seq: 2 },
     { path: "/api/records", id: "r1", seq: 9 },
@@ -81,7 +81,7 @@ test("弱网重放遇断网立即保留剩余队列，恢复网络后继续完�
   assert.deepEqual(resumedIds, ["b", "c"]);
 });
 
-test("401 鉴权过期保留队列不丢弃，409 冲突仅跳过冲突项并继续同步后续记录", async () => {
+test("401 保留队列，409 保留冲突内容并继续同步后续记录", async () => {
   const storage = memoryStorage();
   const userId = "usr_3";
 
@@ -96,18 +96,39 @@ test("401 鉴权过期保留队列不丢弃，409 冲突仅跳过冲突项并继
   assert.equal(authRes.remaining, 2);
   assert.equal(readQueue(storage, userId).length, 2);
 
-  // 409 冲突剔除并继续同步 op-valid
+  // 409 冲突留在本机并继续同步 op-valid
   const flushedIds = [];
   const conflictRes = await flushQueue(storage, userId, async (_path, opts) => {
     if (opts.body.id === "old") throw Object.assign(new Error("版本冲突"), { status: 409 });
     flushedIds.push(opts.body.id);
   });
   assert.equal(conflictRes.synced, 1);
-  assert.equal(conflictRes.remaining, 0);
-  assert.equal(conflictRes.dropped.length, 1);
-  assert.equal(conflictRes.dropped[0].item.opId, "op-conflict");
+  assert.equal(conflictRes.remaining, 1);
+  assert.equal(conflictRes.blocked.length, 1);
+  assert.equal(conflictRes.blocked[0]?.opId, "op-conflict");
+  assert.equal(conflictRes.blocked[0]?.failure?.status, 409);
+  assert.deepEqual(readQueue(storage, userId)[0]?.body, { id: "old" });
   assert.deepEqual(flushedIds, ["fresh"]);
+  const after = await flushQueue(storage, userId, async () => assert.fail("冲突项不应自动重发"));
+  assert.equal(after.blocked.length, 1);
 
   clearQueue(storage, userId);
   assert.equal(readQueue(storage, userId).length, 0);
+});
+
+test("离线队列写满时报告失败，服务器限流和本地移除失败时保留记录", async () => {
+  const item = { opId: "offline-save", path: "/api/records", body: { id: "workout" } };
+  const storage = memoryStorage();
+  const full = { ...storage, setItem() { throw new Error("quota"); } };
+  assert.equal(enqueueMutation(full, "owner", item), null);
+  assert.equal(readQueue(storage, "owner").length, 0);
+  assert.equal(enqueueMutation(storage, "owner", item), 1);
+  const limited = await flushQueue(storage, "owner", async () => { throw Object.assign(new Error("rate limited"), { status: 429 }); });
+  assert.equal(limited.remaining, 1);
+  assert.deepEqual(limited.blocked, []);
+  const locked = { ...storage, removeItem() { throw new Error("quota"); } };
+  const after = await flushQueue(locked, "owner", async () => {});
+  assert.equal(after.storageError, true);
+  assert.equal(after.remaining, 1);
+  assert.equal(readQueue(storage, "owner")[0]?.opId, item.opId);
 });

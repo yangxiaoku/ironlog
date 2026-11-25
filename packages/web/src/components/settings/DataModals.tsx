@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { fmt } from "../../lib/date";
@@ -239,48 +239,48 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
   const [fileName, setFileName] = useState("");
   const [rawText, setRawText] = useState("");
   const [strategy, setStrategy] = useState<"merge" | "replace">("merge");
-  const [parsedBackup, setParsedBackup] = useState<unknown>(null);
-  const [preview, setPreview] = useState<BackupPreviewRes | null>(null);
+  const strategyRef = useRef(strategy);
+  const previewRequest = useRef(0);
+  const [validated, setValidated] = useState<{ backup: unknown; preview: BackupPreviewRes } | null>(null);
   const [armedReplace, setArmedReplace] = useState(false);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
+  const preview = validated?.preview;
 
   const runPreview = async (txt: string, nextStrategy: "merge" | "replace") => {
+    const request = ++previewRequest.current;
     const clean = txt.trim();
     setError("");
     setArmedReplace(false);
+    setValidated(null);
+    setPreviewing(false);
     if (!clean) {
-      setPreview(null);
-      setParsedBackup(null);
       return;
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(clean);
     } catch {
-      setPreview(null);
       setError("备份内容不是合法的 JSON 格式");
       return;
     }
-    setParsedBackup(parsed);
     setPreviewing(true);
     try {
       const res = await apiFetch<BackupPreviewRes>("/api/web/restore-backup", {
         method: "POST",
         body: { backup: parsed, mode: "preview", strategy: nextStrategy },
       });
-      setPreview(res);
+      if (request === previewRequest.current) setValidated({ backup: parsed, preview: res });
     } catch (err) {
-      setPreview(null);
-      setError((err as Error)?.message || "预览恢复失败");
+      if (request === previewRequest.current) setError((err as Error)?.message || "预览恢复失败");
     } finally {
-      setPreviewing(false);
+      if (request === previewRequest.current) setPreviewing(false);
     }
   };
 
   const commitRestore = async () => {
-    if (!parsedBackup || committing) return;
+    if (!validated || validated.preview.strategy !== strategy || previewing || committing) return;
     if (strategy === "replace" && !armedReplace) {
       setArmedReplace(true);
       return;
@@ -290,7 +290,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
     try {
       const res = await apiFetch<{ imported: number; updated: number }>("/api/web/restore-backup", {
         method: "POST",
-        body: { backup: parsedBackup, mode: "commit", strategy },
+        body: { backup: validated.backup, mode: "commit", strategy },
       });
       bumpDataEpoch();
       closeAllModals();
@@ -314,20 +314,30 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
         <input
           type="file"
           accept=".json,application/json"
+          disabled={committing}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (!file) return;
+            const request = ++previewRequest.current;
+            setValidated(null);
+            setRawText("");
+            setArmedReplace(false);
             if (file.size > 16_000_000) {
-              setPreview(null);
-              setParsedBackup(null);
-              setArmedReplace(false);
+              setPreviewing(false);
               setError("备份文件超过 16 MB");
               return;
             }
             setFileName(`已加载：${file.name}`);
+            setError("");
+            setPreviewing(true);
             void file.text().then((txt) => {
+              if (request !== previewRequest.current) return;
               setRawText(txt);
-              void runPreview(txt, strategy);
+              void runPreview(txt, strategyRef.current);
+            }).catch(() => {
+              if (request !== previewRequest.current) return;
+              setPreviewing(false);
+              setError("无法读取备份文件");
             });
           }}
         />
@@ -340,10 +350,12 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       <textarea
         rows={5}
         value={rawText}
+        disabled={committing}
         onChange={(e) => {
+          ++previewRequest.current;
           setRawText(e.target.value);
-          setPreview(null);
-          setParsedBackup(null);
+          setValidated(null);
+          setPreviewing(false);
           setArmedReplace(false);
           setError("");
         }}
@@ -354,8 +366,10 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
         <select
           aria-label="恢复策略"
           value={strategy}
+          disabled={committing}
           onChange={(e) => {
             const next = e.target.value as "merge" | "replace";
+            strategyRef.current = next;
             setStrategy(next);
             if (rawText.trim()) void runPreview(rawText, next);
           }}
@@ -363,7 +377,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
           <option value="merge">智能合并（推荐：保留现有数据，仅导入缺失或更新的记录）</option>
           <option value="replace">完整覆盖（清空当前账号数据，完整还原至此备份）</option>
         </select>
-        <button type="button" className="secondary-button" disabled={previewing} onClick={() => void runPreview(rawText, strategy)}>
+        <button type="button" className="secondary-button" disabled={previewing || committing} onClick={() => void runPreview(rawText, strategy)}>
           {previewing ? "解析中…" : "解析预览"}
         </button>
       </div>
@@ -387,7 +401,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
             <div><span>计划/模板</span><strong>{(c.plans ?? 0) + (c.templates ?? 0)} <small>份</small></strong></div>
           </div>
           <p className="muted csv-custom-note">
-            将新增 <b>{d.toImport ?? 0}</b> 项 · 更新 <b>{d.toUpdate ?? 0}</b> 项 · 已一致跳过 <b>{d.unchanged ?? 0}</b> 项
+            将新增 <b>{d.toImport ?? 0}</b> 项 · 更新 <b>{d.toUpdate ?? 0}</b> 项 · 保留现有 <b>{d.unchanged ?? 0}</b> 项
             {c.appleDaily || c.appleWorkouts ? ` · 含 Apple 健康 ${c.appleDaily ?? 0} 天 / ${c.appleWorkouts ?? 0} 场训练` : ""}
           </p>
         </div>
@@ -400,7 +414,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
         <button
           type="button"
           className="primary-button"
-          disabled={committing || !preview}
+          disabled={committing || previewing || !preview || preview.strategy !== strategy}
           onClick={() => void commitRestore()}
         >
           {committing ? "恢复中…" : armedReplace ? "确认清空并覆盖恢复" : "确认恢复"}

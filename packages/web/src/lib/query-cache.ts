@@ -11,13 +11,18 @@ export interface QueryCacheHooks {
   getDataEpoch?: () => number;
 }
 
+interface PendingQuery {
+  userId: string;
+  cacheKey: string;
+  promise: Promise<unknown>;
+}
+
 const DEFAULT_TTL_MS = 5 * 60_000;
 const MAX_ENTRIES_PER_USER = 120;
 
 let hooks: QueryCacheHooks = {};
-let cacheGeneration = 0;
 const store = new Map<string, Map<string, CachedEntry>>();
-const inFlight = new Map<string, Promise<unknown>>();
+const inFlight = new Map<string, PendingQuery>();
 
 export function configureQueryCache(nextHooks: QueryCacheHooks): void {
   hooks = nextHooks;
@@ -101,26 +106,23 @@ export async function cachedQuery<T>(
     return existing!.data;
   }
 
-  const flightKey = `${uid}::${ep}::${cacheKey}`;
+  const flightKey = JSON.stringify([uid, ep, cacheKey]);
   const pending = inFlight.get(flightKey);
-  if (pending) return pending as Promise<T>;
+  if (pending) return pending.promise as Promise<T>;
 
-  const gen = cacheGeneration;
-  const req = (async () => {
-    try {
-      const data = await fetcher();
-      // Record under the fetched epoch only if cache was not invalidated while in flight
-      if (gen === cacheGeneration) {
+  const request: Promise<T> = new Promise<T>((resolve) => resolve(fetcher()))
+    .then((data) => {
+      if (inFlight.get(flightKey) === flight) {
         writeQueryCache(cacheKey, data, { userId: uid, epoch: ep });
       }
       return data;
-    } finally {
-      inFlight.delete(flightKey);
-    }
-  })();
-
-  inFlight.set(flightKey, req);
-  return req;
+    })
+    .finally(() => {
+      if (inFlight.get(flightKey) === flight) inFlight.delete(flightKey);
+    });
+  const flight: PendingQuery = { userId: uid, cacheKey, promise: request };
+  inFlight.set(flightKey, flight);
+  return request;
 }
 
 export function cachedApiFetch<T = unknown>(
@@ -138,21 +140,22 @@ export function cachedApiFetch<T = unknown>(
 }
 
 export function invalidateQueryCache(userId?: string, keyPrefix?: string): void {
-  cacheGeneration++;
   if (userId === undefined) {
     store.clear();
     inFlight.clear();
     return;
   }
-  const bucket = store.get(userId);
-  if (!bucket) return;
+  for (const [key, flight] of inFlight) {
+    if (flight.userId === userId && (!keyPrefix || flight.cacheKey.startsWith(keyPrefix))) {
+      inFlight.delete(key);
+    }
+  }
   if (!keyPrefix) {
     store.delete(userId);
-    for (const k of inFlight.keys()) {
-      if (k.startsWith(`${userId}::`)) inFlight.delete(k);
-    }
     return;
   }
+  const bucket = store.get(userId);
+  if (!bucket) return;
   for (const key of bucket.keys()) {
     if (key.startsWith(keyPrefix)) bucket.delete(key);
   }

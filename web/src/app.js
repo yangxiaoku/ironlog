@@ -5,7 +5,7 @@ import { appleDailyDetailsModal, appleLine, appleWorkoutDetails, openDeviceSetup
 import { badgesOverviewStrip, filterVisibleBadges, renderBadgeSections, renderBadgesView, badgeDetailModal } from "./badges-ui.js";
 import { onboardingSeenKey, welcomeDismissedKey, renderWelcomeChecklist, openOnboardingGuide } from "./onboarding-ui.js";
 import { primeSharedAudio, triggerHaptic } from "./workout-clock.js";
-import { clearQueue, enqueueMutation, flushQueue, isNetworkError, readQueue } from "./offline-queue.js";
+import { enqueueMutation, flushQueue, getOfflineStorage, isNetworkError, readQueue } from "./offline-queue.js";
 import { createModalStack } from "./modal-stack.js";
 import { renderMeasurementsSection, createDietWeightModals } from "./diet-weight-modals.js";
 
@@ -191,11 +191,11 @@ function notify(message, action = null) {
     if (id === notices) toast.classList.remove("shown", "has-action");
   }, hasAction ? 4500 : 1900);
 }
-async function api(path, { method = "GET", body = undefined, token = state.demoToken, timeout = 15000 } = {}) {
+async function api(path, { method = "GET", body = undefined, token = state.demoToken, accountId = state.userId, timeout = 15000 } = {}) {
   const response = await fetch(path, {
     method, credentials: "same-origin", headers: {
       ...(token && { Authorization: "Bearer " + token }),
-      ...(state.userId && { "X-Ironlog-Account": state.userId }),
+      ...(accountId && { "X-Ironlog-Account": accountId }),
       ...(body !== undefined && { "Content-Type": "application/json" }),
     },
     ...(body !== undefined && { body: JSON.stringify(body) }),
@@ -207,7 +207,7 @@ async function api(path, { method = "GET", body = undefined, token = state.demoT
     (path.startsWith("/auth/web/") ? data?.details?.[0]?.message : null) ?? data?.error ?? "请求失败，请重试",
   ), { status: response.status });
   if (data === undefined) throw new Error("服务器没有返回有效数据");
-  if (method !== "GET" && !path.startsWith("/auth/") && !readOnlyPostPaths.has(path.split("?")[0])) {
+  if (accountId === state.userId && method !== "GET" && !path.startsWith("/auth/") && !readOnlyPostPaths.has(path.split("?")[0])) {
     dataEpoch++;
     state.dayCache.clear();
     const cleanPath = path.split("?")[0];
@@ -219,39 +219,56 @@ async function api(path, { method = "GET", body = undefined, token = state.demoT
 
 let flushingOfflineQueue = false;
 function pendingQueueCount() {
-  return state.userId ? readQueue(localStorage, state.userId).length : 0;
+  return readQueue(getOfflineStorage(), state.userId).length;
 }
 function queueOfflineRecord(body, label = "记录") {
-  if (!state.userId) return 0;
-  const count = enqueueMutation(localStorage, state.userId, {
+  const count = enqueueMutation(getOfflineStorage(), state.userId, {
     opId: body.opId,
     path: "/api/records",
     method: "POST",
     body,
     label,
   });
-  nav();
+  if (count != null) nav();
   return count;
 }
 async function syncOfflineQueue({ silent = false } = {}) {
   if (!state.userId || flushingOfflineQueue || (typeof navigator !== "undefined" && !navigator.onLine)) return null;
   if (pendingQueueCount() === 0) return null;
+  const { userId, demoToken } = state;
+  const isCurrentAccount = () => state.userId === userId && state.demoToken === demoToken;
   flushingOfflineQueue = true;
   try {
-    const res = await flushQueue(localStorage, state.userId, (path, opts) => api(path, opts));
+    const res = await flushQueue(getOfflineStorage(), userId, (path, opts) => {
+      if (!isCurrentAccount()) throw Object.assign(new Error("账号已切换"), { status: 401 });
+      return api(path, { ...opts, accountId: userId, token: demoToken });
+    });
+    if (!isCurrentAccount()) return null;
     nav();
     if (res.synced > 0) {
       dataEpoch++;
       state.dayCache.clear();
       if (!dialog.open) void renderRoute();
+    }
+    if (res.storageError) {
+      if (!silent) notify("浏览器暂时无法读取或更新离线记录");
+    } else if (res.blocked.length > 0 && (!silent || res.synced > 0)) {
+      notify(`${res.blocked.length} 条离线记录待处理，原内容保存在本机`, {
+        label: "复制记录",
+        onClick: async () => {
+          if (!isCurrentAccount()) return;
+          const copied = await copyText(JSON.stringify(res.blocked, null, 2));
+          notify(copied ? "待处理的记录已复制" : "浏览器无法复制，记录仍保存在本机");
+        },
+      });
+    } else if (res.synced > 0) {
       notify(`已自动同步 ${res.synced} 条离线记录`);
     } else if (!silent && res.stoppedOffline) {
       notify("网络仍不稳定，待恢复后继续自动同步");
     } else if (!silent && res.authRequired) {
       notify("登录已过期，请重新登录后同步离线记录");
-    }
-    if (res.dropped.length > 0) {
-      notify(`${res.dropped.length} 条离线记录与服务端冲突，已保留最新服务端版本`);
+    } else if (!silent && res.remaining > 0) {
+      notify("服务器暂时无法接收，稍后可重试同步");
     }
     return res;
   } finally {
@@ -271,7 +288,6 @@ function clearUser() {
   requestId++;
   reportShareUi?.clearReportApple();
   dataEpoch = 0;
-  if (state.userId) clearQueue(localStorage, state.userId);
   const prefix = "ironlog-web-draft:" + state.userId + ":";
   if (state.userId) for (const storage of [localStorage, sessionStorage]) {
     for (const key of Object.keys(storage)) if (key.startsWith(prefix)) storage.removeItem(key);
@@ -2655,8 +2671,8 @@ async function handleRecordSwipe(rowEl, direction) {
         notify(`已删除 ${shortDate(record.data.date)} 体重记录`, { label: "撤销", onClick: restore });
       }
     } catch (err) {
-      if (isNetworkError(err) && state.userId) {
-        queueOfflineRecord(deleteBody, record.kind === "diet" ? "删除饮食" : "删除体重");
+      if (isNetworkError(err) && state.userId
+        && queueOfflineRecord(deleteBody, record.kind === "diet" ? "删除饮食" : "删除体重") != null) {
         notify("当前离线，删除已暂存同步队列");
         return;
       }

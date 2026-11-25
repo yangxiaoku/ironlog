@@ -3,7 +3,7 @@ import { apiFetch } from "../../lib/api";
 import { fmt, today } from "../../lib/date";
 import { shiftDateStr, type RecordEnvelope, type WeightData } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
-import { enqueueMutation, isNetworkError } from "../../lib/offline-queue";
+import { enqueueMutation, getOfflineStorage, isNetworkError } from "../../lib/offline-queue";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -121,14 +121,18 @@ export function WeightEditorModal({
       closeAllModals();
       notify(record ? "体重记录已更新" : "体重已记录");
     } catch (err) {
-      if (isNetworkError(err) && userId && typeof localStorage !== "undefined") {
-        enqueueMutation(localStorage, userId, {
+      if (isNetworkError(err) && userId) {
+        const queued = enqueueMutation(getOfflineStorage(), userId, {
           opId: payload.opId,
           path: "/api/records",
           method: "POST",
           body: payload,
           label: `体重：${fmt(payload.data.weight, 1)} kg`,
         });
+        if (queued == null) {
+          setError("浏览器无法暂存离线记录。请保留此页面，联网后重新保存");
+          return;
+        }
         refreshPendingCount(userId);
         closeAllModals();
         notify("离线状态：体重已暂存本地");

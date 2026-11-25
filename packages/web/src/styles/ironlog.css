@@ -1529,6 +1529,51 @@ dialog.workout-dialog .workout-inline-add-btn {
   will-change: transform;
 }
 
+.workout-swipe-stage > .exercise-editor {
+  animation: workoutCardIn 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes workoutCardIn {
+  from {
+    opacity: 0.72;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.set-ref-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--muted);
+  font: 600 11px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color 0.14s ease, color 0.14s ease, background 0.14s ease;
+}
+
+.set-ref-chip:hover {
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+.set-ref-chip:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workout-swipe-stage > .exercise-editor {
+    animation: none;
+  }
+}
+
 .workout-swipe-hint {
   margin: 2px 0 0;
   text-align: center;
