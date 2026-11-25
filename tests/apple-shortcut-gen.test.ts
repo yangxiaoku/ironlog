@@ -176,7 +176,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "WFStringSubstitutableState",
     "<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>",
     "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>",
-    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>",
+    "<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>",
     "<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>",
     "<key>WFContentItemLimitNumber</key>\n\t\t\t\t<integer>1</integer>",
     "<string>Steps</string>",

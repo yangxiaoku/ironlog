@@ -141,7 +141,7 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
   assert.ok(dailyNoCreds.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>"));
-  assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>"));
   assert.ok(!dailyNoCreds.xml.includes("<integer>1002</integer>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>VO2 Max</string>"));
@@ -200,7 +200,7 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.equal(hubUniversal.metricCount, 6);
   assert.ok(hubUniversal.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
   assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>"));
-  assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>1</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>"));
   assert.ok(!hubUniversal.xml.includes("<integer>1002</integer>"));
   assert.ok(hubUniversal.xml.includes("<string>Resting Calories</string>"));
@@ -241,7 +241,9 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
     );
   }
   assert.ok(hubUniversal.xml.includes("【传统力量训练】"));
-  assert.ok(!hubUniversal.xml.includes("<string>is.workflow.actions.workout.start</string>"));
+  const startWorkoutCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.workout\.start<\/string>/g) ?? []).length;
+  assert.equal(startWorkoutCount, 16, `expected Start Workout in all 16 launch routes, got ${startWorkoutCount}`);
+  assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>"));
   assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>coreTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));

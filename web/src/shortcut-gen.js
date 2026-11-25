@@ -526,7 +526,7 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
       "\t\t\t\t\t\t\t\t\t<dict>",
       "\t\t\t\t\t\t\t\t\t\t<key>Number</key>",
-      `\t\t\t\t\t\t\t\t\t\t<string>${escapeXml(String(amount))}</string>`,
+      `\t\t\t\t\t\t\t\t\t\t<integer>${Math.max(1, Math.round(amount))}</integer>`,
       "\t\t\t\t\t\t\t\t\t\t<key>Unit</key>",
       `\t\t\t\t\t\t\t\t\t\t<integer>${unitCode}</integer>`,
       "\t\t\t\t\t\t\t\t\t</dict>",
@@ -590,7 +590,14 @@ function findHealthSampleActionXml({
     params.push("\t\t\t\t<key>WFContentItemLimitEnabled</key>", "\t\t\t\t<false/>");
   }
   if (unit) params.push("\t\t\t\t<key>WFHKSampleFilteringUnit</key>", `\t\t\t\t<string>${escapeXml(unit)}</string>`);
-  if (groupBy) params.push("\t\t\t\t<key>WFHKSampleFilteringGroupBy</key>", `\t\t\t\t<string>${escapeXml(groupBy)}</string>`);
+  if (groupBy) {
+    params.push(
+      "\t\t\t\t<key>WFHKSampleFilteringFillMissing</key>",
+      "\t\t\t\t<false/>",
+      "\t\t\t\t<key>WFHKSampleFilteringGroupBy</key>",
+      `\t\t\t\t<string>${escapeXml(groupBy)}</string>`,
+    );
+  }
 
   return actionBlockXml("is.workflow.actions.filter.health.quantity", params.join("\n"));
 }
