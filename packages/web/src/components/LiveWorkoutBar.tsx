@@ -68,6 +68,8 @@ export function LiveWorkoutBar() {
   const userId = useAuthStore((s) => s.userId);
   const modals = useUiStore((s) => s.modals);
   const notify = useUiStore((s) => s.notify);
+  const openConfirm = useUiStore((s) => s.openConfirm);
+  const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
 
   const hasWorkoutOpen = modals.some((m) => m.layout === "workout");
   const [draft, setDraft] = useState<ParsedLiveDraft | null>(() => (hasWorkoutOpen ? null : readParsedDraft(userId)));
@@ -175,6 +177,25 @@ export function LiveWorkoutBar() {
     setNowMs(Date.now());
   };
 
+  const handleDiscard = () => {
+    const draftKey = draft.key;
+    const draftTitle = draft.title;
+    triggerHaptic("light");
+    openConfirm({
+      title: "放弃本地训练草稿",
+      message: `确定放弃「${draftTitle}」的未保存草稿吗？`,
+      confirmLabel: "放弃草稿",
+      onConfirm: () => {
+        try {
+          localStorage.removeItem(draftKey);
+        } catch {}
+        setDraft(null);
+        bumpDataEpoch();
+        notify("已清除本地训练草稿");
+      },
+    });
+  };
+
   return (
     <div className="live-workout-bar" role="region" aria-label="进行中的训练控制条">
       <button
@@ -210,14 +231,25 @@ export function LiveWorkoutBar() {
         </div>
       ) : null}
 
-      <button
-        type="button"
-        className="primary-button live-workout-bar-resume"
-        disabled={resuming}
-        onClick={() => void handleResume()}
-      >
-        {resuming ? "恢复中" : "继续训练"}
-      </button>
+      <div className="live-workout-bar-actions">
+        <button
+          type="button"
+          className="primary-button live-workout-bar-resume"
+          disabled={resuming}
+          onClick={() => void handleResume()}
+        >
+          {resuming ? "恢复中" : "继续训练"}
+        </button>
+        <button
+          type="button"
+          className="live-workout-bar-discard"
+          aria-label="放弃本地训练草稿"
+          title="放弃草稿"
+          onClick={handleDiscard}
+        >
+          <Icon name="close" size={14} />
+        </button>
+      </div>
     </div>
   );
 }

@@ -1,9 +1,8 @@
 import type { ReactNode } from "react";
 import { today } from "../lib/date";
-import { findLocalWorkoutDraft } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { prefetchWorkspace } from "../lib/prefetch";
-import { openCommandPalette, resumeLocalWorkoutDraft } from "../lib/record-openers";
+import { openCommandPalette } from "../lib/record-openers";
 import {
   DESTINATIONS,
   MOBILE_TABS,
@@ -33,7 +32,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const online = useUiStore((s) => s.online);
   const pendingSyncCount = useUiStore((s) => s.pendingSyncCount);
   const modals = useUiStore((s) => s.modals);
-  const dataEpoch = useUiStore((s) => s.dataEpoch);
   const navigate = useUiStore((s) => s.navigate);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const openModal = useUiStore((s) => s.openModal);
@@ -44,7 +42,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   const themeIcon = theme === "dark" ? "sun" : "moon";
   const activeTabLabel = activeGroup.tabs?.find((tab) => tab.id === view)?.label ?? DESTINATIONS[view];
   const moreMenuOpen = modals.at(-1)?.layout === "menu" && modals.at(-1)?.title === "更多";
-  const localDraft = userId ? (void dataEpoch, void modals.length, findLocalWorkoutDraft(userId)) : null;
   const todayStr = today();
 
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, target: WorkspaceId) => {
@@ -249,20 +246,6 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {todayStr.slice(0, 4)} / {todayStr.slice(5).replace("-", ".")}
               </time>
             </span>
-            {userId && localDraft ? (
-              <button
-                type="button"
-                className="live-resume-pill"
-                aria-label="恢复未保存的训练草稿"
-                onClick={() => {
-                  triggerHaptic("light");
-                  void resumeLocalWorkoutDraft(userId);
-                }}
-              >
-                <i className="training-led" aria-hidden="true" />
-                <span>草稿</span>
-              </button>
-            ) : null}
             {userId ? (
               <>
                 <button
@@ -309,11 +292,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
+        <LiveWorkoutBar />
+
         <main id="content" tabIndex={-1}>
           {children}
         </main>
       </div>
-      <LiveWorkoutBar />
     </>
   );
 }

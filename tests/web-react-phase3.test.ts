@@ -520,3 +520,20 @@ test("WorkoutEditorModal fixes plan source validation, implements single-exercis
   assert.match(css, /\.workout-swipe-stage\s*\{/);
   assert.match(css, /\.set-row\.is-next\s*\{/);
 });
+
+test("AppShell renders LiveWorkoutBar inside .frame flow without floating overlay or crowded topbar draft pill", () => {
+  const shell = readFileSync(resolve(process.cwd(), "packages/web/src/components/AppShell.tsx"), "utf8");
+  const liveBar = readFileSync(resolve(process.cwd(), "packages/web/src/components/LiveWorkoutBar.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  const frameIdx = shell.indexOf('<div className="frame">');
+  const liveBarIdx = shell.indexOf("<LiveWorkoutBar />");
+  const mainIdx = shell.indexOf('<main id="content"');
+  assert.ok(frameIdx > 0 && liveBarIdx > frameIdx && mainIdx > liveBarIdx);
+  assert.ok(!shell.includes("live-resume-pill"), "AppShell topbar must not emit redundant live-resume-pill");
+  assert.match(liveBar, /live-workout-bar-discard/);
+
+  const barRule = css.match(/\.live-workout-bar\s*\{[^}]*\}/)?.[0] ?? "";
+  assert.match(barRule, /position:\s*relative;/);
+  assert.doesNotMatch(barRule, /position:\s*fixed;/);
+});
