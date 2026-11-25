@@ -839,6 +839,8 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t</dict>",
     ];
   } else if (dateFilter.kind === "today") {
+    // Verified byte-for-byte against Apple's real iOS 26.2 Find Health Samples export:
+    // Operator 1002 ("Start Date is today") with default Number="7" + Unit=16 + BoundedDate=false.
     dateTemplate = [
       "\t\t\t\t\t\t\t\t<dict>",
       "\t\t\t\t\t\t\t\t\t<key>Bounded</key>",
@@ -850,7 +852,12 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Removable</key>",
       "\t\t\t\t\t\t\t\t\t<false/>",
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
-      "\t\t\t\t\t\t\t\t\t<dict/>",
+      "\t\t\t\t\t\t\t\t\t<dict>",
+      "\t\t\t\t\t\t\t\t\t\t<key>Number</key>",
+      "\t\t\t\t\t\t\t\t\t\t<string>7</string>",
+      "\t\t\t\t\t\t\t\t\t\t<key>Unit</key>",
+      "\t\t\t\t\t\t\t\t\t\t<integer>16</integer>",
+      "\t\t\t\t\t\t\t\t\t</dict>",
       "\t\t\t\t\t\t\t\t</dict>",
     ];
   } else {
@@ -1827,23 +1834,28 @@ function buildDailyHealthCollectionActions({
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
 
-  // Use native relative 1-day (24h) filter (`Operator: 1001`, `Unit: 16`, `Number: "1"`,
-  // `WFContentPredicateBoundedDate: false`), verified on real iOS 18/26 Shortcuts.
-  // For dailySum metrics, `Group by: Day` + `Latest First` + `Limit: 1` returns only today's aggregated total.
+  // For dailySum metrics, use native "Start Date is today" (`Operator: 1002`, `Values: { Number: "7", Unit: 16 }`,
+  // `WFContentPredicateBoundedDate: false`, verified against real iOS 26.2 Find Health Samples exports):
+  // - Steps groups by Hour (at most 24 buckets for today, no Limit cap, summed via Calculate Statistics)
+  // - Other dailySum metrics group by Day (1 bucket for today)
+  // For sleep & latest point-in-time vitals/body metrics, use relative 1-day (24h) `Operator: 1001`.
   for (const metric of selectedMetrics) {
     const findUuid = uuidFactory();
     const variableName = `v_${metric.key}`;
     const isSleep = metric.mode === "sleepIntervals";
     const latest = metric.mode === "latest";
     const isDailySum = metric.mode === "dailySum";
+    const isSteps = metric.key === "steps";
     actions.push(findHealthSampleActionXml({
       uuid: findUuid,
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
-      groupBy: isDailySum ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
+      groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
+      dateFilter: isDailySum
+        ? { kind: "today" }
+        : { kind: "lastDays", days: 1, byEndDate: isSleep },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
-      limit: latest || isDailySum ? 1 : null,
+      limit: latest ? 1 : null,
     }));
 
     let bodyActions: string[];

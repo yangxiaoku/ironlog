@@ -140,15 +140,15 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   });
   makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
   assert.ok(dailyNoCreds.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>"));
-  assert.ok(!dailyNoCreds.xml.includes("<integer>1002</integer>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>VO2 Max</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(dailyNoCreds.xml.includes("<string>Oxygen Saturation</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>Blood Oxygen</string>"));
-  assert.ok(dailyNoCreds.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Hour</string>"));
 
   // Passing serverOrigin & token in universal mode STILL strips them cleanly
   const recent = buildIronlogRecentWorkoutShortcut({
@@ -199,10 +199,11 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.equal(hubUniversal.windowMinutes, 45);
   assert.equal(hubUniversal.metricCount, 6);
   assert.ok(hubUniversal.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<false/>"));
+  assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1001</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<integer>1</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Unit</key>\n\t\t\t\t\t\t\t\t\t\t<integer>16</integer>"));
-  assert.ok(!hubUniversal.xml.includes("<integer>1002</integer>"));
+  assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Hour</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Resting Calories</string>"));
   assert.ok(!hubUniversal.xml.includes("<string>Resting Energy</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Dietary Calories</string>"));

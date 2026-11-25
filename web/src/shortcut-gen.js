@@ -507,7 +507,12 @@ function findHealthSampleActionXml({
       "\t\t\t\t\t\t\t\t\t<key>Removable</key>",
       "\t\t\t\t\t\t\t\t\t<false/>",
       "\t\t\t\t\t\t\t\t\t<key>Values</key>",
-      "\t\t\t\t\t\t\t\t\t<dict/>",
+      "\t\t\t\t\t\t\t\t\t<dict>",
+      "\t\t\t\t\t\t\t\t\t\t<key>Number</key>",
+      "\t\t\t\t\t\t\t\t\t\t<string>7</string>",
+      "\t\t\t\t\t\t\t\t\t\t<key>Unit</key>",
+      "\t\t\t\t\t\t\t\t\t\t<integer>16</integer>",
+      "\t\t\t\t\t\t\t\t\t</dict>",
       "\t\t\t\t\t\t\t\t</dict>",
     ];
   } else {
@@ -1227,14 +1232,17 @@ export function buildIronlogDailyHealthShortcut({
     const isSleep = metric.mode === "sleepIntervals";
     const latest = metric.mode === "latest";
     const isDailySum = metric.mode === "dailySum";
+    const isSteps = metric.key === "steps";
     actions.push(findHealthSampleActionXml({
       uuid: findUuid,
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
-      groupBy: isDailySum ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: 1, byEndDate: isSleep },
+      groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
+      dateFilter: isDailySum
+        ? { kind: "today" }
+        : { kind: "lastDays", days: 1, byEndDate: isSleep },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
-      limit: latest || isDailySum ? 1 : null,
+      limit: latest ? 1 : null,
     }));
 
     let bodyActions;
