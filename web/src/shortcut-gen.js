@@ -458,6 +458,17 @@ function adjustDateSubtractMinutesActionXml({
   ].join("\n"));
 }
 
+function adjustDateStartOfDayActionXml({ uuid, inputUuid, inputName = "Date" }) {
+  return actionBlockXml("is.workflow.actions.adjustdate", [
+    "\t\t\t\t<key>UUID</key>",
+    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
+    "\t\t\t\t<key>WFAdjustOperation</key>",
+    "\t\t\t\t<string>Get Start of Day</string>",
+    "\t\t\t\t<key>WFDate</key>",
+    actionOutputAttachmentXml({ outputUuid: inputUuid, outputName: inputName, indent: 4 }),
+  ].join("\n"));
+}
+
 function findHealthSampleActionXml({
   uuid,
   typeLabel,
@@ -1210,8 +1221,14 @@ export function buildIronlogDailyHealthShortcut({
   // Format Current Date inline via WFDateFormatVariableAggrandizement instead of calling
   // is.workflow.actions.format.date, which can evaluate to "" on some iOS builds.
   const rawNowUuid = uuidFactory();
+  const todayStartUuid = uuidFactory();
   const dayAgoUuid = uuidFactory();
   actions.push(currentDateActionXml({ uuid: rawNowUuid }));
+  actions.push(adjustDateStartOfDayActionXml({
+    uuid: todayStartUuid,
+    inputUuid: rawNowUuid,
+    inputName: "Date",
+  }));
   actions.push(adjustDateSubtractMinutesActionXml({
     uuid: dayAgoUuid,
     minutes: 1440,
@@ -1223,6 +1240,13 @@ export function buildIronlogDailyHealthShortcut({
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
 
+  const todayWindowFilter = {
+    kind: "betweenDates",
+    startDateUuid: todayStartUuid,
+    startDateOutputName: "Adjusted Date",
+    endDateUuid: rawNowUuid,
+    endDateOutputName: "Date",
+  };
   const explicitWindowFilter = {
     kind: "betweenDates",
     startDateUuid: dayAgoUuid,
@@ -1243,7 +1267,7 @@ export function buildIronlogDailyHealthShortcut({
       unit: metric.unit ?? null,
       groupBy: isDailySum ? "Day" : null,
       dateFilter: isDailySum
-        ? { kind: "today" }
+        ? todayWindowFilter
         : { ...explicitWindowFilter, byEndDate: isSleep },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
       limit: latest ? 1 : null,

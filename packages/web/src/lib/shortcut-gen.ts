@@ -771,6 +771,25 @@ function adjustDateSubtractMinutesActionXml({
   ].join("\n"));
 }
 
+function adjustDateStartOfDayActionXml({
+  uuid,
+  inputUuid,
+  inputName = "Date",
+}: {
+  uuid: string;
+  inputUuid: string;
+  inputName?: string;
+}): string {
+  return actionBlockXml("is.workflow.actions.adjustdate", [
+    "\t\t\t\t<key>UUID</key>",
+    `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
+    "\t\t\t\t<key>WFAdjustOperation</key>",
+    "\t\t\t\t<string>Get Start of Day</string>",
+    "\t\t\t\t<key>WFDate</key>",
+    actionOutputAttachmentXml({ outputUuid: inputUuid, outputName: inputName, indent: 4 }),
+  ].join("\n"));
+}
+
 type DateFilterSpec =
   | {
       kind: "betweenDates";
@@ -1813,8 +1832,14 @@ function buildDailyHealthCollectionActions({
     { key: "source", value: "shortcut" },
   ];
   const rawNowUuid = uuidFactory();
+  const todayStartUuid = uuidFactory();
   const dayAgoUuid = uuidFactory();
   actions.push(currentDateActionXml({ uuid: rawNowUuid }));
+  actions.push(adjustDateStartOfDayActionXml({
+    uuid: todayStartUuid,
+    inputUuid: rawNowUuid,
+    inputName: "Date",
+  }));
   actions.push(adjustDateSubtractMinutesActionXml({
     uuid: dayAgoUuid,
     minutes: 1440,
@@ -1826,6 +1851,13 @@ function buildDailyHealthCollectionActions({
     outputAttachment: { name: "Date", uuid: rawNowUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS },
   });
 
+  const todayWindowFilter = {
+    kind: "betweenDates" as const,
+    startDateUuid: todayStartUuid,
+    startDateOutputName: "Adjusted Date",
+    endDateUuid: rawNowUuid,
+    endDateOutputName: "Date",
+  };
   const explicitWindowFilter = {
     kind: "betweenDates" as const,
     startDateUuid: dayAgoUuid,
@@ -1846,7 +1878,7 @@ function buildDailyHealthCollectionActions({
       unit: metric.unit ?? null,
       groupBy: isDailySum ? "Day" : null,
       dateFilter: isDailySum
-        ? { kind: "today" }
+        ? todayWindowFilter
         : { ...explicitWindowFilter, byEndDate: isSleep },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
       limit: latest ? 1 : null,

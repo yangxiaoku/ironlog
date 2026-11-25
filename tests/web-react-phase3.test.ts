@@ -140,9 +140,11 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   });
   makeUniversalChecks(dailyNoCreds, ["/api/integrations/apple-health/daily"]);
   assert.ok(dailyNoCreds.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
-  assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
+  assert.ok(dailyNoCreds.xml.includes("<string>Get Start of Day</string>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1003</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<integer>1001</integer>"));
+  assert.ok(!dailyNoCreds.xml.includes("<integer>1002</integer>"));
   assert.ok(dailyNoCreds.xml.includes("<string>VO2 Max</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>Cardio Fitness</string>"));
   assert.ok(dailyNoCreds.xml.includes("<string>Oxygen Saturation</string>"));
@@ -198,9 +200,11 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   assert.equal(hubUniversal.windowMinutes, 45);
   assert.equal(hubUniversal.metricCount, 7);
   assert.ok(hubUniversal.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
-  assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>"));
+  assert.ok(hubUniversal.xml.includes("<string>Get Start of Day</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1003</integer>"));
   assert.ok(hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>"));
   assert.ok(!hubUniversal.xml.includes("<integer>1001</integer>"));
+  assert.ok(!hubUniversal.xml.includes("<integer>1002</integer>"));
   assert.ok(hubUniversal.xml.includes("<string>Resting Calories</string>"));
   assert.ok(!hubUniversal.xml.includes("<string>Resting Energy</string>"));
   assert.ok(hubUniversal.xml.includes("<string>Dietary Calories</string>"));

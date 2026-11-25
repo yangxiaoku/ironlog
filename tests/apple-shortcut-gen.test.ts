@@ -175,7 +175,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     "is.workflow.actions.setvariable",
     "WFStringSubstitutableState",
     "<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>",
-    "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1002</integer>",
+    "<string>Get Start of Day</string>",
     "<key>Operator</key>\n\t\t\t\t\t\t\t\t\t<integer>1003</integer>",
     "<key>Magnitude</key>\n\t\t\t\t\t\t<string>1440</string>",
     "<string>Steps</string>",
@@ -208,9 +208,10 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     assert.ok(daily.xml.includes(needle), `Expected generated daily shortcut XML to contain ${needle}`);
   }
 
-  // Must use canonical HealthKit keys (VO2 Max / Oxygen Saturation), native today + Day sum without slow Repeat loops on daily sums
+  // Must use canonical HealthKit keys and explicit betweenDates (Operator 1003, never 1000/1001/1002 which default to 7 days)
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
   assert.ok(!daily.xml.includes("<integer>1001</integer>"));
+  assert.ok(!daily.xml.includes("<integer>1002</integer>"));
   assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
   assert.ok(!daily.xml.includes("<string>步数</string>"));
   assert.ok(!daily.xml.includes("<string>体重</string>"));
