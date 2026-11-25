@@ -519,6 +519,18 @@ test("createRestAudio uses warm lowpass-filtered mid-register presets, respects 
         start() {},
       };
     }
+    createDynamicsCompressor() {
+      return {
+        threshold: { value: 0 },
+        knee: { value: 0 },
+        ratio: { value: 0 },
+        attack: { value: 0 },
+        release: { value: 0 },
+        connect(target: unknown) {
+          return target;
+        },
+      };
+    }
     createBiquadFilter() {
       const f: MockFilter = {
         type: "",
@@ -592,7 +604,7 @@ test("createRestAudio uses warm lowpass-filtered mid-register presets, respects 
     audio.preview("marimba");
     assert.ok(createdOscs.length >= 3, "preview plays marimba voices when enabled() is false");
     assert.equal(createdFilters[0]?.type, "lowpass");
-    assert.equal(createdFilters[0]?.frequency.value, 1600);
+    assert.equal(createdFilters[0]?.frequency.value, 2400);
 
     // Verify all 3 presets when enabled() is true
     isEnabled = true;
@@ -603,15 +615,15 @@ test("createRestAudio uses warm lowpass-filtered mid-register presets, respects 
       assert.ok(createdOscs.length >= 2, `${style} schedules oscillators`);
       assert.equal(createdFilters.length, 1, `${style} routes through lowpass filter`);
       assert.equal(createdFilters[0]!.type, "lowpass");
-      assert.ok(createdFilters[0]!.frequency.value <= 2600, `${style} cutoff (${createdFilters[0]!.frequency.value}) <= 2600 Hz`);
+      assert.ok(createdFilters[0]!.frequency.value <= 3600, `${style} cutoff (${createdFilters[0]!.frequency.value}) <= 3600 Hz`);
 
       for (const g of createdGains) {
         const peak = Math.max(0, ...g.gain.ramps);
-        assert.ok(peak <= 0.25, `${style} peak gain (${peak}) stays headphone-safe <= 0.25`);
+        assert.ok(peak <= 0.85, `${style} peak gain (${peak}) stays non-clipping <= 0.85`);
       }
 
-      const fundamentals = createdOscs.filter((o) => Math.max(0, ...(o.connectedGain?.gain.ramps ?? [])) >= 0.1);
-      assert.ok(fundamentals.length >= 2, `${style} has primary warm notes`);
+      const fundamentals = createdOscs.filter((o) => Math.max(0, ...(o.connectedGain?.gain.ramps ?? [])) >= 0.45);
+      assert.ok(fundamentals.length >= 2, `${style} has clearly audible primary notes (>= 0.45)`);
       for (const fOsc of fundamentals) {
         assert.equal(fOsc.type, "sine");
         assert.ok(

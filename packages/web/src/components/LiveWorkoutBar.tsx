@@ -164,6 +164,7 @@ export function LiveWorkoutBar() {
   const handleExtendRest = () => {
     if (!draft.rest) return;
     triggerHaptic("light");
+    audio.unlock();
     const nextRest = shiftRestTimer(draft.rest, prefs.restAdjustStep);
     try {
       const raw = localStorage.getItem(draft.key);

@@ -259,35 +259,35 @@ interface AcousticPhraseConfig {
 const REST_SOUND_PHRASES: Record<RestSoundStyle, AcousticPhraseConfig> = {
   chime: {
     notes: [
-      [523.25, 0, 0.38, 0.16],
-      [783.99, 0.15, 0.58, 0.18],
+      [523.25, 0, 0.45, 0.58],
+      [783.99, 0.16, 0.72, 0.64],
     ],
-    cutoffHz: 2200,
+    cutoffHz: 2800,
     overtoneRatio: 2,
-    overtoneGain: 0.18,
+    overtoneGain: 0.28,
   },
   marimba: {
     notes: [
-      [392.0, 0, 0.22, 0.17],
-      [523.25, 0.11, 0.26, 0.18],
-      [659.25, 0.22, 0.42, 0.19],
-    ],
-    cutoffHz: 1600,
-    overtoneRatio: 2,
-    overtoneGain: 0.12,
-    thirdRatio: 4,
-    thirdGain: 0.05,
-  },
-  bell: {
-    notes: [
-      [587.33, 0, 0.56, 0.15],
-      [880.0, 0.09, 0.72, 0.13],
+      [392.0, 0, 0.28, 0.58],
+      [523.25, 0.12, 0.34, 0.62],
+      [659.25, 0.24, 0.54, 0.66],
     ],
     cutoffHz: 2400,
     overtoneRatio: 2,
-    overtoneGain: 0.22,
+    overtoneGain: 0.24,
+    thirdRatio: 4,
+    thirdGain: 0.1,
+  },
+  bell: {
+    notes: [
+      [587.33, 0, 0.64, 0.56],
+      [880.0, 0.1, 0.85, 0.6],
+    ],
+    cutoffHz: 3200,
+    overtoneRatio: 2,
+    overtoneGain: 0.3,
     thirdRatio: 3,
-    thirdGain: 0.06,
+    thirdGain: 0.12,
   },
 };
 
@@ -296,13 +296,24 @@ export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSou
     if (!audio) return false;
     try {
       const baseTime = Math.max(audio.currentTime, 0);
-      let sink: AudioNode = audio.destination;
+      let outputNode: AudioNode = audio.destination;
+      if (typeof audio.createDynamicsCompressor === "function") {
+        const comp = audio.createDynamicsCompressor();
+        comp.threshold.value = -3;
+        comp.knee.value = 6;
+        comp.ratio.value = 4;
+        comp.attack.value = 0.003;
+        comp.release.value = 0.12;
+        comp.connect(audio.destination);
+        outputNode = comp;
+      }
+      let sink: AudioNode = outputNode;
       if (typeof audio.createBiquadFilter === "function") {
         const filter = audio.createBiquadFilter();
         filter.type = "lowpass";
         filter.frequency.value = config.cutoffHz;
         filter.Q.value = 0.7;
-        filter.connect(audio.destination);
+        filter.connect(outputNode);
         sink = filter;
       }
       const master = audio.createGain();
@@ -314,9 +325,11 @@ export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSou
         const gain = audio.createGain();
         osc.type = "sine";
         osc.frequency.value = freq;
-        const attack = Math.min(0.014, dur * 0.35);
+        const attack = Math.min(0.012, dur * 0.25);
+        const holdEnd = start + attack + Math.min(0.14, dur * 0.35);
         gain.gain.setValueAtTime(0.0001, start);
         gain.gain.linearRampToValueAtTime(peak, start + attack);
+        gain.gain.linearRampToValueAtTime(Math.max(0.0002, peak * 0.72), holdEnd);
         gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
         osc.connect(gain).connect(master);
         osc.start(start);
@@ -340,29 +353,29 @@ export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSou
   function emitTap(audio: AudioContext | null, kind: SoundTapKind): boolean {
     if (kind === "check") {
       return playAcousticPhrase(audio, {
-        notes: [[523.25, 0, 0.075, 0.08]],
-        cutoffHz: 1500,
+        notes: [[523.25, 0, 0.09, 0.32]],
+        cutoffHz: 2200,
         overtoneRatio: 2,
-        overtoneGain: 0.12,
+        overtoneGain: 0.18,
       });
     }
     if (kind === "pr") {
       return playAcousticPhrase(audio, {
         notes: [
-          [523.25, 0, 0.14, 0.14],
-          [659.25, 0.08, 0.16, 0.15],
-          [783.99, 0.16, 0.32, 0.16],
+          [523.25, 0, 0.16, 0.48],
+          [659.25, 0.08, 0.18, 0.52],
+          [783.99, 0.16, 0.36, 0.58],
         ],
-        cutoffHz: 2000,
+        cutoffHz: 2800,
         overtoneRatio: 2,
-        overtoneGain: 0.15,
+        overtoneGain: 0.22,
       });
     }
     return playAcousticPhrase(audio, {
-      notes: [[kind === "uncheck" ? 440 : 523.25, 0, 0.04, 0.05]],
-      cutoffHz: 1200,
+      notes: [[kind === "uncheck" ? 440 : 523.25, 0, 0.05, 0.22]],
+      cutoffHz: 1800,
       overtoneRatio: 2,
-      overtoneGain: 0.08,
+      overtoneGain: 0.12,
     });
   }
 
@@ -413,10 +426,10 @@ export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSou
       }
       withRunningAudio((audio) => {
         playAcousticPhrase(audio, {
-          notes: [[587.33, 0, 0.06, 0.07]],
-          cutoffHz: 1400,
+          notes: [[587.33, 0, 0.08, 0.28]],
+          cutoffHz: 2000,
           overtoneRatio: 2,
-          overtoneGain: 0.1,
+          overtoneGain: 0.16,
         });
       });
     },
