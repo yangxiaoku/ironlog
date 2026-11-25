@@ -436,7 +436,7 @@ function adjustDateSubtractMinutesActionXml({
       ].join("\n")
     : [
         "\t\t\t\t\t\t<key>Magnitude</key>",
-        `\t\t\t\t\t\t<integer>${minutes}</integer>`,
+        `\t\t\t\t\t\t<string>${escapeXml(String(minutes))}</string>`,
       ].join("\n");
   return actionBlockXml("is.workflow.actions.adjustdate", [
     "\t\t\t\t<key>UUID</key>",
@@ -463,6 +463,7 @@ function findHealthSampleActionXml({
   uuid,
   typeLabel,
   unit = null,
+  groupBy = null,
   dateFilter,
   sortOrder = "Latest First",
   limit = null,
@@ -577,6 +578,7 @@ function findHealthSampleActionXml({
     params.push("\t\t\t\t<key>WFContentItemLimitEnabled</key>", "\t\t\t\t<false/>");
   }
   if (unit) params.push("\t\t\t\t<key>WFHKSampleFilteringUnit</key>", `\t\t\t\t<string>${escapeXml(unit)}</string>`);
+  if (groupBy) params.push("\t\t\t\t<key>WFHKSampleFilteringGroupBy</key>", `\t\t\t\t<string>${escapeXml(groupBy)}</string>`);
 
   return actionBlockXml("is.workflow.actions.filter.health.quantity", params.join("\n"));
 }
@@ -587,8 +589,6 @@ function calculateStatisticsActionXml({ uuid, operation = "Sum", inputUuid, inpu
     "\t\t\t\t<key>UUID</key>",
     `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
     "\t\t\t\t<key>Input</key>",
-    inputXml,
-    "\t\t\t\t<key>WFInput</key>",
     inputXml,
     "\t\t\t\t<key>WFStatisticsOperation</key>",
     `\t\t\t\t<string>${escapeXml(operation)}</string>`,
@@ -604,8 +604,6 @@ function countItemsActionXml({ uuid, inputUuid, inputName = "Value" }) {
     inputXml,
     "\t\t\t\t<key>WFCountType</key>",
     "\t\t\t\t<string>Items</string>",
-    "\t\t\t\t<key>WFInput</key>",
-    inputXml,
   ].join("\n"));
 }
 
@@ -1213,6 +1211,7 @@ export function buildIronlogDailyHealthShortcut({
       uuid: findUuid,
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
+      groupBy: metric.mode === "dailySum" ? "Day" : null,
       dateFilter: { kind: "lastDays", days: DAILY_LOOKBACK_DAYS, byEndDate: isSleep },
       sortOrder: latest ? "Latest First" : "Oldest First",
       limit: latest ? 1 : null,

@@ -139,6 +139,7 @@ test("packages/web/src/lib/shortcut-gen generates token-free universal shortcuts
   assert.ok(!dailyNoCreds.xml.includes("<key>Number</key>\n\t\t\t\t\t\t\t\t\t\t<string>3</string>"));
   assert.ok(dailyNoCreds.xml.includes("<string>Oxygen Saturation</string>"));
   assert.ok(!dailyNoCreds.xml.includes("<string>Blood Oxygen</string>"));
+  assert.ok(dailyNoCreds.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
 
   // Passing serverOrigin & token in universal mode STILL strips them cleanly
   const recent = buildIronlogRecentWorkoutShortcut({
@@ -221,8 +222,13 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
       `contains conditional route for ${mode}`,
     );
   }
-  assert.ok(hubUniversal.xml.includes("is.workflow.actions.openurl"));
-  assert.ok(hubUniversal.xml.includes("<string>fitnessapp://</string>"));
+  assert.ok(hubUniversal.xml.includes("is.workflow.actions.openapp"));
+  assert.ok(hubUniversal.xml.includes("<key>WFSelectedApp</key>"));
+  assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.Fitness</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>WFAppIdentifier</key>\n\t\t\t\t<string>com.apple.Fitness</string>"));
+  assert.ok(!hubUniversal.xml.includes("fitnessapp://"));
+  assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
+  assert.ok(hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>45</string>"));
 
   // Magic variable endpoints & headers
   assert.ok(hubUniversal.xml.includes("<string>Bearer &#xFFFC;</string>"));

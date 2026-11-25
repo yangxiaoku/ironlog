@@ -471,10 +471,19 @@ function textActionXml({
   ].join("\n"));
 }
 
-function openUrlActionXml(url: string): string {
-  return actionBlockXml("is.workflow.actions.openurl", [
-    "\t\t\t\t<key>WFInput</key>",
-    indentBlock(tokenStringXml({ text: url }), 4),
+function openAppActionXml(bundleIdentifier: string, appName: string): string {
+  return actionBlockXml("is.workflow.actions.openapp", [
+    "\t\t\t\t<key>WFAppIdentifier</key>",
+    `\t\t\t\t<string>${escapeXml(bundleIdentifier)}</string>`,
+    "\t\t\t\t<key>WFAppName</key>",
+    `\t\t\t\t<string>${escapeXml(appName)}</string>`,
+    "\t\t\t\t<key>WFSelectedApp</key>",
+    "\t\t\t\t<dict>",
+    "\t\t\t\t\t<key>BundleIdentifier</key>",
+    `\t\t\t\t\t<string>${escapeXml(bundleIdentifier)}</string>`,
+    "\t\t\t\t\t<key>Name</key>",
+    `\t\t\t\t\t<string>${escapeXml(appName)}</string>`,
+    "\t\t\t\t</dict>",
   ].join("\n"));
 }
 
@@ -663,7 +672,7 @@ function adjustDateSubtractMinutesActionXml({
       ].join("\n")
     : [
         "\t\t\t\t\t\t<key>Magnitude</key>",
-        `\t\t\t\t\t\t<integer>${minutes}</integer>`,
+        `\t\t\t\t\t\t<string>${escapeXml(String(minutes))}</string>`,
       ].join("\n");
   return actionBlockXml("is.workflow.actions.adjustdate", [
     "\t\t\t\t<key>UUID</key>",
@@ -704,6 +713,7 @@ function findHealthSampleActionXml({
   uuid,
   typeLabel,
   unit = null,
+  groupBy = null,
   dateFilter,
   sortOrder = "Latest First",
   limit = null,
@@ -711,6 +721,7 @@ function findHealthSampleActionXml({
   uuid: string;
   typeLabel: string;
   unit?: string | null;
+  groupBy?: "Minute" | "Hour" | "Day" | "Week" | "Month" | "Year" | null;
   dateFilter: DateFilterSpec;
   sortOrder?: "Latest First" | "Oldest First";
   limit?: number | null;
@@ -825,6 +836,7 @@ function findHealthSampleActionXml({
     params.push("\t\t\t\t<key>WFContentItemLimitEnabled</key>", "\t\t\t\t<false/>");
   }
   if (unit) params.push("\t\t\t\t<key>WFHKSampleFilteringUnit</key>", `\t\t\t\t<string>${escapeXml(unit)}</string>`);
+  if (groupBy) params.push("\t\t\t\t<key>WFHKSampleFilteringGroupBy</key>", `\t\t\t\t<string>${escapeXml(groupBy)}</string>`);
 
   return actionBlockXml("is.workflow.actions.filter.health.quantity", params.join("\n"));
 }
@@ -845,8 +857,6 @@ function calculateStatisticsActionXml({
     "\t\t\t\t<key>UUID</key>",
     `\t\t\t\t<string>${escapeXml(uuid)}</string>`,
     "\t\t\t\t<key>Input</key>",
-    inputXml,
-    "\t\t\t\t<key>WFInput</key>",
     inputXml,
     "\t\t\t\t<key>WFStatisticsOperation</key>",
     `\t\t\t\t<string>${escapeXml(operation)}</string>`,
@@ -870,8 +880,6 @@ function countItemsActionXml({
     inputXml,
     "\t\t\t\t<key>WFCountType</key>",
     "\t\t\t\t<string>Items</string>",
-    "\t\t\t\t<key>WFInput</key>",
-    inputXml,
   ].join("\n"));
 }
 
@@ -1724,6 +1732,7 @@ function buildDailyHealthCollectionActions({
       uuid: findUuid,
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
+      groupBy: metric.mode === "dailySum" ? "Day" : null,
       dateFilter: { kind: "lastDays", days: DAILY_LOOKBACK_DAYS, byEndDate: isSleep },
       sortOrder: latest ? "Latest First" : "Oldest First",
       limit: latest ? 1 : null,
@@ -1897,7 +1906,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     `铁记（Ironlog）Apple 健康全能智能联动（1 个快捷指令覆盖全流程）`,
     `默认运动：${sportLabel}（${resolvedEnv}），兜底窗口 ${resolvedMinutes} 分钟；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
-    `  • strength：上报开始事件并跳转「健身」App（若需直开 Watch 传统力量，可在 strength 分支末尾将「打开 URL」替换为「开始体能训练 → 传统力量训练」）`,
+    `  • strength：上报开始事件并跳转「健身」App（若需直开 Watch 传统力量，可在 strength 分支末尾将「打开 App（健身）」替换为「开始体能训练 → 传统力量训练」）`,
     `  • cardio：直开 Apple「健身」App 开启有氧`,
     `  • end：等待 5 秒并回传活动能量、心率${distanceSpec ? "、距离" : ""}（优先匹配 active 开始事件，未打卡开始则自动按最近 ${resolvedMinutes} 分钟直传）`,
     `  • daily：同步今日选定 Apple 健康指标`,
@@ -1957,7 +1966,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
           { key: "occurredAt", outputAttachment: { name: "Date", uuid: strengthDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
         ],
       }),
-      openUrlActionXml("fitnessapp://"),
+      openAppActionXml("com.apple.Fitness", "Fitness"),
     ],
   });
 
@@ -1967,7 +1976,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     input: { kind: "variable", variableName: "v_mode" },
     condition: 4,
     equalsText: "cardio",
-    bodyActions: [openUrlActionXml("fitnessapp://")],
+    bodyActions: [openAppActionXml("com.apple.Fitness", "Fitness")],
   });
 
   // Branch 3: end -> check active start event or fallback recent workout window upload

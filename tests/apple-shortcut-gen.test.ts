@@ -206,10 +206,10 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
     assert.ok(daily.xml.includes(needle), `Expected generated daily shortcut XML to contain ${needle}`);
   }
 
-  // Must use canonical English HealthKit keys internally even for zh-Hans Shortcuts, and 1-day lookback without Blood Oxygen typo
+  // Must use canonical English HealthKit keys internally even for zh-Hans Shortcuts, 1-day lookback without Blood Oxygen typo, and Day grouping for daily sums
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
   assert.ok(!daily.xml.includes("<integer>1002</integer>"));
-  assert.ok(!daily.xml.includes("WFHKSampleFilteringGroupBy"));
+  assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
   assert.ok(!daily.xml.includes("<string>步数</string>"));
   assert.ok(!daily.xml.includes("<string>体重</string>"));
   assert.ok(!daily.xml.includes("<string>VO2 Max</string>"));
@@ -237,6 +237,7 @@ test("buildIronlogDailyHealthShortcut 生成近 1 天查询并携带按日归档
   assert.equal(subset.metricCount, 6);
   assertValidPlistStructure(subset.xml);
   assert.ok(!subset.xml.includes("<string>Steps</string>"));
+  assert.ok(!subset.xml.includes("WFHKSampleFilteringGroupBy"));
   assert.throws(() => buildIronlogDailyHealthShortcut({
     serverOrigin: "https://ironlog.example.com",
     token: "ih_dailyToken_123456",
@@ -273,6 +274,16 @@ test("buildIronlogEventShortcut end 默认延迟并查询开放训练时长以�
   assert.ok(endRunning.xml.includes("<string>Heart Rate</string>"));
   assert.ok(endRunning.xml.includes("<string>is.workflow.actions.statistics</string>"));
   assert.ok(endRunning.xml.includes("<string>is.workflow.actions.count</string>"));
+  const statAndCountBlocks = [
+    ...endRunning.xml.matchAll(
+      /<string>is\.workflow\.actions\.(?:statistics|count)<\/string>[\s\S]*?<key>WFWorkflowActionParameters<\/key>\s*<dict>([\s\S]*?)\n\t\t\t<\/dict>/g,
+    ),
+  ];
+  assert.ok(statAndCountBlocks.length >= 2);
+  for (const m of statAndCountBlocks) {
+    assert.ok(m[1]!.includes("<key>Input</key>"));
+    assert.ok(!m[1]!.includes("<key>WFInput</key>"), "statistics/count actions must not emit duplicate WFInput");
+  }
   assert.ok(endRunning.xml.includes("https://ironlog.example.com/api/integrations/apple-health/events"));
 
   const minimalEnd = buildIronlogEventShortcut({
@@ -301,7 +312,7 @@ test("buildIronlogRecentWorkoutShortcut 支持全运动类型单条直传并正�
   assert.ok(stair.xml.includes("<string>is.workflow.actions.delay</string>"));
   assert.ok(stair.xml.includes("<string>is.workflow.actions.adjustdate</string>"));
   assert.ok(stair.xml.includes("<string>Subtract</string>"));
-  assert.ok(stair.xml.includes("<integer>30</integer>"));
+  assert.ok(stair.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>30</string>"));
   assert.ok(stair.xml.includes("<string>Minutes</string>"));
   assert.ok(stair.xml.includes("<string>trigger</string>"));
   assert.ok(stair.xml.includes("<string>event_elapsed</string>"));
@@ -323,7 +334,7 @@ test("buildIronlogRecentWorkoutShortcut 支持全运动类型单条直传并正�
   assert.ok(runEn.xml.includes("<string>Walking + Running Distance</string>"));
   assert.ok(runEn.xml.includes("<string>Heart Rate</string>"));
   assert.ok(runEn.xml.includes("<string>distanceKm</string>"));
-  assert.ok(runEn.xml.includes("<integer>60</integer>"));
+  assert.ok(runEn.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>60</string>"));
 
   const cycling = buildIronlogRecentWorkoutShortcut({
     serverOrigin: "https://ironlog.example.com",
