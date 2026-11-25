@@ -142,7 +142,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     resetLocalWorkoutPreferences();
     useUiStore.getState().closeModalSilent();
     if (prevUserId) {
-      const prefix = `ironlog-web-draft:${prevUserId}:`;
+      const prefixes = [`ironlog-web-draft:${prevUserId}:`, `ironlog-web-cardio-session:${prevUserId}`];
       for (const getter of [
         () => (typeof localStorage !== "undefined" ? localStorage : null),
         () => (typeof sessionStorage !== "undefined" ? sessionStorage : null),
@@ -151,7 +151,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const storage = getter();
           if (!storage) continue;
           for (const key of Object.keys(storage)) {
-            if (key.startsWith(prefix)) storage.removeItem(key);
+            if (prefixes.some((prefix) => key === prefix || key.startsWith(prefix))) storage.removeItem(key);
           }
         } catch {}
       }

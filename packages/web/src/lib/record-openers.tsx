@@ -14,6 +14,7 @@ const TextLogModal = lazy(() => import("../components/ai/AiModals").then((m) => 
 const AppleDailyDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleDailyDetailsModal })));
 const AppleWorkoutDetailsModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.AppleWorkoutDetailsModal })));
 const CardioLauncherModal = lazy(() => import("../components/apple/CardioLauncherModal").then((m) => ({ default: m.CardioLauncherModal })));
+const CardioSessionModal = lazy(() => import("../components/apple/CardioSessionModal").then((m) => ({ default: m.CardioSessionModal })));
 const DeviceSetupModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.DeviceSetupModal })));
 const HealthDataImportModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.HealthDataImportModal })));
 const HealthDataWebhookModal = lazy(() => import("../components/apple/AppleHealthModals").then((m) => ({ default: m.HealthDataWebhookModal })));
@@ -157,6 +158,25 @@ export function openWorkoutEditor(
   }
 }
 
+export function openCardioSessionModal(): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: "有氧进行中",
+    layout: "cardio",
+    content: (
+      <CardioSessionModal
+        onFinishedLocal={(saved) => {
+          ui.closeAllModals();
+          openWorkoutReport({ workoutId: saved.id, record: saved });
+        }}
+        onOpenLauncher={() => {
+          openCardioLauncherModal();
+        }}
+      />
+    ),
+  });
+}
+
 export function openCardioLauncherModal(initialPresetId?: AppleCardioPresetId): void {
   const ui = useUiStore.getState();
   ui.openModal({
@@ -165,6 +185,10 @@ export function openCardioLauncherModal(initialPresetId?: AppleCardioPresetId): 
       <CardioLauncherModal
         initialTab="cardio"
         initialPresetId={initialPresetId}
+        onStartedCardio={() => {
+          ui.closeTopModal();
+          openCardioSessionModal();
+        }}
         onOpenDeviceSetup={() => {
           ui.closeTopModal();
           openDeviceSetupModal();

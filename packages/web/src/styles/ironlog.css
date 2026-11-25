@@ -2814,3 +2814,393 @@ dialog.workout-dialog .workout-inline-add-btn {
   flex-wrap: wrap;
   gap: 8px;
 }
+
+/* ==== Live Cardio Session & Chronograph ==== */
+.cardio-active-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--red) 45%, var(--edge));
+  background: color-mix(in srgb, var(--red-wash) 52%, var(--surface));
+}
+
+.cardio-active-banner-copy {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.cardio-active-banner-copy strong {
+  display: block;
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.cardio-active-banner-copy small {
+  display: block;
+  font: 600 11.5px/1.3 var(--mono);
+  color: var(--muted);
+}
+
+.cardio-session {
+  display: grid;
+  gap: 14px;
+}
+
+.cardio-session-hero {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid color-mix(in srgb, var(--red) 35%, var(--edge));
+  background:
+    radial-gradient(circle at 85% 10%, color-mix(in srgb, var(--red) 14%, transparent), transparent 56%),
+    var(--surface);
+}
+
+.cardio-session-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cardio-live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--red-ink);
+  background: color-mix(in srgb, var(--red) 14%, var(--inset));
+  border: 1px solid color-mix(in srgb, var(--red) 42%, var(--edge));
+}
+
+.cardio-live-badge.is-paused {
+  color: var(--muted);
+  background: var(--inset);
+  border-color: var(--edge);
+}
+
+.cardio-live-badge.is-paused .training-led {
+  animation: none;
+  opacity: 0.4;
+}
+
+.cardio-env-tag,
+.cardio-bg-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: var(--inset);
+  border: 1px solid var(--rule);
+}
+
+.cardio-bg-pill {
+  margin-left: auto;
+}
+
+.cardio-clock-stage {
+  display: grid;
+  gap: 6px;
+  text-align: center;
+  padding: 8px 4px 4px;
+}
+
+.cardio-clock-sport {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.cardio-clock-digits {
+  font-family: var(--mono);
+  font-size: clamp(2.6rem, 11vw, 3.85rem);
+  font-weight: 800;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.cardio-clock-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px 14px;
+  font: 600 12px/1.4 var(--mono);
+  color: var(--muted);
+}
+
+.cardio-target-bar {
+  height: 6px;
+  margin-top: 6px;
+  border-radius: 999px;
+  background: var(--inset);
+  overflow: hidden;
+  border: 1px solid var(--rule);
+}
+
+.cardio-target-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--red);
+  transition: width 0.25s ease;
+}
+
+.cardio-target-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--rule);
+}
+
+.cardio-target-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+
+.cardio-target-chip {
+  min-height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid var(--edge);
+  background: var(--inset);
+  color: var(--muted);
+  font: 600 12px/1 var(--mono);
+  cursor: pointer;
+}
+
+.cardio-target-chip.is-active {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 14%, var(--surface));
+  color: var(--red-ink);
+}
+
+.cardio-telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (min-width: 560px) {
+  .cardio-telemetry-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.cardio-telemetry-cell {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.cardio-telemetry-cell span {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.cardio-telemetry-cell strong {
+  font: 700 15.5px/1.2 var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+
+.cardio-telemetry-cell small {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.cardio-control-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cardio-ctrl-btn {
+  min-height: 46px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--edge);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background-color 0.14s ease, transform 0.12s ease;
+}
+
+.cardio-ctrl-btn:hover {
+  border-color: var(--ink);
+  background: var(--inset);
+}
+
+.cardio-ctrl-btn:active {
+  transform: scale(0.98);
+}
+
+.cardio-ctrl-btn.is-resume {
+  border-color: var(--red);
+  background: color-mix(in srgb, var(--red) 12%, var(--surface));
+  color: var(--red-ink);
+}
+
+.cardio-laps-panel {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.cardio-laps-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+}
+
+.cardio-laps-panel header small {
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.cardio-laps-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.cardio-laps-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--inset);
+  font-size: 12.5px;
+}
+
+.cardio-laps-list li strong {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.cardio-laps-list li small {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+
+.cardio-shortcut-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 12px;
+  padding: 11px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--rule);
+  background: color-mix(in srgb, var(--inset) 70%, transparent);
+}
+
+.cardio-shortcut-copy {
+  display: grid;
+  gap: 2px;
+  flex: 1 1 200px;
+  min-width: 0;
+}
+
+.cardio-shortcut-copy strong {
+  font-size: 13px;
+}
+
+.cardio-shortcut-copy small {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.cardio-relaunch-link {
+  min-height: 36px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.cardio-extra-body {
+  display: grid;
+  gap: 12px;
+}
+
+.cardio-session-footer {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.cardio-finish-primary {
+  width: 100%;
+  min-height: 48px;
+  font-size: 15px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.cardio-finish-secondary-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.live-workout-bar-stack {
+  display: grid;
+  gap: 0;
+}
+
+.live-cardio-end-btn {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 12.5px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}

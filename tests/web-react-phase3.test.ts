@@ -27,6 +27,18 @@ import {
 import { useAuthStore } from "../packages/web/src/store/useAuthStore.ts";
 import { useUiStore } from "../packages/web/src/store/useUiStore.ts";
 import { enqueueMutation, readQueue } from "../packages/web/src/lib/offline-queue.ts";
+import { getAppleCardioPreset } from "../packages/web/src/lib/apple-fitness.ts";
+import {
+  clearCardioSession,
+  createCardioSession,
+  estimateCardioCalories,
+  formatCardioPaceOrSpeed,
+  readCardioSession,
+  recordCardioLap,
+  startCardioSession,
+  toggleCardioSessionPause,
+} from "../packages/web/src/lib/cardio-session.ts";
+import { elapsedAt } from "../packages/web/src/lib/haptics-audio.ts";
 
 test("packages/web/src/lib/shortcut-gen generates valid Apple Shortcut plists and assesses origins", () => {
   assert.equal(APPLE_SHORTCUT_SPORTS.length, 16);
@@ -876,4 +888,83 @@ test("Cardio modality picker connects QuickRecordSheet, WorkoutView, SettingsVie
   assert.match(reportModal, /visibilitychange/);
   assert.match(planModals, /openStrengthLauncherModal/);
   assert.match(planModals, /openCardioLauncherModal/);
+});
+
+test("Live cardio session supports background wall-clock timing, laps, pace, calories, and Shortcut end binding", () => {
+  const storeMap = new Map<string, string>();
+  const prevStorage = (globalThis as Record<string, unknown>).localStorage;
+  (globalThis as Record<string, unknown>).localStorage = {
+    getItem: (k: string) => storeMap.get(k) ?? null,
+    setItem: (k: string, v: string) => { storeMap.set(k, v); },
+    removeItem: (k: string) => { storeMap.delete(k); },
+    clear: () => { storeMap.clear(); },
+  };
+  try {
+    const runPreset = getAppleCardioPreset("outdoor_run")!;
+    const t0 = Date.parse("2026-11-25T10:00:00.000Z");
+    const started = startCardioSession("u-cardio", runPreset, { now: t0, targetMinutes: 30 });
+    assert.equal(started.presetId, "outdoor_run");
+    assert.equal(started.targetMinutes, 30);
+
+    // Simulating background/locked screen for 12m 30s without any timer ticks
+    const reloaded = readCardioSession("u-cardio");
+    assert.ok(reloaded);
+    const t1 = t0 + 750_000;
+    assert.equal(elapsedAt(reloaded.timing, t1), 750);
+
+    // Record lap at 12:30, pause for 2 minutes, resume and advance another 5 minutes
+    const lapped = recordCardioLap(reloaded, t1);
+    assert.equal(lapped.laps.length, 1);
+    assert.equal(lapped.laps[0]!.splitSeconds, 750);
+
+    const paused = toggleCardioSessionPause(lapped, t1);
+    assert.equal(paused.timing.runningSince, null);
+    assert.equal(elapsedAt(paused.timing, t1 + 120_000), 750);
+
+    const resumed = toggleCardioSessionPause(paused, t1 + 120_000);
+    assert.ok(resumed.timing.runningSince);
+    const t2 = t1 + 120_000 + 300_000;
+    assert.equal(elapsedAt(resumed.timing, t2), 1050);
+
+    const lap2 = recordCardioLap(resumed, t2);
+    assert.equal(lap2.laps.length, 2);
+    assert.equal(lap2.laps[1]!.splitSeconds, 300);
+    assert.equal(lap2.laps[1]!.cumulativeSeconds, 1050);
+
+    // Pace, cycling speed, and calorie estimates
+    assert.deepEqual(formatCardioPaceOrSpeed("running", 1500, "5"), { label: "配速", value: "5'00\"/km" });
+    assert.deepEqual(formatCardioPaceOrSpeed("cycling", 1800, "12"), { label: "均速", value: "24.0 km/h" });
+    assert.ok(estimateCardioCalories("running", 1800) > 250);
+
+    clearCardioSession("u-cardio");
+    assert.equal(readCardioSession("u-cardio"), null);
+
+    // Sanity check createCardioSession defaults
+    const pure = createCardioSession(runPreset, { now: t0 });
+    assert.equal(pure.targetMinutes, null);
+  } finally {
+    if (prevStorage === undefined) {
+      delete (globalThis as Record<string, unknown>).localStorage;
+    } else {
+      (globalThis as Record<string, unknown>).localStorage = prevStorage;
+    }
+  }
+
+  // Structural verification of CardioSessionModal, CardioLauncherModal, LiveWorkoutBar, and record-openers
+  const sessionModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/CardioSessionModal.tsx"), "utf8");
+  const launcherModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/CardioLauncherModal.tsx"), "utf8");
+  const liveBar = readFileSync(resolve(process.cwd(), "packages/web/src/components/LiveWorkoutBar.tsx"), "utf8");
+  const openers = readFileSync(resolve(process.cwd(), "packages/web/src/lib/record-openers.tsx"), "utf8");
+
+  assert.match(sessionModal, /buildAppleHubActionUrl\("end"/);
+  assert.match(sessionModal, /visibilitychange/);
+  assert.match(sessionModal, /pageshow/);
+  assert.match(sessionModal, /结束有氧并同步 Apple Watch/);
+  assert.match(sessionModal, /后台计时/);
+  assert.match(launcherModal, /startCardioSession/);
+  assert.match(launcherModal, /onStartedCardio/);
+  assert.match(liveBar, /readCardioSession/);
+  assert.match(liveBar, /openCardioSessionModal/);
+  assert.match(liveBar, /buildAppleHubActionUrl\("end"/);
+  assert.match(openers, /openCardioSessionModal/);
 });

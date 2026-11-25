@@ -7,7 +7,7 @@ import { parseHashView, type ViewId } from "../lib/routes";
 import { useAuthStore } from "./useAuthStore";
 
 export type ThemeMode = "dark" | "light";
-export type ModalLayout = "" | "menu" | "workout" | "report" | "badge" | "exercise" | "onboarding";
+export type ModalLayout = "" | "menu" | "workout" | "cardio" | "report" | "badge" | "exercise" | "onboarding";
 export type PlanTab = "current" | "horizon" | "starters" | "templates" | "drafts";
 export type SettingsTab = "statistics" | "profile" | "devices" | "ai" | "account";
 

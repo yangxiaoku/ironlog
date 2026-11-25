@@ -4,6 +4,7 @@ import {
   APPLE_CARDIO_PRESETS,
   APPLE_STRENGTH_PRESETS,
   buildAppleCardioLaunchUrl,
+  buildAppleHubActionUrl,
   buildAppleStrengthLaunchUrl,
   getAppleCardioPreset,
   getAppleStrengthPreset,
@@ -19,14 +20,21 @@ import {
   type AppleCardioPresetId,
   type AppleStrengthPresetId,
 } from "../../lib/apple-fitness";
+import {
+  CARDIO_SESSION_EVENT,
+  readCardioSession,
+  startCardioSession,
+  type LiveCardioSession,
+} from "../../lib/cardio-session";
 import { copyText } from "../../lib/clipboard";
-import { triggerHaptic } from "../../lib/haptics-audio";
+import { elapsedAt, formatClock, triggerHaptic } from "../../lib/haptics-audio";
 import {
   WORKOUT_PREFS_EVENT,
   readWorkoutPreferences,
   writeWorkoutPreference,
   type AppleFitnessLaunchMode,
 } from "../../lib/workout-helpers";
+import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
@@ -40,19 +48,24 @@ export function CardioLauncherModal({
   initialTab = "cardio",
   initialPresetId,
   initialStrengthPresetId,
+  onStartedCardio,
   onOpenDeviceSetup,
 }: {
   initialTab?: "cardio" | "strength";
   initialPresetId?: AppleCardioPresetId;
   initialStrengthPresetId?: AppleStrengthPresetId;
+  onStartedCardio?: () => void;
   onOpenDeviceSetup?: () => void;
 }) {
+  const userId = useAuthStore((s) => s.userId);
   const closeTopModal = useUiStore((s) => s.closeTopModal);
   const updateTopModalTitle = useUiStore((s) => s.updateTopModalTitle);
   const notify = useUiStore((s) => s.notify);
   const [tab, setTab] = useState<"cardio" | "strength">(initialTab);
   const [prefs, setPrefs] = useState(() => readWorkoutPreferences());
   const [lastPreset] = useState<AppleCardioPresetId | null>(() => readLastCardioPreset());
+  const [activeCardio, setActiveCardio] = useState<LiveCardioSession | null>(() => readCardioSession(userId));
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [selectedId, setSelectedId] = useState<AppleCardioPresetId>(
     () => initialPresetId ?? readLastCardioPreset() ?? "outdoor_run",
   );
@@ -68,6 +81,21 @@ export function CardioLauncherModal({
     window.addEventListener(WORKOUT_PREFS_EVENT, sync);
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
   }, []);
+
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") return;
+    const syncCardio = () => {
+      setActiveCardio(readCardioSession(userId));
+      setNowMs(Date.now());
+    };
+    syncCardio();
+    const timer = window.setInterval(() => setNowMs(Date.now()), 500);
+    window.addEventListener(CARDIO_SESSION_EVENT, syncCardio);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener(CARDIO_SESSION_EVENT, syncCardio);
+    };
+  }, [userId]);
 
   const isStrength = tab === "strength";
   const selectedCardio = getAppleCardioPreset(selectedId) ?? APPLE_CARDIO_PRESETS[0]!;
@@ -106,17 +134,31 @@ export function CardioLauncherModal({
     setSelectedId(presetId);
     writeLastCardioPreset(presetId);
     const preset = getAppleCardioPreset(presetId) ?? APPLE_CARDIO_PRESETS[0]!;
-    if (prefs.appleCardioLaunch === "shortcut" || prefs.appleCardioLaunch === "fitness_app") {
-      void apiFetch("/api/integrations/apple-health/session-start", {
-        method: "POST",
-        body: { activityType: preset.activityType, environment: preset.environment },
-      }).catch(() => {});
-    }
+    const started = userId ? startCardioSession(userId, preset) : null;
+    void apiFetch("/api/integrations/apple-health/session-start", {
+      method: "POST",
+      body: {
+        activityType: preset.activityType,
+        environment: preset.environment,
+        ...(started ? { startedAt: started.startedAt } : {}),
+        onlyIfIdle: prefs.appleCardioLaunch === "hub",
+      },
+    }).catch(() => {});
     if (viaNativeLink) {
-      window.setTimeout(() => closeTopModal(), 240);
+      window.setTimeout(() => {
+        if (onStartedCardio && started) {
+          onStartedCardio();
+        } else {
+          closeTopModal();
+        }
+      }, 240);
       return;
     }
-    const res = triggerAppleCardioLaunch(presetId, { prefs, notify });
+    const res = triggerAppleCardioLaunch(presetId, { prefs, notify, silentNonIos: Boolean(onStartedCardio && started) });
+    if (onStartedCardio && started) {
+      window.setTimeout(() => onStartedCardio(), res.launched ? 240 : 0);
+      return;
+    }
     if (res.launched) {
       window.setTimeout(() => closeTopModal(), 240);
     }
@@ -142,8 +184,35 @@ export function CardioLauncherModal({
     }
   };
 
+  const endHubUrl = buildAppleHubActionUrl("end", prefs);
+
   return (
     <div className="dialog-form cardio-launcher">
+      {!isStrength && activeCardio && onStartedCardio ? (
+        <div className="cardio-active-banner" role="region" aria-label="进行中的有氧计时">
+          <div className="cardio-active-banner-copy">
+            <span className="training-led" aria-hidden="true" />
+            <div>
+              <strong>正在进行：{activeCardio.label}</strong>
+              <small>
+                {formatClock(elapsedAt(activeCardio.timing, nowMs))}
+                {activeCardio.timing.runningSince ? " · 后台计时中" : " · 已暂停"}
+              </small>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="primary-button"
+            onClick={() => {
+              triggerHaptic("light");
+              onStartedCardio();
+            }}
+          >
+            回到计时页
+          </button>
+        </div>
+      ) : null}
+
       <div className="segments" role="group" aria-label="选择运动类别">
         <button type="button" aria-pressed={tab === "cardio"} onClick={() => handleTabChange("cardio")}>
           有氧方式
@@ -362,16 +431,27 @@ export function CardioLauncherModal({
       </details>
 
       <footer>
-        <button
-          type="button"
-          className="secondary-button"
-          onClick={() => {
-            triggerHaptic("light");
-            triggerAppleHubAction("end", { prefs, notify });
-          }}
-        >
-          <Icon name="upload" size={14} /> 完练回传数据
-        </button>
+        {onIos ? (
+          <a
+            href={endHubUrl}
+            className="secondary-button"
+            style={{ textDecoration: "none" }}
+            onClick={() => triggerHaptic("light")}
+          >
+            <Icon name="upload" size={14} /> 完练回传数据
+          </a>
+        ) : (
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              triggerHaptic("light");
+              triggerAppleHubAction("end", { prefs, notify });
+            }}
+          >
+            <Icon name="upload" size={14} /> 完练回传数据
+          </button>
+        )}
         <button
           type="button"
           className="quiet"
