@@ -1,12 +1,17 @@
 import { useEffect, useState } from "react";
 import {
   APPLE_CARDIO_PRESETS,
+  APPLE_STRENGTH_PRESETS,
   getAppleCardioPreset,
+  getAppleStrengthPreset,
   openAppleShortcutCreator,
   readLastCardioPreset,
   resolveCardioShortcutName,
+  resolveStrengthShortcutName,
   triggerAppleCardioLaunch,
+  triggerAppleStrengthLaunch,
   type AppleCardioPresetId,
+  type AppleStrengthPresetId,
 } from "../../lib/apple-fitness";
 import { copyText } from "../../lib/clipboard";
 import { triggerHaptic } from "../../lib/haptics-audio";
@@ -19,27 +24,36 @@ import {
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
-const CARDIO_LAUNCH_MODES: ReadonlyArray<readonly [AppleFitnessLaunchMode, string]> = [
+const LAUNCH_MODES: ReadonlyArray<readonly [AppleFitnessLaunchMode, string]> = [
   ["shortcut", "按项目直开"],
   ["hub", "全能联动"],
   ["fitness_app", "仅开健身App"],
 ];
 
 export function CardioLauncherModal({
+  initialTab = "cardio",
   initialPresetId,
+  initialStrengthPresetId,
   onOpenDeviceSetup,
 }: {
+  initialTab?: "cardio" | "strength";
   initialPresetId?: AppleCardioPresetId;
+  initialStrengthPresetId?: AppleStrengthPresetId;
   onOpenDeviceSetup?: () => void;
 }) {
   const closeTopModal = useUiStore((s) => s.closeTopModal);
+  const updateTopModalTitle = useUiStore((s) => s.updateTopModalTitle);
   const notify = useUiStore((s) => s.notify);
+  const [tab, setTab] = useState<"cardio" | "strength">(initialTab);
   const [prefs, setPrefs] = useState(() => readWorkoutPreferences());
   const [lastPreset] = useState<AppleCardioPresetId | null>(() => readLastCardioPreset());
   const [selectedId, setSelectedId] = useState<AppleCardioPresetId>(
     () => initialPresetId ?? readLastCardioPreset() ?? "outdoor_run",
   );
-  const [setupOpen, setSetupOpen] = useState(false);
+  const [selectedStrengthId, setSelectedStrengthId] = useState<AppleStrengthPresetId>(
+    () => initialStrengthPresetId ?? "traditional_strength",
+  );
+  const [setupOpen, setSetupOpen] = useState(() => initialTab === "strength");
   const [copiedName, setCopiedName] = useState("");
 
   useEffect(() => {
@@ -49,17 +63,37 @@ export function CardioLauncherModal({
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
   }, []);
 
-  const selected = getAppleCardioPreset(selectedId) ?? APPLE_CARDIO_PRESETS[0]!;
-  const mode = prefs.appleCardioLaunch;
-  const shortcutName = resolveCardioShortcutName(selected, prefs.appleCardioShortcutName);
+  const isStrength = tab === "strength";
+  const selectedCardio = getAppleCardioPreset(selectedId) ?? APPLE_CARDIO_PRESETS[0]!;
+  const selectedStrength = getAppleStrengthPreset(selectedStrengthId) ?? APPLE_STRENGTH_PRESETS[0]!;
+  const selected = isStrength ? selectedStrength : selectedCardio;
+
+  const mode = isStrength ? prefs.appleStrengthLaunch : prefs.appleCardioLaunch;
+  const prefKey = isStrength ? "appleStrengthLaunch" : "appleCardioLaunch";
+  const shortcutName = isStrength
+    ? resolveStrengthShortcutName(selectedStrength, prefs.appleStrengthShortcutName)
+    : resolveCardioShortcutName(selectedCardio, prefs.appleCardioShortcutName);
+  const hubParam = isStrength
+    ? selectedStrength.id === "traditional_strength"
+      ? "strength"
+      : selectedStrength.id === "functional_strength"
+        ? "strength:functional"
+        : "strength:core"
+    : `cardio:${selectedCardio.id}`;
+
+  const handleTabChange = (nextTab: "cardio" | "strength") => {
+    triggerHaptic("light");
+    setTab(nextTab);
+    updateTopModalTitle(nextTab === "strength" ? "启动 Apple 力量训练" : "选择有氧方式");
+  };
 
   const handleModeChange = (nextMode: AppleFitnessLaunchMode) => {
     triggerHaptic("light");
-    writeWorkoutPreference("appleCardioLaunch", nextMode);
+    writeWorkoutPreference(prefKey, nextMode);
     setPrefs(readWorkoutPreferences());
   };
 
-  const handleSelectAndLaunch = (presetId: AppleCardioPresetId) => {
+  const handleSelectCardio = (presetId: AppleCardioPresetId) => {
     triggerHaptic("light");
     setSelectedId(presetId);
     const res = triggerAppleCardioLaunch(presetId, { prefs, notify });
@@ -68,12 +102,30 @@ export function CardioLauncherModal({
     }
   };
 
+  const handleSelectStrength = (presetId: AppleStrengthPresetId) => {
+    triggerHaptic("light");
+    setSelectedStrengthId(presetId);
+    const res = triggerAppleStrengthLaunch(presetId, { prefs, notify });
+    if (res.launched) {
+      closeTopModal();
+    }
+  };
+
   return (
     <div className="dialog-form cardio-launcher">
+      <div className="segments" role="group" aria-label="选择运动类别">
+        <button type="button" aria-pressed={tab === "cardio"} onClick={() => handleTabChange("cardio")}>
+          有氧方式
+        </button>
+        <button type="button" aria-pressed={tab === "strength"} onClick={() => handleTabChange("strength")}>
+          力量训练
+        </button>
+      </div>
+
       <div className="field">
         <span>跳转方式</span>
-        <div className="segments" role="group" aria-label="选择有氧跳转方式">
-          {CARDIO_LAUNCH_MODES.map(([itemMode, label]) => (
+        <div className="segments" role="group" aria-label={isStrength ? "选择力量跳转方式" : "选择有氧跳转方式"}>
+          {LAUNCH_MODES.map(([itemMode, label]) => (
             <button
               key={itemMode}
               type="button"
@@ -89,11 +141,11 @@ export function CardioLauncherModal({
       <div className="cardio-mode-note">
         {mode === "shortcut" ? (
           <p className="muted">
-            点击下方任一有氧方式，直接运行对应快捷指令（如 <code>{shortcutName}</code>）立即开练。
+            点击下方项目，直接运行对应快捷指令（如 <code>{shortcutName}</code>）跳过健身首页立即开练。
           </p>
         ) : mode === "hub" ? (
           <p className="muted">
-            点击下方任一有氧方式，通过全能快捷指令上报该有氧开练事件并按对应分支启动。
+            点击下方项目，通过全能快捷指令上报 <code>{selected.label}</code> 开练事件并按对应分支启动。
           </p>
         ) : (
           <div className="cardio-mode-warn">
@@ -114,27 +166,49 @@ export function CardioLauncherModal({
         )}
       </div>
 
-      <div className="cardio-preset-grid" role="group" aria-label="选择有氧方式">
-        {APPLE_CARDIO_PRESETS.map((preset) => {
-          const isSelected = preset.id === selected.id;
-          const isLast = preset.id === lastPreset;
-          return (
-            <button
-              key={preset.id}
-              type="button"
-              className={`cardio-preset-card${isSelected ? " is-selected" : ""}`}
-              aria-pressed={isSelected}
-              onClick={() => handleSelectAndLaunch(preset.id)}
-            >
-              <div className="cardio-preset-head">
-                <strong>{preset.label}</strong>
-                {isLast ? <span className="cardio-last-tag">上次</span> : null}
-              </div>
-              <small>{preset.subtitle}</small>
-            </button>
-          );
-        })}
-      </div>
+      {isStrength ? (
+        <div className="cardio-preset-grid" role="group" aria-label="选择力量训练方式">
+          {APPLE_STRENGTH_PRESETS.map((preset) => {
+            const isSelected = preset.id === selectedStrength.id;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={`cardio-preset-card${isSelected ? " is-selected" : ""}`}
+                aria-pressed={isSelected}
+                onClick={() => handleSelectStrength(preset.id)}
+              >
+                <div className="cardio-preset-head">
+                  <strong>{preset.label}</strong>
+                </div>
+                <small>{preset.subtitle}</small>
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="cardio-preset-grid" role="group" aria-label="选择有氧方式">
+          {APPLE_CARDIO_PRESETS.map((preset) => {
+            const isSelected = preset.id === selectedCardio.id;
+            const isLast = preset.id === lastPreset;
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                className={`cardio-preset-card${isSelected ? " is-selected" : ""}`}
+                aria-pressed={isSelected}
+                onClick={() => handleSelectCardio(preset.id)}
+              >
+                <div className="cardio-preset-head">
+                  <strong>{preset.label}</strong>
+                  {isLast ? <span className="cardio-last-tag">上次</span> : null}
+                </div>
+                <small>{preset.subtitle}</small>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       <details
         className="settings-accordion"
@@ -157,10 +231,10 @@ export function CardioLauncherModal({
                 <span>全能快捷指令</span>
                 <code className="cardio-setup-name">{prefs.appleHubShortcutName}</code>
                 <span>传入参数</span>
-                <code className="cardio-setup-name">{`cardio:${selected.id}`}</code>
+                <code className="cardio-setup-name">{hubParam}</code>
               </div>
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
-                重新导出新版全能快捷指令即包含 13 项有氧独立分支（自动上报开始事件）；在该分支末尾把「打开 Fitness」换成
+                全能快捷指令内置对应分支（自动上报开始事件）；在该分支末尾把「打开 Fitness」换成
                 <strong>「开始体能训练 → {selected.appleWorkoutLabel}」</strong>即可 1 步直开。
               </p>
               <div className="cardio-setup-actions">
@@ -189,7 +263,7 @@ export function CardioLauncherModal({
                   打开 iPhone 快捷指令，添加动作 <b>「开始体能训练」</b> → 选 <b>「{selected.appleWorkoutLabel}」</b> · 开放式目标；
                 </li>
                 <li>
-                  将快捷指令改名为 <code>{shortcutName}</code> 点完成即可（以后点对应卡片自动直接开始）。
+                  将快捷指令改名为 <code>{shortcutName}</code> 点完成即可（以后点对应项目自动直接开始）。
                 </li>
               </ol>
               <div className="cardio-setup-actions">
@@ -228,7 +302,11 @@ export function CardioLauncherModal({
           className="quiet"
           onClick={() => {
             triggerHaptic("light");
-            triggerAppleCardioLaunch(selected.id, { prefs, forceMode: "fitness_app", notify });
+            if (isStrength) {
+              triggerAppleStrengthLaunch(selectedStrength.id, { prefs, forceMode: "fitness_app", notify });
+            } else {
+              triggerAppleCardioLaunch(selectedCardio.id, { prefs, forceMode: "fitness_app", notify });
+            }
           }}
         >
           仅打开健身 App

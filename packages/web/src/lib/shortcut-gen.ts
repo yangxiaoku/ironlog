@@ -1966,8 +1966,64 @@ export function buildIronlogUnifiedAppleHubShortcut({
           { key: "occurredAt", outputAttachment: { name: "Date", uuid: strengthDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
         ],
       }),
+      commentActionXml("【传统力量训练】如需跳过健身首页直接开练，把下方「打开 Fitness」替换为「开始体能训练 → 传统力量训练」"),
       openAppActionXml("com.apple.Fitness", "Fitness"),
     ],
+  });
+
+  const strengthRoutes: ReadonlyArray<{
+    mode: string;
+    label: string;
+    appleWorkoutLabel: string;
+    activityType: string;
+    environment: ShortcutEnvironment;
+  }> = [
+    {
+      mode: "strength:functional",
+      label: "功能性力量",
+      appleWorkoutLabel: "功能性力量训练",
+      activityType: "functionalStrengthTraining",
+      environment: "indoor",
+    },
+    {
+      mode: "strength:core",
+      label: "核心训练",
+      appleWorkoutLabel: "核心训练",
+      activityType: "coreTraining",
+      environment: "indoor",
+    },
+  ];
+
+  const strengthRouteBranches = strengthRoutes.flatMap((route) => {
+    const startDateUuid = uuidFactory();
+    return conditionalBlock({
+      groupUuid: uuidFactory(),
+      input: { kind: "variable", variableName: "v_mode" },
+      condition: 4,
+      equalsText: route.mode,
+      bodyActions: [
+        currentDateActionXml({ uuid: startDateUuid }),
+        downloadJsonActionXml({
+          uuid: uuidFactory(),
+          endpoint: eventsEndpoint,
+          endpointPath: prelude ? eventsPath : undefined,
+          token: cleanToken,
+          originUuid: prelude?.originUuid,
+          tokenUuid: prelude?.tokenUuid,
+          bodyItems: [
+            { key: "schemaVersion", value: "1", itemType: 3 },
+            { key: "event", value: "start" },
+            { key: "activityType", value: route.activityType },
+            { key: "environment", value: route.environment },
+            { key: "occurredAt", outputAttachment: { name: "Date", uuid: startDateUuid, aggrandizements: ISO_DATE_AGGRANDIZEMENTS } },
+          ],
+        }),
+        commentActionXml(
+          `【${route.label}】如需跳过健身首页直接开练，把下方「打开 Fitness」替换为「开始体能训练 → ${route.appleWorkoutLabel}」`,
+        ),
+        openAppActionXml("com.apple.Fitness", "Fitness"),
+      ],
+    });
   });
 
   const cardioRoutes: ReadonlyArray<{
@@ -2259,6 +2315,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     ...(prelude ? prelude.actions : []),
     ...resolveModeActions,
     ...strengthBranch,
+    ...strengthRouteBranches,
     ...cardioBranch,
     ...cardioRouteBranches,
     ...endBranch,

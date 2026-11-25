@@ -220,12 +220,15 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   for (const label of ["开始传统力量", "打开有氧健身", "结束训练并同步心率热量", "同步今日健康数据", "选择有氧方式"]) {
     assert.ok(hubUniversal.xml.includes(`<string>${label}</string>`), `contains menu item ${label}`);
   }
-  for (const mode of ["strength", "cardio", "cardio:indoor_run", "cardio:stair_climbing", "end", "daily"]) {
+  for (const mode of ["strength", "strength:functional", "strength:core", "cardio", "cardio:indoor_run", "cardio:stair_climbing", "end", "daily"]) {
     assert.ok(
       hubUniversal.xml.includes(`<key>WFConditionalActionString</key>\n\t\t\t\t<string>${mode}</string>`),
       `contains conditional route for ${mode}`,
     );
   }
+  assert.ok(hubUniversal.xml.includes("【传统力量训练】"));
+  assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>coreTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));
   assert.ok(hubUniversal.xml.includes("<string>running</string>"));
   assert.ok(hubUniversal.xml.includes("is.workflow.actions.openapp"));
@@ -831,6 +834,15 @@ test("Cardio modality picker connects QuickRecordSheet, WorkoutView, SettingsVie
   assert.match(workoutModal, /triggerAppleCardioLaunch/);
   assert.match(workoutModal, /openCardioLauncherModal/);
   assert.match(cardioModal, /APPLE_CARDIO_PRESETS/);
+  assert.match(cardioModal, /APPLE_STRENGTH_PRESETS/);
   assert.match(cardioModal, /resolveCardioShortcutName/);
+  assert.match(cardioModal, /resolveStrengthShortcutName/);
   assert.match(cardioModal, /triggerAppleCardioLaunch/);
+  assert.match(cardioModal, /triggerAppleStrengthLaunch/);
+
+  const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+  assert.match(settingsView, /openStrengthLauncherModal/);
+  assert.match(workoutModal, /openStrengthLauncherModal/);
+  assert.match(planModals, /openStrengthLauncherModal/);
+  assert.match(planModals, /openCardioLauncherModal/);
 });

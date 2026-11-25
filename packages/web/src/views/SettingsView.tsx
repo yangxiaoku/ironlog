@@ -4,6 +4,7 @@ import { AiSettingsCard } from "../components/ai/AiSettingsCard";
 import type { AiStatus } from "../components/ai/AiModals";
 import { apiFetch } from "../lib/api";
 import { openAppleShortcutCreator, triggerAppleFitnessLaunch, triggerAppleHubAction } from "../lib/apple-fitness";
+import { copyText } from "../lib/clipboard";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
 import { createRestAudio, triggerHaptic } from "../lib/haptics-audio";
@@ -35,6 +36,7 @@ import {
   openHealthDataWebhookModal,
   openIssueApiTokenModal,
   openOnboardingModal,
+  openStrengthLauncherModal,
 } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore, type SettingsTab } from "../store/useUiStore";
@@ -1262,7 +1264,7 @@ export function SettingsView() {
                       {(
                         [
                           ["hub", "全能联动"],
-                          ["shortcut", "独立快捷指令"],
+                          ["shortcut", "按项目直开"],
                           ["fitness_app", "健身 App"],
                           ["off", "关闭"],
                         ] as ReadonlyArray<readonly [AppleFitnessLaunchMode, string]>
@@ -1281,21 +1283,13 @@ export function SettingsView() {
                   {workoutPrefs.appleStrengthLaunch === "shortcut" ? (
                     <div className="field">
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
-                        <span>独立力量快捷指令名称</span>
+                        <span>力量直开快捷指令名称</span>
                         <button
                           type="button"
                           className="quiet"
-                          onClick={() =>
-                            triggerAppleFitnessLaunch("strength", {
-                              prefs: {
-                                ...workoutPrefs,
-                                appleStrengthShortcutName: strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT,
-                              },
-                              notify,
-                            })
-                          }
+                          onClick={() => openStrengthLauncherModal("traditional_strength")}
                         >
-                          测试跳转
+                          配置 / 测试
                         </button>
                       </div>
                       <input
@@ -1313,6 +1307,30 @@ export function SettingsView() {
                           updateWorkoutPref("appleStrengthShortcutName", normalized);
                         }}
                       />
+                      <small className="muted">
+                        在 iPhone 快捷指令添加「开始体能训练 → 传统力量训练 · 开放式目标」并命名为此名称，开练即直接启动。
+                      </small>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => {
+                            const name = strengthShortcutInput.trim() || DEFAULT_APPLE_STRENGTH_SHORTCUT;
+                            void copyText(name).then((ok) =>
+                              notify(ok ? `已复制「${name}」` : `请手动复制：${name}`),
+                            );
+                          }}
+                        >
+                          <Icon name="copy" size={14} /> 复制名称
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={() => openAppleShortcutCreator(notify)}
+                        >
+                          <Icon name="plus" size={14} /> 去快捷指令新建
+                        </button>
+                      </div>
                     </div>
                   ) : null}
 

@@ -68,7 +68,12 @@ import {
   type SetFieldPatch,
   type WorkoutPreferences,
 } from "../../lib/workout-helpers";
-import { openAiAdaptWorkoutModal, openCardioLauncherModal, openExerciseDetailModal } from "../../lib/record-openers";
+import {
+  openAiAdaptWorkoutModal,
+  openCardioLauncherModal,
+  openExerciseDetailModal,
+  openStrengthLauncherModal,
+} from "../../lib/record-openers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -1668,6 +1673,17 @@ export function WorkoutEditorModal({
                   }}
                 >
                   <Icon name="heart" size={14} /> 启动传统力量
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => {
+                    triggerHaptic("light");
+                    setOpenMenu(false);
+                    openStrengthLauncherModal("traditional_strength");
+                  }}
+                >
+                  <Icon name="dial" size={14} /> 配置力量直开
                 </button>
                 <button
                   type="button"

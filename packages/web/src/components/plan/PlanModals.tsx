@@ -15,7 +15,8 @@ import {
   type WorkoutData,
 } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
-import { inferAppleFitnessKind } from "../../lib/apple-fitness";
+import { inferAppleCardioPreset, inferAppleFitnessKind } from "../../lib/apple-fitness";
+import { openCardioLauncherModal, openStrengthLauncherModal } from "../../lib/record-openers";
 import {
   WORKOUT_PREFS_EVENT,
   applyDeloadToTarget,
@@ -1264,6 +1265,7 @@ export function RoutinePreviewModal({
   const ssBadges = supersetBadges(result.exercises);
 
   const previewFitnessKind = inferAppleFitnessKind(result.exercises, result.name);
+  const inferredCardio = previewFitnessKind === "cardio" ? inferAppleCardioPreset(result.exercises, result.name) : null;
   const appleLaunchMode = previewFitnessKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
   const appleLaunchPrefKey = previewFitnessKind === "cardio" ? "appleCardioLaunch" : "appleStrengthLaunch";
 
@@ -1410,13 +1412,13 @@ export function RoutinePreviewModal({
           <div className="preview-apple-text">
             <strong>开练同步拉起 Apple 健身</strong>
             <small>
-              方式：
+              目标：{inferredCardio ? inferredCardio.label : "传统力量训练"} · 方式：
               {appleLaunchMode === "hub"
                 ? "全能快捷指令"
                 : appleLaunchMode === "fitness_app"
                   ? "直接打开健身 App（免配置）"
                   : appleLaunchMode === "shortcut"
-                    ? "独立快捷指令"
+                    ? "按项目直开"
                     : "已关闭"}
             </small>
           </div>
@@ -1438,7 +1440,7 @@ export function RoutinePreviewModal({
               [
                 ["hub", "全能快捷指令"],
                 ["fitness_app", "直开健身 App"],
-                ["shortcut", "独立快捷指令"],
+                ["shortcut", "按项目直开"],
               ] as const
             ).map(([mode, label]) => (
               <button
@@ -1455,6 +1457,17 @@ export function RoutinePreviewModal({
                 {label}
               </button>
             ))}
+            <button
+              type="button"
+              className="quiet"
+              onClick={() =>
+                previewFitnessKind === "cardio"
+                  ? openCardioLauncherModal(inferredCardio?.id)
+                  : openStrengthLauncherModal("traditional_strength")
+              }
+            >
+              直开配置
+            </button>
           </div>
         ) : null}
       </div>

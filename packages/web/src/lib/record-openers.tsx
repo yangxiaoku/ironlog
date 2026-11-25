@@ -52,6 +52,7 @@ import {
   triggerAppleCardioLaunch,
   triggerAppleFitnessLaunch,
   type AppleCardioPresetId,
+  type AppleStrengthPresetId,
 } from "./apple-fitness";
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
@@ -162,7 +163,25 @@ export function openCardioLauncherModal(initialPresetId?: AppleCardioPresetId): 
     title: "选择有氧方式",
     content: (
       <CardioLauncherModal
+        initialTab="cardio"
         initialPresetId={initialPresetId}
+        onOpenDeviceSetup={() => {
+          ui.closeTopModal();
+          openDeviceSetupModal();
+        }}
+      />
+    ),
+  });
+}
+
+export function openStrengthLauncherModal(initialPresetId?: AppleStrengthPresetId): void {
+  const ui = useUiStore.getState();
+  ui.openModal({
+    title: "启动 Apple 力量训练",
+    content: (
+      <CardioLauncherModal
+        initialTab="strength"
+        initialStrengthPresetId={initialPresetId}
         onOpenDeviceSetup={() => {
           ui.closeTopModal();
           openDeviceSetupModal();

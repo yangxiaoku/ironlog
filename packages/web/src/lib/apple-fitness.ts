@@ -8,6 +8,7 @@ import {
 } from "./workout-helpers";
 
 export type AppleFitnessKind = "strength" | "cardio";
+export type AppleStrengthPresetId = "traditional_strength" | "functional_strength" | "core_training";
 export type AppleCardioPresetId =
   | "outdoor_run"
   | "indoor_run"
@@ -22,6 +23,42 @@ export type AppleCardioPresetId =
   | "outdoor_walk"
   | "hiking"
   | "mixed_cardio";
+
+export interface AppleStrengthPreset {
+  id: AppleStrengthPresetId;
+  label: string;
+  appleWorkoutLabel: string;
+  activityType: string;
+  environment: "indoor";
+  subtitle: string;
+}
+
+export const APPLE_STRENGTH_PRESETS: ReadonlyArray<AppleStrengthPreset> = [
+  {
+    id: "traditional_strength",
+    label: "传统力量训练",
+    appleWorkoutLabel: "传统力量训练",
+    activityType: "traditionalStrengthTraining",
+    environment: "indoor",
+    subtitle: "自由重量 / 固定器械",
+  },
+  {
+    id: "functional_strength",
+    label: "功能性力量",
+    appleWorkoutLabel: "功能性力量训练",
+    activityType: "functionalStrengthTraining",
+    environment: "indoor",
+    subtitle: "壶铃 / 徒手 / 复合",
+  },
+  {
+    id: "core_training",
+    label: "核心训练",
+    appleWorkoutLabel: "核心训练",
+    activityType: "coreTraining",
+    environment: "indoor",
+    subtitle: "腹肌 / 稳定核心",
+  },
+];
 
 export interface AppleCardioPreset {
   id: AppleCardioPresetId;
@@ -139,7 +176,33 @@ export const APPLE_CARDIO_PRESETS: ReadonlyArray<AppleCardioPreset> = [
   },
 ];
 
-export type AppleHubAction = "strength" | "cardio" | `cardio:${AppleCardioPresetId}` | "end" | "daily";
+export type AppleHubAction =
+  | "strength"
+  | "strength:functional"
+  | "strength:core"
+  | "cardio"
+  | `cardio:${AppleCardioPresetId}`
+  | "end"
+  | "daily";
+
+export function getAppleStrengthPreset(id: string | null | undefined): AppleStrengthPreset | null {
+  if (!id) return null;
+  return APPLE_STRENGTH_PRESETS.find((preset) => preset.id === id) ?? null;
+}
+
+/**
+ * Resolves the iOS Shortcut name for a chosen strength preset while preserving `铁记开始力量` compatibility.
+ */
+export function resolveStrengthShortcutName(preset: AppleStrengthPreset, baseShortcutName?: string): string {
+  const base = (baseShortcutName ?? "").trim().slice(0, 80) || DEFAULT_APPLE_STRENGTH_SHORTCUT;
+  if (base.includes("{sport}")) {
+    return base.replaceAll("{sport}", preset.label).slice(0, 80);
+  }
+  if (preset.id === "traditional_strength") {
+    return base;
+  }
+  return `${base}-${preset.label}`.slice(0, 80);
+}
 
 export const LAST_CARDIO_PRESET_KEY = "ironlog-web-last-cardio-preset";
 export const APPLE_FITNESS_APP_URL = "fitnessapp://";
@@ -290,6 +353,38 @@ export function buildAppleFitnessLaunchUrl(
 }
 
 /**
+ * Builds the iOS deep-link URL (`shortcuts://run-shortcut?...` or `fitnessapp://`) for a chosen strength preset.
+ */
+export function buildAppleStrengthLaunchUrl(
+  presetId: AppleStrengthPresetId,
+  prefs: Pick<WorkoutPreferences, "appleStrengthLaunch" | "appleStrengthShortcutName"> & {
+    appleHubShortcutName?: string;
+  },
+  forceMode?: AppleFitnessLaunchMode,
+): string | null {
+  const preset = getAppleStrengthPreset(presetId) ?? APPLE_STRENGTH_PRESETS[0]!;
+  const mode = forceMode ?? prefs.appleStrengthLaunch;
+  if (mode === "off") return null;
+  if (mode === "fitness_app") return APPLE_FITNESS_APP_URL;
+  if (mode === "hub") {
+    const action: AppleHubAction =
+      preset.id === "traditional_strength"
+        ? "strength"
+        : preset.id === "functional_strength"
+          ? "strength:functional"
+          : "strength:core";
+    return buildAppleHubActionUrl(action, {
+      appleHubShortcutName: prefs.appleHubShortcutName ?? DEFAULT_APPLE_HUB_SHORTCUT,
+    });
+  }
+  const name = resolveStrengthShortcutName(preset, prefs.appleStrengthShortcutName);
+  if (preset.id === "traditional_strength") {
+    return `shortcuts://run-shortcut?name=${encodeURIComponent(name)}`;
+  }
+  return `shortcuts://run-shortcut?name=${encodeURIComponent(name)}&input=text&text=${encodeURIComponent(preset.id)}`;
+}
+
+/**
  * Builds the iOS deep-link URL (`shortcuts://run-shortcut?...` or `fitnessapp://`) for a chosen cardio preset.
  */
 export function buildAppleCardioLaunchUrl(
@@ -375,6 +470,37 @@ export function triggerAppleCardioLaunch(
   if (!url) {
     if (!options.silentNonIos) {
       options.notify?.("Apple 有氧跳转已关闭，可在设置中开启");
+    }
+    return { launched: false, url: null, preset };
+  }
+  if (typeof window === "undefined" || !isAppleMobileDevice()) {
+    if (!options.silentNonIos) {
+      options.notify?.("Apple 健身 / 快捷指令跳转仅支持在 iPhone / iPad 上使用");
+    }
+    return { launched: false, url, preset };
+  }
+  launchIosUrlScheme(url);
+  return { launched: true, url, preset };
+}
+
+/**
+ * Launches Apple Fitness (or the matched iOS Shortcut) for a chosen strength preset synchronously on iOS.
+ */
+export function triggerAppleStrengthLaunch(
+  presetId: AppleStrengthPresetId,
+  options: {
+    prefs?: WorkoutPreferences;
+    forceMode?: AppleFitnessLaunchMode;
+    notify?: (msg: string) => void;
+    silentNonIos?: boolean;
+  } = {},
+): { launched: boolean; url: string | null; preset: AppleStrengthPreset } {
+  const preset = getAppleStrengthPreset(presetId) ?? APPLE_STRENGTH_PRESETS[0]!;
+  const prefs = options.prefs ?? readWorkoutPreferences();
+  const url = buildAppleStrengthLaunchUrl(preset.id, prefs, options.forceMode);
+  if (!url) {
+    if (!options.silentNonIos) {
+      options.notify?.("Apple 力量跳转已关闭，可在设置中开启");
     }
     return { launched: false, url: null, preset };
   }

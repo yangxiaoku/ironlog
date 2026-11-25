@@ -20,17 +20,21 @@ import {
 import {
   APPLE_CARDIO_PRESETS,
   APPLE_FITNESS_APP_URL,
+  APPLE_STRENGTH_PRESETS,
   buildAppleCardioLaunchUrl,
   buildAppleFitnessLaunchUrl,
   buildAppleHubActionUrl,
+  buildAppleStrengthLaunchUrl,
   inferAppleCardioPreset,
   inferAppleFitnessKind,
   isAppleMobileDevice,
   readLastCardioPreset,
   resolveCardioShortcutName,
+  resolveStrengthShortcutName,
   triggerAppleCardioLaunch,
   triggerAppleFitnessLaunch,
   triggerAppleHubAction,
+  triggerAppleStrengthLaunch,
   writeLastCardioPreset,
 } from "../packages/web/src/lib/apple-fitness.ts";
 import {
@@ -931,6 +935,40 @@ test("cardio presets, shortcut naming, inference, and per-modality launch routin
       loc.href,
       `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始有氧-室内跑步")}&input=text&text=indoor_run`,
     );
+
+    assert.equal(APPLE_STRENGTH_PRESETS.length, 3);
+    const trad = APPLE_STRENGTH_PRESETS[0]!;
+    const func = APPLE_STRENGTH_PRESETS[1]!;
+    assert.equal(resolveStrengthShortcutName(trad, "铁记开始力量"), "铁记开始力量");
+    assert.equal(resolveStrengthShortcutName(func, "铁记开始力量"), "铁记开始力量-功能性力量");
+    assert.equal(resolveStrengthShortcutName(trad, "直开-{sport}"), "直开-传统力量训练");
+
+    assert.equal(
+      buildAppleStrengthLaunchUrl("traditional_strength", {
+        appleStrengthLaunch: "shortcut",
+        appleStrengthShortcutName: "铁记开始力量",
+      }),
+      `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始力量")}`,
+    );
+    assert.equal(
+      buildAppleStrengthLaunchUrl("functional_strength", {
+        appleStrengthLaunch: "hub",
+        appleStrengthShortcutName: "铁记开始力量",
+        appleHubShortcutName: "铁记全能",
+      }),
+      `shortcuts://run-shortcut?name=${encodeURIComponent("铁记全能")}&input=text&text=${encodeURIComponent("strength:functional")}`,
+    );
+
+    const strengthLaunched = triggerAppleStrengthLaunch("traditional_strength", {
+      prefs: {
+        ...DEFAULT_WORKOUT_PREFERENCES,
+        appleStrengthLaunch: "shortcut",
+        appleStrengthShortcutName: "铁记开始力量",
+      },
+      silentNonIos: true,
+    });
+    assert.equal(strengthLaunched.launched, true);
+    assert.equal(loc.href, `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始力量")}`);
   } finally {
     if (prevStorage) Object.defineProperty(globalThis, "localStorage", prevStorage);
     else Reflect.deleteProperty(globalThis, "localStorage");
