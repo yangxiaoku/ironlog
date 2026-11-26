@@ -1253,7 +1253,9 @@ export function buildIronlogDailyHealthShortcut({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: isDailySum ? 3 : 1, byEndDate: isSleep },
+      // Keep the locked Find Health Samples date row on "Start Date" (iOS resets Sleep to
+      // default Steps/7 days if "End Date" is written to the non-removable date template).
+      dateFilter: { kind: "lastDays", days: isDailySum ? 3 : isSleep ? 2 : 1 },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
       limit: latest ? 1 : null,
     }));

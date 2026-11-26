@@ -1879,7 +1879,11 @@ function buildDailyHealthCollectionActions({
       typeLabel: metric.typeLabelEn,
       unit: metric.unit ?? null,
       groupBy: isSteps ? "Hour" : isDailySum ? "Day" : null,
-      dateFilter: { kind: "lastDays", days: isDailySum ? 3 : 1, byEndDate: isSleep },
+      // Apple Shortcuts' locked Find Health Samples date row only accepts "Start Date";
+      // using "End Date" causes iOS to reset the entire Sleep filter back to default
+      // (Steps / last 7 days / no grouping). Use Start Date in the last 2 days for Sleep
+      // so pre-midnight sessions are captured and bucketed by End Date on the server.
+      dateFilter: { kind: "lastDays", days: isDailySum ? 3 : isSleep ? 2 : 1 },
       sortOrder: isSleep ? "Oldest First" : "Latest First",
       limit: latest ? 1 : null,
     }));
@@ -2053,7 +2057,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     : "铁记-Apple健康全能联动.shortcut";
 
   const commentText = [
-    `铁记（Ironlog）Apple 健康全能智能联动 [v2026.11.25-r10]（1 个快捷指令覆盖全流程）`,
+    `铁记（Ironlog）Apple 健康全能智能联动 [v2026.11.26-r11]（1 个快捷指令覆盖全流程）`,
     `默认运动：${sportLabel}（${resolvedEnv}）；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `网页智能路由参数（input=text）：`,
     `  • strength / strength:functional / strength:core：上报对应力量开始事件，自动开始对应体能训练并打开 Apple「健身」App`,

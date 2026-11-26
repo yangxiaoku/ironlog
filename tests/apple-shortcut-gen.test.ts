@@ -248,6 +248,15 @@ test("buildIronlogDailyHealthShortcut 生成带日期的最近三天活动数据
   assert.ok(!daily.xml.includes("<integer>1000</integer>"));
   assert.ok(!daily.xml.includes("<integer>1002</integer>"));
   assert.ok(!daily.xml.includes("<key>WFContentPredicateBoundedDate</key>\n\t\t\t\t\t\t<true/>"));
+  assert.ok(!daily.xml.includes("<key>Property</key>\n\t\t\t\t\t\t\t\t\t<string>End Date</string>"), "locked health date filter must never use End Date (iOS resets Sleep to Steps/7d)");
+  const sleepAction = daily.xml.split(/\n\t\t<dict>\n/).find(
+    (action) =>
+      action.includes("<string>is.workflow.actions.filter.health.quantity</string>") &&
+      action.includes("<string>Sleep</string>"),
+  );
+  assert.ok(sleepAction, "expected Sleep Find Health Samples action");
+  assert.match(sleepAction!, /<key>Operator<\/key>\s*<integer>1001<\/integer>\s*<key>Property<\/key>\s*<string>Start Date<\/string>/);
+  assert.match(sleepAction!, /<key>Number<\/key>\s*<string>2<\/string>\s*<key>Unit<\/key>\s*<integer>16<\/integer>/);
   assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Hour</string>"));
   assert.ok(daily.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
   assert.ok(!daily.xml.includes("<string>步数</string>"));
