@@ -137,13 +137,13 @@ test("readWorkoutPreferences returns OpenGym defaults safely and round-trips thr
   assert.equal(defaults.weightStepKg, 2.5);
   assert.equal(defaults.warmupScheme, "standard");
   assert.equal(defaults.soundStyle, "chime");
-  assert.equal(defaults.appleFitnessAutoLaunch, true);
+  assert.equal(defaults.appleFitnessAutoLaunch, false);
   assert.equal(defaults.appleStrengthLaunch, "hub");
   assert.equal(defaults.appleCardioLaunch, "hub");
   assert.equal(defaults.appleHubShortcutName, DEFAULT_APPLE_HUB_SHORTCUT);
   assert.equal(defaults.appleStrengthShortcutName, DEFAULT_APPLE_STRENGTH_SHORTCUT);
   assert.equal(defaults.appleCardioShortcutName, DEFAULT_APPLE_CARDIO_SHORTCUT);
-  assert.equal(defaults.appleAutoSyncOnFinish, true);
+  assert.equal(defaults.appleAutoSyncOnFinish, false);
   assert.equal(defaults.showPlateMath, true);
   assert.deepEqual(defaults.enabledPlates, DEFAULT_WORKOUT_PREFERENCES.enabledPlates);
 

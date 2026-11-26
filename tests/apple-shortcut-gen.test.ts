@@ -507,3 +507,36 @@ test("默认防弹窗预设与自动体征全项预设排除高易空手录/凌�
   assert.equal(autoBuilt.metricCount, 13);
   assertValidPlistStructure(autoBuilt.xml);
 });
+
+test("buildIronlogUnifiedAppleHubShortcut 生成纯后台静默上报版（不含手表控制与健身 App 跳转，保留 r11 步数/睡眠修复）", () => {
+  const hub = buildIronlogUnifiedAppleHubShortcut({
+    useImportQuestions: true,
+  });
+  assertValidPlistStructure(hub.xml);
+  assert.ok(hub.xml.includes("[v2026.11.26-r12]"));
+  assert.ok(!hub.xml.includes("is.workflow.actions.workout.start"), "must not include Start Workout");
+  assert.ok(!hub.xml.includes("is.workflow.actions.workout.end"), "must not include End Workout");
+  assert.ok(!hub.xml.includes("is.workflow.actions.openapp"), "must not include Open App");
+  assert.ok(!hub.xml.includes("com.apple.SessionTrackerApp"));
+  assert.ok(!hub.xml.includes("com.apple.Fitness"));
+  assert.ok(hub.xml.includes("is.workflow.actions.delay"));
+  assert.ok(hub.xml.includes("/api/integrations/apple-health/events/active?activityType=any&amp;closeShort=1"));
+  assert.ok(!hub.xml.includes("/api/integrations/apple-health/workouts"), "must not fall back to synthetic workout upload");
+
+  for (const route of ["strength", "strength:functional", "strength:core", "cardio:indoor_run", "cardio:stair_climbing", "end", "daily"]) {
+    assert.ok(hub.xml.includes(`<key>WFConditionalActionString</key>\n\t\t\t\t<string>${route}</string>`), route);
+  }
+
+  const actions = hub.xml.split(/\n\t\t<dict>\n/);
+  const stepQuery = actions.find(
+    (action) => action.includes("<string>is.workflow.actions.filter.health.quantity</string>") && action.includes("<string>Steps</string>"),
+  );
+  const sleepQuery = actions.find(
+    (action) => action.includes("<string>is.workflow.actions.filter.health.quantity</string>") && action.includes("<string>Sleep</string>"),
+  );
+  assert.ok(stepQuery && sleepQuery);
+  assert.match(stepQuery!, /<key>Number<\/key>\s*<string>3<\/string>/);
+  assert.match(stepQuery!, /<key>WFHKSampleFilteringGroupBy<\/key>\s*<string>Hour<\/string>/);
+  assert.match(sleepQuery!, /<key>Property<\/key>\s*<string>Start Date<\/string>/);
+  assert.match(sleepQuery!, /<key>Number<\/key>\s*<string>2<\/string>/);
+});
