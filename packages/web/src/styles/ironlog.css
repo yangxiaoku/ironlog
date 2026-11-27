@@ -4577,7 +4577,9 @@ dialog.cardio-dialog .dialog-head {
 }
 .cal-schedule-preview .hero-drawer-actions,
 dialog .hero-drawer-actions {
+  margin-left: 0 !important;
   justify-content: flex-start !important;
+  width: 100%;
 }
 .dossier-quick-btn {
   min-height: 30px !important;

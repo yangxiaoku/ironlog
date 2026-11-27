@@ -71,7 +71,7 @@ test("Batch 3: overview 4-cell load metrics, sparse chart guides, analytics layo
   assert.match(css, /\.load-metrics\s*\{[\s\S]*grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/);
   assert.match(css, /\.dashboard\s*\{[\s\S]*align-items:\s*stretch/);
   assert.match(css, /\.analytics-period-segments,\s*\.apple-chart-subbar \.segments\s*\{[\s\S]*flex-wrap:\s*nowrap/);
-  assert.match(css, /dialog \.hero-drawer-actions\s*\{[\s\S]*justify-content:\s*flex-start/);
+  assert.match(css, /dialog \.hero-drawer-actions\s*\{[\s\S]*margin-left:\s*0/);
   assert.match(css, /\.kpi-card-btn\.is-selected::after\s*\{[\s\S]*display:\s*none/);
   assert.match(css, /\.panel-plan-adherence\s*\{[\s\S]*grid-column:\s*1 \/ -1/);
   assert.match(css, /\.apple-signal-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
