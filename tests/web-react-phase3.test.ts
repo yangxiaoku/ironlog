@@ -1224,7 +1224,15 @@ test("Batch 3 P2 polish: diet save-and-continue, water -250ml/unmark, draft edit
   assert.match(cmdk, /\.slice\(0, 30\)/);
   assert.match(exercisesView, /setMuscle\(muscle === k \? "" : k\)/);
   assert.match(exercisesView, /继续向后检索更多动作/);
+  const sleepPanel = readFileSync(resolve(process.cwd(), "packages/web/src/components/SleepReportPanel.tsx"), "utf8");
+  const settingsView = readFileSync(resolve(process.cwd(), "packages/web/src/views/SettingsView.tsx"), "utf8");
+
   assert.match(shareCard, /effectiveToday/);
   assert.match(shareModal, /长按上方海报/);
   assert.match(analyticsView, /\^\[=\+\\-@\\t\\r\]/);
+  assert.match(analyticsView, /onPointerDown/);
+  assert.match(dietView, /customWaterOpen/);
+  assert.match(settingsView, /showPwd/);
+  assert.match(appShell, /!online \|\| offlineBoot/);
+  assert.match(sleepPanel, /pageSize/);
 });

@@ -39,13 +39,16 @@ function exportSleepReport(report: SleepReport) {
 
 export function SleepReportPanel({ report }: { report: SleepReport }) {
   const { current, previous, series, timing, averageChangeMinutes, referenceMinutes } = report;
+  const [pageSize, setPageSize] = useState<7 | 14>(PAGE_SIZE);
   const [page, setPage] = useState(() => {
     const latest = series.map(({ minutes }) => minutes != null).lastIndexOf(true);
     return latest < 0 ? 0 : Math.floor((series.length - 1 - latest) / PAGE_SIZE);
   });
   const [selectedDate, setSelectedDate] = useState<string>();
-  const endIndex = series.length - page * PAGE_SIZE;
-  const visibleDays = series.slice(Math.max(0, endIndex - PAGE_SIZE), endIndex);
+  const totalPages = Math.max(1, Math.ceil(series.length / pageSize));
+  const safePage = Math.min(page, totalPages - 1);
+  const endIndex = series.length - safePage * pageSize;
+  const visibleDays = series.slice(Math.max(0, endIndex - pageSize), endIndex);
   const day = visibleDays.find(({ date }) => date === selectedDate)
     ?? visibleDays.filter(({ minutes }) => minutes != null).at(-1)
     ?? visibleDays.at(-1);
@@ -116,11 +119,31 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
             <div className="sleep-trend-head">
               <h3>逐日睡眠时长</h3>
               <div className="sleep-week-controls">
+                {series.length > 14 ? (
+                  <button
+                    type="button"
+                    className="quiet"
+                    onClick={() => {
+                      setPageSize((s) => (s === 7 ? 14 : 7));
+                      setPage(0);
+                    }}
+                  >
+                    {pageSize}天/页
+                  </button>
+                ) : null}
                 <button type="button" className="quiet" aria-label="查看前一周"
-                  disabled={endIndex <= PAGE_SIZE} onClick={() => setPage(page + 1)}>‹</button>
-                <span aria-live="polite">{fromLabel} – {throughLabel}</span>
+                  disabled={endIndex <= pageSize} onClick={() => setPage(safePage + 1)}>‹</button>
+                <span aria-live="polite">
+                  {fromLabel} – {throughLabel}
+                  {totalPages > 1 ? ` (${totalPages - safePage}/${totalPages})` : ""}
+                </span>
                 <button type="button" className="quiet" aria-label="查看后一周"
-                  disabled={page === 0} onClick={() => setPage(page - 1)}>›</button>
+                  disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>›</button>
+                {safePage > 0 ? (
+                  <button type="button" className="quiet" onClick={() => setPage(0)}>
+                    最新
+                  </button>
+                ) : null}
               </div>
             </div>
             <div className="sleep-chart">

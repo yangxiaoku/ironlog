@@ -26,6 +26,7 @@ const SECONDARY_NAV: WorkspaceId[] = ["settings"];
 export function AppShell({ children }: { children: ReactNode }) {
   const userId = useAuthStore((s) => s.userId);
   const demo = useAuthStore((s) => s.demo);
+  const offlineBoot = useAuthStore((s) => s.offlineBoot);
 
   const view = useUiStore((s) => s.view);
   const theme = useUiStore((s) => s.theme);
@@ -256,7 +257,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </a>
 
           <div className="top-actions">
-            {!online ? (
+            {!online || offlineBoot ? (
               <span className="offline-pill" role="status" aria-label="当前离线">
                 离线
               </span>

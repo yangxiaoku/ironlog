@@ -66,6 +66,8 @@ export function DietView() {
   const [waterMl, setWaterMl] = useState(0);
   const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl(userId));
   const [busyWater, setBusyWater] = useState(false);
+  const [customWaterOpen, setCustomWaterOpen] = useState(false);
+  const [customWaterVal, setCustomWaterVal] = useState("");
   const [markingDone, setMarkingDone] = useState(false);
   const dateRef = useRef(date);
   dateRef.current = date;
@@ -503,7 +505,49 @@ export function DietView() {
                   </button>
                 </>
               ) : null}
+              <button
+                type="button"
+                className="micro-chip"
+                disabled={busyWater}
+                aria-pressed={customWaterOpen}
+                onClick={() => {
+                  setCustomWaterVal(waterMl > 0 ? String(waterMl) : "");
+                  setCustomWaterOpen((v) => !v);
+                }}
+              >
+                自定义
+              </button>
             </div>
+            {customWaterOpen ? (
+              <form
+                style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const parsed = Math.round(Number(customWaterVal));
+                  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 15000) {
+                    notify("请输入 0–15000 ml 之间的有效饮水量");
+                    return;
+                  }
+                  setCustomWaterOpen(false);
+                  void updateWater(0, parsed);
+                }}
+              >
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  max={15000}
+                  step={50}
+                  placeholder="输入今日总饮水量 (ml)"
+                  value={customWaterVal}
+                  onChange={(e) => setCustomWaterVal(e.target.value)}
+                  style={{ flex: 1, minHeight: 34 }}
+                />
+                <button type="submit" className="secondary-button" disabled={busyWater} style={{ minHeight: 34, padding: "4px 12px" }}>
+                  设定
+                </button>
+              </form>
+            ) : null}
           </div>
 
           {dayRows.length ? (

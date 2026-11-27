@@ -151,7 +151,19 @@ function SimpleTrendChart({
       <div className="chart-readout-line">
         <span className="chart-readout">{activeTip}</span>
       </div>
-      <svg className="analytics-chart" viewBox={`0 0 ${width} ${height}`} aria-label={`${label}趋势图`}>
+      <svg
+        className="analytics-chart"
+        viewBox={`0 0 ${width} ${height}`}
+        aria-label={`${label}趋势图`}
+        onPointerDown={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0) return;
+          const svgX = ((e.clientX - rect.left) / rect.width) * width;
+          const ratio = Math.max(0, Math.min(1, (svgX - padL) / Math.max(1, chartW)));
+          const nearest = Math.round(ratio * (points.length - 1));
+          setActiveIdx(nearest);
+        }}
+      >
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--red)" stopOpacity={0.24} />
@@ -172,17 +184,31 @@ function SimpleTrendChart({
         </text>
         <polygon points={areaPoly} fill={`url(#${gradId})`} />
         <polyline points={poly} fill="none" stroke="var(--red)" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" />
+        {activeIdx != null && points[activeIdx] ? (
+          <line
+            x1={getX(activeIdx)}
+            y1={padT}
+            x2={getX(activeIdx)}
+            y2={height - padB}
+            stroke="var(--red)"
+            strokeDasharray="2 3"
+            opacity={0.5}
+          />
+        ) : null}
         {points.map((p, i) => {
           const cx = Number(getX(i).toFixed(1));
           const cy = Number(getY(p.value).toFixed(1));
+          const bandW = Math.max(12, chartW / Math.max(1, points.length));
           const tip = `${shortDate(p.date)} · ${label} ${fmt(p.value, digits)} ${unit}`;
           return (
             <g key={`${p.date}-${i}`}>
-              <circle cx={cx} cy={cy} r={4} fill="var(--red)" />
-              <circle
-                cx={cx}
-                cy={cy}
-                r={10}
+              <circle cx={cx} cy={cy} r={activeIdx === i ? 5.5 : 4} fill="var(--red)" />
+              <rect
+                x={Number((cx - bandW / 2).toFixed(1))}
+                y={padT}
+                width={Number(bandW.toFixed(1))}
+                height={chartH}
+                fill="transparent"
                 className={`chart-hit${activeIdx === i ? " is-active" : ""}`}
                 tabIndex={0}
                 role="button"
@@ -191,7 +217,7 @@ function SimpleTrendChart({
                 onFocus={() => setActiveIdx(i)}
               >
                 <title>{tip}</title>
-              </circle>
+              </rect>
             </g>
           );
         })}

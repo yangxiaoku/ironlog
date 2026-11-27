@@ -179,6 +179,7 @@ export function SettingsView() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPwd, setShowPwd] = useState(false);
   const [pwdSaving, setPwdSaving] = useState(false);
   const [pwdError, setPwdError] = useState("");
 
@@ -1382,9 +1383,19 @@ export function SettingsView() {
                             />
                           </label>
                           <label className="field">
-                            <span>新密码</span>
+                            <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                              <span>新密码</span>
+                              <button
+                                type="button"
+                                className="quiet"
+                                style={{ padding: "0 4px", minHeight: 22, fontSize: 12 }}
+                                onClick={() => setShowPwd((v) => !v)}
+                              >
+                                {showPwd ? "隐藏" : "显示"}
+                              </button>
+                            </span>
                             <input
-                              type="password"
+                              type={showPwd ? "text" : "password"}
                               autoComplete="new-password"
                               minLength={10}
                               maxLength={128}
@@ -1398,7 +1409,7 @@ export function SettingsView() {
                           <label className="field">
                             <span>确认新密码</span>
                             <input
-                              type="password"
+                              type={showPwd ? "text" : "password"}
                               autoComplete="new-password"
                               minLength={10}
                               maxLength={128}
