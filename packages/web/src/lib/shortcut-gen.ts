@@ -2557,42 +2557,6 @@ export const APPLE_AUTOMATION_SHORTCUT_PRESETS: ReadonlyArray<AppleAutomationSho
     group: "extra",
     trigger: { kind: "workout_start", activityTypeIds: [73] },
   },
-  {
-    id: "cardio:indoor_run",
-    param: "cardio:indoor_run",
-    label: "室内跑步（仅跑跑步机时可选）",
-    filenameStem: "铁记-自动化-室内跑步开始",
-    triggerDesc: "绑定「跑步」并固定记为室内",
-    group: "extra",
-    trigger: { kind: "workout_start", activityTypeIds: [37] },
-  },
-  {
-    id: "cardio:outdoor_run",
-    param: "cardio:outdoor_run",
-    label: "户外跑步（仅路跑时可选）",
-    filenameStem: "铁记-自动化-户外跑步开始",
-    triggerDesc: "绑定「跑步」并固定记为户外",
-    group: "extra",
-    trigger: { kind: "workout_start", activityTypeIds: [37] },
-  },
-  {
-    id: "cardio:indoor_cycle",
-    param: "cardio:indoor_cycle",
-    label: "室内单车（仅动感单车可选）",
-    filenameStem: "铁记-自动化-室内单车开始",
-    triggerDesc: "绑定「单车」并固定记为室内",
-    group: "extra",
-    trigger: { kind: "workout_start", activityTypeIds: [13] },
-  },
-  {
-    id: "cardio:outdoor_cycle",
-    param: "cardio:outdoor_cycle",
-    label: "户外骑行（仅户外骑行可选）",
-    filenameStem: "铁记-自动化-户外骑行开始",
-    triggerDesc: "绑定「单车」并固定记为户外",
-    group: "extra",
-    trigger: { kind: "workout_start", activityTypeIds: [13] },
-  },
 ];
 
 function buildTriggerEntryXml(trigger: AutomationTriggerSpec, triggerUuid: string): string {

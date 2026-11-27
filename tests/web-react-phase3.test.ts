@@ -648,9 +648,9 @@ test("DeviceSetupModal implements a 5-step guided setup wizard without removing 
   assert.match(modal, /https:\/\/sign\.shortcuty\.app/);
   assert.match(modal, /https:\/\/routinehub\.co/);
   assert.match(modal, /buildMacSignCommand/);
-  assert.match(modal, /buildIronlogDailyHealthShortcut/);
-  assert.match(modal, /buildIronlogRecentWorkoutShortcut/);
-  assert.match(modal, /buildIronlogEventShortcut/);
+  assert.match(modal, /buildIronlogUnifiedAppleHubShortcut/);
+  assert.match(modal, /buildIronlogAutomationShortcut/);
+  assert.doesNotMatch(modal, /单独导出单项快捷指令/);
 
   assert.match(css, /\.shortcut-wizard-stepper\s*\{/);
   assert.match(css, /\.shortcut-wizard-foot\s*\{/);
@@ -881,7 +881,7 @@ test("Watch-first Apple Health UI exposes one-tap automation copy panel and remo
   assert.match(appleModals, /buildIronlogAutomationShortcut/);
   assert.match(settingsView, /<AppleAutomationCopyPanel/);
   assert.match(settingsView, /<AppleSyncStatusCard/);
-  assert.match(settingsView, /自动化参数 · 一键复制/);
+  assert.match(settingsView, /iPhone 自动化快捷指令/);
   assert.match(overviewView, /\/api\/integrations\/apple-health\/status/);
   assert.match(overviewView, /apple-live-banner/);
   assert.match(clipboard, /contentEditable/);

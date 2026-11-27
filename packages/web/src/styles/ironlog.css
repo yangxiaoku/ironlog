@@ -4502,3 +4502,28 @@ dialog.cardio-dialog .dialog-head {
   padding: 2px 8px;
   font-size: 11px;
 }
+.apple-auto-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.apple-auto-format-seg {
+  flex: 0 0 auto;
+}
+.apple-advanced-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.apple-advanced-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+.apple-advanced-block > strong {
+  font-size: 13px;
+}

@@ -1265,19 +1265,20 @@ export function SettingsView() {
                   <div className="apple-optin-banner">
                     <strong>暂未对接 Apple 健康</strong>
                     <small>
-                      没有 Apple Watch 也能完整使用铁记，首页、数据分析、日历与徽章中的苹果健康模块已自动为你隐藏。日后如需同步，在下方导出快捷指令或导入数据即可自动开启。
+                      没有 Apple Watch 也能完整使用铁记，相关入口已自动隐藏。如需同步，下方一键配置快捷指令即可开启。
                     </small>
                   </div>
                 ) : null}
 
+                {/* 1. 统一主控区：状态 + 快捷指令向导 + 手动同步 */}
                 <section className="form-section">
-                  <h3 className="form-section-title">Apple Watch 静默同步</h3>
+                  <h3 className="form-section-title">主指令与同步状态</h3>
                   <p className="muted">
-                    1 个纯后台快捷指令：直接在 Apple Watch 原生开练与结束，iPhone 自动静默上报心率、消耗、距离、步数与睡眠，不再来回跳转健身 App。
+                    仅需 1 个纯后台主指令：手表原生开练与结束，iPhone 自动静默上报心率、热量、距离、步数与睡眠。
                   </p>
                   <AppleSyncStatusCard />
                   <button type="button" className="primary-button settings-hero-cta" onClick={() => openDeviceSetupModal()}>
-                    <Icon name="plus" size={16} /> 导出全能快捷指令（1 个文件）
+                    <Icon name="plus" size={16} /> 配置 / 导出主快捷指令
                   </button>
                   <div className="settings-quick-grid">
                     <button
@@ -1303,21 +1304,25 @@ export function SettingsView() {
                   </div>
                 </section>
 
+                {/* 2. 自动化快捷指令一键导出 */}
                 <section className="form-section">
-                  <h3 className="form-section-title">自动化参数 · 一键复制</h3>
+                  <h3 className="form-section-title">iPhone 自动化快捷指令</h3>
                   <AppleAutomationCopyPanel shortcutName={hubShortcutInput.trim() || DEFAULT_APPLE_HUB_SHORTCUT} />
+                </section>
 
+                {/* 3. 设备管理、名称与高级工具统一折叠 */}
+                <section className="form-section">
                   <details className="settings-accordion">
                     <summary>
-                      <span>自定义快捷指令名称</span>
+                      <span>已绑定设备、指令名称与高级工具</span>
                       <span className="settings-accordion-meta">
-                        <span>{hubShortcutInput.trim() || DEFAULT_APPLE_HUB_SHORTCUT}</span>
+                        <span>{devices.length} 台设备</span>
                         <Icon name="chevron" size={14} />
                       </span>
                     </summary>
-                    <div className="settings-accordion-body">
+                    <div className="settings-accordion-body apple-advanced-stack">
                       <div className="field">
-                        <span>全能快捷指令名称（如在手机上改过名请同步修改）</span>
+                        <span>主快捷指令名称（在手机上改过名请同步修改）</span>
                         <input
                           value={hubShortcutInput}
                           maxLength={80}
@@ -1334,60 +1339,52 @@ export function SettingsView() {
                           }}
                         />
                       </div>
-                    </div>
-                  </details>
-                </section>
 
-                <section className="form-section">
-                  <h3 className="form-section-title">Health Data Export</h3>
-                  <p className="muted">导入已有体能训练，或连接 iPhone 定时同步。</p>
-                  <div className="health-import-actions">
-                    <button type="button" className="secondary-button" onClick={() => openHealthDataImportModal()}>
-                      导入训练 JSON
-                    </button>
-                    <button type="button" className="secondary-button" onClick={() => openHealthDataWebhookModal()}>
-                      设置自动同步
-                    </button>
-                  </div>
-                </section>
+                      <div className="apple-advanced-block">
+                        <strong>已绑定上传设备（{devices.length}）</strong>
+                        {devices.length ? (
+                          <ul className="device-list">
+                            {devices.map((device) => (
+                              <li key={device.id}>
+                                <span>
+                                  <strong>{device.label}</strong>
+                                  <small>{device.expiresAt.slice(0, 10)} 到期</small>
+                                </span>
+                                <button type="button" className="quiet" onClick={() => handleRevokeDevice(device)}>
+                                  撤销
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="muted" style={{ margin: "4px 0 0" }}>暂未绑定设备，点上方「配置 / 导出主快捷指令」自动生成。</p>
+                        )}
+                      </div>
 
-                <section className="form-section">
-                  <h3 className="form-section-title">已绑定上传设备</h3>
-                  {devices.length ? (
-                    <ul className="device-list">
-                      {devices.map((device) => (
-                        <li key={device.id}>
-                          <span>
-                            <strong>{device.label}</strong>
-                            <small>{device.expiresAt.slice(0, 10)} 到期</small>
-                          </span>
-                          <button type="button" className="quiet" onClick={() => handleRevokeDevice(device)}>
-                            撤销
+                      <div className="apple-advanced-block">
+                        <strong>第三方导入（Health Data Export）</strong>
+                        <div className="health-import-actions">
+                          <button type="button" className="secondary-button" onClick={() => openHealthDataImportModal()}>
+                            导入训练 JSON
                           </button>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="muted">暂未添加设备。</p>
-                  )}
-                  <details className="settings-accordion">
-                    <summary>
-                      <span>查看接口地址</span>
-                      <span className="settings-accordion-meta">
-                        3 个接口
-                        <Icon name="chevron" size={14} />
-                      </span>
-                    </summary>
-                    <div className="settings-accordion-body">
-                      <p className="device-endpoint">
-                        <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/daily</code>
-                      </p>
-                      <p className="device-endpoint">
-                        <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/events</code>
-                      </p>
-                      <p className="device-endpoint">
-                        <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/workouts</code>
-                      </p>
+                          <button type="button" className="secondary-button" onClick={() => openHealthDataWebhookModal()}>
+                            Webhook 自动同步
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="apple-advanced-block">
+                        <strong>开发者接口地址</strong>
+                        <p className="device-endpoint">
+                          <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/daily</code>
+                        </p>
+                        <p className="device-endpoint">
+                          <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/events</code>
+                        </p>
+                        <p className="device-endpoint">
+                          <code>{typeof location !== "undefined" ? location.origin : ""}/api/integrations/apple-health/workouts</code>
+                        </p>
+                      </div>
                     </div>
                   </details>
                 </section>
