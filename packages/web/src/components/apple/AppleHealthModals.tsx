@@ -89,6 +89,166 @@ export interface AppleWorkoutAgendaItem {
   annotation?: AppleWorkoutAnnotation;
 }
 
+export interface AppleSyncStatus {
+  activeSession: {
+    activityType: string;
+    title: string;
+    environment: string;
+    startedAt: string;
+    elapsedMinutes: number;
+    deviceLabel: string;
+  } | null;
+  lastWorkout: {
+    id: string;
+    title: string;
+    activityType: string;
+    environment: string;
+    startedAt: string;
+    endedAt: string;
+    receivedAt: string;
+    durationSeconds: number | null;
+    activeEnergyKcal: number | null;
+    avgBpm: number | null;
+  } | null;
+  lastDaily: {
+    date: string;
+    updatedAt: string;
+    steps: number | null;
+    sleepMinutes: number | null;
+    activeEnergyKcal: number | null;
+    restingHeartRateBpm: number | null;
+  } | null;
+}
+
+function formatSyncTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return "";
+  const d = new Date(ms);
+  const datePart = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const clock = CLOCK_FMT.format(d);
+  return datePart === today() ? `今日 ${clock}` : `${datePart.slice(5)} ${clock}`;
+}
+
+export function AppleSyncStatusCard() {
+  const userId = useAuthStore((s) => s.userId);
+  const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const notify = useUiStore((s) => s.notify);
+  const [status, setStatus] = useState<AppleSyncStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = async (manual = false) => {
+    if (manual) setRefreshing(true);
+    try {
+      const res = await apiFetch<AppleSyncStatus>("/api/integrations/apple-health/status");
+      setStatus(res);
+      if (manual) notify("已刷新 Apple 健康同步状态");
+    } catch {
+      if (manual) notify("刷新同步状态失败，请稍后重试");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    void apiFetch<AppleSyncStatus>("/api/integrations/apple-health/status")
+      .then((res) => {
+        if (active) setStatus(res);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [userId, dataEpoch]);
+
+  if (loading && !status) {
+    return (
+      <div className="apple-sync-status">
+        <span className="muted">正在检查 Apple Watch 同步状态…</span>
+      </div>
+    );
+  }
+
+  const activeSession = status?.activeSession ?? null;
+  const lastWorkout = status?.lastWorkout ?? null;
+  const lastDaily = status?.lastDaily ?? null;
+
+  return (
+    <div className={`apple-sync-status${activeSession ? " is-live" : ""}`}>
+      <div className="apple-sync-status-head">
+        <strong>
+          {activeSession ? (
+            <>
+              <i className="live-led" aria-hidden="true" /> Apple Watch 训练进行中
+            </>
+          ) : (
+            "服务端同步状态"
+          )}
+        </strong>
+        <button
+          type="button"
+          className="quiet"
+          disabled={refreshing}
+          onClick={() => {
+            triggerHaptic("light");
+            void load(true);
+          }}
+        >
+          <Icon name="refresh" size={13} /> {refreshing ? "检查中…" : "刷新"}
+        </button>
+      </div>
+
+      {activeSession ? (
+        <div className="apple-sync-status-live">
+          <b>{activeSession.title}</b>
+          <span>
+            已开始约 {activeSession.elapsedMinutes} 分钟（{formatSyncTime(activeSession.startedAt)} 起）· 结束手表训练后将自动回传心率与消耗
+          </span>
+        </div>
+      ) : null}
+
+      <div className="apple-sync-status-rows">
+        <div className="apple-sync-status-row">
+          <span>最近运动</span>
+          <strong>
+            {lastWorkout
+              ? [
+                  `${lastWorkout.title}（${formatSyncTime(lastWorkout.receivedAt)}）`,
+                  lastWorkout.durationSeconds ? duration(lastWorkout.durationSeconds) : null,
+                  lastWorkout.avgBpm ? `均心率 ${fmt(lastWorkout.avgBpm, 0)}` : null,
+                  lastWorkout.activeEnergyKcal ? `${fmt(lastWorkout.activeEnergyKcal, 0)} kcal` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : "暂无手表运动记录"}
+          </strong>
+        </div>
+        <div className="apple-sync-status-row">
+          <span>最近日常</span>
+          <strong>
+            {lastDaily
+              ? [
+                  `${lastDaily.date}（${formatSyncTime(lastDaily.updatedAt)}）`,
+                  lastDaily.steps != null ? `${fmt(lastDaily.steps, 0)} 步` : null,
+                  lastDaily.sleepMinutes != null ? `睡眠 ${formatSleepMinutes(lastDaily.sleepMinutes)}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
+              : "暂无每日健康同步"}
+          </strong>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function formatSleepMinutes(minutes: number | null | undefined): string {
   if (minutes == null) return "—";
   const rounded = Math.round(minutes);

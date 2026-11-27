@@ -88,7 +88,7 @@ import {
   planJsonImportInput,
   previewWorkoutCsvImport,
 } from "./web-import.js";
-import { agendaQuery, listAppleTraining } from "./apple-training-agenda.js";
+import { agendaQuery, describeAppleActivity, listAppleTraining } from "./apple-training-agenda.js";
 import { WebAuth, webCredentialsInput, webLoginInput, webPasswordChangeInput, webSessionSeconds } from "./web-auth.js";
 import type { Db } from "./db.js";
 
@@ -689,6 +689,10 @@ export function createApp(
   app.get(`${apple}/agenda`, (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(listAppleTraining(store, c.get("userId"), agendaQuery.parse(c.req.query())));
+  });
+  app.get(`${apple}/status`, (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json(health.syncStatus(c.get("userId"), describeAppleActivity));
   });
   app.get(`${apple}/daily`, (c) => {
     c.header("Cache-Control", "no-store");

@@ -123,6 +123,13 @@ export function WorkoutReportModal({
   useEffect(() => {
     if (!report || appleItem || report.date !== today()) return;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    let pollCount = 0;
+    const pollInterval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      pollCount += 1;
+      void refreshAppleAgenda(report.date, report.id, { notifyFound: true });
+      if (pollCount >= 6) clearInterval(pollInterval);
+    }, 5000);
     const scheduleRefresh = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
       void refreshAppleAgenda(report.date, report.id, { notifyFound: true });
@@ -142,6 +149,7 @@ export function WorkoutReportModal({
       window.addEventListener("focus", onFocus);
     }
     return () => {
+      clearInterval(pollInterval);
       if (timer != null) clearTimeout(timer);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibility);
@@ -392,7 +400,7 @@ export function WorkoutReportModal({
         </div>
       ) : report.date === today() ? (
         <div className="report-comparison-bar" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-          <span>回传 Apple Watch 心率与消耗</span>
+          <span>等待 Apple Watch 自动回传心率与消耗</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <button
               type="button"
@@ -413,7 +421,7 @@ export function WorkoutReportModal({
                 triggerAppleHubAction("end", { notify });
               }}
             >
-              <Icon name="heart" size={14} /> 回传 Apple 心率/热量
+              <Icon name="heart" size={14} /> 手动补传
             </button>
           </div>
         </div>

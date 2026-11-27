@@ -55,13 +55,18 @@ for (const [family, key, title, aliases] of [
 }
 const normalize = (code: string) => code.toLowerCase().replace(/^hkworkoutactivitytype/, "").replace(/[-_]/g, "");
 
-function identifyActivity(data: AppleWorkoutInput): Activity {
+function identifyActivity(data: Pick<AppleWorkoutInput, "activityType" | "environment">): Activity {
   const code = normalize(data.activityType);
   const kind = Object.hasOwn(kinds, code) ? kinds[code]! : { family: "other" as const, key: code, title: "其他运动" };
   if (!["running", "walking", "cycling"].includes(kind.key)) return kind;
   const prefix = data.environment === "outdoor" || code.startsWith("outdoor") ? "户外" :
     data.environment === "indoor" || code.startsWith("indoor") ? "室内" : "";
   return { ...kind, title: prefix + kind.title };
+}
+
+export function describeAppleActivity(activityType: string, environment: string = "unknown"): string {
+  const env = environment === "indoor" || environment === "outdoor" ? environment : "unknown";
+  return identifyActivity({ activityType, environment: env }).title;
 }
 
 const resistance = new Set(["strength", "calisthenics", "olympic", "isometric", "plyometrics"]);
@@ -121,6 +126,23 @@ function overlapping(
   const a = endA - startA, b = endB - startB;
   const shared = Math.min(endA, endB) - Math.max(startA, startB);
   return a > 0 && b > 0 && shared >= 0.8 * Math.min(a, b) && shared >= 0.55 * Math.max(a, b);
+}
+
+const SAME_DAY_RESISTANCE_MAX_GAP_MS = 90 * 60_000;
+
+function nearSameDayResistance(
+  first: { startedAt: string; endedAt: string | null },
+  second: { startedAt: string; endedAt: string | null },
+) {
+  if (!first.endedAt || !second.endedAt) return false;
+  const startA = Date.parse(first.startedAt), endA = Date.parse(first.endedAt);
+  const startB = Date.parse(second.startedAt), endB = Date.parse(second.endedAt);
+  if (!Number.isFinite(startA) || !Number.isFinite(endA) || !Number.isFinite(startB) || !Number.isFinite(endB)) {
+    return false;
+  }
+  if (endA <= startA || endB <= startB) return false;
+  const gap = Math.max(0, Math.max(startA, startB) - Math.min(endA, endB));
+  return gap <= SAME_DAY_RESISTANCE_MAX_GAP_MS;
 }
 
 function sameSourceWorkout(a: Uploaded, b: Uploaded) {
@@ -241,10 +263,38 @@ export function projectAppleTraining(
     possible.set(row.id, joined);
     for (const item of joined) useCount.set(item.id, (useCount.get(item.id) ?? 0) + 1);
   }
-  const claimed = new Set<string>();
+  const manualByUploadId = new Map<string, Manual>();
+  const pairedManualIds = new Set<string>();
   for (const row of uploads) {
     const matches = possible.get(row.id)!;
-    const manual = matches.length === 1 && useCount.get(matches[0]!.id) === 1 ? matches[0]! : null;
+    if (matches.length === 1 && useCount.get(matches[0]!.id) === 1) {
+      manualByUploadId.set(row.id, matches[0]!);
+      pairedManualIds.add(matches[0]!.id);
+    }
+  }
+  // Pass 2: for same-day resistance workouts (e.g. Watch started earlier, Ironlog finished late, or logged right after),
+  // pair uniquely matched unmatched resistance sessions within 90 minutes.
+  const fallbackPossible = new Map<string, Manual[]>();
+  const fallbackUseCount = new Map<string, number>();
+  for (const row of uploads) {
+    if (manualByUploadId.has(row.id) || row.activity.family !== "resistance") continue;
+    const joined = (byDay.get(row.date) ?? []).filter((record) =>
+      !pairedManualIds.has(record.id) &&
+      record.kind.family === "resistance" &&
+      nearSameDayResistance(row, record.workout));
+    fallbackPossible.set(row.id, joined);
+    for (const item of joined) fallbackUseCount.set(item.id, (fallbackUseCount.get(item.id) ?? 0) + 1);
+  }
+  for (const row of uploads) {
+    const matches = fallbackPossible.get(row.id);
+    if (matches?.length === 1 && fallbackUseCount.get(matches[0]!.id) === 1) {
+      manualByUploadId.set(row.id, matches[0]!);
+      pairedManualIds.add(matches[0]!.id);
+    }
+  }
+  const claimed = new Set<string>();
+  for (const row of uploads) {
+    const manual = manualByUploadId.get(row.id) ?? null;
     const activation = planHistory.find((plan) => !!plan.updatedAt && plan.updatedAt <= row.startedAt);
     let matchedPlan: ApplePlanMatch | null = null;
     if (activation && !planCycle(activation, row.date)?.expired) {

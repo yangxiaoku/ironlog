@@ -47,13 +47,9 @@ const WeightEditorModal = lazy(() => import("../components/weight/WeightEditorMo
 const WorkoutEditorModal = lazy(() => import("../components/workout/WorkoutEditorModal").then((m) => ({ default: m.WorkoutEditorModal })));
 const WorkoutReportModal = lazy(() => import("../components/workout/WorkoutReportModal").then((m) => ({ default: m.WorkoutReportModal })));
 import { apiFetch } from "./api";
-import {
-  inferAppleCardioPreset,
-  inferAppleFitnessKind,
-  triggerAppleCardioLaunch,
-  triggerAppleFitnessLaunch,
-  type AppleCardioPresetId,
-  type AppleStrengthPresetId,
+import type {
+  AppleCardioPresetId,
+  AppleStrengthPresetId,
 } from "./apple-fitness";
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
@@ -74,7 +70,6 @@ import {
 } from "./domain";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
-import { readWorkoutPreferences } from "./workout-helpers";
 
 export interface WorkoutEditorOptions {
   record?: RecordEnvelope<WorkoutData>;
@@ -143,19 +138,6 @@ export function openWorkoutEditor(
       />
     ),
   });
-  if (!record && (!seed?.date || seed.date === today()) && !opts.skipAppleAutoLaunch) {
-    const prefs = readWorkoutPreferences();
-    if (prefs.appleFitnessAutoLaunch) {
-      const kind = inferAppleFitnessKind(seed?.exercises, seed?.title);
-      const cardioPreset = kind === "cardio" ? inferAppleCardioPreset(seed?.exercises, seed?.title) : null;
-      const res = cardioPreset
-        ? triggerAppleCardioLaunch(cardioPreset.id, { prefs, silentNonIos: true })
-        : triggerAppleFitnessLaunch(kind, { prefs, silentNonIos: true });
-      if (res.launched) {
-        ui.notify(cardioPreset ? `已拉起 ${cardioPreset.label}` : "已拉起 Apple 健身 / 快捷指令");
-      }
-    }
-  }
 }
 
 export function openCardioSessionModal(): void {

@@ -7,6 +7,7 @@ import {
   AppleDailyStrip,
   AppleLine,
   type AppleDailyEntry,
+  type AppleSyncStatus,
   type AppleWorkoutAgendaItem,
 } from "../components/apple/AppleHealthModals";
 import { BadgesOverviewStrip } from "../components/badges/BadgesOverviewStrip";
@@ -70,6 +71,7 @@ export function OverviewView() {
     visiblePanels: string[] | null;
     appleDaily: AppleDailyEntry | null;
     appleAgenda: AppleWorkoutAgendaItem[];
+    appleStatus: AppleSyncStatus | null;
   }
   const initialQuery = new URLSearchParams({ through });
   if (period) initialQuery.set("days", String(period));
@@ -83,6 +85,7 @@ export function OverviewView() {
   const [visiblePanels, setVisiblePanels] = useState<string[] | null>(() => cachedInit?.visiblePanels ?? null);
   const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(() => cachedInit?.appleDaily ?? null);
   const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>(() => cachedInit?.appleAgenda ?? []);
+  const [appleStatus, setAppleStatus] = useState<AppleSyncStatus | null>(() => cachedInit?.appleStatus ?? null);
   const [loading, setLoading] = useState(() => !cachedInit);
   const [error, setError] = useState("");
   const autoOnboardedUserRef = useRef("");
@@ -102,6 +105,7 @@ export function OverviewView() {
       setVisiblePanels(staleHit.visiblePanels);
       setAppleDaily(staleHit.appleDaily);
       setAppleAgenda(staleHit.appleAgenda);
+      setAppleStatus(staleHit.appleStatus ?? null);
       setLoading(false);
     } else {
       setLoading(true);
@@ -125,8 +129,11 @@ export function OverviewView() {
             { epoch: dataEpoch, userId },
           ).catch(() => [])
         : Promise.resolve([]),
+      appleHealthConnected
+        ? apiFetch<AppleSyncStatus>("/api/integrations/apple-health/status").catch(() => null)
+        : Promise.resolve(null),
     ])
-      .then(([statsRes, todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes]) => {
+      .then(([statsRes, todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes, statusRes]) => {
         if (!active) return;
         const nextSnap: OverviewSnapshot = {
           stats: statsRes,
@@ -136,6 +143,7 @@ export function OverviewView() {
           visiblePanels: Array.isArray(prefsRes?.panels) ? prefsRes.panels : null,
           appleDaily: dailyRes?.entries?.[0] ?? null,
           appleAgenda: Array.isArray(agendaRes) ? agendaRes : [],
+          appleStatus: statusRes ?? null,
         };
         writeQueryCache(viewKey, nextSnap, { userId, epoch: dataEpoch });
         setStats(nextSnap.stats);
@@ -145,6 +153,7 @@ export function OverviewView() {
         setVisiblePanels(nextSnap.visiblePanels);
         setAppleDaily(nextSnap.appleDaily);
         setAppleAgenda(nextSnap.appleAgenda);
+        setAppleStatus(nextSnap.appleStatus);
 
         if (
           !demo &&
@@ -471,6 +480,26 @@ export function OverviewView() {
           </section>
         ) : null}
       </div>
+
+      {appleStatus?.activeSession ? (
+        <div className="apple-live-banner" role="status">
+          <span className="apple-live-banner-main">
+            <i className="live-led" aria-hidden="true" />
+            <strong>Apple Watch 训练进行中 · {appleStatus.activeSession.title}</strong>
+            <small>已进行约 {appleStatus.activeSession.elapsedMinutes} 分钟</small>
+          </span>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => {
+              bumpDataEpoch();
+              notify("已刷新同步状态");
+            }}
+          >
+            <Icon name="refresh" size={13} /> 刷新
+          </button>
+        </div>
+      ) : null}
 
       {isNewUser && !demo ? <WelcomeChecklist stats={stats} currentDay={day} hasPlan={hasPlan} /> : null}
 

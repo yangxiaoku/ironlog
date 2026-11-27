@@ -869,14 +869,26 @@ test("Watch-first Apple Health UI exposes one-tap automation copy panel and remo
   const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
   const reportModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutReportModal.tsx"), "utf8");
 
-  // One-tap automation copy panel is exported and embedded in SettingsView + DeviceSetupModal
+  // One-tap automation copy panel & live sync status card are exported and embedded
+  const overviewView = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
+  const recordOpeners = readFileSync(resolve(process.cwd(), "packages/web/src/lib/record-openers.tsx"), "utf8");
+  const clipboard = readFileSync(resolve(process.cwd(), "packages/web/src/lib/clipboard.ts"), "utf8");
+
   assert.match(appleModals, /export function AppleAutomationCopyPanel/);
+  assert.match(appleModals, /export function AppleSyncStatusCard/);
   assert.match(appleModals, /cardio:indoor_run/);
   assert.match(appleModals, /cardio:stair_climbing/);
   assert.match(settingsView, /<AppleAutomationCopyPanel/);
+  assert.match(settingsView, /<AppleSyncStatusCard/);
   assert.match(settingsView, /自动化参数 · 一键复制/);
+  assert.match(overviewView, /\/api\/integrations\/apple-health\/status/);
+  assert.match(overviewView, /apple-live-banner/);
+  assert.match(clipboard, /contentEditable/);
+  assert.match(clipboard, /createRange/);
 
   // Legacy launch buttons and multi-mode toggles are removed across the app
+  assert.doesNotMatch(recordOpeners, /triggerAppleFitnessLaunch/);
+  assert.doesNotMatch(recordOpeners, /triggerAppleCardioLaunch/);
   assert.doesNotMatch(quickSheet, /openCardioLauncherModal/);
   assert.doesNotMatch(quickSheet, /有氧运动（Apple 健身）/);
   assert.doesNotMatch(workoutView, /openCardioLauncherModal/);
@@ -893,9 +905,10 @@ test("Watch-first Apple Health UI exposes one-tap automation copy panel and remo
   assert.doesNotMatch(workoutModal, /openCardioLauncherModal/);
   assert.doesNotMatch(workoutModal, /openStrengthLauncherModal/);
 
-  // Manual fallback and report visibility refresh remain intact
+  // Manual fallback and report visibility + short-poll refresh remain intact
   assert.match(workoutModal, /triggerAppleHubAction\("end"/);
   assert.match(reportModal, /visibilitychange/);
+  assert.match(reportModal, /setInterval/);
   assert.match(cardioModal, /APPLE_CARDIO_PRESETS/);
   assert.match(cardioModal, /APPLE_STRENGTH_PRESETS/);
 });

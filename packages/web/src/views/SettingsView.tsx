@@ -3,7 +3,7 @@ import { BACKUP_REQUEST_TIMEOUT_MS } from "@ironlog/shared";
 import { Icon } from "../components/Icon";
 import { AiSettingsCard } from "../components/ai/AiSettingsCard";
 import type { AiStatus } from "../components/ai/AiModals";
-import { AppleAutomationCopyPanel } from "../components/apple/AppleHealthModals";
+import { AppleAutomationCopyPanel, AppleSyncStatusCard } from "../components/apple/AppleHealthModals";
 import { apiFetch } from "../lib/api";
 import { triggerAppleHubAction } from "../lib/apple-fitness";
 import { today } from "../lib/date";
@@ -1176,6 +1176,7 @@ export function SettingsView() {
                   <p className="muted">
                     1 个纯后台快捷指令：直接在 Apple Watch 原生开练与结束，iPhone 自动静默上报心率、消耗、距离、步数与睡眠，不再来回跳转健身 App。
                   </p>
+                  <AppleSyncStatusCard />
                   <button type="button" className="primary-button settings-hero-cta" onClick={() => openDeviceSetupModal()}>
                     <Icon name="plus" size={16} /> 导出全能快捷指令（1 个文件）
                   </button>

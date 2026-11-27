@@ -246,7 +246,10 @@ export class AppleHealth {
   private readonly stmtHasDevice: Stmt;
   private readonly stmtHasWorkout: Stmt;
   private readonly stmtListDailyData: Stmt;
+  private readonly stmtLatestDaily: Stmt;
   private readonly stmtRecentWorkouts: Stmt;
+  private readonly stmtLatestWorkout: Stmt;
+  private readonly stmtLatestActiveUserEvent: Stmt;
   private readonly stmtGetEvent: Stmt;
   private readonly stmtGetLatestActiveEvent: Stmt;
   private readonly stmtGetEventFull: Stmt;
@@ -273,8 +276,18 @@ export class AppleHealth {
     this.stmtHasDevice = db.prepare("SELECT 1 FROM apple_health_devices WHERE user_id=? AND revoked_at IS NULL LIMIT 1");
     this.stmtHasWorkout = db.prepare("SELECT 1 FROM apple_health_workouts WHERE user_id=? LIMIT 1");
     this.stmtListDailyData = db.prepare("SELECT data FROM apple_health_daily WHERE user_id=? ORDER BY date DESC LIMIT 60");
+    this.stmtLatestDaily = db.prepare(`SELECT date, updated_at AS updatedAt, data
+      FROM apple_health_daily WHERE user_id=? ORDER BY updated_at DESC, date DESC LIMIT 1`);
     this.stmtRecentWorkouts = db.prepare(`SELECT id, data, received_at AS receivedAt FROM apple_health_workouts
       WHERE user_id=? ORDER BY ended_at DESC, id LIMIT 30`);
+    this.stmtLatestWorkout = db.prepare(`SELECT id, ended_at AS endedAt, received_at AS receivedAt, data
+      FROM apple_health_workouts WHERE user_id=? ORDER BY received_at DESC, ended_at DESC LIMIT 1`);
+    this.stmtLatestActiveUserEvent = db.prepare(`SELECT e.activity_type AS activityType, e.started_at AS startedAt,
+      e.started_environment AS environment, d.label AS deviceLabel
+      FROM apple_health_events e
+      JOIN apple_health_devices d ON d.id = e.device_id
+      WHERE d.user_id=? AND d.revoked_at IS NULL AND (e.ended_at IS NULL OR e.started_at > e.ended_at)
+      ORDER BY e.started_at DESC LIMIT 1`);
     this.stmtGetEvent = db.prepare(`SELECT started_at AS startedAt, started_environment AS environment,
       ended_at AS endedAt FROM apple_health_events WHERE device_id=? AND activity_type=?`);
     this.stmtGetLatestActiveEvent = db.prepare(`SELECT activity_type AS activityType, started_at AS startedAt,
@@ -353,6 +366,105 @@ export class AppleHealth {
     const rows = this.stmtRecentWorkouts.all(userId) as
       { id: string; data: string; receivedAt: string }[];
     return rows.map(({ id, receivedAt, data }) => ({ id, receivedAt, ...JSON.parse(data) as AppleWorkoutData }));
+  }
+
+  syncStatus(
+    userId: string,
+    describeActivity: (activityType: string, environment?: string) => string = (type) => type,
+  ) {
+    const activeRow = this.stmtLatestActiveUserEvent.get(userId) as {
+      activityType: string;
+      startedAt: string;
+      environment: AppleWorkoutInput["environment"];
+      deviceLabel: string;
+    } | undefined;
+    let activeSession: {
+      activityType: string;
+      title: string;
+      environment: AppleWorkoutInput["environment"];
+      startedAt: string;
+      elapsedMinutes: number;
+      deviceLabel: string;
+    } | null = null;
+    if (activeRow) {
+      const elapsedSeconds = Math.floor((Date.now() - Date.parse(activeRow.startedAt)) / 1000);
+      if (Number.isFinite(elapsedSeconds) && elapsedSeconds >= 0 && elapsedSeconds <= MAX_TRIGGER_WORKOUT_SECONDS) {
+        activeSession = {
+          activityType: activeRow.activityType,
+          title: describeActivity(activeRow.activityType, activeRow.environment),
+          environment: activeRow.environment,
+          startedAt: activeRow.startedAt,
+          elapsedMinutes: Math.max(1, Math.floor(elapsedSeconds / 60)),
+          deviceLabel: activeRow.deviceLabel,
+        };
+      }
+    }
+
+    const workoutRow = this.stmtLatestWorkout.get(userId) as {
+      id: string;
+      endedAt: string;
+      receivedAt: string;
+      data: string;
+    } | undefined;
+    let lastWorkout: {
+      id: string;
+      title: string;
+      activityType: string;
+      environment: AppleWorkoutInput["environment"];
+      startedAt: string;
+      endedAt: string;
+      receivedAt: string;
+      durationSeconds: number | null;
+      activeEnergyKcal: number | null;
+      avgBpm: number | null;
+    } | null = null;
+    if (workoutRow) {
+      try {
+        const parsed = JSON.parse(workoutRow.data) as AppleWorkoutData;
+        lastWorkout = {
+          id: workoutRow.id,
+          title: describeActivity(parsed.activityType, parsed.environment),
+          activityType: parsed.activityType,
+          environment: parsed.environment,
+          startedAt: parsed.startedAt,
+          endedAt: workoutRow.endedAt,
+          receivedAt: workoutRow.receivedAt,
+          durationSeconds: parsed.durationSeconds ?? null,
+          activeEnergyKcal: parsed.activeEnergyKcal ?? null,
+          avgBpm: parsed.heartRate?.avgBpm ?? null,
+        };
+      } catch {}
+    }
+
+    const dailyRow = this.stmtLatestDaily.get(userId) as {
+      date: string;
+      updatedAt: string;
+      data: string;
+    } | undefined;
+    let lastDaily: {
+      date: string;
+      updatedAt: string;
+      steps: number | null;
+      sleepMinutes: number | null;
+      activeEnergyKcal: number | null;
+      restingHeartRateBpm: number | null;
+    } | null = null;
+    if (dailyRow) {
+      try {
+        const parsed = JSON.parse(dailyRow.data) as Record<string, unknown>;
+        const num = (k: string) => (typeof parsed[k] === "number" && Number.isFinite(parsed[k] as number) ? (parsed[k] as number) : null);
+        lastDaily = {
+          date: dailyRow.date,
+          updatedAt: dailyRow.updatedAt,
+          steps: num("steps"),
+          sleepMinutes: num("sleepMinutes"),
+          activeEnergyKcal: num("activeEnergyKcal"),
+          restingHeartRateBpm: num("restingHeartRateBpm"),
+        };
+      } catch {}
+    }
+
+    return { activeSession, lastWorkout, lastDaily };
   }
 
   saveWorkoutAnnotation(userId: string, id: string, input: AppleWorkoutAnnotationInput) {

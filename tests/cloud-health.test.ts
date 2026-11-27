@@ -1095,3 +1095,114 @@ test("JSON API Gzip 压缩、Cache-Control 保留及内存动作目录复合筛�
     db.close();
   }
 });
+
+test("Apple 健康同步状态接口实时返回进行中会话与最近记录，同日相近力量训练自动关联且不误配远时段记录", async () => {
+  const { db, owner, issue, call, store } = fixture();
+  try {
+    const { token } = await issue();
+    const initialStatus = await (await call(`${apple}/status`, owner.token)).json() as any;
+    assert.equal(initialStatus.activeSession, null);
+    assert.equal(initialStatus.lastWorkout, null);
+    assert.equal(initialStatus.lastDaily, null);
+
+    // 1. Start indoor running event -> activeSession appears with localized title
+    const startedAt = new Date(Date.now() - 12 * 60_000).toISOString();
+    const startRes = await call(`${apple}/events`, token, "POST", {
+      schemaVersion: 1,
+      event: "start",
+      activityType: "running",
+      environment: "indoor",
+      occurredAt: startedAt,
+    });
+    assert.equal(startRes.status, 200);
+    const liveStatus = await (await call(`${apple}/status`, owner.token)).json() as any;
+    assert.equal(liveStatus.activeSession?.title, "室内跑步");
+    assert.equal(liveStatus.activeSession?.activityType, "running");
+    assert.ok(liveStatus.activeSession?.elapsedMinutes >= 11);
+
+    // 2. End event -> activeSession clears and lastWorkout populates
+    const endRes = await call(`${apple}/events`, token, "POST", {
+      schemaVersion: 1,
+      event: "end",
+      activityType: "running",
+      environment: "indoor",
+      occurredAt: new Date().toISOString(),
+      activeEnergyKcal: 165,
+      energyKind: "window_estimate",
+      avgBpm: 148,
+    });
+    assert.equal(endRes.status, 201);
+    const dailyRes = await call(`${apple}/daily`, token, "POST", {
+      schemaVersion: 1,
+      date: localDate(),
+      steps: 6420,
+      sleepMinutes: 455,
+    });
+    assert.equal(dailyRes.status, 200);
+
+    const afterStatus = await (await call(`${apple}/status`, owner.token)).json() as any;
+    assert.equal(afterStatus.activeSession, null);
+    assert.equal(afterStatus.lastWorkout?.title, "室内跑步");
+    assert.equal(afterStatus.lastWorkout?.activeEnergyKcal, 165);
+    assert.equal(afterStatus.lastWorkout?.avgBpm, 148);
+    assert.equal(afterStatus.lastDaily?.steps, 6420);
+    assert.equal(afterStatus.lastDaily?.sleepMinutes, 455);
+
+    // 3. Same-day resistance workout logged 20 minutes after Watch finished auto-pairs via Pass 2
+    const dayNear = shiftDay(localDate(), -3);
+    const dayFar = shiftDay(localDate(), -2);
+    const uploadStrength = (id: string, day: string, startHour: string, endHour: string) =>
+      call(`${apple}/workouts`, token, "POST", {
+        schemaVersion: 1,
+        captureMethod: "workout",
+        externalWorkoutId: id,
+        activityType: "traditionalStrengthTraining",
+        environment: "indoor",
+        startedAt: `${day}T${startHour}:00+08:00`,
+        endedAt: `${day}T${endHour}:00+08:00`,
+        durationSeconds: 3600,
+        durationKind: "workout_active",
+        activeEnergyKcal: 310,
+      });
+    assert.equal((await uploadStrength("w_near", dayNear, "10:00", "11:00")).status, 201);
+    assert.equal((await uploadStrength("w_far", dayFar, "08:00", "09:00")).status, 201);
+
+    const makeManual = (id: string, day: string, startIso: string, endIso: string) =>
+      store.mutate(owner.userId, {
+        id,
+        opId: `op_${id}`,
+        kind: "workout",
+        baseVersion: 0,
+        deleted: false,
+        data: {
+          title: "推举日",
+          status: "completed",
+          date: day,
+          startedAt: startIso,
+          endedAt: endIso,
+          exercises: [
+            {
+              id: `row_${id}`,
+              exerciseId: "bench-press",
+              restSeconds: 90,
+              sets: [{ id: `set_${id}`, type: "normal", completed: true, weight: 60, reps: 8 }],
+            },
+          ],
+        },
+      });
+    // 20 minutes after Watch ended (11:20–11:35 +08:00 == 03:20–03:35Z) -> pairs
+    makeManual("manual_post_lift", dayNear, `${dayNear}T03:20:00Z`, `${dayNear}T03:35:00Z`);
+    // 10 hours after Watch ended (19:00–20:00 +08:00 == 11:00–12:00Z) -> must NOT pair
+    makeManual("manual_evening_lift", dayFar, `${dayFar}T11:00:00Z`, `${dayFar}T12:00:00Z`);
+
+    const agendaRes = await call(`${apple}/agenda?from=${dayNear}&through=${dayFar}`, owner.token);
+    assert.equal(agendaRes.status, 200);
+    const items = (await agendaRes.json()) as Array<{ date: string; manualWorkoutId: string | null }>;
+    const nearItem = items.find((i) => i.date === dayNear);
+    const farItem = items.find((i) => i.date === dayFar);
+    assert.equal(nearItem?.manualWorkoutId, "manual_post_lift");
+    assert.equal(farItem?.manualWorkoutId, null);
+  } finally {
+    db.close();
+  }
+});
