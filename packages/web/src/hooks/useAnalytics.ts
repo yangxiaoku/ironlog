@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { SleepReport } from "@ironlog/shared";
+import type { AppleWorkoutAnnotation, SleepReport } from "@ironlog/shared";
 import type { AppleDailyEntry } from "../components/apple/AppleHealthModals";
 import { cachedApiFetch, peekQuery } from "../lib/query-cache";
 
@@ -415,6 +415,7 @@ interface AppleWorkoutsBucket {
     activeEnergyKcal?: number | null;
     distanceMeters?: number | null;
     heartRate?: { avgBpm?: number | null; maxBpm?: number | null } | null;
+    annotation?: AppleWorkoutAnnotation;
   }>;
 }
 

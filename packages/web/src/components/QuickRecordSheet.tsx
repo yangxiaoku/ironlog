@@ -1,7 +1,6 @@
 import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
 import {
-  openCardioLauncherModal,
   openDietEditor,
   openStrengthCalcModal,
   openTextLogModal,
@@ -13,7 +12,7 @@ import { useUiStore } from "../store/useUiStore";
 import { Icon, type IconName } from "./Icon";
 
 interface QuickOption {
-  kind: "workout" | "cardio" | "diet" | "weight" | "textLog" | "calc";
+  kind: "workout" | "diet" | "weight" | "textLog" | "calc";
   title: string;
   desc: string;
   accent: string;
@@ -27,13 +26,6 @@ const BASE_QUICK_OPTIONS: QuickOption[] = [
     desc: "自选动作，实时计时与杠铃配片",
     accent: "workout-accent",
     icon: "workout",
-  },
-  {
-    kind: "cardio",
-    title: "有氧运动（Apple 健身）",
-    desc: "选择有氧方式，跳转 Apple 健身直接开练",
-    accent: "workout-accent",
-    icon: "heart",
   },
   {
     kind: "diet",
@@ -71,7 +63,7 @@ export function QuickRecordSheetBody() {
   const closeModalSilent = useUiStore((s) => s.closeModalSilent);
 
   const options = aiReady
-    ? [...BASE_QUICK_OPTIONS.slice(0, 4), TEXT_LOG_OPTION, BASE_QUICK_OPTIONS[4]!]
+    ? [...BASE_QUICK_OPTIONS.slice(0, 3), TEXT_LOG_OPTION, BASE_QUICK_OPTIONS[3]!]
     : BASE_QUICK_OPTIONS;
 
   return (
@@ -87,8 +79,6 @@ export function QuickRecordSheetBody() {
               closeModalSilent();
               if (item.kind === "workout") {
                 openWorkoutEditor();
-              } else if (item.kind === "cardio") {
-                openCardioLauncherModal();
               } else if (item.kind === "diet") {
                 openDietEditor({ date: today() });
               } else if (item.kind === "weight") {

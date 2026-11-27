@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
+import type { AppleWorkoutAnnotation } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import { triggerAppleHubAction } from "../../lib/apple-fitness";
 import { copyText } from "../../lib/clipboard";
 import { duration, fmt, today } from "../../lib/date";
+import { FEELINGS } from "../../lib/domain";
+import { formatClock, triggerHaptic } from "../../lib/haptics-audio";
 import {
   APPLE_HEALTH_AUTO_METRICS,
   APPLE_HEALTH_DAILY_GROUPS,
   APPLE_HEALTH_DEFAULT_METRICS,
   APPLE_HEALTH_WATCH_METRICS,
   APPLE_SHORTCUT_ENVIRONMENTS,
-  APPLE_SHORTCUT_RECENT_WINDOWS,
   APPLE_SHORTCUT_SPORTS,
   DEFAULT_APPLE_HUB_SHORTCUT_NAME,
   assessServerOrigin,
@@ -84,6 +86,7 @@ export interface AppleWorkoutAgendaItem {
   heartRate?: { avgBpm?: number | null; maxBpm?: number | null } | null;
   plan?: { name?: string } | null;
   manualWorkoutId?: string | null;
+  annotation?: AppleWorkoutAnnotation;
 }
 
 export function formatSleepMinutes(minutes: number | null | undefined): string {
@@ -359,6 +362,7 @@ export function AppleWorkoutDetailsModal({
   onOpenWorkout?: (workoutId: string) => void;
 }) {
   const startDate = item.startedAt ? new Date(item.startedAt) : null;
+  const annotation = item.annotation;
   const endDate = item.endedAt ? new Date(item.endedAt) : null;
   const hasTimeWindow = Boolean(
     startDate && !Number.isNaN(startDate.getTime()) && endDate && !Number.isNaN(endDate.getTime()),
@@ -401,6 +405,19 @@ export function AppleWorkoutDetailsModal({
           </div>
         ))}
       </div>
+      {annotation && (annotation.notes || annotation.feeling || annotation.distanceKm || annotation.lapSeconds.length > 0) ? (
+        <section className="report-notes">
+          <h3>训练记录</h3>
+          {annotation.notes ? <p>{annotation.notes}</p> : null}
+          {annotation.feeling ? <p>体感 · {FEELINGS[annotation.feeling]}</p> : null}
+          {annotation.distanceKm ? <p>手记距离 · {annotation.distanceKm} km</p> : null}
+          {annotation.lapSeconds.length ? (
+            <ol aria-label="计时分段">
+              {annotation.lapSeconds.map((seconds, index) => <li key={index}>{formatClock(seconds)}</li>)}
+            </ol>
+          ) : null}
+        </section>
+      ) : null}
       {item.manualWorkoutId && onOpenWorkout ? (
         <footer>
           <button type="button" className="secondary-button" onClick={() => onOpenWorkout(item.manualWorkoutId!)}>
@@ -624,6 +641,133 @@ const WIZARD_STEPS: ReadonlyArray<{ step: WizardStep; shortLabel: string }> = [
   { step: 5, shortLabel: "验证" },
 ];
 
+interface AppleAutomationPreset {
+  param: string;
+  label: string;
+  trigger: string;
+  badge?: string;
+}
+
+const REQUIRED_APPLE_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
+  { param: "end", label: "结束任何体能训练", trigger: "所有力量与有氧共用这 1 条", badge: "必配" },
+  { param: "daily", label: "每日定时同步健康", trigger: "特定时间（如每天 23:30）", badge: "必配" },
+];
+
+const COMMON_START_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
+  { param: "strength", label: "传统力量训练", trigger: "手表开始时" },
+  { param: "cardio:indoor_run", label: "室内跑步", trigger: "手表开始时" },
+  { param: "cardio:outdoor_run", label: "户外跑步", trigger: "手表开始时" },
+  { param: "cardio:stair_climbing", label: "踏步机 / 爬楼机", trigger: "手表开始时" },
+];
+
+const EXTRA_START_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
+  { param: "strength:functional", label: "功能性力量训练", trigger: "手表开始时" },
+  { param: "strength:core", label: "核心训练", trigger: "手表开始时" },
+  { param: "cardio:indoor_cycle", label: "室内单车", trigger: "手表开始时" },
+  { param: "cardio:outdoor_cycle", label: "户外单车 / 骑行", trigger: "手表开始时" },
+  { param: "cardio:elliptical", label: "椭圆机", trigger: "手表开始时" },
+  { param: "cardio:rowing", label: "划船机", trigger: "手表开始时" },
+  { param: "cardio:swimming", label: "泳池游泳", trigger: "手表开始时" },
+  { param: "cardio:hiit", label: "高强度间歇 (HIIT)", trigger: "手表开始时" },
+  { param: "cardio:jump_rope", label: "跳绳", trigger: "手表开始时" },
+  { param: "cardio:outdoor_walk", label: "户外步行", trigger: "手表开始时" },
+  { param: "cardio:hiking", label: "徒步", trigger: "手表开始时" },
+  { param: "cardio:mixed_cardio", label: "混合有氧", trigger: "手表开始时" },
+];
+
+export function AppleAutomationCopyPanel({
+  shortcutName = DEFAULT_APPLE_HUB_SHORTCUT_NAME,
+}: {
+  shortcutName?: string;
+}) {
+  const notify = useUiStore((s) => s.notify);
+  const [copiedKey, setCopiedKey] = useState("");
+  const timerRef = useRef<number | null>(null);
+  const resolvedName = shortcutName.trim() || DEFAULT_APPLE_HUB_SHORTCUT_NAME;
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current != null) window.clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  const handleCopy = (value: string, noticeLabel?: string) => {
+    triggerHaptic("light");
+    void copyText(value).then((ok) => {
+      if (ok) {
+        setCopiedKey(value);
+        if (timerRef.current != null) window.clearTimeout(timerRef.current);
+        timerRef.current = window.setTimeout(() => setCopiedKey(""), 1800);
+      }
+      notify(ok ? `已复制：${noticeLabel ?? value}` : `无法自动复制，请手动复制：${value}`);
+    });
+  };
+
+  const renderChip = (item: AppleAutomationPreset) => {
+    const isCopied = copiedKey === item.param;
+    return (
+      <button
+        key={item.param}
+        type="button"
+        className={`apple-auto-chip${isCopied ? " is-copied" : ""}`}
+        onClick={() => handleCopy(item.param, `${item.label}（${item.param}）`)}
+      >
+        <div className="apple-auto-chip-top">
+          <strong>{item.label}</strong>
+          <span className="apple-auto-chip-badge">{isCopied ? "✓ 已复制" : item.badge ?? "复制"}</span>
+        </div>
+        <code className="apple-auto-chip-param">{item.param}</code>
+        <small>{item.trigger}</small>
+      </button>
+    );
+  };
+
+  return (
+    <div className="apple-auto-panel">
+      <p className="apple-auto-hint">
+        在 iPhone <b>快捷指令 → 自动化 → ＋ → 立即运行</b> → 放 2 个动作：① <b>「文本」</b>粘贴下方参数 → ② <b>「运行快捷指令」</b>选目标指令即可。
+      </p>
+
+      <div className="apple-auto-shortcut-bar">
+        <div className="apple-auto-shortcut-meta">
+          <span>目标快捷指令</span>
+          <code>{resolvedName}</code>
+        </div>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => handleCopy(resolvedName, "快捷指令名称")}
+        >
+          <Icon name="copy" size={14} /> {copiedKey === resolvedName ? "✓ 已复制" : "复制名称"}
+        </button>
+      </div>
+
+      <div className="apple-auto-group">
+        <span className="apple-auto-group-label">必配 2 条（全局通用）</span>
+        <div className="apple-auto-grid">{REQUIRED_APPLE_AUTOMATIONS.map(renderChip)}</div>
+      </div>
+
+      <div className="apple-auto-group">
+        <span className="apple-auto-group-label">常用运动开始（按常练项目挑 2～4 条配即可）</span>
+        <div className="apple-auto-grid">{COMMON_START_AUTOMATIONS.map(renderChip)}</div>
+      </div>
+
+      <details className="settings-accordion">
+        <summary>
+          <span>更多运动开始参数</span>
+          <span className="settings-accordion-meta">
+            <span>{EXTRA_START_AUTOMATIONS.length} 项</span>
+            <Icon name="chevron" size={14} />
+          </span>
+        </summary>
+        <div className="settings-accordion-body">
+          <div className="apple-auto-grid">{EXTRA_START_AUTOMATIONS.map(renderChip)}</div>
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
   const userId = useAuthStore((s) => s.userId);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -647,7 +791,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
   const [workoutMode, setWorkoutMode] = useState<"recent" | "pair">("recent");
   const [activityType, setActivityType] = useState(APPLE_SHORTCUT_SPORTS[0]!.activityType);
   const [environment, setEnvironment] = useState<ShortcutEnvironment>(APPLE_SHORTCUT_SPORTS[0]!.defaultEnvironment);
-  const [recentWindowMinutes, setRecentWindowMinutes] = useState(45);
+  const recentWindowMinutes = 45;
   const [exportedFile, setExportedFile] = useState("");
   const [copiedOrigin, setCopiedOrigin] = useState(false);
   const [copiedToken, setCopiedToken] = useState(false);
@@ -932,8 +1076,8 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
         <div className="shortcut-step-body">
           <div className="shortcut-wizard-head">
             <span>第 2 步 / 共 5 步</span>
-            <h3>下载「全能智能联动」快捷指令</h3>
-            <p>1 个文件即可统筹开练打卡、完练采集心率热量与每日健康（近 1 天防卡顿）；下载后点底部下一步。</p>
+            <h3>下载「Apple 健康静默上报」快捷指令</h3>
+            <p>1 个纯后台文件：手表原生开练与结束自动静默回传心率、消耗、距离与每日健康（步数 3 天按小时、睡眠 2 天）。</p>
           </div>
 
           <div className="field">
@@ -1028,16 +1172,6 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                     </select>
                   </label>
                 </div>
-                <label className="field">
-                  <span>未打卡「开始」时的兜底回溯窗口</span>
-                  <select value={String(recentWindowMinutes)} onChange={(e) => setRecentWindowMinutes(Number(e.target.value))}>
-                    {Object.entries(APPLE_SHORTCUT_RECENT_WINDOWS).map(([k, lbl]) => (
-                      <option key={k} value={k}>
-                        {lbl}
-                      </option>
-                    ))}
-                  </select>
-                </label>
                 <small className="muted">
                   ⚠️ 若某项在 iPhone「健康」中为 0 条记录或未授权会提示「未找到样本」，建议先用「自动体征 13项」。
                 </small>
@@ -1610,9 +1744,9 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
                 打开 iPhone <b>「健康」App → 右上角头像 → 隐私 → App → 快捷指令</b>，将需要的指标权限打开（建议「全部打开」）；
               </li>
               <li>
-                新版快捷指令的步数/热量已改为<b>「过去 1 天内（24 小时）+ 原生按天分组取最新 1 条」</b>（秒级执行、不会显示 7 天），已关闭最大摄氧量并对齐 <code>Resting Calories</code> / <code>Dietary Calories</code> / <code>Oxygen Saturation</code>；
+                新版纯后台指令已适配 iOS 26.2：步数按小时分组回看近 3 天、睡眠按开始日期回看近 2 天，且不包含任何跳转健身 App 动作，不会干扰手表原生训练；
               </li>
-              <li>若某项提示「未找到样本」，说明今日暂未测得该项（可回到第 2 步换「基础 4项」或「自动体征 13项」）。</li>
+              <li>若某项提示「未找到样本」，说明近期暂未测得该项（可回到第 2 步换「基础 4项」或「自动体征 13项」）。</li>
             </ol>
           </div>
 
@@ -1621,7 +1755,7 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
               <span className="shortcut-tag">VERIFY</span>
               <strong>2. 试跑一次并检查是否上传成功</strong>
             </div>
-            <small>在 iPhone 上点下「拉起测试」（选「同步今日健康数据」），跑完提示成功后点右侧检查按钮：</small>
+            <small>在 iPhone 上点下「拉起测试」（选「同步今日健康数据」），跑完后点右侧检查按钮：</small>
             <div className="shortcut-action-row">
               <button
                 type="button"
@@ -1646,31 +1780,13 @@ export function DeviceSetupModal({ onRefresh }: { onRefresh?: () => void }) {
             ) : null}
           </div>
 
-          <details className="settings-accordion">
-            <summary>
-              <span>3. 完整闭环：完练自动回传 + 每日 23:30 同步（全部用这 1 个快捷指令）</span>
-              <span className="settings-accordion-meta">
-                <span>展开做法</span>
-                <Icon name="chevron" size={14} />
-              </span>
-            </summary>
-            <div className="settings-accordion-body">
-              <ol className="shortcut-steps">
-                <li>
-                  <b>网页训练完练自动闭环</b>：在网页点开练自动记下起点，点「完成并保存训练」时会自动拉起全能快捷指令 <code>end</code> 回传心率、热量与对应项目距离，返回网页复盘页自动刷新显示。
-                </li>
-                <li>
-                  <b>手表端结束体能训练全自动回传（纯 Apple Watch 也能传）</b>：iPhone <b>快捷指令 → 自动化 → ＋ → Apple Watch 体能训练 → 结束任何体能训练 → 立即运行</b> → 新建空白自动化，只需放 2 个动作：① <b>「文本」填 <code>end</code></b> → ② <b>「运行快捷指令」选 <code>{DEFAULT_APPLE_HUB_SHORTCUT_NAME}</code></b>（输入选上方文本）。
-                </li>
-                <li>
-                  <b>每日定时健康同步</b>：新建自动化 <b>特定时间（如 23:30 亮屏/充电）→ 立即运行</b> → ① <b>「文本」填 <code>daily</code></b> → ② <b>「运行快捷指令」选 <code>{DEFAULT_APPLE_HUB_SHORTCUT_NAME}</code></b>（输入选文本）。
-                </li>
-                <li>
-                  <b>开练一键打开健身 App</b>：新版全能快捷指令的 <code>strength*</code> 与全部 <code>cardio:*</code> 分支会在上报开练事件后直接调用「打开 Fitness」拉起 Apple「健身」App，点选对应项目即可开练。
-                </li>
-              </ol>
+          <div className="shortcut-card">
+            <div className="shortcut-card-head">
+              <span className="shortcut-tag">AUTOMATION</span>
+              <strong>3. 复制参数去配 iPhone 个人自动化</strong>
             </div>
-          </details>
+            <AppleAutomationCopyPanel shortcutName={DEFAULT_APPLE_HUB_SHORTCUT_NAME} />
+          </div>
 
           <footer className="shortcut-wizard-foot">
             <button type="button" className="secondary-button" onClick={() => goToStep(4)}>

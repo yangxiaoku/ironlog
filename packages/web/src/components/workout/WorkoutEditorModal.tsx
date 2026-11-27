@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import {
-  buildAppleCardioLaunchUrl,
-  buildAppleFitnessLaunchUrl,
   buildAppleHubActionUrl,
-  inferAppleCardioPreset,
-  inferAppleFitnessKind,
   isAppleMobileDevice,
-  triggerAppleCardioLaunch,
-  triggerAppleFitnessLaunch,
   triggerAppleHubAction,
 } from "../../lib/apple-fitness";
 import { fmt, today } from "../../lib/date";
@@ -70,9 +64,7 @@ import {
 } from "../../lib/workout-helpers";
 import {
   openAiAdaptWorkoutModal,
-  openCardioLauncherModal,
   openExerciseDetailModal,
-  openStrengthLauncherModal,
 } from "../../lib/record-openers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
@@ -349,10 +341,6 @@ export function WorkoutEditorModal({
     enabledPlates,
     showPlateMath,
     warmupScheme,
-    appleFitnessAutoLaunch,
-    appleStrengthLaunch,
-    appleCardioLaunch,
-    appleAutoSyncOnFinish,
   } = prefs;
   const [wakeActive, setWakeActive] = useState(false);
 
@@ -1170,40 +1158,16 @@ export function WorkoutEditorModal({
 
     const curRec = savedRecordRef.current;
     const payloadPack = buildWorkoutPayload(targetStatus, { exercisesOverride: exercisesForSave });
-    const sessionKind = inferAppleFitnessKind(exercisesForSave, payloadPack.cleanTitle);
-    const sessionCardio = sessionKind === "cardio" ? inferAppleCardioPreset(exercisesForSave, payloadPack.cleanTitle) : null;
-    const sessionLaunchMode = sessionKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
-    const shouldAutoSyncApple =
-      targetStatus === "completed" &&
-      !isHistoricalEdit &&
-      payloadPack.workoutData.date === today() &&
-      appleAutoSyncOnFinish &&
-      sessionLaunchMode !== "off";
 
     savingRef.current = true;
     setSaving(true);
     setError("");
 
     try {
-      const sessionSeedPromise =
-        shouldAutoSyncApple && elapsedSeconds >= 180
-          ? apiFetch("/api/integrations/apple-health/session-start", {
-              method: "POST",
-              body: {
-                activityType: sessionCardio?.activityType ?? "traditionalStrengthTraining",
-                environment: sessionCardio?.environment ?? "indoor",
-                startedAt: payloadPack.workoutData.startedAt,
-                onlyIfIdle: true,
-              },
-            }).catch(() => null)
-          : Promise.resolve(null);
-      const [res] = await Promise.all([
-        apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
-          method: "POST",
-          body: payloadPack.body,
-        }),
-        sessionSeedPromise,
-      ]);
+      const res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
+        method: "POST",
+        body: payloadPack.body,
+      });
       clearDraft();
       triggerHaptic("success");
       bumpDataEpoch();
@@ -1222,12 +1186,6 @@ export function WorkoutEditorModal({
       } else {
         closeAllModals();
         notify(targetStatus === "active" ? "训练草稿已保存至云端" : "训练已保存");
-      }
-      if (shouldAutoSyncApple) {
-        const launchRes = triggerAppleHubAction("end", { prefs, silentNonIos: true });
-        if (launchRes.launched) {
-          notify("训练已保存，正在拉起全能快捷指令回传 Apple Watch 数据…");
-        }
       }
     } catch (err) {
       if (isNetworkError(err) && userId) {
@@ -1287,16 +1245,7 @@ export function WorkoutEditorModal({
 
   const restInfo = rest ? restProgress(rest, nowMs) : null;
   const isPausedClock = timing.runningSince == null;
-  const fitnessKind = inferAppleFitnessKind(exercises, title);
-  const inferredCardio = fitnessKind === "cardio" ? inferAppleCardioPreset(exercises, title) : null;
-  const activeLaunchMode = fitnessKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
   const onIos = isAppleMobileDevice();
-  const appleLaunchUrl =
-    fitnessKind === "cardio"
-      ? inferredCardio
-        ? buildAppleCardioLaunchUrl(inferredCardio.id, prefs)
-        : null
-      : buildAppleFitnessLaunchUrl("strength", prefs);
   const appleEndUrl = buildAppleHubActionUrl("end", prefs);
 
   return (
@@ -1363,46 +1312,6 @@ export function WorkoutEditorModal({
           <div className="workout-progress-strip">
             <progress value={doneSets} max={Math.max(1, totalSets)} />
             <span className="workout-live-vol">{fmt(liveVolume, 0)} kg</span>
-            {activeLaunchMode !== "off" && fitnessKind === "cardio" && !inferredCardio ? (
-              <button
-                type="button"
-                className="micro-chip workout-apple-chip"
-                title="选择有氧方式并跳转 Apple 健身"
-                onClick={() => {
-                  triggerHaptic("light");
-                  openCardioLauncherModal();
-                }}
-              >
-                <Icon name="heart" size={12} /> 选择有氧
-              </button>
-            ) : activeLaunchMode !== "off" && appleLaunchUrl ? (
-              onIos ? (
-                <a
-                  href={appleLaunchUrl}
-                  className="micro-chip workout-apple-chip"
-                  title={inferredCardio ? `跳转 Apple 健身开始${inferredCardio.label}` : "跳转 Apple 健身开始传统力量训练"}
-                  onClick={() => triggerHaptic("light")}
-                >
-                  <Icon name="heart" size={12} /> {inferredCardio ? inferredCardio.label : "力量训练"}
-                </a>
-              ) : (
-                <button
-                  type="button"
-                  className="micro-chip workout-apple-chip"
-                  title={inferredCardio ? `跳转 Apple 健身开始${inferredCardio.label}` : "跳转 Apple 健身开始力量训练"}
-                  onClick={() => {
-                    triggerHaptic("light");
-                    if (inferredCardio) {
-                      triggerAppleCardioLaunch(inferredCardio.id, { prefs, notify });
-                    } else {
-                      triggerAppleFitnessLaunch("strength", { prefs, notify });
-                    }
-                  }}
-                >
-                  <Icon name="heart" size={12} /> {inferredCardio ? inferredCardio.label : "力量训练"}
-                </button>
-              )
-            ) : null}
           </div>
         </header>
       ) : null}
@@ -1684,73 +1593,6 @@ export function WorkoutEditorModal({
               </div>
             </div>
 
-            <div className="session-settings-group">
-              <h4 className="session-settings-group-title">Apple 健身联动</h4>
-              <label className="switch-chip">
-                <span>开练自动跳转 Apple 健身</span>
-                <input
-                  className="switch"
-                  type="checkbox"
-                  checked={appleFitnessAutoLaunch}
-                  onChange={(e) => updatePref("appleFitnessAutoLaunch", e.target.checked)}
-                />
-              </label>
-              <div className="session-menu-quick" style={{ marginTop: 8 }}>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    triggerHaptic("light");
-                    triggerAppleFitnessLaunch("strength", { prefs, notify });
-                  }}
-                >
-                  <Icon name="heart" size={14} /> 启动传统力量
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    triggerHaptic("light");
-                    setOpenMenu(false);
-                    openStrengthLauncherModal("traditional_strength");
-                  }}
-                >
-                  <Icon name="dial" size={14} /> 配置力量直开
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    triggerHaptic("light");
-                    setOpenMenu(false);
-                    openCardioLauncherModal(inferredCardio?.id);
-                  }}
-                >
-                  <Icon name="heart" size={14} /> 选择有氧方式
-                </button>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  onClick={() => {
-                    triggerHaptic("light");
-                    triggerAppleHubAction("end", { prefs, notify });
-                  }}
-                >
-                  <Icon name="upload" size={14} /> 回传刚结束训练（心率/热量）
-                </button>
-                <button
-                  type="button"
-                  className="quiet"
-                  onClick={() => {
-                    triggerHaptic("light");
-                    triggerAppleFitnessLaunch("strength", { prefs, forceMode: "fitness_app", notify });
-                  }}
-                >
-                  直接打开健身 App
-                </button>
-              </div>
-            </div>
-
             <div className="session-menu-quick">
               <button
                 type="button"
@@ -1877,41 +1719,28 @@ export function WorkoutEditorModal({
                 />
               </label>
 
-              {activeLaunchMode !== "off" ? (
-                <>
-                  {date === today() ? (
-                    <label className="switch-chip" style={{ marginBottom: 8 }}>
-                      <span>完练自动回传 Apple Watch 心率与消耗</span>
-                      <input
-                        className="switch"
-                        type="checkbox"
-                        checked={appleAutoSyncOnFinish}
-                        onChange={(e) => updatePref("appleAutoSyncOnFinish", e.target.checked)}
-                      />
-                    </label>
-                  ) : null}
-                  {onIos ? (
-                    <a
-                      href={appleEndUrl}
-                      className="secondary-button"
-                      style={{ textDecoration: "none", justifyContent: "center" }}
-                      onClick={() => triggerHaptic("light")}
-                    >
-                      <Icon name="upload" size={14} /> 同步 Apple 心率/热量
-                    </a>
-                  ) : (
-                    <button
-                      type="button"
-                      className="secondary-button"
-                      onClick={() => {
-                        triggerHaptic("light");
-                        triggerAppleHubAction("end", { prefs, notify });
-                      }}
-                    >
-                      <Icon name="upload" size={14} /> 同步 Apple 心率/热量
-                    </button>
-                  )}
-                </>
+              {date === today() ? (
+                onIos ? (
+                  <a
+                    href={appleEndUrl}
+                    className="secondary-button"
+                    style={{ textDecoration: "none", justifyContent: "center" }}
+                    onClick={() => triggerHaptic("light")}
+                  >
+                    <Icon name="upload" size={14} /> 手动补传 Apple 心率/热量
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      triggerHaptic("light");
+                      triggerAppleHubAction("end", { prefs, notify });
+                    }}
+                  >
+                    <Icon name="upload" size={14} /> 手动补传 Apple 心率/热量
+                  </button>
+                )
               ) : null}
             </div>
 

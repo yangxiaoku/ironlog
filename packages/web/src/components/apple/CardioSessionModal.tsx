@@ -1,32 +1,32 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import {
   buildAppleCardioLaunchUrl,
   buildAppleHubActionUrl,
   isAppleMobileDevice,
   triggerAppleCardioLaunch,
-  triggerAppleHubAction,
 } from "../../lib/apple-fitness";
 import {
   CARDIO_SESSION_EVENT,
   CARDIO_TARGET_MINUTES_OPTIONS,
+  buildCardioWorkoutMutation,
   clearCardioSession,
   estimateCardioCalories,
+  finishCardioTiming,
   formatCardioPaceOrSpeed,
   formatStartClock,
   readCardioSession,
   recordCardioLap,
+  requestCardioAppleSync,
   saveCardioSession,
   toggleCardioSessionPause,
   type LiveCardioSession,
 } from "../../lib/cardio-session";
-import { today } from "../../lib/date";
 import { FEELINGS, type FeelingKey, type RecordEnvelope, type WorkoutData } from "../../lib/domain";
 import {
   elapsedAt,
   formatClock,
   keepWorkoutScreenAwake,
-  pauseAt,
   triggerHaptic,
 } from "../../lib/haptics-audio";
 import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../../lib/workout-helpers";
@@ -53,6 +53,7 @@ export function CardioSessionModal({
   const [prefs, setPrefs] = useState(() => readWorkoutPreferences());
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [savingLocal, setSavingLocal] = useState(false);
+  const savingRef = useRef(false);
   const [menuOpen, setMenuOpen] = useState(false);
 
   const isRunningRef = useRef(Boolean(session?.timing.runningSince));
@@ -144,7 +145,7 @@ export function CardioSessionModal({
 
   const commitSession = (next: LiveCardioSession) => {
     setSession(next);
-    saveCardioSession(userId, next);
+    if (!saveCardioSession(userId, next)) notify("浏览器存储不可用，请在关闭页面前保存记录");
     setNowMs(Date.now());
   };
 
@@ -163,116 +164,34 @@ export function CardioSessionModal({
     commitSession({ ...session, targetMinutes: minutes });
   };
 
-  const schedulePostShortcutRefresh = () => {
-    if (typeof window === "undefined") return;
-    const onReturn = () => {
-      if (document.visibilityState === "visible") {
-        bumpDataEpoch();
-        document.removeEventListener("visibilitychange", onReturn);
-      }
-    };
-    document.addEventListener("visibilitychange", onReturn);
-    window.setTimeout(() => {
-      bumpDataEpoch();
-      document.removeEventListener("visibilitychange", onReturn);
-    }, 6500);
-  };
-
-  const handleFinishWithShortcut = (viaNativeLink = false) => {
-    triggerHaptic("success");
-    void apiFetch("/api/integrations/apple-health/session-start", {
-      method: "POST",
-      body: {
-        activityType: session.activityType,
-        environment: session.environment,
-        startedAt: session.startedAt,
-        onlyIfIdle: true,
-      },
-    }).catch(() => {});
-    clearCardioSession(userId);
-    schedulePostShortcutRefresh();
-    if (viaNativeLink) {
-      notify(`已调用「${prefs.appleHubShortcutName}」结束并回传 Apple Watch 数据`);
-      window.setTimeout(() => closeTopModal(), 260);
+  const handleFinishWithShortcut = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (savingRef.current || !requestCardioAppleSync(userId, session)) {
+      event.preventDefault();
+      if (!savingRef.current) notify("浏览器无法保存计时，请先保存本次记录");
       return;
     }
-    const res = triggerAppleHubAction("end", { prefs, notify });
-    if (res.launched) {
-      notify(`已调用「${prefs.appleHubShortcutName}」结束并回传 Apple Watch 数据`);
-      window.setTimeout(() => closeTopModal(), 260);
-    } else {
-      closeTopModal();
-    }
+    triggerHaptic("light");
+    notify("已请求 Apple 同步。收到对应训练后会清除计时");
   };
 
   const handleSaveLocalCardio = async () => {
-    if (savingLocal) return;
-    triggerHaptic("success");
+    if (savingRef.current) return;
+    const finished = finishCardioTiming(session);
+    const body = buildCardioWorkoutMutation(finished);
+    savingRef.current = true;
     setSavingLocal(true);
+    commitSession(finished);
     try {
-      const finishNow = Date.now();
-      const finalTiming = pauseAt(session.timing, finishNow);
-      const totalSec = Math.max(1, finalTiming.elapsedSeconds);
-      const endedIso = new Date(finishNow).toISOString();
-      const noteParts: string[] = [];
-      if (session.distanceKm.trim()) noteParts.push(`距离：${session.distanceKm.trim()} km`);
-      if (paceOrSpeed) noteParts.push(`${paceOrSpeed.label}：${paceOrSpeed.value}`);
-      if (session.laps.length > 0) {
-        noteParts.push(
-          `分段：${session.laps.map((lap) => `#${lap.index} ${formatClock(lap.splitSeconds)}`).join(" / ")}`,
-        );
-      }
-      if (session.notes.trim()) noteParts.push(session.notes.trim());
-
-      const workoutId = `cardio-${session.id}`;
-      const body = {
-        id: workoutId,
-        kind: "workout",
-        data: {
-          date: today(),
-          title: session.label,
-          startedAt: session.startedAt,
-          endedAt: endedIso,
-          status: "completed" as const,
-          notes: noteParts.join(" · "),
-          feeling: session.feeling,
-          source: "manual",
-          timing: finalTiming,
-          exercises: [
-            {
-              id: `cardio-ex-${session.id}`,
-              exerciseId: `cardio-${session.presetId}`,
-              snapshot: {
-                name: session.label,
-                muscle: "cardio" as const,
-                equipment: "bodyweight" as const,
-                mode: "timed" as const,
-                volumeMultiplier: 1,
-              },
-              sets: [
-                {
-                  id: `cardio-set-${session.id}`,
-                  type: "normal" as const,
-                  weight: 0,
-                  reps: 0,
-                  seconds: totalSec,
-                  completed: true,
-                  completedAt: endedIso,
-                  rir: null,
-                },
-              ],
-            },
-          ],
-        },
-      };
       const res = await apiFetch<{ record?: RecordEnvelope<WorkoutData> }>("/api/records", {
         method: "POST",
         body,
       });
-      clearCardioSession(userId);
+      if (!res.record) throw new Error("服务器未确认保存，请重试");
+      if (readCardioSession(userId)?.id === session.id) clearCardioSession(userId);
+      triggerHaptic("success");
       bumpDataEpoch();
-      notify(`已保存「${session.label}」· ${formatClock(totalSec)}`);
-      if (res.record && onFinishedLocal) {
+      notify(`已保存「${session.label}」· ${formatClock(finished.timing.elapsedSeconds)}`);
+      if (onFinishedLocal) {
         onFinishedLocal(res.record);
       } else {
         closeTopModal();
@@ -280,6 +199,7 @@ export function CardioSessionModal({
     } catch (err) {
       notify((err as Error)?.message || "保存有氧记录失败");
     } finally {
+      savingRef.current = false;
       setSavingLocal(false);
     }
   };
@@ -319,7 +239,7 @@ export function CardioSessionModal({
           <strong>{session.label}</strong>
           <span className="workout-topbar-sub">
             <i className="live-led" aria-hidden="true" />
-            <span>{isRunning ? "计时中" : "已暂停"}</span>
+            <span>{session.appleSyncRequestedAt ? "等待 Apple 回传" : isRunning ? "计时中" : "已暂停"}</span>
             <span aria-hidden="true">·</span>
             <span>{session.environment === "outdoor" ? "室外" : "室内"}</span>
             <span aria-hidden="true">·</span>
@@ -468,19 +388,20 @@ export function CardioSessionModal({
           <a
             href={endShortcutUrl}
             className="cardio-dock-finish"
-            onClick={() => handleFinishWithShortcut(true)}
+            onClick={handleFinishWithShortcut}
           >
             <Icon name="upload" size={16} />
-            <span>结束有氧并同步 Apple Watch</span>
+            <span>{session.appleSyncRequestedAt ? "重试 Apple Watch 同步" : "结束有氧并同步 Apple Watch"}</span>
           </a>
         ) : (
           <button
             type="button"
             className="cardio-dock-finish"
-            onClick={() => handleFinishWithShortcut(false)}
+            disabled={savingLocal}
+            onClick={() => void handleSaveLocalCardio()}
           >
-            <Icon name="upload" size={16} />
-            <span>结束有氧并同步 Apple Watch</span>
+            <Icon name="check" size={16} />
+            <span>{savingLocal ? "保存中…" : "结束并保存记录"}</span>
           </button>
         )}
       </footer>
@@ -507,6 +428,7 @@ export function CardioSessionModal({
             <input
               type="text"
               inputMode="decimal"
+              maxLength={80}
               placeholder="例如 5.0"
               value={session.distanceKm}
               onChange={(e) => commitSession({ ...session, distanceKm: e.target.value })}
@@ -537,6 +459,7 @@ export function CardioSessionModal({
             <input
               type="text"
               placeholder="坡度、配速节奏、心率区间等"
+              maxLength={4000}
               value={session.notes}
               onChange={(e) => commitSession({ ...session, notes: e.target.value })}
             />

@@ -254,6 +254,13 @@ export function appleDailyDetailsModal(daily) {
 }
 
 export function appleWorkoutDetails(item, back = false) {
+  const annotation = item.annotation;
+  const sessionNotes = annotation ? [
+    annotation.notes,
+    annotation.feeling ? `体感 · ${({ easy: "轻松", balanced: "均衡", fatigued: "疲惫" })[annotation.feeling] || ""}` : "",
+    annotation.distanceKm ? `手记距离 · ${annotation.distanceKm} km` : "",
+    annotation.lapSeconds.length ? `分段 · ${annotation.lapSeconds.map((seconds) => `${fmt(seconds, 0)} 秒`).join(" / ")}` : "",
+  ].filter(Boolean) : [];
   const measures = [
     [item.durationKind === "event_elapsed" ? "开始至结束间隔" : "训练时长", duration(item.durationSeconds)],
     [item.energyKind === "window_estimate" ? "活动能量（估算）" : "活动能量", item.activeEnergyKcal == null ? "—" : fmt(item.activeEnergyKcal) + " kcal"],
@@ -264,6 +271,7 @@ export function appleWorkoutDetails(item, back = false) {
     <span>运动类型 <strong>${esc(item.title)}</strong></span></div>
     ${item.plan ? `<div class="apple-plan-result">${icon("check", 17)}<div><strong>${esc(item.plan.name)}</strong><small>计划已完成</small></div></div>` : ""}
     <div class="health-metrics apple-telemetry">${measures.map(([label, value]) => `<div><span>${label}</span><strong>${value}</strong></div>`).join("")}</div>
+    ${sessionNotes.length ? `<section class="report-notes"><h3>训练记录</h3>${sessionNotes.map((note) => `<p>${esc(note)}</p>`).join("")}</section>` : ""}
     ${item.manualWorkoutId ? `<footer><button type="button" class="secondary-button" data-action="workout-detail" data-value="${esc(item.manualWorkoutId)}">${back ? "返回训练复盘" : "查看关联训练"}</button></footer>` : ""}
   </div>`;
 }

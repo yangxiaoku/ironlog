@@ -1,10 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { localDate } from "@ironlog/shared";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { apiFetch } from "../lib/api";
-import { buildAppleHubActionUrl, isAppleMobileDevice, triggerAppleHubAction } from "../lib/apple-fitness";
+import { buildAppleHubActionUrl, isAppleMobileDevice } from "../lib/apple-fitness";
 import {
   CARDIO_SESSION_EVENT,
+  buildCardioAppleAnnotation,
   clearCardioSession,
+  matchesCardioAppleWorkout,
   readCardioSession,
+  requestCardioAppleSync,
   type LiveCardioSession,
 } from "../lib/cardio-session";
 import { formatWeekdayZh } from "../lib/date";
@@ -138,6 +142,57 @@ export function LiveWorkoutBar() {
   }, [userId, hasWorkoutOpen, hasCardioOpen, modals.length]);
 
   useEffect(() => {
+    if (!userId) return;
+    let disposed = false;
+    let checking = false;
+    const check = async (force = false) => {
+      const session = readCardioSession(userId);
+      if (checking || document.visibilityState !== "visible" || !session?.appleSyncRequestedAt ||
+        (!force && Date.now() - Date.parse(session.appleSyncRequestedAt) > 90_000)) return;
+      checking = true;
+      try {
+        const from = localDate(Date.parse(session.startedAt));
+        const through = localDate(Date.parse(session.appleSyncRequestedAt));
+        const rows = await apiFetch<Array<Parameters<typeof matchesCardioAppleWorkout>[1] & { id: string }>>(
+          `/api/integrations/apple-health/agenda?from=${from}&through=${through}`,
+          { accountId: userId },
+        );
+        const current = readCardioSession(userId);
+        const matched = rows.filter((row) => matchesCardioAppleWorkout(session, row));
+        if (disposed || current?.id !== session.id || current.appleSyncRequestedAt !== session.appleSyncRequestedAt ||
+          matched.length !== 1) return;
+        const annotation = buildCardioAppleAnnotation(current);
+        const { ok } = await apiFetch<{ ok: boolean }>(
+          `/api/integrations/apple-health/workouts/${encodeURIComponent(matched[0]!.id)}/annotation`,
+          { method: "PUT", body: annotation, accountId: userId, skipMutateHook: true },
+        );
+        if (!ok) return;
+        const saved = readCardioSession(userId);
+        if (disposed || saved?.id !== session.id || saved.appleSyncRequestedAt !== session.appleSyncRequestedAt ||
+          JSON.stringify(buildCardioAppleAnnotation(saved)) !== JSON.stringify(annotation)) return;
+        clearCardioSession(userId);
+        bumpDataEpoch();
+        notify(`已收到「${session.label}」的 Apple 训练`);
+      } catch {
+        // Keep the paused session available when the device or server has not responded.
+      } finally {
+        checking = false;
+      }
+    };
+    const onReturn = () => void check(true);
+    window.addEventListener("pageshow", onReturn);
+    document.addEventListener("visibilitychange", onReturn);
+    const timer = window.setInterval(() => void check(), 6500);
+    onReturn();
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+      window.removeEventListener("pageshow", onReturn);
+      document.removeEventListener("visibilitychange", onReturn);
+    };
+  }, [userId, bumpDataEpoch, notify]);
+
+  useEffect(() => {
     if (!draft?.rest || draft.rest.pausedLeftMs != null) return;
     if (nowMs >= draft.rest.end && firedRestEndRef.current !== draft.rest.end) {
       firedRestEndRef.current = draft.rest.end;
@@ -164,38 +219,14 @@ export function LiveWorkoutBar() {
   const onIos = isAppleMobileDevice();
   const endShortcutUrl = buildAppleHubActionUrl("end", prefs);
 
-  const handleFinishCardioShortcut = (viaNativeLink = false) => {
-    if (!cardioSession) return;
-    triggerHaptic("success");
-    void apiFetch("/api/integrations/apple-health/session-start", {
-      method: "POST",
-      body: {
-        activityType: cardioSession.activityType,
-        environment: cardioSession.environment,
-        startedAt: cardioSession.startedAt,
-        onlyIfIdle: true,
-      },
-    }).catch(() => {});
-    clearCardioSession(userId);
-    setCardioSession(null);
-    if (typeof window !== "undefined") {
-      const onReturn = () => {
-        if (document.visibilityState === "visible") {
-          bumpDataEpoch();
-          document.removeEventListener("visibilitychange", onReturn);
-        }
-      };
-      document.addEventListener("visibilitychange", onReturn);
-      window.setTimeout(() => {
-        bumpDataEpoch();
-        document.removeEventListener("visibilitychange", onReturn);
-      }, 6500);
-    }
-    if (viaNativeLink) {
-      notify(`已调用「${prefs.appleHubShortcutName}」结束并回传 Apple Watch 数据`);
+  const handleFinishCardioShortcut = (event: MouseEvent<HTMLAnchorElement>) => {
+    if (!cardioSession || !requestCardioAppleSync(userId, cardioSession)) {
+      event.preventDefault();
+      notify("浏览器无法保存计时，请打开有氧计时页保存");
       return;
     }
-    triggerAppleHubAction("end", { prefs, notify });
+    triggerHaptic("light");
+    notify("已请求 Apple 同步，计时会保留到收到对应训练");
   };
 
   const handleDiscardCardio = () => {
@@ -294,7 +325,7 @@ export function LiveWorkoutBar() {
               <strong>{cardioSession.label}</strong>
               <small>
                 {formatClock(cardioElapsed)}
-                {cardioSession.timing.runningSince ? " · 后台计时中" : " · 已暂停"}
+                {cardioSession.appleSyncRequestedAt ? " · 等待 Apple 回传" : cardioSession.timing.runningSince ? " · 后台计时中" : " · 已暂停"}
                 {cardioSession.targetMinutes ? ` · 目标 ${cardioSession.targetMinutes}m` : ""}
               </small>
             </span>
@@ -316,17 +347,17 @@ export function LiveWorkoutBar() {
                 href={endShortcutUrl}
                 className="primary-button live-cardio-end-btn"
                 style={{ textDecoration: "none" }}
-                onClick={() => handleFinishCardioShortcut(true)}
+                onClick={handleFinishCardioShortcut}
               >
-                <Icon name="upload" size={13} /> 结束同步
+                <Icon name="upload" size={13} /> {cardioSession.appleSyncRequestedAt ? "重试同步" : "结束同步"}
               </a>
             ) : (
               <button
                 type="button"
                 className="primary-button live-cardio-end-btn"
-                onClick={() => handleFinishCardioShortcut(false)}
+                onClick={openCardioSessionModal}
               >
-                <Icon name="upload" size={13} /> 结束同步
+                <Icon name="check" size={13} /> 保存计时
               </button>
             )}
             <button

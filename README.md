@@ -20,7 +20,7 @@ npm run web:demo
 
 ## 登录与已有数据
 
-直接在网页创建用户名和密码。注册成功后自动登录，随后可用相同的用户名和密码登录其他设备。新密码支持大小写英文字母和数字，长度为 10–128 个字符。浏览器会话有效期为 30 天，退出会撤销当前会话。生产反向代理应保留原始 `Host` 并设置 `X-Forwarded-Proto: https`。
+直接在网页创建用户名和密码。注册成功后自动登录，随后可用相同的用户名和密码登录其他设备。新密码支持大小写英文字母和数字，长度为 10–128 个字符。浏览器会话有效期为 30 天，退出会撤销当前会话。
 
 要继续使用已有账号的数据，在服务器使用与正式服务一致的 `DATABASE_PATH`，先执行 `npm run web:account -- --list` 核对用户 ID，再将选定的密码通过标准输入绑定到该账号。例如在 Bash 中执行：
 
@@ -70,7 +70,9 @@ MCP 支持查询训练上下文与动作、管理计划草稿、应用计划、�
 docker compose up -d --build
 ```
 
-Compose 将 SQLite 持久化到宿主机的 `./data`。在容器内签发令牌时，在上文命令前使用 `docker compose exec ironlog`。网页中可在「统计后台 → 账号」导出自己的记录。新版 JSON 备份包含已同步的睡眠阶段和时段数据，可用于恢复作息报表。只包含睡眠汇总的旧备份仍可恢复汇总。部署者可通过 `node --env-file-if-exists=.env scripts/backup.mjs` 创建一致性 SQLite 备份。
+Compose 默认只在宿主机的 `127.0.0.1` 发布端口。由 HTTPS 反向代理提供公网入口时，在铁记的环境中设 `TRUST_PROXY=true`，并让后端仅接受该代理的连接。代理应保留原始 `Host`，覆盖 `X-Forwarded-Proto` 与 `X-Forwarded-For`，分别写入实际协议和客户端地址。
+
+Compose 将 SQLite 持久化到宿主机的 `./data`。在容器内签发令牌时，在上文命令前使用 `docker compose exec ironlog`。网页中可在「统计后台 → 账号」导出和恢复不超过 64 MiB 的个人 JSON 备份。代理的请求体上限应覆盖 64 MiB JSON 和少量请求元数据，例如 65 MiB。新版备份包含已同步的睡眠阶段和时段数据，旧备份中的睡眠汇总也可恢复。更大的数据量由部署者通过 `node --env-file-if-exists=.env scripts/backup.mjs` 创建一致性 SQLite 备份。
 
 ## 项目结构
 

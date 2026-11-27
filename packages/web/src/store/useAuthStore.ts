@@ -137,25 +137,9 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearUser() {
-    const prevUserId = get().userId;
     invalidateQueryCache();
     resetLocalWorkoutPreferences();
     useUiStore.getState().closeModalSilent();
-    if (prevUserId) {
-      const prefixes = [`ironlog-web-draft:${prevUserId}:`, `ironlog-web-cardio-session:${prevUserId}`];
-      for (const getter of [
-        () => (typeof localStorage !== "undefined" ? localStorage : null),
-        () => (typeof sessionStorage !== "undefined" ? sessionStorage : null),
-      ]) {
-        try {
-          const storage = getter();
-          if (!storage) continue;
-          for (const key of Object.keys(storage)) {
-            if (prefixes.some((prefix) => key === prefix || key.startsWith(prefix))) storage.removeItem(key);
-          }
-        } catch {}
-      }
-    }
     set({
       demo: false,
       demoToken: "",
@@ -170,9 +154,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   async logout() {
-    try {
-      await apiFetch("/auth/web/logout", { method: "POST" });
-    } catch {}
+    if (!get().demo) {
+      try {
+        await apiFetch("/auth/web/logout", { method: "POST" });
+      } catch {
+        throw new Error("服务器尚未确认退出，请检查网络后重试");
+      }
+    }
     get().clearUser();
     useUiStore.getState().bumpDataEpoch();
   },

@@ -2,14 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import {
-  compactWorkoutTag,
   DayDossier,
-  fullWorkoutTag,
   hasAppleTelemetry,
   type DayScheduleDetail,
 } from "../components/calendar/DayDossier";
 import type { AppleDailyEntry, AppleWorkoutAgendaItem } from "../components/apple/AppleHealthModals";
 import type { ScheduleDayEntry } from "../components/plan/PlanModals";
+import { compactWorkoutTag, fullWorkoutTag } from "../lib/calendar-label";
 import { resolveCatalogueMap } from "../lib/catalogue";
 import { fmt, formatWeekdayZh, monthDays, shortDate, today } from "../lib/date";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";

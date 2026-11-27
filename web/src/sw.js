@@ -1,10 +1,10 @@
-const SHELL_CACHE = "ironlog-shell-104";
+const SHELL_CACHE = "ironlog-shell-105";
 const MEDIA_CACHE = "ironlog-media-v1";
 const shellAssets = [
   "./", "./styles.css", "./app.js", "./analytics-ui.js", "./charts.js", "./ui.js",
   "./modal-stack.js", "./data-modals.js", "./diet-weight-modals.js", "./settings-ui.js", "./report-share-ui.js",
   "./badges-ui.js", "./ai-ui.js", "./plan-ui.js", "./calendar-ui.js", "./calc-ui.js",
-  "./editor.js", "./workout-helpers.js", "./simple-editors.js", "./workout-clock.js", "./offline-queue.js", "./display.js", "./matrix-data.js",
+  "./editor.js", "./workout-helpers.js", "./simple-editors.js", "./workout-clock.js", "./offline-queue.js", "./project-shared.js", "./display.js", "./matrix-data.js",
   "./session-ui.js", "./apple-health-ui.js", "./onboarding-ui.js", "./shortcut-gen.js",
   "./app.webmanifest", "./icon-192.png", "./icon-512.png",
 ];

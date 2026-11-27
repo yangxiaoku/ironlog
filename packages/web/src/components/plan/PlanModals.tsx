@@ -15,14 +15,11 @@ import {
   type WorkoutData,
 } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
-import { inferAppleCardioPreset, inferAppleFitnessKind } from "../../lib/apple-fitness";
-import { openCardioLauncherModal, openStrengthLauncherModal } from "../../lib/record-openers";
 import {
   WORKOUT_PREFS_EVENT,
   applyDeloadToTarget,
   readWorkoutPreferences,
   writeWorkoutPreference,
-  type AppleFitnessLaunchMode,
 } from "../../lib/workout-helpers";
 import { Icon } from "../Icon";
 import { exportPlanAsJson } from "../settings/DataModals";
@@ -1159,13 +1156,6 @@ export function RoutinePreviewModal({
   const [result, setResult] = useState<RoutinePreviewResponse | null>(null);
   const [goals, setGoals] = useState<ProfileGoals | null>(null);
   const [muscleStatus, setMuscleStatus] = useState<NonNullable<OverviewStatsResponse["muscleStatus"]>>([]);
-  const [appleAutoLaunch, setAppleAutoLaunch] = useState(() => readWorkoutPreferences().appleFitnessAutoLaunch);
-  const [appleStrengthLaunch, setAppleStrengthLaunch] = useState<AppleFitnessLaunchMode>(
-    () => readWorkoutPreferences().appleStrengthLaunch,
-  );
-  const [appleCardioLaunch, setAppleCardioLaunch] = useState<AppleFitnessLaunchMode>(
-    () => readWorkoutPreferences().appleCardioLaunch,
-  );
   const [deloadPrefs, setDeloadPrefs] = useState(() => {
     const p = readWorkoutPreferences();
     return {
@@ -1182,9 +1172,6 @@ export function RoutinePreviewModal({
     if (typeof window === "undefined") return;
     const sync = () => {
       const nextPrefs = readWorkoutPreferences();
-      setAppleAutoLaunch(nextPrefs.appleFitnessAutoLaunch);
-      setAppleStrengthLaunch(nextPrefs.appleStrengthLaunch);
-      setAppleCardioLaunch(nextPrefs.appleCardioLaunch);
       setDeloadPrefs({
         deloadMode: nextPrefs.deloadMode,
         deloadWeightPct: nextPrefs.deloadWeightPct,
@@ -1263,11 +1250,6 @@ export function RoutinePreviewModal({
     (st) => targetMuscles.has(st.key) && Number.isFinite(st.recoveryPct) && st.recoveryPct < 60,
   );
   const ssBadges = supersetBadges(result.exercises);
-
-  const previewFitnessKind = inferAppleFitnessKind(result.exercises, result.name);
-  const inferredCardio = previewFitnessKind === "cardio" ? inferAppleCardioPreset(result.exercises, result.name) : null;
-  const appleLaunchMode = previewFitnessKind === "cardio" ? appleCardioLaunch : appleStrengthLaunch;
-  const appleLaunchPrefKey = previewFitnessKind === "cardio" ? "appleCardioLaunch" : "appleStrengthLaunch";
 
   const handleLaunch = () => {
     const exercises = result.exercises.map((row) => {
@@ -1406,71 +1388,6 @@ export function RoutinePreviewModal({
           );
         })}
       </ol>
-
-      <div className="preview-apple-card">
-        <div className="preview-apple-row">
-          <div className="preview-apple-text">
-            <strong>开练同步拉起 Apple 健身</strong>
-            <small>
-              目标：{inferredCardio ? inferredCardio.label : "传统力量训练"} · 方式：
-              {appleLaunchMode === "hub"
-                ? "全能快捷指令"
-                : appleLaunchMode === "fitness_app"
-                  ? "直接打开健身 App（免配置）"
-                  : appleLaunchMode === "shortcut"
-                    ? "按项目直开"
-                    : "已关闭"}
-            </small>
-          </div>
-          <input
-            type="checkbox"
-            className="switch"
-            aria-label="开练同步拉起 Apple 健身"
-            checked={appleAutoLaunch}
-            onChange={(e) => {
-              const next = e.target.checked;
-              setAppleAutoLaunch(next);
-              writeWorkoutPreference("appleFitnessAutoLaunch", next);
-            }}
-          />
-        </div>
-        {appleAutoLaunch ? (
-          <div className="preview-apple-modes" role="group" aria-label="拉起方式">
-            {(
-              [
-                ["hub", "全能快捷指令"],
-                ["fitness_app", "直开健身 App"],
-                ["shortcut", "按项目直开"],
-              ] as const
-            ).map(([mode, label]) => (
-              <button
-                key={mode}
-                type="button"
-                className="micro-chip"
-                aria-pressed={appleLaunchMode === mode}
-                onClick={() => {
-                  if (previewFitnessKind === "cardio") setAppleCardioLaunch(mode);
-                  else setAppleStrengthLaunch(mode);
-                  writeWorkoutPreference(appleLaunchPrefKey, mode);
-                }}
-              >
-                {label}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="quiet"
-              onClick={() =>
-                previewFitnessKind === "cardio"
-                  ? openCardioLauncherModal(inferredCardio?.id)
-                  : openStrengthLauncherModal("traditional_strength")
-              }
-            >
-              直开配置
-            </button>
-          </div>
-        ) : null}
-      </div>
 
       <footer className="dialog-foot">
         {allowEditSchedule ? (

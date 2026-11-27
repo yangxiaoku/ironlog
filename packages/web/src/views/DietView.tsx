@@ -5,6 +5,7 @@ import { DotMeter, ThinMeter } from "../components/Meters";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { apiFetch } from "../lib/api";
 import { fmt, shortDate, today } from "../lib/date";
+import { copyDietBatch } from "../lib/diet-copy";
 import {
   MEALS,
   shiftDateStr,
@@ -59,6 +60,7 @@ export function DietView() {
   const [loading, setLoading] = useState(() => !cachedDiet);
   const [error, setError] = useState("");
   const [copying, setCopying] = useState(false);
+  const copyInFlight = useRef(false);
   const [dietDone, setDietDone] = useState(false);
   const [waterMl, setWaterMl] = useState(0);
   const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl(userId));
@@ -176,39 +178,28 @@ export function DietView() {
           : "已达每日目标";
 
   const copyFoodsToDate = async (
+    intent: string,
     foods: Array<Pick<MealTemplateFood, "name" | "calories" | "protein" | "carbs" | "fat"> & { meal?: MealKey }>,
     targetMeal?: MealKey,
     label?: string,
   ) => {
-    if (!foods.length || copying) return;
+    if (copyInFlight.current) return;
     const targetDate = date;
+    copyInFlight.current = true;
     setCopying(true);
     try {
-      const mutations = foods.slice(0, 100).map((f) => ({
-        opId: crypto.randomUUID(),
-        id: crypto.randomUUID(),
-        kind: "diet",
-        baseVersion: 0,
-        deleted: false,
-        data: {
-          date: targetDate,
-          meal: targetMeal ?? f.meal ?? "lunch",
-          name: f.name,
-          calories: f.calories,
-          protein: f.protein,
-          carbs: f.carbs,
-          fat: f.fat,
-          source: "copy",
-          rawPrompt: "",
-        },
-      }));
-      await apiFetch("/api/sync", { method: "POST", body: { cursor: 0, mutations } });
+      const count = await copyDietBatch({
+        userId, intent, date: targetDate, meal: targetMeal, foods,
+        send: (body) => apiFetch("/api/sync", { method: "POST", body, accountId: userId }),
+      });
+      if (!count) return;
       triggerHaptic("success");
       bumpDataEpoch();
-      notify(label || `已添加 ${mutations.length} 项饮食至 ${shortDate(targetDate)}`);
+      notify(label || `已添加 ${count} 项饮食至 ${shortDate(targetDate)}`);
     } catch (err) {
       notify((err as Error)?.message || "复制饮食失败");
     } finally {
+      copyInFlight.current = false;
       setCopying(false);
     }
   };
@@ -348,6 +339,7 @@ export function DietView() {
               disabled={copying}
               onClick={() =>
                 void copyFoodsToDate(
+                  `day:${prevDate}`,
                   prevDayRows.map((r) => r.data),
                   undefined,
                   `已复刻昨日全部饮食 (${prevDayRows.length} 项)`,
@@ -520,6 +512,7 @@ export function DietView() {
                         disabled={copying}
                         onClick={() =>
                           void copyFoodsToDate(
+                            `meal:${prevDate}:${mealKey}`,
                             prevMealEntries.map((r) => r.data),
                             mealKey,
                             `已复刻昨日${mealLabel}（${prevMealEntries.length} 项）`,
@@ -654,6 +647,7 @@ export function DietView() {
                         disabled={copying}
                         onClick={() =>
                           void copyFoodsToDate(
+                            `template:${tpl.id}:${mKey}`,
                             foods,
                             mKey,
                             `已将「${tpl.data.name}」填入${mLabel}`,

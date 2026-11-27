@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { classicLiftIds, classicStrength } from "@ironlog/shared";
 import { Icon } from "../components/Icon";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { displayWeekday, duration, fmt, shortDate } from "../lib/date";
@@ -17,7 +18,6 @@ import {
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
-  openCardioLauncherModal,
   openWorkoutEditor,
   openWorkoutReport,
   resumeLocalWorkoutDraft,
@@ -127,7 +127,7 @@ export function WorkoutView() {
     const byId = new Map(trainedItems.map((i) => [i.id, i]));
     const picks: TrainedExerciseSummary[] = [];
     const seen = new Set<string>();
-    for (const id of ["bench-press", "squat", "deadlift", "romanian-deadlift", "overhead-press", "barbell-row"]) {
+    for (const id of [...classicLiftIds.bench, ...classicLiftIds.squat, ...classicLiftIds.deadlift, "overhead-press", "barbell-row"]) {
       const hit = byId.get(id);
       if (hit) {
         picks.push(hit);
@@ -148,10 +148,7 @@ export function WorkoutView() {
 
   const sbdTotal = useMemo(() => {
     const byId = new Map(trainedItems.map((i) => [i.id, i]));
-    const sq = byId.get("squat")?.best1rm ?? 0;
-    const bp = byId.get("bench-press")?.best1rm ?? 0;
-    const dl = byId.get("deadlift")?.best1rm ?? byId.get("romanian-deadlift")?.best1rm ?? 0;
-    return sq > 0 && bp > 0 && dl > 0 ? Math.round((sq + bp + dl) * 10) / 10 : null;
+    return classicStrength((id) => byId.get(id)?.best1rm).total;
   }, [trainedItems]);
 
   return (
@@ -162,16 +159,6 @@ export function WorkoutView() {
         view="workout"
         controls={
           <div className="heading-actions">
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => {
-                triggerHaptic("light");
-                openCardioLauncherModal();
-              }}
-            >
-              <Icon name="heart" size={15} /> Apple 有氧
-            </button>
             <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
               <Icon name="plus" size={16} /> 记一次训练
             </button>
@@ -242,7 +229,7 @@ export function WorkoutView() {
               <h2>主项 1RM</h2>
               <p>
                 {sbdTotal != null
-                  ? `三大项合计 ${fmt(sbdTotal, 1)} kg`
+                  ? `三大项预估合计 ${fmt(sbdTotal, 1)} kg`
                   : `已记录 ${trainedItems.length} 个动作`}
               </p>
             </div>

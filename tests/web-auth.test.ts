@@ -59,7 +59,7 @@ test("注册后使用独立网页会话，退出撤销会话，已有 API 令牌
 test("HTTPS 会话带 Secure，跨源请求和旧账号页不能更改当前账号数据", async () => {
   const db = openDatabase(":memory:");
   try {
-    const { app } = createApp(db);
+    const { app } = createApp(db, { trustProxy: true });
     const origin = "https://ironlog.example";
     const path = "http://ironlog.example";
     const base = { "X-Forwarded-Proto": "https", "Content-Type": "application/json" };
@@ -95,6 +95,21 @@ test("HTTPS 会话带 Secure，跨源请求和旧账号页不能更改当前账�
     assert.deepEqual(await read.json(), []);
     db.prepare("UPDATE web_sessions SET expires_at=?").run("2000-01-01T00:00:00.000Z");
     assert.equal((await app.request(path + "/api/me", { headers: { ...base, Cookie: cookie(second) } })).status, 401);
+  } finally { db.close(); }
+});
+
+test("未启用代理信任时保持直连 HTTPS 要求", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const { app } = createApp(db, { trustProxy: false });
+    const send = (protocol: string) => app.request(`${protocol}://ironlog.example/auth/web/register`, {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Forwarded-Proto": "https" },
+      body: JSON.stringify(credentials),
+    });
+    assert.equal((await send("http")).status, 403);
+    const directTls = await send("https");
+    assert.equal(directTls.status, 201);
+    assert.match(directTls.headers.get("Set-Cookie") ?? "", /; Secure;/);
   } finally { db.close(); }
 });
 

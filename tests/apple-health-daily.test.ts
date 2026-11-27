@@ -59,6 +59,33 @@ test("同一 Apple 训练带或不带来源 ID 时只计一次，保留补充心
   }
 });
 
+test("带时间的步数快照可纠正旧高估并拒绝过期或无日期的覆盖", async () => {
+  const { db, call, issue, owner } = setup();
+  try {
+    const date = shiftDay(localDate(), -1);
+    const later = `${date}T11:00:00+08:00`;
+    const device = await issue();
+    const path = "/api/integrations/apple-health/daily";
+    const post = async (body: Record<string, unknown>) => {
+      const response = await call(path, device.token, "POST", { date, shortcutGenVersion: "3", ...body });
+      assert.equal(response.status, 200);
+      return ((await response.json()) as any).daily.steps;
+    };
+    const samples = (value: number) => [`${date}T08:00:00+08:00|${value}`];
+    assert.equal(await post({ steps: 12000 }), 12000);
+    assert.equal(await post({ occurredAt: later, stepsSamples: samples(1200) }), 1200);
+    assert.equal(await post({ occurredAt: `${date}T10:00:00+08:00`, stepsSamples: samples(900) }), 1200);
+    assert.equal(await post({ occurredAt: `${date}T12:00:00+08:00`, steps: 13000 }), 1200);
+    assert.equal(await post({ occurredAt: `${date}T13:00:00+08:00`, stepsSamples: samples(1500) }), 1500);
+    const read = await call(`${path}?from=${date}&through=${date}`, owner.token);
+    const { entries } = await read.json() as any;
+    assert.equal(entries[0].steps, 1500);
+    assert.equal(entries[0].stepsSampledAt, undefined);
+  } finally {
+    db.close();
+  }
+});
+
 test("parseSleepSamples 精确合并重叠阶段区间，不重复计算深睡与卧床时间", () => {
   assert.equal(mergeIntervalsMinutes([[0, 600_000], [300_000, 900_000]]), 15);
   const parsed = parseSleepSamples([

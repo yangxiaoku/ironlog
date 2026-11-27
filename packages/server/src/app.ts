@@ -7,6 +7,9 @@ import { secureHeaders } from "hono/secure-headers";
 import { z } from "zod";
 import { HTTPException } from "hono/http-exception";
 import {
+  BACKUP_JSON_LIMIT_LABEL,
+  BACKUP_JSON_MAX_BYTES,
+  appleWorkoutAnnotationInput,
   applyWorkoutAdaptation,
   catalogueDataVersion,
   entityKindSchema,
@@ -91,6 +94,7 @@ import type { Db } from "./db.js";
 
 export interface AppConfig {
   allowDevLogin?: boolean;
+  trustProxy?: boolean;
   ai?: AiConfig;
   healthDataExportWebhookUrl?: string;
 }
@@ -122,26 +126,27 @@ const healthExportImport = `${healthExport}/import`;
 const healthExportWebhook = `${healthExport}/webhook`;
 const httpLoopback = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const readOnlyMethods = new Set(["GET", "HEAD", "OPTIONS"]);
-function browserOrigin(c: Context) {
+function browserOrigin(c: Context, trustProxy: boolean) {
   const url = new URL(c.req.url);
-  const secure = url.protocol === "https:" || c.req.header("X-Forwarded-Proto")?.split(",", 1)[0]?.trim() === "https";
+  const forwarded = trustProxy ? c.req.header("X-Forwarded-Proto")?.trim().toLowerCase() : undefined;
+  const secure = url.protocol === "https:" || forwarded === "https";
   return { origin: (secure ? "https://" : "http://") + url.host, secure, local: httpLoopback.has(url.hostname) };
 }
-function checkBrowserWrite(c: Context) {
-  const { origin, secure, local } = browserOrigin(c);
+function checkBrowserWrite(c: Context, trustProxy: boolean) {
+  const { origin, secure, local } = browserOrigin(c, trustProxy);
   const source = c.req.header("Origin"), site = c.req.header("Sec-Fetch-Site");
   if ((source && source !== origin) || (site && site !== "same-origin" && site !== "none"))
     throw new DomainError("请从铁记网页操作", 403);
   if (!secure && !local && process.env.ALLOW_INSECURE_HTTP !== "true")
     throw new DomainError("请使用 HTTPS 打开铁记", 403);
 }
-function cookieOptions(c: Context) {
-  const { secure } = browserOrigin(c);
+function cookieOptions(c: Context, trustProxy: boolean) {
+  const { secure } = browserOrigin(c, trustProxy);
   return { prefix: secure ? "host" as const : undefined, httpOnly: true, secure, sameSite: "Strict" as const, path: "/" };
 }
-function requestPeer(c: Context) {
-  if (process.env.TRUST_PROXY === "true") {
-    const forwarded = c.req.header("CF-Connecting-IP") ?? c.req.header("X-Forwarded-For")?.split(",", 1)[0]?.trim();
+function requestPeer(c: Context, trustProxy: boolean) {
+  if (trustProxy) {
+    const forwarded = c.req.header("X-Forwarded-For")?.split(",").at(-1)?.trim();
     if (forwarded) return forwarded;
   }
   try { return getConnInfo(c).remote.address ?? "local"; }
@@ -154,6 +159,7 @@ export function createApp(
   transport: typeof fetch = fetch,
 ) {
   const store = new Store(db);
+  const trustProxy = config.trustProxy ?? (process.env.TRUST_PROXY === "true");
   const auth = new Auth(db);
   const browser = new WebAuth(db);
   const ai = new AiService(store, config.ai ?? {}, transport);
@@ -173,8 +179,8 @@ export function createApp(
     onError: (c) => c.json({ error: "CSV 导入内容过大，请控制在 2 MB 以内或分批导入" }, 413),
   });
   const backupImportBody = bodyLimit({
-    maxSize: 16 * 1024 * 1024,
-    onError: (c) => c.json({ error: "全量备份 JSON 超过 16 MB" }, 413),
+    maxSize: BACKUP_JSON_MAX_BYTES + 4096,
+    onError: (c) => c.json({ error: `全量备份 JSON 超过 ${BACKUP_JSON_LIMIT_LABEL}，请通过服务器 SQLite 备份恢复` }, 413),
   });
   app.use("*", secureHeaders());
   app.use("*", (c, next) =>
@@ -229,7 +235,7 @@ export function createApp(
   app.use("/auth/web/*", bodyLimit({ maxSize: 4096 }));
   app.use("/auth/web/*", async (c, next) => {
     c.header("Cache-Control", "no-store");
-    checkBrowserWrite(c);
+    checkBrowserWrite(c, trustProxy);
     await next();
   });
   for (const mode of ["register", "login"] as const) {
@@ -237,21 +243,21 @@ export function createApp(
       const registering = mode === "register";
       if (registering && process.env.ALLOW_REGISTRATION === "false")
         throw new DomainError("当前服务器已关闭公开注册", 403);
-      const peer = requestPeer(c);
+      const peer = requestPeer(c, trustProxy);
       browser.limit(mode + ":peer:" + peer, registering ? 12 : 60, registering ? 60 * 60_000 : undefined);
       if (c.req.header("Content-Type")?.split(";", 1)[0]?.trim() !== "application/json")
         throw new DomainError("请提交 JSON 格式的账号资料");
       const input = (registering ? webCredentialsInput : webLoginInput).parse(await c.req.json());
       if (!registering) browser.limit("login:username:" + input.username, 12);
       const account = registering ? await browser.register(input) : await browser.login(input);
-      const options = cookieOptions(c);
+      const options = cookieOptions(c, trustProxy);
       const session = browser.issueSession(account.userId, getCookie(c, cookieName, options.prefix));
       setCookie(c, cookieName, session, { ...options, maxAge: webSessionSeconds });
       return c.json(account, registering ? 201 : 200);
     });
   }
   app.post("/auth/web/logout", (c) => {
-    const options = cookieOptions(c);
+    const options = cookieOptions(c, trustProxy);
     browser.revokeSession(getCookie(c, cookieName, options.prefix));
     deleteCookie(c, cookieName, options);
     return c.json({ ok: true });
@@ -368,11 +374,11 @@ export function createApp(
       if (!token) throw new DomainError("请先登录", 401);
       c.set("userId", auth.identify(token));
     } else {
-      const userId = browser.identify(getCookie(c, cookieName, cookieOptions(c).prefix));
+      const userId = browser.identify(getCookie(c, cookieName, cookieOptions(c, trustProxy).prefix));
       const expected = c.req.header("X-Ironlog-Account");
       if (expected && expected !== userId) throw new DomainError("账号已切换，请重新登录", 401);
       if (!readOnlyMethods.has(c.req.method)) {
-        checkBrowserWrite(c);
+        checkBrowserWrite(c, trustProxy);
         if (!expected) throw new DomainError("请从铁记网页操作", 403);
       }
       c.set("userId", userId);
@@ -671,6 +677,9 @@ export function createApp(
     return c.json({ ok: true });
   });
   app.get(`${apple}/workouts`, (c) => c.json(health.workouts(c.get("userId"))));
+  app.put(`${apple}/workouts/:id/annotation`, async (c) =>
+    c.json(health.saveWorkoutAnnotation(c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")),
+      appleWorkoutAnnotationInput.parse(await c.req.json()))));
   app.post(`${apple}/session-start`, async (c) =>
     c.json(health.recordWebSessionStart(c.get("userId"), appleWebSessionStartInput.parse(await c.req.json()))));
   app.get(`${healthExport}/config`, (c) =>
@@ -905,11 +914,15 @@ export function createApp(
     return c.json({ ok: true });
   });
   app.get("/api/export", (c) => {
+    const json = JSON.stringify(store.export(c.get("userId")));
+    if (Buffer.byteLength(json) > BACKUP_JSON_MAX_BYTES) {
+      return c.json({ error: `全量备份超过网页恢复上限 ${BACKUP_JSON_LIMIT_LABEL}，请使用服务器 SQLite 备份` }, 413);
+    }
     c.header(
       "Content-Disposition",
       `attachment; filename="ironlog-${localDate()}.json"`,
     );
-    return c.json(store.export(c.get("userId")));
+    return c.body(json, 200, { "Content-Type": "application/json; charset=UTF-8" });
   });
   app.post("/api/web/restore-backup", async (c) => {
     const input = z.object({
@@ -927,7 +940,7 @@ export function createApp(
     browser.limit("password:user:" + userId, 10);
     const input = webPasswordChangeInput.parse(await c.req.json());
     await browser.changePassword(userId, input);
-    const options = cookieOptions(c);
+    const options = cookieOptions(c, trustProxy);
     const session = browser.issueSession(userId);
     setCookie(c, cookieName, session, { ...options, maxAge: webSessionSeconds });
     return c.json({ ok: true });

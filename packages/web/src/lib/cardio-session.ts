@@ -1,6 +1,7 @@
+import { localDate, type AppleWorkoutAnnotationInput } from "@ironlog/shared";
 import { getAppleCardioPreset, type AppleCardioPreset, type AppleCardioPresetId } from "./apple-fitness";
 import type { FeelingKey } from "./domain";
-import { elapsedAt, pauseAt, type WorkoutTiming } from "./haptics-audio";
+import { elapsedAt, formatClock, pauseAt, type WorkoutTiming } from "./haptics-audio";
 
 export const CARDIO_SESSION_EVENT = "ironlog-cardio-session-change";
 export const CARDIO_TARGET_MINUTES_OPTIONS = [null, 20, 30, 45, 60] as const;
@@ -27,6 +28,8 @@ export interface LiveCardioSession {
   distanceKm: string;
   feeling: FeelingKey | null;
   notes: string;
+  finishedAt?: string;
+  appleSyncRequestedAt?: string;
 }
 
 const ACTIVITY_METS: Record<string, number> = {
@@ -76,7 +79,8 @@ export function readCardioSession(userId: string): LiveCardioSession | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<LiveCardioSession>;
     const preset = getAppleCardioPreset(parsed.presetId);
-    if (!preset || !isValidTiming(parsed.timing) || typeof parsed.startedAt !== "string") {
+    if (!preset || !isValidTiming(parsed.timing) || typeof parsed.startedAt !== "string" ||
+      !Number.isFinite(Date.parse(parsed.startedAt))) {
       return null;
     }
     const laps: CardioLap[] = Array.isArray(parsed.laps)
@@ -121,18 +125,24 @@ export function readCardioSession(userId: string): LiveCardioSession | null {
           ? parsed.feeling
           : null,
       notes: typeof parsed.notes === "string" ? parsed.notes : "",
+      finishedAt: typeof parsed.finishedAt === "string" && Number.isFinite(Date.parse(parsed.finishedAt)) ? parsed.finishedAt : undefined,
+      appleSyncRequestedAt: typeof parsed.appleSyncRequestedAt === "string" && Number.isFinite(Date.parse(parsed.appleSyncRequestedAt))
+        ? parsed.appleSyncRequestedAt : undefined,
     };
   } catch {
     return null;
   }
 }
 
-export function saveCardioSession(userId: string, session: LiveCardioSession): void {
-  if (!userId || typeof localStorage === "undefined") return;
+export function saveCardioSession(userId: string, session: LiveCardioSession): boolean {
+  if (!userId || typeof localStorage === "undefined") return false;
   try {
     localStorage.setItem(cardioSessionStorageKey(userId), JSON.stringify(session));
     dispatchCardioSessionChange();
-  } catch {}
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function clearCardioSession(userId: string): void {
@@ -172,10 +182,11 @@ export function startCardioSession(
   userId: string,
   preset: AppleCardioPreset,
   options: { now?: number; targetMinutes?: number | null } = {},
-): LiveCardioSession {
+): LiveCardioSession | null {
+  const existing = readCardioSession(userId);
+  if (existing) return existing;
   const session = createCardioSession(preset, options);
-  saveCardioSession(userId, session);
-  return session;
+  return saveCardioSession(userId, session) ? session : null;
 }
 
 export function toggleCardioSessionPause(session: LiveCardioSession, now = Date.now()): LiveCardioSession {
@@ -187,9 +198,89 @@ export function toggleCardioSessionPause(session: LiveCardioSession, now = Date.
   }
   return {
     ...session,
+    finishedAt: undefined,
+    appleSyncRequestedAt: undefined,
     timing: {
       elapsedSeconds: session.timing.elapsedSeconds,
       runningSince: new Date(now).toISOString(),
+    },
+  };
+}
+
+export function finishCardioTiming(session: LiveCardioSession, now = Date.now()): LiveCardioSession {
+  return session.finishedAt ? session : {
+    ...session,
+    timing: pauseAt(session.timing, now),
+    finishedAt: new Date(now).toISOString(),
+  };
+}
+
+export function requestCardioAppleSync(userId: string, session: LiveCardioSession, now = Date.now()): boolean {
+  return saveCardioSession(userId, {
+    ...finishCardioTiming(session, now),
+    appleSyncRequestedAt: new Date(now).toISOString(),
+  });
+}
+
+export function matchesCardioAppleWorkout(session: LiveCardioSession, workout: {
+  activityType: string; environment?: string; startedAt: string; endedAt: string;
+}): boolean {
+  if (!session.finishedAt || !session.appleSyncRequestedAt) return false;
+  const normalize = (type: string) => type.toLowerCase().replace(/^hkworkoutactivitytype/, "").replace(/[-_]/g, "");
+  return normalize(workout.activityType) === normalize(session.activityType) &&
+    (workout.environment === session.environment || workout.environment === "unknown" || workout.environment == null) &&
+    Math.abs(Date.parse(workout.startedAt) - Date.parse(session.startedAt)) <= 120_000 &&
+    Date.parse(workout.endedAt) >= Date.parse(session.finishedAt) - 120_000 &&
+    Date.parse(workout.endedAt) <= Date.parse(session.appleSyncRequestedAt) + 120_000;
+}
+
+export function buildCardioAppleAnnotation(session: LiveCardioSession): AppleWorkoutAnnotationInput {
+  const notes = session.notes.trim();
+  const distanceKm = session.distanceKm.trim();
+  const lapSeconds = session.laps.map((lap) => lap.splitSeconds);
+  return { sessionId: session.id, notes, distanceKm, feeling: session.feeling, lapSeconds };
+}
+
+export function buildCardioWorkoutMutation(session: LiveCardioSession, now = Date.now()) {
+  const finished = finishCardioTiming(session, now);
+  const totalSec = Math.max(1, finished.timing.elapsedSeconds);
+  const endedAt = finished.finishedAt!;
+  const pace = formatCardioPaceOrSpeed(finished.activityType, totalSec, finished.distanceKm);
+  const laps = finished.laps.map((lap) => `#${lap.index} ${formatClock(lap.splitSeconds)}`).join(" / ");
+  const notes = [
+    finished.distanceKm.trim() && `距离：${finished.distanceKm.trim()} km`,
+    pace && `${pace.label}：${pace.value}`,
+    laps && `分段：${laps}`,
+    finished.notes.trim(),
+  ].filter(Boolean).join(" · ").slice(0, 4000);
+  const id = `cardio-${finished.id}`;
+  return {
+    id,
+    opId: `${id}-save`,
+    baseVersion: 0,
+    kind: "workout" as const,
+    data: {
+      title: finished.label,
+      date: localDate(Date.parse(finished.startedAt)),
+      startedAt: finished.startedAt,
+      endedAt,
+      status: "completed" as const,
+      source: "manual" as const,
+      timing: finished.timing,
+      feeling: finished.feeling,
+      notes,
+      exercises: [{
+        id: `${id}-exercise`,
+        exerciseId: `cardio-${finished.presetId}`,
+        restSeconds: 0,
+        snapshot: {
+          name: finished.label, muscle: "cardio", equipment: "bodyweight", mode: "timed", volumeMultiplier: 1,
+        },
+        sets: [{
+          id: `${id}-set`, type: "normal", weight: 0, reps: 0, seconds: Math.min(totalSec, 86400),
+          completed: true, completedAt: endedAt, rir: null,
+        }],
+      }],
     },
   };
 }

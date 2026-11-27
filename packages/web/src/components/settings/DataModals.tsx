@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { BACKUP_JSON_LIMIT_LABEL, BACKUP_JSON_MAX_BYTES, BACKUP_REQUEST_TIMEOUT_MS } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { fmt } from "../../lib/date";
@@ -269,6 +270,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
     try {
       const res = await apiFetch<BackupPreviewRes>("/api/web/restore-backup", {
         method: "POST",
+        timeout: BACKUP_REQUEST_TIMEOUT_MS,
         body: { backup: parsed, mode: "preview", strategy: nextStrategy },
       });
       if (request === previewRequest.current) setValidated({ backup: parsed, preview: res });
@@ -290,6 +292,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
     try {
       const res = await apiFetch<{ imported: number; updated: number }>("/api/web/restore-backup", {
         method: "POST",
+        timeout: BACKUP_REQUEST_TIMEOUT_MS,
         body: { backup: validated.backup, mode: "commit", strategy },
       });
       bumpDataEpoch();
@@ -322,9 +325,9 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
             setValidated(null);
             setRawText("");
             setArmedReplace(false);
-            if (file.size > 16_000_000) {
+            if (file.size > BACKUP_JSON_MAX_BYTES) {
               setPreviewing(false);
-              setError("备份文件超过 16 MB");
+              setError(`备份文件超过 ${BACKUP_JSON_LIMIT_LABEL}，请通过服务器 SQLite 备份恢复`);
               return;
             }
             setFileName(`已加载：${file.name}`);

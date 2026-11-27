@@ -152,7 +152,7 @@ export function MoreSheetBody() {
             onClick={() =>
               openConfirm({
                 title: "退出账号",
-                message: "确认退出当前账号吗？未同步的离线本地草稿会被清除。",
+                message: "确认退出当前账号吗？本机草稿和离线记录会保留，重新登录同一账号后可以继续。",
                 confirmLabel: "退出登录",
                 onConfirm: () => logout(),
               })

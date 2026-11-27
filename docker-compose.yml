@@ -4,13 +4,13 @@ services:
     container_name: ironlog
     restart: unless-stopped
     ports:
-      - "${IRONLOG_BIND:-0.0.0.0}:${PORT:-8080}:8080"
+      - "${IRONLOG_BIND:-127.0.0.1}:${PORT:-8080}:8080"
     volumes:
       - ./data:/app/data
     environment:
       ALLOW_DEV_LOGIN: ${ALLOW_DEV_LOGIN:-false}
       ALLOW_INSECURE_HTTP: ${ALLOW_INSECURE_HTTP:-false}
-      TRUST_PROXY: ${TRUST_PROXY:-true}
+      TRUST_PROXY: ${TRUST_PROXY:-false}
       ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-true}
       AI_BASE_URL: ${AI_BASE_URL:-https://api.deepseek.com/v1}
       AI_MODEL: ${AI_MODEL:-}

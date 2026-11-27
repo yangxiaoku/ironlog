@@ -33,12 +33,15 @@ import {
   createCardioSession,
   estimateCardioCalories,
   formatCardioPaceOrSpeed,
+  matchesCardioAppleWorkout,
   readCardioSession,
   recordCardioLap,
+  requestCardioAppleSync,
   startCardioSession,
   toggleCardioSessionPause,
 } from "../packages/web/src/lib/cardio-session.ts";
 import { elapsedAt } from "../packages/web/src/lib/haptics-audio.ts";
+import { compactWorkoutTag, fullWorkoutTag } from "../packages/web/src/lib/calendar-label.ts";
 
 test("packages/web/src/lib/shortcut-gen generates valid Apple Shortcut plists and assesses origins", () => {
   assert.equal(APPLE_SHORTCUT_SPORTS.length, 16);
@@ -244,7 +247,7 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   // Menu fallback + ExtensionInput conditional routing
   assert.ok(hubUniversal.xml.includes("<string>ExtensionInput</string>"));
   assert.ok(hubUniversal.xml.includes("is.workflow.actions.choosefrommenu"));
-  for (const label of ["开始传统力量", "打开有氧健身", "结束训练并同步心率热量", "同步今日健康数据", "选择有氧方式"]) {
+  for (const label of ["上报传统力量开始", "上报有氧开始", "结束训练并同步心率热量", "同步今日健康数据", "选择有氧方式"]) {
     assert.ok(hubUniversal.xml.includes(`<string>${label}</string>`), `contains menu item ${label}`);
   }
   for (const mode of ["strength", "strength:functional", "strength:core", "cardio", "cardio:indoor_run", "cardio:stair_climbing", "end", "daily"]) {
@@ -253,26 +256,23 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
       `contains conditional route for ${mode}`,
     );
   }
-  assert.ok(hubUniversal.xml.includes("【传统力量训练】"));
   const startWorkoutCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.workout\.start<\/string>/g) ?? []).length;
-  assert.equal(startWorkoutCount, 16, `expected Start Workout in all 16 launch routes, got ${startWorkoutCount}`);
-  const openEndedCount = (hubUniversal.xml.match(/<key>isOpenEnded<\/key>\n\t\t\t\t<true\/>/g) ?? []).length;
-  assert.equal(openEndedCount, 16, `expected isOpenEnded=true in all 16 Start Workout actions, got ${openEndedCount}`);
-  assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.SessionTrackerApp</string>"));
-  assert.ok(hubUniversal.xml.includes("[v2026.11.25-r8]"));
+  assert.equal(startWorkoutCount, 0, `expected 0 Start Workout actions in silent mode, got ${startWorkoutCount}`);
+  assert.ok(!hubUniversal.xml.includes("com.apple.SessionTrackerApp"));
+  assert.ok(hubUniversal.xml.includes("[v2026.11.26-r12]"));
+  assert.ok(hubUniversal.xml.includes("<key>WFWorkflowClientVersion</key>\n\t<string>5203.0.1</string>"));
+  assert.ok(hubUniversal.xml.includes("<string>is.workflow.actions.nothing</string>"));
   assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>coreTraining</string>"));
   assert.ok(hubUniversal.xml.includes("<string>stairClimbing</string>"));
   assert.ok(hubUniversal.xml.includes("<string>running</string>"));
   const openAppCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.openapp<\/string>/g) ?? []).length;
-  assert.ok(openAppCount >= 17, `expected openapp in all 16 launch routes + fallback menu, got ${openAppCount}`);
-  assert.ok(hubUniversal.xml.includes("<key>WFSelectedApp</key>"));
-  assert.ok(hubUniversal.xml.includes("<key>BundleIdentifier</key>\n\t\t\t\t\t<string>com.apple.Fitness</string>"));
-  assert.ok(hubUniversal.xml.includes("<key>WFAppIdentifier</key>\n\t\t\t\t<string>com.apple.Fitness</string>"));
+  assert.equal(openAppCount, 0, `expected 0 openapp actions in silent mode, got ${openAppCount}`);
+  assert.ok(!hubUniversal.xml.includes("com.apple.Fitness"));
   assert.ok(!hubUniversal.xml.includes("fitnessapp://"));
   assert.ok(hubUniversal.xml.includes("<key>WFHKSampleFilteringGroupBy</key>\n\t\t\t\t<string>Day</string>"));
   const endWorkoutCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.workout\.end<\/string>/g) ?? []).length;
-  assert.equal(endWorkoutCount, 1, `expected 1 End Workout action in hub end branch, got ${endWorkoutCount}`);
+  assert.equal(endWorkoutCount, 0, `expected 0 End Workout actions in silent mode, got ${endWorkoutCount}`);
   assert.ok(!hubUniversal.xml.includes("<key>Magnitude</key>\n\t\t\t\t\t\t<string>45</string>"), "hub end branch must not fabricate 45-min fallback workout");
 
   // Magic variable endpoints & headers
@@ -675,9 +675,9 @@ test("WorkoutEditorModal fixes plan source validation, implements single-exercis
   assert.match(appleFitness, /function launchIosUrlScheme/);
   assert.match(appleFitness, /window\.location\.href\s*=\s*url/);
   assert.doesNotMatch(appleFitness, /link\.style\.display\s*=\s*"none"/);
-  assert.match(planModals, /className="preview-apple-row"/);
-  assert.match(planModals, /className="preview-apple-modes"/);
-  assert.match(editor, /buildAppleFitnessLaunchUrl/);
+  assert.doesNotMatch(planModals, /className="preview-apple-row"/);
+  assert.doesNotMatch(planModals, /className="preview-apple-modes"/);
+  assert.match(editor, /buildAppleHubActionUrl/);
 
   assert.match(css, /\.workout-pager-bar\s*\{/);
   assert.match(css, /\.workout-finish-overlay\s/);
@@ -859,37 +859,45 @@ test("Audit fixes harden diet upsert rollback, assisted ref/prog math, draft con
   assert.match(appShell, /清空冲突条目/);
 });
 
-test("Cardio modality picker connects QuickRecordSheet, WorkoutView, SettingsView, WorkoutEditorModal, and CardioLauncherModal", () => {
+test("Watch-first Apple Health UI exposes one-tap automation copy panel and removes legacy launch clutter", () => {
   const quickSheet = readFileSync(resolve(process.cwd(), "packages/web/src/components/QuickRecordSheet.tsx"), "utf8");
   const workoutView = readFileSync(resolve(process.cwd(), "packages/web/src/views/WorkoutView.tsx"), "utf8");
   const settingsView = readFileSync(resolve(process.cwd(), "packages/web/src/views/SettingsView.tsx"), "utf8");
   const workoutModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const appleModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/AppleHealthModals.tsx"), "utf8");
   const cardioModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/CardioLauncherModal.tsx"), "utf8");
-
-  assert.match(quickSheet, /openCardioLauncherModal/);
-  assert.match(workoutView, /openCardioLauncherModal/);
-  assert.match(settingsView, /openCardioLauncherModal/);
-  assert.match(settingsView, /按项目直开/);
-  assert.match(workoutModal, /inferAppleCardioPreset/);
-  assert.match(workoutModal, /triggerAppleCardioLaunch/);
-  assert.match(workoutModal, /openCardioLauncherModal/);
-  assert.match(cardioModal, /APPLE_CARDIO_PRESETS/);
-  assert.match(cardioModal, /APPLE_STRENGTH_PRESETS/);
-  assert.match(cardioModal, /resolveCardioShortcutName/);
-  assert.match(cardioModal, /resolveStrengthShortcutName/);
-  assert.match(cardioModal, /triggerAppleCardioLaunch/);
-  assert.match(cardioModal, /triggerAppleStrengthLaunch/);
-
   const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
   const reportModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutReportModal.tsx"), "utf8");
-  assert.match(settingsView, /openStrengthLauncherModal/);
-  assert.match(settingsView, /appleAutoSyncOnFinish/);
-  assert.match(workoutModal, /openStrengthLauncherModal/);
-  assert.match(workoutModal, /\/api\/integrations\/apple-health\/session-start/);
+
+  // One-tap automation copy panel is exported and embedded in SettingsView + DeviceSetupModal
+  assert.match(appleModals, /export function AppleAutomationCopyPanel/);
+  assert.match(appleModals, /cardio:indoor_run/);
+  assert.match(appleModals, /cardio:stair_climbing/);
+  assert.match(settingsView, /<AppleAutomationCopyPanel/);
+  assert.match(settingsView, /自动化参数 · 一键复制/);
+
+  // Legacy launch buttons and multi-mode toggles are removed across the app
+  assert.doesNotMatch(quickSheet, /openCardioLauncherModal/);
+  assert.doesNotMatch(quickSheet, /有氧运动（Apple 健身）/);
+  assert.doesNotMatch(workoutView, /openCardioLauncherModal/);
+  assert.doesNotMatch(workoutView, /Apple 有氧/);
+  assert.doesNotMatch(settingsView, /openCardioLauncherModal/);
+  assert.doesNotMatch(settingsView, /openStrengthLauncherModal/);
+  assert.doesNotMatch(settingsView, /按项目直开/);
+  assert.doesNotMatch(settingsView, /直接打开苹果健身 App/);
+  assert.doesNotMatch(planModals, /开练同步拉起 Apple 健身/);
+  assert.doesNotMatch(planModals, /openStrengthLauncherModal/);
+  assert.doesNotMatch(planModals, /openCardioLauncherModal/);
+  assert.doesNotMatch(workoutModal, /开练自动跳转 Apple 健身/);
+  assert.doesNotMatch(workoutModal, /\/api\/integrations\/apple-health\/session-start/);
+  assert.doesNotMatch(workoutModal, /openCardioLauncherModal/);
+  assert.doesNotMatch(workoutModal, /openStrengthLauncherModal/);
+
+  // Manual fallback and report visibility refresh remain intact
   assert.match(workoutModal, /triggerAppleHubAction\("end"/);
   assert.match(reportModal, /visibilitychange/);
-  assert.match(planModals, /openStrengthLauncherModal/);
-  assert.match(planModals, /openCardioLauncherModal/);
+  assert.match(cardioModal, /APPLE_CARDIO_PRESETS/);
+  assert.match(cardioModal, /APPLE_STRENGTH_PRESETS/);
 });
 
 test("Live cardio session supports background wall-clock timing, laps, pace, calories, and Shortcut end binding", () => {
@@ -905,8 +913,10 @@ test("Live cardio session supports background wall-clock timing, laps, pace, cal
     const runPreset = getAppleCardioPreset("outdoor_run")!;
     const t0 = Date.parse("2026-11-25T10:00:00.000Z");
     const started = startCardioSession("u-cardio", runPreset, { now: t0, targetMinutes: 30 });
+    assert.ok(started);
     assert.equal(started.presetId, "outdoor_run");
     assert.equal(started.targetMinutes, 30);
+    assert.equal(startCardioSession("u-cardio", getAppleCardioPreset("indoor_run")!)?.id, started.id);
 
     // Simulating background/locked screen for 12m 30s without any timer ticks
     const reloaded = readCardioSession("u-cardio");
@@ -938,6 +948,17 @@ test("Live cardio session supports background wall-clock timing, laps, pace, cal
     assert.deepEqual(formatCardioPaceOrSpeed("cycling", 1800, "12"), { label: "均速", value: "24.0 km/h" });
     assert.ok(estimateCardioCalories("running", 1800) > 250);
 
+    assert.equal(requestCardioAppleSync("u-cardio", lap2, t2), true);
+    const pending = readCardioSession("u-cardio")!;
+    assert.equal(elapsedAt(pending.timing, t2 + 60_000), 1050);
+    const corresponding = {
+      activityType: "running", environment: "outdoor", startedAt: pending.startedAt,
+      endedAt: new Date(t2 + 5000).toISOString(),
+    };
+    assert.equal(matchesCardioAppleWorkout(pending, corresponding), true);
+    assert.equal(matchesCardioAppleWorkout(pending, { ...corresponding, environment: "indoor" }), false);
+    assert.equal(matchesCardioAppleWorkout(pending, { ...corresponding, endedAt: new Date(t2 - 300_000).toISOString() }), false);
+    assert.equal(toggleCardioSessionPause(pending, t2 + 5000).appleSyncRequestedAt, undefined);
     clearCardioSession("u-cardio");
     assert.equal(readCardioSession("u-cardio"), null);
 
@@ -969,4 +990,62 @@ test("Live cardio session supports background wall-clock timing, laps, pace, cal
   assert.match(liveBar, /openCardioSessionModal/);
   assert.match(liveBar, /buildAppleHubActionUrl\("end"/);
   assert.match(openers, /openCardioSessionModal/);
+});
+
+test("日历截断以完整字符计数，并限制带中点的长标签", () => {
+  assert.equal(fullWorkoutTag("Tempo run!"), "Tempo run!");
+  assert.equal(fullWorkoutTag("Tempo run!!"), "Tempo run!");
+  assert.equal(fullWorkoutTag("123456789🏃‍♀️ club"), "123456789🏃‍♀️");
+  assert.equal(fullWorkoutTag("很长的腿部训练·深蹲和硬拉"), "很长·深蹲");
+  assert.equal(compactWorkoutTag("🏃‍♀️晨跑"), "🏃‍♀️晨");
+});
+
+test("清除登录状态保留原账号的有氧、力量草稿和离线队列", () => {
+  const oldStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const previousAuth = useAuthStore.getState();
+  const active = "test-logout-owner";
+  const other = "test-other-account";
+  const strengthKey = `ironlog-web-draft:${active}:new`;
+  const cardioKey = `ironlog-web-cardio-session:${active}`;
+  const queueKey = `ironlog-offline-queue:${active}`;
+  const storage = {
+    [strengthKey]: "strength-draft",
+    [cardioKey]: "cardio-draft",
+    [queueKey]: "[]",
+    getItem(key: string) { return (this as Record<string, unknown>)[key] ?? null; },
+    removeItem(key: string) { delete (this as Record<string, unknown>)[key]; },
+  };
+  Object.defineProperty(globalThis, "localStorage", { value: storage, configurable: true });
+  try {
+    useAuthStore.setState({ userId: active });
+    useAuthStore.getState().clearUser();
+    assert.equal(useAuthStore.getState().userId, "");
+    assert.equal(storage.getItem(strengthKey), "strength-draft");
+    assert.equal(storage.getItem(cardioKey), "cardio-draft");
+    assert.equal(storage.getItem(queueKey), "[]");
+    assert.equal(readCardioSession(other), null);
+  } finally {
+    useAuthStore.setState(previousAuth);
+    if (oldStorage) Object.defineProperty(globalThis, "localStorage", oldStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
+
+test("退出失败保留登录状态，成功回执后才清理", async () => {
+  const originalFetch = globalThis.fetch;
+  const previousAuth = useAuthStore.getState();
+  const account = { userId: "logout-audit", demo: false, username: "logout-audit" };
+  let status = 503;
+  globalThis.fetch = async () => Response.json({ ok: status === 200 }, { status });
+  try {
+    useAuthStore.setState(account);
+    await assert.rejects(useAuthStore.getState().logout(), /尚未确认退出/);
+    assert.equal(useAuthStore.getState().userId, account.userId);
+    status = 200;
+    await useAuthStore.getState().logout();
+    assert.equal(useAuthStore.getState().userId, "");
+  } finally {
+    globalThis.fetch = originalFetch;
+    useAuthStore.setState(previousAuth);
+  }
 });

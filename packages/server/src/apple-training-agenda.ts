@@ -4,7 +4,7 @@ import {
   type Exercise, type PlanCompletion, type Routine, type Workout,
 } from "@ironlog/shared";
 import { z } from "zod";
-import { mergeAppleMeasurements, type AppleWorkoutInput } from "./apple-health.js";
+import { mergeAppleMeasurements, type AppleWorkoutData, type AppleWorkoutInput } from "./apple-health.js";
 import type { Db } from "./db.js";
 import { DomainError, type Store } from "./store.js";
 
@@ -105,7 +105,7 @@ function compatible(activity: Activity, planned: TrainingKind, allowGenericCardi
   return planned.cardio.size > 0 ? planned.cardio.size === 1 && planned.cardio.has(activity.key) : allowGenericCardio;
 }
 
-type Uploaded = AppleWorkoutInput & { id: string; date: string; activity: Activity };
+type Uploaded = AppleWorkoutData & { id: string; date: string; activity: Activity };
 type Manual = { id: string; workout: Workout; kind: TrainingKind };
 export type ApplePlanMatch = { planId: string; planVersion: number | null; routineId: string; name: string };
 export type AppleAgendaItem = Uploaded & { manualWorkoutId: string | null; plan: ApplePlanMatch | null };
@@ -162,7 +162,7 @@ function canonicalUploads(store: Store, userId: string, through: string): Upload
   const limit = new Date(startOf(through) + 8 * DAY).toISOString();
   const records = canonicalUploadsStmt(store.db).all(userId, limit) as { id: string; data: string }[];
   const rows = records.map(({ id, data }) => {
-    const workout = JSON.parse(data) as AppleWorkoutInput;
+    const workout = JSON.parse(data) as AppleWorkoutData;
     return { id, ...workout, date: localDate(Date.parse(workout.startedAt)), activity: identifyActivity(workout) };
   });
   const direct = mergeDirectUploads(rows.filter((row) => row.captureMethod === "workout"));
@@ -280,11 +280,11 @@ export function projectAppleTraining(
 
 export const agendaQuery = z.object({ from: z.iso.date(), through: z.iso.date() });
 export function publicAppleActivity(item: AppleAgendaItem) {
-  const { id, date, activity, activityType, startedAt, endedAt, durationSeconds, durationKind,
-    activeEnergyKcal, energyKind, distanceMeters, heartRate, manualWorkoutId, plan } = item;
-  return { id, date, title: activity.title, family: activity.family, activityType, startedAt, endedAt,
+  const { id, date, activity, activityType, environment, startedAt, endedAt, durationSeconds, durationKind,
+    activeEnergyKcal, energyKind, distanceMeters, heartRate, annotation, manualWorkoutId, plan } = item;
+  return { id, date, title: activity.title, family: activity.family, activityType, environment, startedAt, endedAt,
     durationSeconds: durationSeconds ?? null, durationKind: durationKind ?? null, activeEnergyKcal: activeEnergyKcal ?? null,
-    energyKind: energyKind ?? null, distanceMeters: distanceMeters ?? null, heartRate: heartRate ?? null, manualWorkoutId, plan };
+    energyKind: energyKind ?? null, distanceMeters: distanceMeters ?? null, heartRate: heartRate ?? null, annotation, manualWorkoutId, plan };
 }
 export function listAppleTraining(store: Store, userId: string, query: z.infer<typeof agendaQuery>) {
   if (query.from > query.through || query.through > localDate() ||

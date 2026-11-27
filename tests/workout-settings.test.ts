@@ -751,8 +751,8 @@ test("apple-fitness builds Shortcut/Fitness deep-links, classifies workouts accu
   );
   assert.equal(notices.length, 2);
 
-  // Server workoutPrefsSchema default matches frontend auto-launch = true
-  assert.equal(workoutPrefsSchema.parse({}).appleFitnessAutoLaunch, true);
+  // Server workoutPrefsSchema default matches Watch-first silent mode (auto-launch = false)
+  assert.equal(workoutPrefsSchema.parse({}).appleFitnessAutoLaunch, false);
 
   // Mocked iOS environment navigates synchronously via window.location.href
   const prevWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
@@ -971,7 +971,7 @@ test("cardio presets, shortcut naming, inference, and per-modality launch routin
     assert.equal(strengthLaunched.launched, true);
     assert.equal(loc.href, `shortcuts://run-shortcut?name=${encodeURIComponent("铁记开始力量")}`);
 
-    assert.equal(workoutPrefsSchema.parse({}).appleAutoSyncOnFinish, true);
+    assert.equal(workoutPrefsSchema.parse({}).appleAutoSyncOnFinish, false);
     writeWorkoutPreference("appleAutoSyncOnFinish", false);
     assert.equal(readWorkoutPreferences().appleAutoSyncOnFinish, false);
     const syncedBack = applyRemoteWorkoutPreferences({ appleAutoSyncOnFinish: true });

@@ -1475,6 +1475,22 @@ test("覆盖恢复保留计划历史且拒绝旧修订，包括恢复为空计�
     store.applyPlan(userId, second.id, second.version, 1);
     store.applyPlan(userId, first.id, first.version, 2);
 
+    const planBefore = store.planSchedule(userId);
+    const corrupt = structuredClone(older);
+    corrupt.activePlan!.data.routines = [];
+    const { activePlan: _missingPlan, ...missing } = older;
+    const badHistory = structuredClone(older);
+    badHistory.activePlan!.history[0]!.data.routines = [];
+    for (const backup of [corrupt, missing, badHistory]) {
+      for (const mode of ["preview", "commit"]) {
+        const response = await call("/api/web/restore-backup", {
+          method: "POST", body: { mode, strategy: "replace", backup },
+        });
+        assert.equal(response.status, 400);
+        assert.deepEqual(store.planSchedule(userId), planBefore);
+      }
+    }
+
     const replace = (backup: typeof empty) => call("/api/web/restore-backup", {
       method: "POST", body: { mode: "commit", strategy: "replace", backup },
     });

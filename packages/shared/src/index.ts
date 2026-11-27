@@ -12,6 +12,9 @@ export * from "./open-gym-catalogue.js";
 export * from "./catalogue-version.js";
 export * from "./planning.js";
 export * from "./science-analytics.js";
+export * from "./apple-workout-annotation.js";
+export * from "./backup-limits.js";
+export * from "./classic-strength.js";
 export type * from "./catalogue-api.js";
 
 const id = z
@@ -279,13 +282,13 @@ export const workoutPrefsSchema = z.object({
   showPlateMath: workoutPrefsBase.showPlateMath.default(true),
   warmupScheme: workoutPrefsBase.warmupScheme.default("standard"),
   soundStyle: workoutPrefsBase.soundStyle.default("chime"),
-  appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(true),
+  appleFitnessAutoLaunch: workoutPrefsBase.appleFitnessAutoLaunch.default(false),
   appleStrengthLaunch: workoutPrefsBase.appleStrengthLaunch.default("hub"),
   appleCardioLaunch: workoutPrefsBase.appleCardioLaunch.default("hub"),
   appleHubShortcutName: workoutPrefsBase.appleHubShortcutName.default("铁记-通用-Apple健康全能联动"),
   appleStrengthShortcutName: workoutPrefsBase.appleStrengthShortcutName.default("铁记开始力量"),
   appleCardioShortcutName: workoutPrefsBase.appleCardioShortcutName.default("铁记开始有氧"),
-  appleAutoSyncOnFinish: workoutPrefsBase.appleAutoSyncOnFinish.default(true),
+  appleAutoSyncOnFinish: workoutPrefsBase.appleAutoSyncOnFinish.default(false),
   deloadMode: workoutPrefsBase.deloadMode.default(false),
   deloadWeightPct: workoutPrefsBase.deloadWeightPct.default(80),
   deloadSetsPct: workoutPrefsBase.deloadSetsPct.default(50),

@@ -28,7 +28,7 @@ await mkdir(out, { recursive: true });
 await Promise.all((await readdir(src, { withFileTypes: true })).filter((file) => file.isFile()).map(async ({ name }) => {
   const inUrl = new URL(name, src);
   const outUrl = new URL(name, out);
-  if (name === "offline-queue.js") {
+  if (name === "offline-queue.js" || name === "project-shared.js") {
     await build({
       entryPoints: [fileURLToPath(inUrl)], outfile: fileURLToPath(outUrl),
       bundle: true, format: "esm", target: "es2020", minify: true,

@@ -1,0 +1,3 @@
+export const BACKUP_JSON_MAX_BYTES = 64 * 1024 * 1024;
+export const BACKUP_JSON_LIMIT_LABEL = "64 MiB";
+export const BACKUP_REQUEST_TIMEOUT_MS = 120_000;

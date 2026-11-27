@@ -2857,6 +2857,7 @@ export function AnalyticsView() {
                                         activeEnergyKcal: row.activeEnergyKcal,
                                         distanceMeters: row.distanceMeters,
                                         heartRate: row.heartRate,
+                                        annotation: row.annotation,
                                       } as AppleWorkoutAgendaItem)
                                     }
                                   >

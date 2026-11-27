@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { openDatabase } from "../packages/server/src/db.js";
 import { createApp } from "../packages/server/src/app.js";
+import { copyDietBatch } from "../packages/web/src/lib/diet-copy.ts";
 import {
   planSchema,
+  classicStrength,
+  localDate,
   workoutSchema,
   estimatedOneRepMax,
   weightTrend,
@@ -46,6 +49,82 @@ const diet = {
   carbs: 0,
   fat: 4,
 };
+
+test("复刻饮食在回执丢失后重用整批编号，收到回执后允许再次复制", async () => {
+  const f = fixture();
+  try {
+    const account = await f.login("diet-copy-retry");
+    const saved = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => saved.get(key) ?? null,
+      setItem: (key: string, value: string) => { saved.set(key, value); },
+      removeItem: (key: string) => { saved.delete(key); },
+    };
+    let first = true;
+    const submit = (calories: number) => copyDietBatch({
+      userId: account.userId, date: diet.date, intent: "yesterday", storage,
+      foods: [{ ...diet, calories, meal: "lunch" }],
+      send: async (body) => {
+        const response = await f.request(account.token, "/api/sync", body);
+        assert.equal(response.status, 200);
+        if (first) {
+          first = false;
+          throw Object.assign(new Error("回执丢失"), { status: 503 });
+        }
+        return response.json() as any;
+      },
+    });
+    await assert.rejects(submit(200), /回执丢失/);
+    assert.equal(saved.size, 1);
+    assert.equal(await submit(999), 1);
+    const rows = () => f.store.list(account.userId, "diet");
+    assert.equal(rows().length, 1);
+    assert.equal((rows()[0]!.data as { calories: number }).calories, 200);
+    assert.equal(saved.size, 0);
+    assert.equal(await submit(300), 1);
+    assert.equal(rows().length, 2);
+  } finally { f.db.close(); }
+});
+
+test("网页全量 JSON 可往返恢复超过旧上限的备份", async () => {
+  const f = fixture();
+  try {
+    const sender = await f.login("large-backup-export");
+    const reader = await f.login("large-backup-import");
+    const stamp = new Date().toISOString();
+    const data = {
+      title: "往返样本", date: localDate(), startedAt: stamp, endedAt: stamp, status: "completed",
+      notes: "x".repeat(3990), exercises: [],
+    };
+    f.db.transaction(() => {
+      for (let i = 0; i < 4000; i++) {
+        f.store.mutate(sender.userId, {
+          opId: `large-op-${i}`, id: `large-record-${i}`, kind: "workout",
+          baseVersion: 0, deleted: false, data,
+        });
+      }
+    })();
+    const exported = await f.request(sender.token, "/api/export");
+    assert.equal(exported.status, 200);
+    const text = await exported.text();
+    assert.ok(Buffer.byteLength(text) > 16 * 1024 * 1024);
+    const backup = JSON.parse(text);
+    const preview = await f.request(reader.token, "/api/web/restore-backup", { backup, mode: "preview", strategy: "replace" });
+    assert.equal(preview.status, 200);
+    assert.equal((await preview.json() as any).counts.workouts, 4000);
+    const restored = await f.request(reader.token, "/api/web/restore-backup", { backup, mode: "commit", strategy: "replace" });
+    assert.equal(restored.status, 200);
+    assert.equal(f.store.list(reader.userId, "workout").length, 4000);
+  } finally { f.db.close(); }
+});
+
+test("三大项只汇总标准动作并接受目录别名", () => {
+  const lifts: Record<string, number> = { "squat": 100, "bench-press": 80, "romanian-deadlift": 110 };
+  assert.deepEqual(classicStrength((id) => lifts[id]), { bench: 80, squat: 100, deadlift: 0, total: null });
+  lifts.exdb_0117 = 120;
+  lifts.exdb_3593 = 102.5;
+  assert.deepEqual(classicStrength((id) => lifts[id]), { bench: 80, squat: 102.5, deadlift: 120, total: 302.5 });
+});
 
 test("常用餐单通过同步保存、隔离、备份与删除，非法组合整批回滚", async () => {
   const f = fixture();

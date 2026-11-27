@@ -6,6 +6,7 @@ import { badgesOverviewStrip, filterVisibleBadges, renderBadgeSections, renderBa
 import { onboardingSeenKey, welcomeDismissedKey, renderWelcomeChecklist, openOnboardingGuide } from "./onboarding-ui.js";
 import { primeSharedAudio, triggerHaptic } from "./workout-clock.js";
 import { enqueueMutation, flushQueue, getOfflineStorage, isNetworkError, readQueue } from "./offline-queue.js";
+import { BACKUP_REQUEST_TIMEOUT_MS, classicLiftIds, classicStrength, copyDietBatch } from "./project-shared.js";
 import { createModalStack } from "./modal-stack.js";
 import { renderMeasurementsSection, createDietWeightModals } from "./diet-weight-modals.js";
 
@@ -1185,12 +1186,8 @@ function renderWorkoutHistoryBody(appleByWorkoutId = buildAppleWorkoutMap()) {
 function renderPrWallSection(trainedItems = []) {
   if (!trainedItems.length) return "";
   const byId = new Map(trainedItems.map((item) => [item.id, item]));
-  const squat1rm = byId.get("squat")?.best1rm ?? 0;
-  const bench1rm = byId.get("bench-press")?.best1rm ?? 0;
-  const pull1rm = byId.get("deadlift")?.best1rm ?? byId.get("romanian-deadlift")?.best1rm ?? 0;
-  const big3Count = [squat1rm, bench1rm, pull1rm].filter((v) => v > 0).length;
-  const sbdTotal = squat1rm + bench1rm + pull1rm;
-  const canonicalIds = ["bench-press", "squat", "deadlift", "romanian-deadlift", "overhead-press", "barbell-row"];
+  const sbdTotal = classicStrength((id) => byId.get(id)?.best1rm).total;
+  const canonicalIds = [...classicLiftIds.bench, ...classicLiftIds.squat, ...classicLiftIds.deadlift, "overhead-press", "barbell-row"];
   const picks = [];
   const seen = new Set();
   for (const id of canonicalIds) {
@@ -1224,7 +1221,7 @@ function renderPrWallSection(trainedItems = []) {
     <header class="panel-head">
       <div class="pr-wall-head-copy">
         <h2>个人最佳纪录榜</h2>
-        ${big3Count >= 2 ? `<span class="pr-sbd-badge">${icon("trophy", 12)} 三大项预估 <b>${fmt(sbdTotal, 0)} kg</b></span>` : ""}
+        ${sbdTotal != null ? `<span class="pr-sbd-badge">${icon("trophy", 12)} 三大项预估 <b>${fmt(sbdTotal, 1)} kg</b></span>` : ""}
       </div>
       <button type="button" class="quiet" data-action="open-trained-prs">全部 ${trainedItems.length} 项 ${icon("chevron", 14)}</button>
     </header>
@@ -1365,30 +1362,16 @@ async function loadRecords(kind, version) {
   };
   renderRecords(kind);
 }
-async function copyDietFoods({ date, meal = undefined, foods, source = "copy", label = "" }) {
-  if (!foods.length) return;
-  const mutations = foods.slice(0, 100).map((f) => ({
-    opId: crypto.randomUUID(),
-    id: crypto.randomUUID(),
-    kind: "diet",
-    baseVersion: 0,
-    deleted: false,
-    data: {
-      date,
-      meal: meal ?? f.meal,
-      name: f.name,
-      calories: f.calories,
-      protein: f.protein,
-      carbs: f.carbs,
-      fat: f.fat,
-      source,
-      rawPrompt: "",
-    },
-  }));
-  await api("/api/sync", { method: "POST", body: { cursor: 0, mutations } });
+async function copyDietFoods({ intent, date, meal = undefined, foods, source = "copy", label = "" }) {
+  const userId = state.userId;
+  const count = await copyDietBatch({
+    userId, intent, date, meal, foods, source: /** @type {"copy" | "manual"} */ (source),
+    send: (body) => api("/api/sync", { method: "POST", body, accountId: userId }),
+  });
+  if (!count) return;
   state.badges = null;
   await loadRecords("diet", requestId);
-  notify(label || `已添加 ${mutations.length} 项饮食至 ${shortDate(date)}`);
+  notify(label || `已添加 ${count} 项饮食至 ${shortDate(date)}`);
 }
 
 const WATER_GOAL_KEY = "ironlog-web-water-goal";
@@ -2689,6 +2672,7 @@ async function handleRecordSwipe(rowEl, direction) {
     if (direction === "right" && record.kind === "diet") {
       // Swipe Right on Diet item -> Duplicate (+1 serving)
       await copyDietFoods({
+        intent: `serving:${record.id}`,
         date: record.data.date,
         meal: record.data.meal,
         foods: [record.data],
@@ -2967,7 +2951,9 @@ document.addEventListener("click", async (event) => {
     if (action === "close") dialog.close();
     if (action === "logout") {
       button.disabled = true;
-      try { await logout(); } finally { button.disabled = false; }
+      try { await logout(); }
+      catch { notify("服务器尚未确认退出，请检查网络后重试"); }
+      finally { button.disabled = false; }
     }
     if (action === "auth-mode" && !state.authenticating && value !== state.authMode && (value === "login" || value === "register")) {
       state.authName = $('#login-form input[name="username"]')?.value ?? "";
@@ -3449,14 +3435,14 @@ document.addEventListener("click", async (event) => {
       const from = button.dataset.from, to = button.dataset.to;
       const items = state.records.filter((r) => r.kind === "diet" && r.data.date === from).map((r) => r.data);
       button.disabled = true;
-      try { await copyDietFoods({ date: to, foods: items, source: "copy", label: `已复刻 ${shortDate(from)} 的 ${items.length} 项饮食` }); }
+      try { await copyDietFoods({ intent: `day:${from}`, date: to, foods: items, source: "copy", label: `已复刻 ${shortDate(from)} 的 ${items.length} 项饮食` }); }
       finally { button.disabled = false; }
     }
     if (action === "copy-diet-meal") {
       const meal = button.dataset.meal, from = button.dataset.from, to = button.dataset.to;
       const items = state.records.filter((r) => r.kind === "diet" && r.data.date === from && r.data.meal === meal).map((r) => r.data);
       button.disabled = true;
-      try { await copyDietFoods({ date: to, meal, foods: items, source: "copy", label: `已复刻昨日${meals[meal]}（${items.length} 项）` }); }
+      try { await copyDietFoods({ intent: `meal:${from}:${meal}`, date: to, meal, foods: items, source: "copy", label: `已复刻昨日${meals[meal]}（${items.length} 项）` }); }
       finally { button.disabled = false; }
     }
     if (action === "save-meal-template") {
@@ -3469,7 +3455,7 @@ document.addEventListener("click", async (event) => {
       const meal = button.dataset.meal;
       if (tpl) {
         button.disabled = true;
-        try { await copyDietFoods({ date: state.date, meal, foods: tpl.data.foods, source: "manual", label: `已将「${tpl.data.name}」填入${meals[meal]}` }); }
+        try { await copyDietFoods({ intent: `template:${tpl.id}:${meal}`, date: state.date, meal, foods: tpl.data.foods, source: "manual", label: `已将「${tpl.data.name}」填入${meals[meal]}` }); }
         finally { button.disabled = false; }
       }
     }
@@ -3828,8 +3814,8 @@ document.addEventListener("click", async (event) => {
       (await loadDataModals()).openBackupRestoreModal();
     }
     if (action === "export") {
-      const data = await api("/api/export");
-      const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }));
+      const data = await api("/api/export", { timeout: BACKUP_REQUEST_TIMEOUT_MS });
+      const url = URL.createObjectURL(new Blob([JSON.stringify(data)], { type: "application/json" }));
       const link = document.createElement("a");
       Object.assign(link, { href: url, download: `ironlog-${today()}.json` });
       link.click();

@@ -1,4 +1,5 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { latestAppleWorkoutAnnotation, type AppleWorkoutAnnotation, type AppleWorkoutAnnotationInput } from "@ironlog/shared";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { parseFlexibleInstant, parseTolerantNumber } from "./apple-health-daily.js";
@@ -13,6 +14,7 @@ const dayMs = 86_400_000;
 const MIN_TRIGGER_WORKOUT_SECONDS = 180;
 const MAX_TRIGGER_WORKOUT_SECONDS = 6 * 3600;
 const MAX_WINDOW_KCAL_PER_MIN = 35;
+const WEB_STRENGTH_TYPES = new Set(["traditionalstrengthtraining", "functionalstrengthtraining", "coretraining"]);
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
 const strictIsoInstant = z.iso.datetime({ offset: true });
 
@@ -166,6 +168,7 @@ export const appleEventInput = z.preprocess(
   }),
 );
 export type AppleWorkoutInput = z.infer<typeof appleWorkoutInput>;
+export type AppleWorkoutData = AppleWorkoutInput & { annotation?: AppleWorkoutAnnotation };
 type EventInput = z.infer<typeof appleEventInput>;
 export const appleWebSessionStartInput = z.object({
   activityType,
@@ -199,7 +202,7 @@ function mergeHeartRate(first: AppleWorkoutInput["heartRate"], second: AppleWork
   return merged.success ? merged.data : first;
 }
 
-export function mergeAppleMeasurements(primary: AppleWorkoutInput, fallback: AppleWorkoutInput): AppleWorkoutInput {
+export function mergeAppleMeasurements(primary: AppleWorkoutData, fallback: AppleWorkoutData): AppleWorkoutData {
   const elapsed = Math.ceil((Date.parse(primary.endedAt) - Date.parse(primary.startedAt)) / 1000);
   const durationFromFallback = fallback.durationSeconds != null && fallback.durationSeconds <= elapsed &&
     (primary.durationSeconds == null || (fallback.durationKind === "workout_active" && primary.durationKind !== "workout_active"));
@@ -220,6 +223,7 @@ export function mergeAppleMeasurements(primary: AppleWorkoutInput, fallback: App
       ? (energyFromFallback ? primary.energyKind : fallback.energyKind) : undefined),
     distanceMeters: primary.distanceMeters ?? fallback.distanceMeters,
     heartRate: mergeHeartRate(primary.heartRate, fallback.heartRate),
+    annotation: latestAppleWorkoutAnnotation(primary.annotation, fallback.annotation),
   };
 }
 
@@ -252,6 +256,7 @@ export class AppleHealth {
   private readonly stmtCloseEventWithWorkout: Stmt;
   private readonly stmtGetReceipt: Stmt;
   private readonly stmtGetWorkoutByIdentity: Stmt;
+  private readonly stmtGetWorkoutById: Stmt;
   private readonly stmtInsertWorkout: Stmt;
   private readonly stmtUpdateWorkoutData: Stmt;
   private readonly stmtInsertReceipt: Stmt;
@@ -289,6 +294,7 @@ export class AppleHealth {
     this.stmtCloseEventWithWorkout = db.prepare("UPDATE apple_health_events SET ended_at=?, workout_id=? WHERE device_id=? AND activity_type=?");
     this.stmtGetReceipt = db.prepare("SELECT digest, workout_id AS workoutId FROM apple_health_receipts WHERE user_id=? AND request_key=?");
     this.stmtGetWorkoutByIdentity = db.prepare("SELECT id, data FROM apple_health_workouts WHERE user_id=? AND identity_key=?");
+    this.stmtGetWorkoutById = db.prepare("SELECT data FROM apple_health_workouts WHERE user_id=? AND id=?");
     this.stmtInsertWorkout = db.prepare("INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)");
     this.stmtUpdateWorkoutData = db.prepare("UPDATE apple_health_workouts SET data=? WHERE id=?");
     this.stmtInsertReceipt = db.prepare("INSERT INTO apple_health_receipts VALUES (?, ?, ?, ?)");
@@ -346,7 +352,23 @@ export class AppleHealth {
   workouts(userId: string) {
     const rows = this.stmtRecentWorkouts.all(userId) as
       { id: string; data: string; receivedAt: string }[];
-    return rows.map(({ id, receivedAt, data }) => ({ id, receivedAt, ...JSON.parse(data) as AppleWorkoutInput }));
+    return rows.map(({ id, receivedAt, data }) => ({ id, receivedAt, ...JSON.parse(data) as AppleWorkoutData }));
+  }
+
+  saveWorkoutAnnotation(userId: string, id: string, input: AppleWorkoutAnnotationInput) {
+    return this.db.transaction(() => {
+      const row = this.stmtGetWorkoutById.get(userId, id) as { data: string } | undefined;
+      if (!row) throw new DomainError("找不到对应的 Apple 训练", 404);
+      const data = JSON.parse(row.data) as AppleWorkoutData;
+      if (data.annotation) {
+        const { updatedAt: _updatedAt, ...saved } = data.annotation;
+        if (saved.sessionId !== input.sessionId) throw new DomainError("这条 Apple 训练已有另一场计时的备注", 409);
+        if (JSON.stringify(saved) === JSON.stringify(input)) return { ok: true };
+      }
+      const annotation: AppleWorkoutAnnotation = { ...input, updatedAt: new Date().toISOString() };
+      this.stmtUpdateWorkoutData.run(JSON.stringify({ ...data, annotation }), id);
+      return { ok: true };
+    }).immediate();
   }
 
   ingest(device: Device, workout: AppleWorkoutInput, key?: string) {
@@ -438,6 +460,9 @@ export class AppleHealth {
   }
 
   recordWebSessionStart(userId: string, input: z.infer<typeof appleWebSessionStartInput>) {
+    const type = input.activityType.toLowerCase();
+    const normalizedType = type.replace(/^hkworkoutactivitytype/, "").replace(/[-_]/g, "");
+    if (!WEB_STRENGTH_TYPES.has(normalizedType)) return { ok: true as const, recorded: 0 };
     const startedIso = input.startedAt ? new Date(input.startedAt).toISOString() : new Date().toISOString();
     this.checkFuture(startedIso);
     const nowIso = new Date().toISOString();
@@ -445,7 +470,6 @@ export class AppleHealth {
     if (!Number.isFinite(ageSeconds) || ageSeconds > MAX_TRIGGER_WORKOUT_SECONDS) {
       return { ok: true as const, recorded: 0 };
     }
-    const type = input.activityType.toLowerCase();
     return this.db.transaction(() => {
       const devices = this.stmtActiveDeviceIds.all(userId, nowIso) as { id: string }[];
       let recorded = 0;
@@ -546,7 +570,7 @@ export class AppleHealth {
       }
     }
     const existing = this.stmtGetWorkoutByIdentity.get(userId, identity) as { id: string; data: string } | undefined;
-    const previous = existing ? JSON.parse(existing.data) as AppleWorkoutInput : null;
+    const previous = existing ? JSON.parse(existing.data) as AppleWorkoutData : null;
     if (previous) {
       if (previous.startedAt !== workout.startedAt || previous.endedAt !== workout.endedAt ||
           previous.activityType.toLowerCase() !== workout.activityType.toLowerCase())
@@ -560,7 +584,7 @@ export class AppleHealth {
       const upgrade = previous.captureMethod === "trigger" && workout.captureMethod === "workout";
       const enriched = appleWorkoutInput.parse(upgrade
         ? mergeAppleMeasurements(workout, previous) : mergeAppleMeasurements(previous, workout));
-      const data = JSON.stringify(enriched);
+      const data = JSON.stringify({ ...enriched, annotation: previous.annotation });
       updated = existing!.data !== data;
       if (updated) this.stmtUpdateWorkoutData.run(data, workoutId);
     }

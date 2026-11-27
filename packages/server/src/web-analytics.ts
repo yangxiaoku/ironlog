@@ -4,6 +4,7 @@ import {
   calculateAcwrSeries,
   calculateIpfGlPoints,
   calculateMonotonyAndStrain,
+  classicStrength,
   calculateSetInol,
   evaluateEffortAndRepZones,
   evaluateNutritionEnergyBalance,
@@ -596,19 +597,14 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     }
   }
 
-  // Canonical catalogue IDs for flat bench, back squat, and conventional or sumo deadlift.
-  const bestClassicLift = (...ids: string[]) => Math.max(...ids.map((id) => exercise1RMs.get(id)?.best1RM ?? 0));
-  const bestBench = bestClassicLift("bench-press", "exdb_0025");
-  const bestSquat = bestClassicLift("squat", "exdb_3593");
-  const bestDeadlift = bestClassicLift("exdb_0032", "exdb_0117");
+  const { bench: bestBench, squat: bestSquat, deadlift: bestDeadlift, total } =
+    classicStrength((id) => exercise1RMs.get(id)?.best1RM);
 
   const benchGl = bestBench > 0 && userGender != null && userWeightKg != null
     ? calculateIpfGlPoints(userGender, userWeightKg, bestBench, "classic_bench")
     : null;
 
-  const total3Lift = bestBench > 0 && bestSquat > 0 && bestDeadlift > 0
-    ? bestBench + bestSquat + bestDeadlift
-    : 0;
+  const total3Lift = total ?? 0;
 
   const totalGl = total3Lift > 0 && userGender != null && userWeightKg != null
     ? calculateIpfGlPoints(userGender, userWeightKg, total3Lift, "classic_3lift")
@@ -1163,6 +1159,7 @@ function computeAppleWorkoutBucket(
       activeEnergyKcal: item.activeEnergyKcal,
       distanceMeters: item.distanceMeters,
       heartRate: item.heartRate,
+      annotation: item.annotation,
       manualWorkoutId: item.manualWorkoutId,
     }));
 

@@ -75,7 +75,7 @@ curl -fsS http://127.0.0.1:8080/api/catalogue/version
 
 ## 待验收
 
-1. **公网 HTTPS 和移动端同步**。确认域名与反向代理，保留请求的 `Host`，设置 `X-Forwarded-Proto: https`。在 iPhone 用快捷指令实测一场力量和一场有氧，核对归档、统计和计划匹配。 [iPhone 配置](iphone-health-shortcuts.md)
+1. **公网 HTTPS 和移动端同步**。限制后端端口只对反向代理开放，设置 `TRUST_PROXY=true`。代理保留原始 `Host`，覆盖 `X-Forwarded-Proto` 和 `X-Forwarded-For`。在 iPhone 用快捷指令实测一场力量和一场有氧，核对归档、统计和计划匹配。 [iPhone 配置](iphone-health-shortcuts.md)
 2. **真实 AI**。配置 `AI_BASE_URL`、`AI_MODEL` 和 `AI_API_KEY`，验证网页生成草稿到启用计划，再验证目标 MCP 客户端的调用。 [AI 和 MCP 配置](../README.md#ai-与-mcp)
 3. **Docker 交付**。仓库保留 Dockerfile 和 Compose。当前正式服使用 systemd，容器构建、启动和数据卷恢复尚未实测。
 

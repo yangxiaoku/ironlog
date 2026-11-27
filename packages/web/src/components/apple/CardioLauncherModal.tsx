@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type MouseEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import {
   APPLE_CARDIO_PRESETS,
@@ -129,22 +129,24 @@ export function CardioLauncherModal({
 
   const onIos = isAppleMobileDevice();
 
-  const handleSelectCardio = (presetId: AppleCardioPresetId, viaNativeLink = false) => {
+  const handleSelectCardio = (presetId: AppleCardioPresetId, nativeLink?: MouseEvent<HTMLAnchorElement>) => {
     triggerHaptic("light");
+    if (readCardioSession(userId)) {
+      nativeLink?.preventDefault();
+      onStartedCardio?.();
+      notify("已有有氧计时，请先结束本次训练");
+      return;
+    }
     setSelectedId(presetId);
     writeLastCardioPreset(presetId);
     const preset = getAppleCardioPreset(presetId) ?? APPLE_CARDIO_PRESETS[0]!;
     const started = userId ? startCardioSession(userId, preset) : null;
-    void apiFetch("/api/integrations/apple-health/session-start", {
-      method: "POST",
-      body: {
-        activityType: preset.activityType,
-        environment: preset.environment,
-        ...(started ? { startedAt: started.startedAt } : {}),
-        onlyIfIdle: prefs.appleCardioLaunch === "hub",
-      },
-    }).catch(() => {});
-    if (viaNativeLink) {
+    if (!started) {
+      nativeLink?.preventDefault();
+      notify("浏览器无法创建有氧计时");
+      return;
+    }
+    if (nativeLink) {
       window.setTimeout(() => {
         if (onStartedCardio && started) {
           onStartedCardio();
@@ -288,7 +290,7 @@ export function CardioLauncherModal({
                   href={launchUrl}
                   className={`cardio-preset-card${isSelected ? " is-selected" : ""}`}
                   style={{ textDecoration: "none", color: "inherit" }}
-                  onClick={() => handleSelectCardio(preset.id, true)}
+                  onClick={(event) => handleSelectCardio(preset.id, event)}
                 >
                   <div className="cardio-preset-head">
                     <strong>{preset.label}</strong>
@@ -363,6 +365,7 @@ export function CardioLauncherModal({
               <p className="muted" style={{ margin: 0, fontSize: 13 }}>
                 受 iOS 限制，直接跳健身 App 只能打开首页；切回「全能联动」或「按项目直开」即可点选直接开练。
               </p>
+              {!isStrength ? <p className="muted">想在结束时回传数据，请使用全能联动，或让 Watch 训练开始自动化上报开始事件。</p> : null}
               <div className="cardio-setup-actions">
                 <button
                   type="button"
@@ -394,6 +397,7 @@ export function CardioLauncherModal({
                   将快捷指令改名为 <code>{shortcutName}</code> 点完成即可（以后点对应项目自动直接开始）。
                 </li>
               </ol>
+              {!isStrength ? <p className="muted">如需结束后回传数据，请同时配置 Watch 训练开始自动化，或改用全能联动。</p> : null}
               <div className="cardio-setup-actions">
                 <button
                   type="button"

@@ -1,4 +1,5 @@
 import { $, copyText, esc, fmt, icon, field } from "./ui.js";
+import { BACKUP_JSON_LIMIT_LABEL, BACKUP_JSON_MAX_BYTES, BACKUP_REQUEST_TIMEOUT_MS } from "./project-shared.js";
 
 /** Download generated text or JSON/CSV payload as a client-side file. */
 export function downloadTextFile(text, mime, filename) {
@@ -185,6 +186,7 @@ export function createDataModals({
       try {
         const res = await api("/api/web/restore-backup", {
           method: "POST",
+          timeout: BACKUP_REQUEST_TIMEOUT_MS,
           body: { backup: parsedBackup, mode: "preview", strategy: strategySel.value },
         });
         if (!dialog.open || !textArea.isConnected) return;
@@ -212,8 +214,8 @@ export function createDataModals({
     fileInput?.addEventListener("change", async () => {
       const file = fileInput.files?.[0];
       if (!file) return;
-      if (file.size > 16_000_000) {
-        errEl.textContent = "备份文件超过 16 MB";
+      if (file.size > BACKUP_JSON_MAX_BYTES) {
+        errEl.textContent = `备份文件超过 ${BACKUP_JSON_LIMIT_LABEL}，请通过服务器 SQLite 备份恢复`;
         errEl.hidden = false;
         return;
       }
@@ -235,6 +237,7 @@ export function createDataModals({
       try {
         const res = await api("/api/web/restore-backup", {
           method: "POST",
+          timeout: BACKUP_REQUEST_TIMEOUT_MS,
           body: { backup: parsedBackup, mode: "commit", strategy: strategySel.value },
         });
         await onInvalidate?.({ clearAllCaches: true, refreshAccount: true });

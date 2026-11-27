@@ -7,6 +7,8 @@ import { openDatabase } from "../packages/server/src/db.js";
 import { mountWebAssets } from "../packages/server/src/web-assets.js";
 import { getWebToday } from "../packages/server/src/web-training.js";
 import { shiftDay } from "../packages/server/src/web-statistics.js";
+import { getAppleCardioPreset } from "../packages/web/src/lib/apple-fitness.ts";
+import { buildCardioWorkoutMutation, createCardioSession, finishCardioTiming } from "../packages/web/src/lib/cardio-session.ts";
 
 const apple = "/api/integrations/apple-health";
 const catalogue = "/api/catalogue/exercises";
@@ -32,6 +34,79 @@ function fixture() {
   };
   return { db, app, owner, other, call, issue, store };
 }
+
+test("Apple 有氧备注随训练回传保存，设备补传和备份合并后仍可读取", async () => {
+  const { db, owner, other, call, issue, store } = fixture();
+  try {
+    const { token } = await issue();
+    const date = shiftDay(localDate(), -1);
+    const payload = {
+      schemaVersion: 1, captureMethod: "trigger", externalWorkoutId: "annotated-trigger-run",
+      activityType: "running", environment: "outdoor", durationSeconds: 1800,
+      startedAt: `${date}T08:00:00+08:00`, endedAt: `${date}T08:30:00+08:00`,
+    };
+    const create = await call(apple + "/workouts", token, "POST", payload);
+    assert.equal(create.status, 201);
+    const id = (await create.json() as { workoutId: string }).workoutId;
+    const oldBackup = store.export(owner.userId);
+    assert.equal((await call("/api/web/restore-backup", other.token, "POST", {
+      backup: oldBackup, mode: "commit", strategy: "merge",
+    })).status, 200);
+
+    const path = `${apple}/workouts/${id}/annotation`;
+    const annotation = { sessionId: "web-session", notes: "坡度 12", feeling: "balanced", distanceKm: "3.5", lapSeconds: [300, 350] };
+    assert.equal((await call(path, other.token, "PUT", annotation)).status, 404);
+    for (let i = 0; i < 2; i++) assert.equal((await call(path, owner.token, "PUT", annotation)).status, 200);
+    assert.equal((await call(path, owner.token, "PUT", { ...annotation, sessionId: "second-session" })).status, 409);
+    assert.equal((await call(apple + "/workouts", token, "POST", { ...payload, heartRate: { avgBpm: 140 } })).status, 200);
+    assert.equal((await call(apple + "/workouts", token, "POST", {
+      ...payload, captureMethod: "workout", externalWorkoutId: "annotated-direct-run", distanceMeters: 3560,
+    })).status, 201);
+    const agenda = async (userToken: string) =>
+      (await call(`${apple}/agenda?from=${date}&through=${date}`, userToken)).json() as Promise<any[]>;
+    const check = async (userToken: string) => {
+      const rows = await agenda(userToken);
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].distanceMeters, 3560);
+      assert.equal(rows[0].heartRate.avgBpm, 140);
+      const { updatedAt, ...notes } = rows[0].annotation;
+      assert.ok(updatedAt);
+      assert.deepEqual(notes, annotation);
+    };
+    await check(owner.token);
+    assert.equal((await call("/api/web/restore-backup", other.token, "POST", {
+      backup: store.export(owner.userId), mode: "commit", strategy: "merge",
+    })).status, 200);
+    // The unchanged receipt time does not prevent the annotation from merging.
+    const restoredRaw = await (await call(apple + "/workouts", other.token)).json() as any[];
+    assert.ok(restoredRaw.some(({ annotation: saved }) => saved?.notes === annotation.notes));
+    assert.equal((await agenda(other.token))[0].annotation.notes, annotation.notes);
+  } finally {
+    db.close();
+  }
+});
+
+test("本地有氧可通过训练接口保存，跨午夜归在开始日并安全重试", async () => {
+  const { db, owner, call } = fixture();
+  try {
+    const start = Date.parse("2026-01-05T15:50:00Z");
+    const session = createCardioSession(getAppleCardioPreset("outdoor_run")!, { now: start });
+    const done = finishCardioTiming(session, start + 20 * 60_000);
+    const body = buildCardioWorkoutMutation(done);
+    assert.equal(body.data.date, "2026-01-05");
+    const save = (now: number) => call("/api/records", owner.token, "POST", buildCardioWorkoutMutation(done, now));
+    const first = await save(start + 1_300_000);
+    const retry = await save(start + 1_500_000);
+    assert.equal(first.status, 200);
+    assert.equal(retry.status, 200);
+    assert.deepEqual(await first.json(), await retry.json());
+    const existing = await (await call("/api/records/workout", owner.token)).json() as any[];
+    assert.equal(existing.length, 1);
+    assert.equal(existing[0].data.exercises[0].sets[0].seconds, 1200);
+  } finally {
+    db.close();
+  }
+});
 
 test("Health Data Export 文件和 Webhook 共享训练档案，重试不会增加记录", async () => {
   const { db, owner, other, call, issue } = fixture();
@@ -597,65 +672,38 @@ test("events/active 查询开放训练耗时，且直传与结束事件兼容快
   }
 });
 
-test("POST /api/integrations/apple-health/session-start 为网页训练建立闭环起点并透传 distanceMode", async () => {
+test("网页有氧不会创建 Apple 开始事件，设备上报仍可完成训练", async () => {
   const { db, owner, call, issue } = fixture();
   try {
     const { token } = await issue();
-    const runStartIso = new Date(Date.now() - 25 * 60_000).toISOString();
-    const runSeed = await call(apple + "/session-start", owner.token, "POST", {
-      activityType: "running",
-      environment: "outdoor",
-      startedAt: runStartIso,
+    const startedAt = new Date(Date.now() - 25 * 60_000).toISOString();
+    const running = { activityType: "running", environment: "outdoor" };
+    const seed = await call(apple + "/session-start", owner.token, "POST", { ...running, startedAt });
+    assert.equal(seed.status, 200);
+    assert.equal((await seed.json() as any).recorded, 0);
+    const active = async () => (await call(apple + "/events/active?activityType=any", token)).json() as Promise<any>;
+    assert.equal((await active()).found, false);
+    const end = () => call(apple + "/events", token, "POST", {
+      schemaVersion: 1, event: "end", ...running, occurredAt: new Date().toISOString(),
     });
-    assert.equal(runSeed.status, 200);
-    assert.equal(((await runSeed.json()) as any).recorded, 1);
-
-    // onlyIfIdle: true preserves active running session
-    const skipSeed = await call(apple + "/session-start", owner.token, "POST", {
-      activityType: "cycling",
-      environment: "indoor",
-      onlyIfIdle: true,
+    assert.equal((await end()).status, 409);
+    const strength = await call(apple + "/session-start", owner.token, "POST", {
+      activityType: "traditionalStrengthTraining", environment: "indoor", startedAt,
     });
-    assert.equal(skipSeed.status, 200);
-    assert.equal(((await skipSeed.json()) as any).recorded, 0);
-
-    const activeAny = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
-    assert.equal(activeAny.found, true);
-    assert.equal(activeAny.activityType, "running");
-    assert.equal(activeAny.environment, "outdoor");
-    assert.equal(activeAny.distanceMode, "foot");
-    assert.ok(activeAny.elapsedMinutes >= 25);
-
-    const endRun = await call(apple + "/events", token, "POST", {
-      schemaVersion: 1,
-      event: "end",
-      activityType: activeAny.activityType,
-      environment: activeAny.environment,
-      occurredAt: new Date().toISOString(),
-      activeEnergyKcal: "280 kcal",
-      distanceKm: "4.15",
-      avgBpm: "152",
-    });
-    assert.equal(endRun.status, 201);
-
-    // Swimming and cycling also report accurate distanceMode; stairClimbing reports ""
-    const swimSeed = await call(apple + "/session-start", owner.token, "POST", {
-      activityType: "swimming",
-      environment: "indoor",
-      startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
-    });
-    assert.equal(((await swimSeed.json()) as any).recorded, 1);
-    const activeSwim = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
-    assert.equal(activeSwim.distanceMode, "swimming");
-
-    const cycleSeed = await call(apple + "/session-start", owner.token, "POST", {
-      activityType: "cycling",
-      environment: "outdoor",
-      startedAt: new Date(Date.now() - 10 * 60_000).toISOString(),
-    });
-    assert.equal(((await cycleSeed.json()) as any).recorded, 1);
-    const activeCycle = await (await call(apple + "/events/active?activityType=any", token)).json() as any;
-    assert.equal(activeCycle.distanceMode, "cycling");
+    assert.equal((await strength.json() as any).recorded, 1);
+    assert.equal((await active()).activityType, "traditionalstrengthtraining");
+    const begin = (activityType: string, offset: number, environment = "outdoor") =>
+      call(apple + "/events", token, "POST", {
+        schemaVersion: 1, event: "start", activityType, environment,
+        occurredAt: new Date(Date.parse(startedAt) + offset).toISOString(),
+      });
+    assert.equal((await begin("running", 1000)).status, 200);
+    assert.equal((await active()).distanceMode, "foot");
+    assert.equal((await end()).status, 201);
+    assert.equal((await begin("swimming", 2000, "indoor")).status, 200);
+    assert.equal((await active()).distanceMode, "swimming");
+    assert.equal((await begin("cycling", 3000)).status, 200);
+    assert.equal((await active()).distanceMode, "cycling");
   } finally {
     db.close();
   }
