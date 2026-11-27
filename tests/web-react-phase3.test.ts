@@ -260,7 +260,7 @@ test("packages/web/src/lib/shortcut-gen generates unified all-in-one Apple Healt
   const startWorkoutCount = (hubUniversal.xml.match(/<string>is\.workflow\.actions\.workout\.start<\/string>/g) ?? []).length;
   assert.equal(startWorkoutCount, 0, `expected 0 Start Workout actions in silent mode, got ${startWorkoutCount}`);
   assert.ok(!hubUniversal.xml.includes("com.apple.SessionTrackerApp"));
-  assert.ok(hubUniversal.xml.includes("[v2026.11.26-r12]"));
+  assert.ok(hubUniversal.xml.includes("[v2026.11.27-r13]"));
   assert.ok(hubUniversal.xml.includes("<key>WFWorkflowClientVersion</key>\n\t<string>5203.0.1</string>"));
   assert.ok(hubUniversal.xml.includes("<string>is.workflow.actions.nothing</string>"));
   assert.ok(hubUniversal.xml.includes("<string>functionalStrengthTraining</string>"));
@@ -877,6 +877,9 @@ test("Watch-first Apple Health UI exposes one-tap automation copy panel and remo
 
   assert.match(appleModals, /export function AppleAutomationCopyPanel/);
   assert.match(appleModals, /export function AppleSyncStatusCard/);
+  assert.match(appleModals, /cardio:run/);
+  assert.match(appleModals, /cardio:cycle/);
+  assert.match(appleModals, /cardio:walk/);
   assert.match(appleModals, /cardio:indoor_run/);
   assert.match(appleModals, /cardio:stair_climbing/);
   assert.match(settingsView, /<AppleAutomationCopyPanel/);

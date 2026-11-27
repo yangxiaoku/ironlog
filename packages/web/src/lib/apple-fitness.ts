@@ -181,6 +181,9 @@ export type AppleHubAction =
   | "strength:functional"
   | "strength:core"
   | "cardio"
+  | "cardio:run"
+  | "cardio:cycle"
+  | "cardio:walk"
   | `cardio:${AppleCardioPresetId}`
   | "end"
   | "daily";

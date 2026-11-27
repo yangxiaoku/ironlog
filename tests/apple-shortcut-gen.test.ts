@@ -513,7 +513,7 @@ test("buildIronlogUnifiedAppleHubShortcut 生成纯后台静默上报版（不�
     useImportQuestions: true,
   });
   assertValidPlistStructure(hub.xml);
-  assert.ok(hub.xml.includes("[v2026.11.26-r12]"));
+  assert.ok(hub.xml.includes("[v2026.11.27-r13]"));
   assert.ok(!hub.xml.includes("is.workflow.actions.workout.start"), "must not include Start Workout");
   assert.ok(!hub.xml.includes("is.workflow.actions.workout.end"), "must not include End Workout");
   assert.ok(!hub.xml.includes("is.workflow.actions.openapp"), "must not include Open App");
@@ -523,7 +523,18 @@ test("buildIronlogUnifiedAppleHubShortcut 生成纯后台静默上报版（不�
   assert.ok(hub.xml.includes("/api/integrations/apple-health/events/active?activityType=any&amp;closeShort=1"));
   assert.ok(!hub.xml.includes("/api/integrations/apple-health/workouts"), "must not fall back to synthetic workout upload");
 
-  for (const route of ["strength", "strength:functional", "strength:core", "cardio:indoor_run", "cardio:stair_climbing", "end", "daily"]) {
+  for (const route of [
+    "strength",
+    "strength:functional",
+    "strength:core",
+    "cardio:run",
+    "cardio:cycle",
+    "cardio:walk",
+    "cardio:indoor_run",
+    "cardio:stair_climbing",
+    "end",
+    "daily",
+  ]) {
     assert.ok(hub.xml.includes(`<key>WFConditionalActionString</key>\n\t\t\t\t<string>${route}</string>`), route);
   }
 

@@ -1945,11 +1945,11 @@ export function buildIronlogUnifiedAppleHubShortcut({
     : "铁记-Apple健康全能联动.shortcut";
 
   const commentText = [
-    `铁记（Ironlog）Apple 健康纯后台静默上报 [v2026.11.26-r12]（手表原生启停，不跳转健身 App）`,
+    `铁记（Ironlog）Apple 健康纯后台静默上报 [v2026.11.27-r13]（手表原生启停，不跳转健身 App）`,
     `默认运动：${sportLabel}（${resolvedEnv}）；每日健康涵盖：${activeGroups.map((g) => g.label).join("、")}（${selectedMetrics.length} 项）`,
     `Apple Watch 自动化入参（input=text，建议勾选「立即运行」）：`,
     `  • strength / strength:functional / strength:core：手表开始对应力量训练时，静默上报开始时间`,
-    `  • cardio:<方式>（如 cardio:indoor_run / cardio:outdoor_run / cardio:stair_climbing）：手表开始对应有氧时，静默上报开始时间`,
+    `  • cardio:<方式>（如 cardio:run / cardio:cycle / cardio:walk / cardio:stair_climbing，对应 iOS 快捷指令通用触发器，亦兼容 cardio:indoor_run / cardio:outdoor_run）`,
     `  • end：手表结束「任何体能训练」时，延迟 5 秒按真实起止窗口回传心率、活动能量与对应距离（不足 3 分钟自动跳过）`,
     `  • daily：每日定时同步步数（按小时）、睡眠分期与健康体征`,
     `本指令不含控制手表启停或打开健身 App 的动作，不会与手表原生训练冲突；手动直接点击运行可弹出 4 合 1 菜单。`,
@@ -2065,8 +2065,10 @@ export function buildIronlogUnifiedAppleHubShortcut({
     activityType: string;
     environment: ShortcutEnvironment;
   }> = [
+    { id: "run", label: "跑步", activityType: "running", environment: "unknown" },
     { id: "outdoor_run", label: "户外跑步", activityType: "running", environment: "outdoor" },
     { id: "indoor_run", label: "室内跑步", activityType: "running", environment: "indoor" },
+    { id: "cycle", label: "单车 / 骑行", activityType: "cycling", environment: "unknown" },
     { id: "outdoor_cycle", label: "户外骑行", activityType: "cycling", environment: "outdoor" },
     { id: "indoor_cycle", label: "室内单车", activityType: "cycling", environment: "indoor" },
     { id: "stair_climbing", label: "爬楼机", activityType: "stairClimbing", environment: "indoor" },
@@ -2075,6 +2077,7 @@ export function buildIronlogUnifiedAppleHubShortcut({
     { id: "swimming", label: "游泳", activityType: "swimming", environment: "indoor" },
     { id: "hiit", label: "HIIT", activityType: "highIntensityIntervalTraining", environment: "indoor" },
     { id: "jump_rope", label: "跳绳", activityType: "jumpRope", environment: "indoor" },
+    { id: "walk", label: "步行", activityType: "walking", environment: "unknown" },
     { id: "outdoor_walk", label: "户外步行", activityType: "walking", environment: "outdoor" },
     { id: "hiking", label: "徒步", activityType: "hiking", environment: "outdoor" },
     { id: "mixed_cardio", label: "混合有氧", activityType: "mixedCardio", environment: "indoor" },

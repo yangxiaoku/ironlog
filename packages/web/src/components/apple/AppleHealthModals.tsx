@@ -972,25 +972,27 @@ const REQUIRED_APPLE_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
 ];
 
 const COMMON_START_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
-  { param: "strength", label: "传统力量训练", trigger: "手表开始时" },
-  { param: "cardio:indoor_run", label: "室内跑步", trigger: "手表开始时" },
-  { param: "cardio:outdoor_run", label: "户外跑步", trigger: "手表开始时" },
-  { param: "cardio:stair_climbing", label: "踏步机 / 爬楼机", trigger: "手表开始时" },
+  { param: "strength", label: "传统力量训练", trigger: "手表开始「传统力量训练」时" },
+  { param: "cardio:run", label: "跑步", trigger: "手表开始「跑步」时 · 室内/户外通用" },
+  { param: "cardio:stair_climbing", label: "踏步机 / 爬楼机", trigger: "手表开始「踏步机」时" },
+  { param: "cardio:cycle", label: "单车 / 骑行", trigger: "手表开始「单车」时 · 室内/户外通用" },
 ];
 
 const EXTRA_START_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
   { param: "strength:functional", label: "功能性力量训练", trigger: "手表开始时" },
   { param: "strength:core", label: "核心训练", trigger: "手表开始时" },
-  { param: "cardio:indoor_cycle", label: "室内单车", trigger: "手表开始时" },
-  { param: "cardio:outdoor_cycle", label: "户外单车 / 骑行", trigger: "手表开始时" },
+  { param: "cardio:walk", label: "步行", trigger: "手表开始「步行」时 · 室内/户外通用" },
   { param: "cardio:elliptical", label: "椭圆机", trigger: "手表开始时" },
   { param: "cardio:rowing", label: "划船机", trigger: "手表开始时" },
-  { param: "cardio:swimming", label: "泳池游泳", trigger: "手表开始时" },
+  { param: "cardio:swimming", label: "游泳", trigger: "手表开始时" },
   { param: "cardio:hiit", label: "高强度间歇 (HIIT)", trigger: "手表开始时" },
   { param: "cardio:jump_rope", label: "跳绳", trigger: "手表开始时" },
-  { param: "cardio:outdoor_walk", label: "户外步行", trigger: "手表开始时" },
   { param: "cardio:hiking", label: "徒步", trigger: "手表开始时" },
   { param: "cardio:mixed_cardio", label: "混合有氧", trigger: "手表开始时" },
+  { param: "cardio:indoor_run", label: "室内跑步（仅跑跑步机时可选）", trigger: "绑定「跑步」并固定记为室内" },
+  { param: "cardio:outdoor_run", label: "户外跑步（仅路跑时可选）", trigger: "绑定「跑步」并固定记为户外" },
+  { param: "cardio:indoor_cycle", label: "室内单车（仅动感单车可选）", trigger: "绑定「单车」并固定记为室内" },
+  { param: "cardio:outdoor_cycle", label: "户外骑行（仅户外骑行可选）", trigger: "绑定「单车」并固定记为户外" },
 ];
 
 export function AppleAutomationCopyPanel({
