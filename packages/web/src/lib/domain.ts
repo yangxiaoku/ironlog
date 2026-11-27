@@ -114,6 +114,7 @@ export interface WorkoutSet {
   completedAt?: string;
   rir: number | null;
   note?: string;
+  restAfterSeconds?: number;
 }
 
 export interface WorkoutExercise {
@@ -251,6 +252,7 @@ export interface ProfileGoals {
     voiceRestCues?: boolean;
     platePairs?: Record<string, number>;
     hiddenModules?: HiddenModuleKey[];
+    demoDisplayMode?: DemoDisplayMode;
   };
   quickFoods?: QuickFoodItem[];
   equipmentProfiles?: EquipmentProfile[];
@@ -443,6 +445,7 @@ export interface CatalogueExercise {
 
 export type ProgressionRule = "double" | "triple" | "linear" | "greyskull" | "manual";
 export type WorkoutLayoutMode = "card" | "compact" | "focus";
+export type DemoDisplayMode = "small" | "large" | "hidden";
 export type HiddenModuleKey = "diet" | "sleep" | "badges" | "ai" | "plateMath" | "rir";
 
 export interface WebhookConfig {
@@ -480,6 +483,7 @@ export interface PlannedExercise {
   backupExerciseId?: string | null;
   supersetGroup?: string | null;
   weightUnit?: WeightUnit;
+  autoWarmup?: boolean;
 }
 
 export interface PlanRoutine {

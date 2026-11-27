@@ -95,6 +95,7 @@ export function sanitizePlannedExercises(
       backupExerciseId: row.backupExerciseId && row.backupExerciseId !== row.exerciseId ? row.backupExerciseId : null,
       supersetGroup: row.supersetGroup ? String(row.supersetGroup).trim().slice(0, 16) : null,
       ...(row.weightUnit === "kg" || row.weightUnit === "lb" ? { weightUnit: row.weightUnit } : {}),
+      ...(row.autoWarmup ? { autoWarmup: true } : {}),
     };
   });
 }
@@ -567,6 +568,15 @@ export function PlannedExerciseList({
                         value={row.targetRir ?? 2}
                         onKeyDown={stopEnter}
                         onChange={(e) => updateRow(index, { targetRir: Number(e.target.value) })}
+                      />
+                    </label>
+                    <label className="plan-warmup-toggle" title="开练时按目标重量自动生成递增热身组">
+                      <span>自动热身</span>
+                      <input
+                        type="checkbox"
+                        className="switch"
+                        checked={Boolean(row.autoWarmup)}
+                        onChange={(e) => updateRow(index, { autoWarmup: e.target.checked })}
                       />
                     </label>
                     <div className="plan-backup-slot">

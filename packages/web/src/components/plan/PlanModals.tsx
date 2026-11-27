@@ -18,6 +18,7 @@ import { useUiStore } from "../../store/useUiStore";
 import {
   WORKOUT_PREFS_EVENT,
   applyDeloadToTarget,
+  buildWarmupSetsPlan,
   readWorkoutPreferences,
   writeWorkoutPreference,
 } from "../../lib/workout-helpers";
@@ -1183,6 +1184,8 @@ interface RoutinePreviewResponse {
       detail?: string;
     } | null;
     backup?: { id: string; name: string } | null;
+    autoWarmup?: boolean;
+    weightUnit?: "kg" | "lb";
   }>;
 }
 
@@ -1298,26 +1301,47 @@ export function RoutinePreviewModal({
   const ssBadges = supersetBadges(result.exercises);
 
   const handleLaunch = () => {
+    const livePrefs = readWorkoutPreferences();
     const exercises = result.exercises.map((row) => {
       const scaled = scaleRowTarget(row);
+      const workSets = Array.from({ length: scaled.sets }, () => ({
+        id: safeUuid(),
+        type: "normal" as const,
+        weight: scaled.weight,
+        reps: row.reps,
+        seconds: row.seconds,
+        completed: false,
+        rir: null,
+      }));
+      const warmupSets =
+        row.autoWarmup && row.snapshot.mode === "reps" && scaled.weight > 0
+          ? buildWarmupSetsPlan(
+              scaled.weight,
+              row.snapshot.equipment === "barbell" && (row.weightUnit ?? "kg") === "kg",
+              livePrefs.barWeight,
+              livePrefs.enabledPlates,
+              livePrefs.warmupScheme,
+            ).map((step) => ({
+              id: safeUuid(),
+              type: "warmup" as const,
+              weight: step.weight,
+              reps: step.reps,
+              seconds: 0,
+              completed: false,
+              rir: null,
+            }))
+          : [];
       return {
         id: safeUuid(),
         exerciseId: row.exerciseId,
         targetIndex: row.targetIndex ?? null,
         restSeconds: row.restSeconds,
         supersetGroup: row.supersetGroup ?? null,
+        ...(row.weightUnit ? { weightUnit: row.weightUnit } : {}),
         snapshot: row.snapshot,
         backupExerciseId: row.backup?.id ?? null,
         backupExerciseName: row.backup?.name ?? null,
-        sets: Array.from({ length: scaled.sets }, () => ({
-          id: safeUuid(),
-          type: "normal" as const,
-          weight: scaled.weight,
-          reps: row.reps,
-          seconds: row.seconds,
-          completed: false,
-          rir: null,
-        })),
+        sets: [...warmupSets, ...workSets],
       };
     });
     onLaunchWorkout(

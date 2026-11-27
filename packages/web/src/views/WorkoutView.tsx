@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { classicLiftIds, classicStrength } from "@ironlog/shared";
 import { Icon } from "../components/Icon";
+import { MuscleBodyMap } from "../components/MuscleBodyMap";
+import type { ScheduleResponse } from "../components/plan/PlanModals";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
-import { displayWeekday, duration, fmt, shortDate } from "../lib/date";
+import { apiFetch } from "../lib/api";
+import { displayWeekday, duration, fmt, shortDate, today } from "../lib/date";
 import {
   FEELINGS,
   MUSCLES,
@@ -12,12 +15,14 @@ import {
   type MuscleKey,
   type ProfileGoals,
   type RecordEnvelope,
+  type TodayResponse,
   type TrainedExerciseSummary,
   type WorkoutData,
 } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
+  openRoutinePreview,
   openWorkoutEditor,
   openWorkoutReport,
   resumeLocalWorkoutDraft,
@@ -29,6 +34,8 @@ interface WorkoutViewSnap {
   records: Array<RecordEnvelope<WorkoutData>>;
   trainedItems: TrainedExerciseSummary[];
   goals: ProfileGoals | null;
+  todayInfo: TodayResponse | null;
+  schedule: ScheduleResponse | null;
 }
 
 export function WorkoutView() {
@@ -42,6 +49,10 @@ export function WorkoutView() {
   const [records, setRecords] = useState<Array<RecordEnvelope<WorkoutData>>>(() => cached?.records ?? []);
   const [trainedItems, setTrainedItems] = useState<TrainedExerciseSummary[]>(() => cached?.trainedItems ?? []);
   const [goals, setGoals] = useState<ProfileGoals | null>(() => cached?.goals ?? null);
+  const [todayInfo, setTodayInfo] = useState<TodayResponse | null>(() => cached?.todayInfo ?? null);
+  const [schedule, setSchedule] = useState<ScheduleResponse | null>(() => cached?.schedule ?? null);
+  const [quickWeightInput, setQuickWeightInput] = useState("");
+  const [savingQuickWeight, setSavingQuickWeight] = useState(false);
   const [loading, setLoading] = useState(() => !cached);
   const [error, setError] = useState("");
 
@@ -57,18 +68,24 @@ export function WorkoutView() {
       cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
       cachedApiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises", { epoch: dataEpoch, userId }).catch(() => ({ items: [] })),
       cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<TodayResponse>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<ScheduleResponse>("/api/web/schedule", { epoch: dataEpoch, userId }).catch(() => null),
     ])
-      .then(([recs, trainedRes, profRes]) => {
+      .then(([recs, trainedRes, profRes, todayRes, schedRes]) => {
         if (!active) return;
         const nextSnap: WorkoutViewSnap = {
           records: recs.filter((r) => !r.deleted && r.data.status !== "cancelled"),
           trainedItems: trainedRes.items ?? [],
           goals: profRes?.profile ?? null,
+          todayInfo: todayRes ?? null,
+          schedule: schedRes ?? null,
         };
         writeQueryCache("view:workout", nextSnap, { userId, epoch: dataEpoch });
         setRecords(nextSnap.records);
         setTrainedItems(nextSnap.trainedItems);
         setGoals(nextSnap.goals);
+        setTodayInfo(nextSnap.todayInfo);
+        setSchedule(nextSnap.schedule);
       })
       .catch((err) => {
         if (active) setError((err as Error)?.message || "加载训练记录失败");
@@ -152,20 +169,172 @@ export function WorkoutView() {
     return classicStrength((id) => byId.get(id)?.best1rm).total;
   }, [trainedItems]);
 
+  const handleQuickPreWorkoutWeight = async () => {
+    const val = Number(quickWeightInput);
+    if (!Number.isFinite(val) || val < 20 || val > 350 || savingQuickWeight) {
+      notify("请输入有效体重（20–350 kg）");
+      return;
+    }
+    setSavingQuickWeight(true);
+    try {
+      const todayKey = today();
+      const existing = await apiFetch<RecordEnvelope<{ date: string; weight: number; bodyFat?: number | null }> | null>(
+        `/api/web/records/weight/${encodeURIComponent(`weight_${todayKey}`)}`,
+      ).catch(() => null);
+      await apiFetch("/api/records", {
+        method: "POST",
+        body: {
+          opId: crypto.randomUUID(),
+          id: `weight_${todayKey}`,
+          kind: "weight",
+          baseVersion: existing?.version ?? 0,
+          deleted: false,
+          data: {
+            date: todayKey,
+            weight: Math.round(val * 100) / 100,
+            bodyFat: existing?.data?.bodyFat ?? null,
+          },
+        },
+      });
+      setQuickWeightInput("");
+      bumpDataEpoch();
+      notify(`已记录今日训前体重 ${fmt(val, 1)} kg`);
+    } catch (err) {
+      notify((err as Error)?.message || "记录体重失败");
+    } finally {
+      setSavingQuickWeight(false);
+    }
+  };
+
+  const launchRoutines = schedule?.activePlan?.routines ?? [];
+  const launchTemplates = schedule?.templates ?? [];
+  const plannedToday = todayInfo?.planned ?? null;
+
   return (
     <>
       <WorkspaceTabs />
       <PageHeading
-        title="训练记录"
+        title="训练"
         view="workout"
         controls={
           <div className="heading-actions">
-            <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
-              <Icon name="plus" size={16} /> 记一次训练
+            <button type="button" className="secondary-button" onClick={() => openWorkoutEditor({ goals })}>
+              <Icon name="plus" size={16} /> 自由训练
             </button>
           </div>
         }
       />
+
+      {/* OpenGym-style Workout Launchpad Console */}
+      <section className="panel workout-launchpad" aria-label="今日开练控制台">
+        <div className="launchpad-hero">
+          <div className="launchpad-hero-info">
+            <span className="launchpad-eyebrow">
+              {plannedToday
+                ? plannedToday.date === today()
+                  ? "今日计划"
+                  : `下一次计划 · ${shortDate(plannedToday.date)}`
+                : "自由开练"}
+              {plannedToday?.scheduleMode === "rotation" ? (
+                <em className="today-mode-pill">轮换顺延</em>
+              ) : null}
+            </span>
+            <h2>{plannedToday ? plannedToday.name : "随时开始自由训练"}</h2>
+            <p className="muted">
+              {plannedToday
+                ? `${plannedToday.exercises} 个动作 · 自动带出渐进目标与配片参考`
+                : "边练边选动作，或从下方挑一个常用训练日直接开练"}
+            </p>
+          </div>
+          {plannedToday?.muscleScores && Object.keys(plannedToday.muscleScores).length > 0 ? (
+            <MuscleBodyMap size="mini" scores={plannedToday.muscleScores} />
+          ) : null}
+          <div className="launchpad-hero-cta">
+            {plannedToday ? (
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() =>
+                  openRoutinePreview({
+                    id: plannedToday.source === "scheduled" ? plannedToday.date : plannedToday.id,
+                    source: plannedToday.source === "scheduled" ? "scheduled" : "plan",
+                    date: plannedToday.date,
+                  })
+                }
+              >
+                开始今日计划
+              </button>
+            ) : (
+              <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
+                <Icon name="plus" size={15} /> 开始自由训练
+              </button>
+            )}
+          </div>
+        </div>
+
+        {(launchRoutines.length > 0 || launchTemplates.length > 0) ? (
+          <div className="launchpad-quick-row">
+            <span className="muted">其他训练日：</span>
+            <div className="launchpad-chips">
+              {launchRoutines.map((r) => (
+                <button
+                  key={`r:${r.id}`}
+                  type="button"
+                  className="quiet"
+                  onClick={() => openRoutinePreview({ id: r.id, source: "plan", date: today() })}
+                >
+                  {r.name}
+                </button>
+              ))}
+              {launchTemplates.slice(0, 6).map((t) => (
+                <button
+                  key={`t:${t.id}`}
+                  type="button"
+                  className="quiet"
+                  onClick={() => openRoutinePreview({ id: t.id, source: "template", date: today() })}
+                >
+                  {t.name}
+                </button>
+              ))}
+              <button type="button" className="quiet" onClick={() => openWorkoutEditor({ goals })}>
+                + 自由训练（边练边选）
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        <div className="launchpad-weighin-bar">
+          {todayInfo?.weight != null ? (
+            <span className="muted">
+              今日已称重：<strong>{fmt(todayInfo.weight, 1)} kg</strong>
+            </span>
+          ) : (
+            <form
+              className="launchpad-weighin-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleQuickPreWorkoutWeight();
+              }}
+            >
+              <span className="muted">训前快记体重：</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min={20}
+                max={350}
+                placeholder="例如 75.5"
+                value={quickWeightInput}
+                onChange={(e) => setQuickWeightInput(e.target.value)}
+              />
+              <span className="muted">kg</span>
+              <button type="submit" className="secondary-button" disabled={savingQuickWeight || !quickWeightInput.trim()}>
+                {savingQuickWeight ? "保存中…" : "记录"}
+              </button>
+            </form>
+          )}
+        </div>
+      </section>
 
       {error && records.length === 0 ? (
         <div className="empty">

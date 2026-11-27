@@ -83,6 +83,7 @@ export const setSchema = z.object({
     (v) => (v === null || v === "" ? undefined : v),
     z.string().trim().max(200).optional(),
   ),
+  restAfterSeconds: z.number().int().min(0).max(900).optional(),
 });
 export const sessionExerciseSchema = z.object({
   id,
@@ -276,6 +277,7 @@ const workoutPrefsBase = {
   voiceRestCues: z.boolean(),
   platePairs: z.record(z.string(), z.number().int().min(0).max(20)),
   hiddenModules: z.array(z.enum(["diet", "sleep", "badges", "ai", "plateMath", "rir"])).max(10),
+  demoDisplayMode: z.enum(["small", "large", "hidden"]),
 };
 
 export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
@@ -313,6 +315,7 @@ export const workoutPrefsSchema = z.object({
   voiceRestCues: workoutPrefsBase.voiceRestCues.default(false),
   platePairs: workoutPrefsBase.platePairs.optional(),
   hiddenModules: workoutPrefsBase.hiddenModules.default([]),
+  demoDisplayMode: workoutPrefsBase.demoDisplayMode.default("small"),
 });
 export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
 
@@ -396,6 +399,7 @@ export const plannedExerciseSchema =
       backupExerciseId: id.nullable().default(null),
       supersetGroup: z.string().trim().max(16).nullable().optional(),
       weightUnit: weightUnitSchema.optional(),
+      autoWarmup: z.boolean().optional(),
     })
     .refine((value) => value.repsMax >= value.repsMin, {
       message: "次数上限不能低于下限",

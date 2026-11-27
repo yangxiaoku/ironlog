@@ -31,6 +31,14 @@ export const collapseCompletedPreference = "ironlog-web-collapse-completed";
 export const voiceRestCuesPreference = "ironlog-web-voice-rest-cues";
 export const platePairsPreference = "ironlog-web-plate-pairs";
 export const hiddenModulesPreference = "ironlog-web-hidden-modules";
+export const demoDisplayModePreference = "ironlog-web-demo-display";
+
+export type DemoDisplayMode = "small" | "large" | "hidden";
+export const DEMO_DISPLAY_PRESETS: ReadonlyArray<{ id: DemoDisplayMode; label: string }> = [
+  { id: "small", label: "缩略动图" },
+  { id: "large", label: "大图示范" },
+  { id: "hidden", label: "隐藏示范" },
+];
 
 export type HiddenModuleKey = "diet" | "sleep" | "badges" | "ai" | "plateMath" | "rir";
 export const MODULAR_UI_OPTIONS: ReadonlyArray<{ id: HiddenModuleKey; label: string; desc: string }> = [
@@ -188,6 +196,7 @@ export interface WorkoutPreferences {
   voiceRestCues: boolean;
   platePairs?: Record<string, number>;
   hiddenModules?: HiddenModuleKey[];
+  demoDisplayMode?: DemoDisplayMode;
 }
 
 export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
@@ -369,6 +378,15 @@ function readHiddenModulesPref(): HiddenModuleKey[] | undefined {
   return undefined;
 }
 
+function readDemoDisplayModePref(): DemoDisplayMode | undefined {
+  if (typeof localStorage === "undefined") return undefined;
+  try {
+    const raw = localStorage.getItem(demoDisplayModePreference);
+    if (raw === "small" || raw === "large" || raw === "hidden") return raw;
+  } catch {}
+  return undefined;
+}
+
 /**
  * Safely reads unified in-session workout preferences with validated defaults.
  */
@@ -456,9 +474,11 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     ...(() => {
       const pairs = readPlatePairsPref();
       const hidden = readHiddenModulesPref();
+      const demoMode = readDemoDisplayModePref();
       return {
         ...(pairs ? { platePairs: pairs } : {}),
         ...(hidden ? { hiddenModules: hidden } : {}),
+        ...(demoMode ? { demoDisplayMode: demoMode } : {}),
       };
     })(),
   };
@@ -627,6 +647,13 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
           localStorage.removeItem(hiddenModulesPreference);
         }
         break;
+      case "demoDisplayMode":
+        if (value === "small" || value === "large" || value === "hidden") {
+          localStorage.setItem(demoDisplayModePreference, value);
+        } else {
+          localStorage.removeItem(demoDisplayModePreference);
+        }
+        break;
     }
   } catch {}
 }
@@ -740,6 +767,9 @@ export function applyRemoteWorkoutPreferences(
   if (Array.isArray(remote.hiddenModules)) {
     persistSinglePreference("hiddenModules", remote.hiddenModules);
   }
+  if (remote.demoDisplayMode === "small" || remote.demoDisplayMode === "large" || remote.demoDisplayMode === "hidden") {
+    persistSinglePreference("demoDisplayMode", remote.demoDisplayMode);
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
@@ -780,6 +810,7 @@ const ALL_WORKOUT_PREF_KEYS = [
   voiceRestCuesPreference,
   platePairsPreference,
   hiddenModulesPreference,
+  demoDisplayModePreference,
 ] as const;
 
 /**

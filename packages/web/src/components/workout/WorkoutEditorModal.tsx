@@ -6,7 +6,7 @@ import {
   isAppleMobileDevice,
   triggerAppleHubAction,
 } from "../../lib/apple-fitness";
-import { resolveCatalogueMap } from "../../lib/catalogue";
+import { resolveCatalogueMap, safeExerciseMediaUrl } from "../../lib/catalogue";
 import {
   COACH_QUICK_SCENARIOS,
   appendRoutineExercises,
@@ -63,6 +63,7 @@ import {
   BAR_PRESETS,
   buildWarmupSetsPlan,
   DEFAULT_EQUIPMENT_PROFILES,
+  DEMO_DISPLAY_PRESETS,
   plateBreakdown,
   plateDeltaLabel,
   readWorkoutPreferences,
@@ -80,6 +81,14 @@ import {
   type WorkoutLayoutMode,
   type WorkoutPreferences,
 } from "../../lib/workout-helpers";
+import {
+  checkSetBeatsPrBaseline,
+  compareSetAgainstReference,
+  duplicateSetInList,
+  insertDropSetAfter,
+  insertRestPauseSetAfter,
+  type LiveExercisePrBaseline,
+} from "../../lib/workout-set-ops";
 import {
   openAiAdaptWorkoutModal,
   openExerciseDetailModal,
@@ -187,6 +196,7 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
       backupExerciseId,
       supersetGroup,
       ...(it.weightUnit === "kg" || it.weightUnit === "lb" ? { weightUnit: it.weightUnit } : {}),
+      ...(it.autoWarmup === true ? { autoWarmup: true } : {}),
     });
   }
   return { id: r.id, name, exercises: cleanExercises };
@@ -369,7 +379,9 @@ export function WorkoutEditorModal({
     workoutLayout,
     collapseCompletedExercises,
     voiceRestCues,
+    demoDisplayMode,
   } = prefs;
+  const effectiveDemoMode = demoDisplayMode ?? "small";
   const [wakeActive, setWakeActive] = useState(false);
 
   const updatePref = <K extends keyof WorkoutPreferences>(key: K, value: WorkoutPreferences[K]) => {
@@ -406,9 +418,31 @@ export function WorkoutEditorModal({
   const [coachExIdx, setCoachExIdx] = useState<number | null>(null);
   const [coachScenario, setCoachScenario] = useState<CoachQuickScenario>("pain");
   const [editingSetNoteId, setEditingSetNoteId] = useState<string | null>(null);
+  const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
   const [finishPanelOpen, setFinishPanelOpen] = useState(isHistoricalEdit);
   const [openSettingsIds, setOpenSettingsIds] = useState<Set<string>>(() => new Set());
   const [refsByExId, setRefsByExId] = useState<Map<string, ExerciseReferenceEntry["sets"]>>(() => new Map());
+  const [prsByExId, setPrsByExId] = useState<Map<string, LiveExercisePrBaseline>>(() => new Map());
+  const [mediaByExId, setMediaByExId] = useState<Map<string, string>>(() => new Map());
+  const [showBestRefIds, setShowBestRefIds] = useState<Set<string>>(() => new Set());
+  const [historyModalEx, setHistoryModalEx] = useState<{
+    id: string;
+    name: string;
+    loading: boolean;
+    mode: ExerciseMode;
+    sessions: Array<{
+      workoutId: string;
+      date: string;
+      title: string;
+      topWeight: number | null;
+      topReps: number | null;
+      estimated1rm: number | null;
+      bestSeconds: number | null;
+      workSets: number;
+      volume: number;
+      sets: Array<{ type: string; weight: number; reps: number; seconds: number; rir: number | null }>;
+    }>;
+  } | null>(null);
   const [notesByExId, setNotesByExId] = useState<Record<string, { note: string }>>({});
   const [editingNoteExId, setEditingNoteExId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
@@ -751,7 +785,7 @@ export function WorkoutEditorModal({
     return () => mgr.stop();
   }, [isHistoricalEdit, screenAwakePref]);
 
-  // Fetch previous-session reference sets for exercises in workout
+  // Fetch previous-session reference sets, all-time PR baselines, and exercise demo GIF media
   const exIdsKey = exercises.map((e) => `${e.exerciseId}:${e.snapshot?.mode ?? "reps"}`).join(",");
   useEffect(() => {
     if (!exercises.length || !date) return;
@@ -759,24 +793,94 @@ export function WorkoutEditorModal({
     const uniqueEntries = [
       ...new Map(exercises.map((e) => [e.exerciseId, { id: e.exerciseId, mode: e.snapshot?.mode ?? "reps" }])).values(),
     ];
+    const reqBody = {
+      date,
+      startedAt: sessionStart,
+      ...(record?.id ? { workoutId: record.id } : {}),
+      exercises: uniqueEntries,
+    };
     void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-references", {
       method: "POST",
-      body: {
-        date,
-        startedAt: sessionStart,
-        ...(record?.id ? { workoutId: record.id } : {}),
-        exercises: uniqueEntries,
-      },
+      body: reqBody,
     })
       .then((list) => {
         if (!active) return;
         setRefsByExId(new Map(list.map((entry) => [entry.id, entry.sets])));
       })
       .catch(() => {});
+
+    void apiFetch<LiveExercisePrBaseline[]>("/api/web/exercise-prs", {
+      method: "POST",
+      body: reqBody,
+    })
+      .then((list) => {
+        if (!active || !Array.isArray(list)) return;
+        setPrsByExId(new Map(list.map((entry) => [entry.exerciseId, entry])));
+      })
+      .catch(() => {});
+
+    void resolveCatalogueMap(uniqueEntries.map((e) => e.id))
+      .then((catMap) => {
+        if (!active) return;
+        const nextMedia = new Map<string, string>();
+        for (const [id, ex] of catMap.entries()) {
+          const url = safeExerciseMediaUrl(ex.illustration?.gifPath ?? ex.illustration?.frames?.[0]?.path);
+          if (url) nextMedia.set(id, url);
+        }
+        if (nextMedia.size) {
+          setMediaByExId((prev) => {
+            const merged = new Map(prev);
+            for (const [id, url] of nextMedia.entries()) merged.set(id, url);
+            return merged;
+          });
+        }
+      })
+      .catch(() => {});
+
     return () => {
       active = false;
     };
   }, [exIdsKey, date, record?.id, sessionStart]);
+
+  const openQuickHistory = (exerciseId: string, name: string, fallbackMode: ExerciseMode) => {
+    triggerHaptic("light");
+    setHistoryModalEx({ id: exerciseId, name, loading: true, mode: fallbackMode, sessions: [] });
+    void apiFetch<{
+      exerciseId: string;
+      name: string;
+      mode: ExerciseMode;
+      sessions: Array<{
+        workoutId: string;
+        date: string;
+        title: string;
+        topWeight: number | null;
+        topReps: number | null;
+        estimated1rm: number | null;
+        bestSeconds: number | null;
+        workSets: number;
+        volume: number;
+        sets: Array<{ type: string; weight: number; reps: number; seconds: number; rir: number | null }>;
+      }>;
+    }>(`/api/web/exercises/${encodeURIComponent(exerciseId)}/history`)
+      .then((res) => {
+        setHistoryModalEx((cur) =>
+          cur && cur.id === exerciseId
+            ? {
+                id: exerciseId,
+                name: res.name || name,
+                mode: res.mode ?? fallbackMode,
+                loading: false,
+                sessions: (res.sessions ?? []).slice(0, 8),
+              }
+            : cur,
+        );
+      })
+      .catch(() => {
+        setHistoryModalEx((cur) =>
+          cur && cur.id === exerciseId ? { ...cur, loading: false, sessions: [] } : cur,
+        );
+      });
+  };
 
   // Fetch persistent per-exercise training cues/notes
   useEffect(() => {
@@ -1123,8 +1227,29 @@ export function WorkoutEditorModal({
     const targetSet = row?.sets[setIdx];
     if (!row || !targetSet) return;
 
+    const prHit =
+      nextCompleted && !isHistoricalEdit
+        ? checkSetBeatsPrBaseline(
+            { ...targetSet, completed: true },
+            row.snapshot?.mode ?? "reps",
+            row.weightUnit,
+            prsByExId.get(row.exerciseId),
+          )
+        : null;
+
     // Hardware tactile & audio unlock MUST run synchronously inside user click handler
-    triggerHaptic(nextCompleted ? "success" : "light");
+    triggerHaptic(prHit ? "pr" : nextCompleted ? "success" : "light");
+    if (prHit) {
+      notify(
+        prHit === "weight"
+          ? "🏆 破纪录！已刷新本动作最大负重 PR"
+          : prHit === "oneRepMax"
+            ? "🏆 破纪录！已刷新本动作估算 1RM PR"
+            : prHit === "hold"
+              ? "🏆 破纪录！已刷新最长保持时长 PR"
+              : "🏆 破纪录！已刷新最小辅助重量 PR",
+      );
+    }
 
     if (autoAdvanceTimerRef.current !== null) {
       window.clearTimeout(autoAdvanceTimerRef.current);
@@ -1137,12 +1262,16 @@ export function WorkoutEditorModal({
 
     if (nextCompleted && !isHistoricalEdit && autoStartRestTimer && ssTransition.shouldStartRest) {
       const nextSet = row.sets[setIdx + 1];
-      const { seconds } = resolveSetRestSeconds({
-        setType: targetSet.type,
-        nextSetType: nextSet?.type ?? null,
-        defaultRestSeconds: row.restSeconds ?? goals?.restSeconds ?? 90,
-        warmupRestSeconds,
-      });
+      const hasCustomRest =
+        targetSet.restAfterSeconds != null && Number.isFinite(targetSet.restAfterSeconds);
+      const seconds = hasCustomRest
+        ? Math.max(0, Math.min(900, Math.round(targetSet.restAfterSeconds!)))
+        : resolveSetRestSeconds({
+            setType: targetSet.type,
+            nextSetType: nextSet?.type ?? null,
+            defaultRestSeconds: row.restSeconds ?? goals?.restSeconds ?? 90,
+            warmupRestSeconds,
+          }).seconds;
       if (seconds > 0) {
         audio.unlock();
         restAlarmFiredForRef.current = null;
@@ -1319,6 +1448,10 @@ export function WorkoutEditorModal({
             const cleanCompleted = Boolean(s.completed);
             const cleanCompletedAt = cleanCompleted ? normalizeIsoTimestamp(s.completedAt) : undefined;
             const cleanNote = typeof s.note === "string" ? s.note.trim().slice(0, 200) : "";
+            const rawRestAfter = s.restAfterSeconds == null ? NaN : Number(s.restAfterSeconds);
+            const cleanRestAfter = Number.isFinite(rawRestAfter)
+              ? Math.max(0, Math.min(900, Math.round(rawRestAfter)))
+              : undefined;
             return {
               id: takeUniqueId(s.id),
               type: VALID_SET_TYPES.has(s.type) ? s.type : "normal",
@@ -1328,6 +1461,7 @@ export function WorkoutEditorModal({
               completed: cleanCompleted,
               ...(cleanCompletedAt ? { completedAt: cleanCompletedAt } : {}),
               rir: Number.isFinite(rawRir) ? Math.max(0, Math.min(10, Math.round(rawRir))) : null,
+              ...(cleanRestAfter != null ? { restAfterSeconds: cleanRestAfter } : {}),
               ...(cleanNote ? { note: cleanNote } : {}),
             };
           }),
@@ -1853,6 +1987,64 @@ export function WorkoutEditorModal({
         </div>
       ) : null}
 
+      {/* Quick In-Session Exercise History Drawer */}
+      {historyModalEx ? (
+        <div className="session-menu-overlay" role="dialog" aria-label="动作最近历史记录">
+          <div className="picker-overlay-head">
+            <strong>最近历史 · {historyModalEx.name}</strong>
+            <button
+              type="button"
+              className="secondary-button picker-close-btn"
+              onClick={() => setHistoryModalEx(null)}
+            >
+              返回训练
+            </button>
+          </div>
+          <div className="session-menu-body">
+            {historyModalEx.loading ? (
+              <div className="empty loading">正在读取历史训练记录…</div>
+            ) : historyModalEx.sessions.length === 0 ? (
+              <div className="empty">该动作暂无历史完成记录，完成今日训练后将自动沉淀。</div>
+            ) : (
+              <div className="quick-history-list">
+                {historyModalEx.sessions.map((sess) => (
+                  <article key={`${sess.workoutId}-${sess.date}`} className="quick-history-card">
+                    <div className="quick-history-head">
+                      <div>
+                        <strong>{sess.date}</strong>
+                        <small className="muted">{sess.title}</small>
+                      </div>
+                      <div className="quick-history-kpis">
+                        {historyModalEx.mode === "timed" ? (
+                          sess.bestSeconds != null ? <span>最佳 {sess.bestSeconds}s</span> : null
+                        ) : (
+                          <>
+                            {sess.estimated1rm != null ? <span>1RM {fmt(sess.estimated1rm, 1)}kg</span> : null}
+                            {sess.volume > 0 ? <span>容量 {fmt(sess.volume, 0)}kg</span> : null}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <div className="quick-history-sets">
+                      {sess.sets.map((st, idx) => (
+                        <span key={idx} className={`quick-history-set-pill${st.type !== "normal" ? " is-special" : ""}`}>
+                          {historyModalEx.mode === "timed"
+                            ? `${st.seconds}s`
+                            : historyModalEx.mode === "assisted"
+                              ? `辅助${fmt(st.weight)}×${st.reps}`
+                              : `${fmt(st.weight)}×${st.reps}`}
+                          {st.rir != null ? ` @RIR${st.rir}` : ""}
+                        </span>
+                      ))}
+                    </div>
+                  </article>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
       {/* Topbar Dropdown / Overlay Settings */}
       {openMenu ? (
         <div className="session-menu-overlay">
@@ -1899,6 +2091,24 @@ export function WorkoutEditorModal({
                       }}
                     >
                       {lay.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <span>动作示范动图展示</span>
+                <div className="segments">
+                  {DEMO_DISPLAY_PRESETS.map((modeOpt) => (
+                    <button
+                      key={modeOpt.id}
+                      type="button"
+                      aria-pressed={effectiveDemoMode === modeOpt.id}
+                      onClick={() => {
+                        updatePref("demoDisplayMode", modeOpt.id);
+                        notify(`动作示范图已切换为「${modeOpt.label}」`);
+                      }}
+                    >
+                      {modeOpt.label}
                     </button>
                   ))}
                 </div>
@@ -2649,6 +2859,25 @@ export function WorkoutEditorModal({
                 .slice(0, 4)
                 .map((r) => (isTimed ? `${r.seconds}s` : isAssisted ? `辅助${r.weight}×${r.reps}` : `${r.weight}×${r.reps}`))
                 .join(", ");
+              const mediaUrl = mediaByExId.get(row.exerciseId) || "";
+              const prBaseline = prsByExId.get(row.exerciseId) ?? null;
+              const showingPrRef = showBestRefIds.has(row.id) && Boolean(prBaseline);
+              const prText = prBaseline
+                ? isTimed
+                  ? prBaseline.hold != null
+                    ? `最长保持 ${prBaseline.hold}s`
+                    : ""
+                  : isAssisted
+                    ? prBaseline.assistance != null
+                      ? `最小辅助 ${fmt(prBaseline.assistance)} kg`
+                      : ""
+                    : [
+                        prBaseline.weight != null ? `最大负重 ${fmt(prBaseline.weight)} kg` : "",
+                        prBaseline.oneRepMax != null ? `估算 1RM ${fmt(prBaseline.oneRepMax, 1)} kg` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")
+                : "";
 
               const prevBestE1rm = !isTimed && !isAssisted
                 ? Math.max(0, ...validRefs.map((r) => estimated1RM(r.weight, r.reps)))
@@ -2704,17 +2933,31 @@ export function WorkoutEditorModal({
                   className={`exercise-editor${isTimed ? " timed-exercise" : ""} has-delete-cols`}
                 >
                   <div className="ex-hero-head">
-                    <button
-                      type="button"
-                      className="ex-hero-thumb is-fallback"
-                      aria-label="替换动作"
-                      onClick={() => openSwapExercisePicker(exIdx)}
-                    >
-                      <Icon name="workout" size={22} />
-                      <span className="ex-thumb-badge">
-                        <Icon name="swap" size={10} />
-                      </span>
-                    </button>
+                    {effectiveDemoMode !== "hidden" ? (
+                      <button
+                        type="button"
+                        className={`ex-hero-thumb${effectiveDemoMode === "small" && mediaUrl ? " has-media" : " is-fallback"}`}
+                        aria-label={mediaUrl ? "放大查看动作示范或替换动作" : "替换动作"}
+                        title={mediaUrl ? "点击放大动作示范图（替换请点右上角设置）" : "点击替换动作"}
+                        onClick={() => {
+                          if (mediaUrl && effectiveDemoMode === "small") {
+                            triggerHaptic("light");
+                            updatePref("demoDisplayMode", "large");
+                          } else {
+                            openSwapExercisePicker(exIdx);
+                          }
+                        }}
+                      >
+                        {effectiveDemoMode === "small" && mediaUrl ? (
+                          <img src={mediaUrl} alt={snap?.name ?? row.exerciseId} loading="lazy" />
+                        ) : (
+                          <Icon name="workout" size={22} />
+                        )}
+                        <span className="ex-thumb-badge">
+                          <Icon name={mediaUrl && effectiveDemoMode === "small" ? "book" : "swap"} size={10} />
+                        </span>
+                      </button>
+                    ) : null}
 
                     <div className="ex-hero-title-col">
                       <div className="ex-hero-title-row">
@@ -2759,11 +3002,40 @@ export function WorkoutEditorModal({
                     </button>
                   </div>
 
+                  {effectiveDemoMode === "large" && mediaUrl ? (
+                    <div className="ex-demo-large">
+                      <img src={mediaUrl} alt={`${snap?.name ?? row.exerciseId} 动作示范`} loading="lazy" />
+                      <div className="ex-demo-large-bar">
+                        <button
+                          type="button"
+                          className="quiet"
+                          onClick={() => updatePref("demoDisplayMode", "small")}
+                        >
+                          缩小为缩略图
+                        </button>
+                        <button
+                          type="button"
+                          className="quiet"
+                          onClick={() => openExerciseDetailModal(row.exerciseId, snap?.name ?? row.exerciseId)}
+                        >
+                          百科要点 →
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+
                   <div className="ex-quick-bar">
                     <span className="ex-quick-stat">
                       容量 <strong>{fmt(exVolume, 0)} kg</strong>
                     </span>
                     <span className="ex-quick-stat">休息 {row.restSeconds ?? 90}s</span>
+                    <button
+                      type="button"
+                      className="ex-quick-rest-btn"
+                      onClick={() => openQuickHistory(row.exerciseId, snap?.name ?? row.exerciseId, mode)}
+                    >
+                      历史
+                    </button>
                     {!isHistoricalEdit ? (
                       <>
                         <button
@@ -2852,11 +3124,33 @@ export function WorkoutEditorModal({
                     )}
                   </div>
 
-                {refText ? (
+                {refText || prText ? (
                   <div className="ex-context-stack">
                     <div className="ex-last-row">
-                      <span>上次：{refText}</span>
-                      {!isTimed ? (
+                      {prText && refText ? (
+                        <button
+                          type="button"
+                          className="ex-ref-toggle-btn"
+                          title="点击切换查看上次记录 / 历史最佳 (PR)"
+                          onClick={() => {
+                            triggerHaptic("light");
+                            setShowBestRefIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(row.id)) next.delete(row.id);
+                              else next.add(row.id);
+                              return next;
+                            });
+                          }}
+                        >
+                          {showingPrRef ? `🏆 历史最佳：${prText}` : `上次：${refText}`}
+                          <small className="ex-ref-switch-hint">
+                            {showingPrRef ? " · 看上次" : " · 看 PR"}
+                          </small>
+                        </button>
+                      ) : (
+                        <span>{refText ? `上次：${refText}` : `🏆 历史最佳：${prText}`}</span>
+                      )}
+                      {!isTimed && refText ? (
                         <div className="ex-last-actions">
                           <button
                             type="button"
@@ -3099,23 +3393,34 @@ export function WorkoutEditorModal({
                         ? plateBreakdown(s.weight, barWeight, enabledPlates, platePairs)
                         : null;
                     const typeInfo = SET_TYPES[s.type];
+                    const cmpDir = compareSetAgainstReference(s, setRef, mode);
+                    const prHit = checkSetBeatsPrBaseline(s, mode, row.weightUnit, prBaseline);
+                    const isSetMenuOpen = openSetMenuId === s.id;
+                    const hasInlineMeta =
+                      Boolean(platesInfo?.valid) ||
+                      Boolean(setRef && !s.completed) ||
+                      Boolean(s.note) ||
+                      editingSetNoteId === s.id ||
+                      Boolean(cmpDir) ||
+                      Boolean(prHit) ||
+                      s.restAfterSeconds != null;
 
                     return (
                       <div key={s.id} className="set-block">
                         <div
                           className={`set-row${s.completed ? " is-complete" : ""}${
                             !isHistoricalEdit && setIdx === nextIncompleteSetIdx ? " is-next" : ""
-                          }`}
+                          }${isSetMenuOpen ? " has-open-menu" : ""}`}
                         >
                           <button
                             type="button"
-                            className="set-num-btn"
+                            className={`set-num-btn${isSetMenuOpen ? " is-menu-open" : ""}`}
                             data-type={s.type}
-                            title={`组别：${typeInfo.label}（点击切换）`}
+                            aria-expanded={isSetMenuOpen}
+                            title={`组别：${typeInfo.label}（点击展开组操作菜单）`}
                             onClick={() => {
                               triggerHaptic("light");
-                              const nextIdx = (SET_TYPE_ORDER.indexOf(s.type) + 1) % SET_TYPE_ORDER.length;
-                              updateSet(exIdx, setIdx, (cur) => ({ ...cur, type: SET_TYPE_ORDER[nextIdx]! }));
+                              setOpenSetMenuId((cur) => (cur === s.id ? null : s.id));
                             }}
                           >
                             {setIdx + 1}
@@ -3345,7 +3650,128 @@ export function WorkoutEditorModal({
                           </button>
                         </div>
 
-                        {platesInfo?.valid || (setRef && !s.completed) || s.note || editingSetNoteId === s.id || !s.completed ? (
+                        {isSetMenuOpen ? (
+                          <div className="set-action-menu" data-no-swipe="true">
+                            <div className="set-action-section">
+                              <span className="set-action-label">组别</span>
+                              <div className="set-action-pills">
+                                {SET_TYPE_ORDER.map((kind) => (
+                                  <button
+                                    key={kind}
+                                    type="button"
+                                    className="set-action-pill"
+                                    aria-pressed={s.type === kind}
+                                    onClick={() => {
+                                      triggerHaptic("light");
+                                      updateSet(exIdx, setIdx, (cur) => ({ ...cur, type: kind }));
+                                    }}
+                                  >
+                                    {SET_TYPES[kind].label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="set-action-section">
+                              <span className="set-action-label">快捷</span>
+                              <div className="set-action-pills">
+                                <button
+                                  type="button"
+                                  className="set-action-pill"
+                                  onClick={() => {
+                                    triggerHaptic("light");
+                                    setExercises((prev) =>
+                                      prev.map((ex, i) =>
+                                        i === exIdx
+                                          ? { ...ex, sets: duplicateSetInList(ex.sets, setIdx, newId) }
+                                          : ex,
+                                      ),
+                                    );
+                                    setOpenSetMenuId(null);
+                                  }}
+                                >
+                                  复制此组
+                                </button>
+                                {!isTimed ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      className="set-action-pill"
+                                      onClick={() => {
+                                        triggerHaptic("light");
+                                        setExercises((prev) =>
+                                          prev.map((ex, i) =>
+                                            i === exIdx
+                                              ? {
+                                                  ...ex,
+                                                  sets: insertDropSetAfter(ex.sets, setIdx, exWeightStep, newId),
+                                                }
+                                              : ex,
+                                          ),
+                                        );
+                                        setOpenSetMenuId(null);
+                                      }}
+                                    >
+                                      + 递减组 (80%)
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="set-action-pill"
+                                      onClick={() => {
+                                        triggerHaptic("light");
+                                        setExercises((prev) =>
+                                          prev.map((ex, i) =>
+                                            i === exIdx
+                                              ? { ...ex, sets: insertRestPauseSetAfter(ex.sets, setIdx, newId) }
+                                              : ex,
+                                          ),
+                                        );
+                                        setOpenSetMenuId(null);
+                                      }}
+                                    >
+                                      + 休停组
+                                    </button>
+                                  </>
+                                ) : null}
+                                <button
+                                  type="button"
+                                  className="set-action-pill"
+                                  onClick={() => {
+                                    setOpenSetMenuId(null);
+                                    setEditingSetNoteId(s.id);
+                                  }}
+                                >
+                                  {s.note ? "编辑备注" : "+ 组备注"}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="set-action-section">
+                              <span className="set-action-label">组后休息</span>
+                              <div className="set-action-pills">
+                                {([undefined, 0, 60, 90, 120, 180] as const).map((sec) => (
+                                  <button
+                                    key={sec ?? "default"}
+                                    type="button"
+                                    className="set-action-pill"
+                                    aria-pressed={s.restAfterSeconds === sec}
+                                    onClick={() => {
+                                      triggerHaptic("light");
+                                      updateSet(exIdx, setIdx, (cur) => {
+                                        const next = { ...cur };
+                                        if (sec == null) delete next.restAfterSeconds;
+                                        else next.restAfterSeconds = sec;
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    {sec == null ? "默认" : sec === 0 ? "免休" : `${sec}s`}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        {hasInlineMeta ? (
                           <div className="set-inline-meta">
                             {platesInfo?.valid ? (
                               <div className="set-inline-top">
@@ -3356,53 +3782,79 @@ export function WorkoutEditorModal({
                                 {deltaHint ? <span className="set-plate-delta">{deltaHint}</span> : null}
                               </div>
                             ) : null}
-                            <div className="set-inline-top">
-                              {setRef && !s.completed ? (
-                                <button
-                                  type="button"
-                                  className="set-ref-chip"
-                                  onClick={() => {
-                                    triggerHaptic("light");
-                                    updateSet(exIdx, setIdx, (cur) => ({
-                                      ...cur,
-                                      ...(isTimed
-                                        ? { seconds: setRef.seconds }
-                                        : { weight: setRef.weight, reps: setRef.reps || cur.reps }),
-                                    }));
-                                  }}
-                                >
-                                  上次 {isTimed ? `${setRef.seconds}s` : isAssisted ? `辅助${setRef.weight}×${setRef.reps}` : `${setRef.weight}×${setRef.reps}`} · 填入
-                                </button>
-                              ) : null}
-                              {editingSetNoteId === s.id ? (
-                                <input
-                                  type="text"
-                                  className="set-note-input"
-                                  maxLength={200}
-                                  autoFocus
-                                  placeholder="单组备注（如：暂停推 / 左肩微紧）"
-                                  value={s.note ?? ""}
-                                  onChange={(e) =>
-                                    updateSet(exIdx, setIdx, (cur) => ({ ...cur, note: e.target.value }))
-                                  }
-                                  onBlur={() => setEditingSetNoteId(null)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === "Escape") {
-                                      e.preventDefault();
-                                      setEditingSetNoteId(null);
+                            {(setRef && !s.completed) || cmpDir || prHit || s.restAfterSeconds != null || s.note || editingSetNoteId === s.id ? (
+                              <div className="set-inline-top">
+                                {prHit ? (
+                                  <span className="set-pr-badge" title="超越历史最佳纪录">
+                                    🏆 PR
+                                  </span>
+                                ) : null}
+                                {cmpDir ? (
+                                  <span
+                                    className={`set-cmp-arrow is-${cmpDir}`}
+                                    title={
+                                      cmpDir === "up"
+                                        ? "较上次同组进步"
+                                        : cmpDir === "down"
+                                          ? "较上次同组略低"
+                                          : "与上次同组持平"
                                     }
-                                  }}
-                                />
-                              ) : (
-                                <button
-                                  type="button"
-                                  className={`set-note-chip${s.note ? " has-note" : ""}`}
-                                  onClick={() => setEditingSetNoteId(s.id)}
-                                >
-                                  {s.note ? `备注：${s.note}` : "+ 组备注"}
-                                </button>
-                              )}
-                            </div>
+                                  >
+                                    {cmpDir === "up" ? "↑ 超上次" : cmpDir === "down" ? "↓ 略低" : "= 持平"}
+                                  </span>
+                                ) : null}
+                                {s.restAfterSeconds != null ? (
+                                  <span className="set-rest-override-badge">
+                                    {s.restAfterSeconds === 0 ? "组后免休" : `组后休 ${s.restAfterSeconds}s`}
+                                  </span>
+                                ) : null}
+                                {setRef && !s.completed ? (
+                                  <button
+                                    type="button"
+                                    className="set-ref-chip"
+                                    onClick={() => {
+                                      triggerHaptic("light");
+                                      updateSet(exIdx, setIdx, (cur) => ({
+                                        ...cur,
+                                        ...(isTimed
+                                          ? { seconds: setRef.seconds }
+                                          : { weight: setRef.weight, reps: setRef.reps || cur.reps }),
+                                      }));
+                                    }}
+                                  >
+                                    上次 {isTimed ? `${setRef.seconds}s` : isAssisted ? `辅助${setRef.weight}×${setRef.reps}` : `${setRef.weight}×${setRef.reps}`} · 填入
+                                  </button>
+                                ) : null}
+                                {editingSetNoteId === s.id ? (
+                                  <input
+                                    type="text"
+                                    className="set-note-input"
+                                    maxLength={200}
+                                    autoFocus
+                                    placeholder="单组备注（如：暂停推 / 左肩微紧）"
+                                    value={s.note ?? ""}
+                                    onChange={(e) =>
+                                      updateSet(exIdx, setIdx, (cur) => ({ ...cur, note: e.target.value }))
+                                    }
+                                    onBlur={() => setEditingSetNoteId(null)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === "Escape") {
+                                        e.preventDefault();
+                                        setEditingSetNoteId(null);
+                                      }
+                                    }}
+                                  />
+                                ) : s.note ? (
+                                  <button
+                                    type="button"
+                                    className="set-note-chip has-note"
+                                    onClick={() => setEditingSetNoteId(s.id)}
+                                  >
+                                    备注：{s.note}
+                                  </button>
+                                ) : null}
+                              </div>
+                            ) : null}
                           </div>
                         ) : null}
                       </div>
