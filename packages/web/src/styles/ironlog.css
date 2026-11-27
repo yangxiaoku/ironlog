@@ -4489,3 +4489,16 @@ dialog.cardio-dialog .dialog-head {
   flex: 1 1 140px;
   justify-content: center;
 }
+.apple-auto-chip-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.apple-auto-chip-actions .secondary-button,
+.apple-auto-chip-actions .quiet {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 11px;
+}

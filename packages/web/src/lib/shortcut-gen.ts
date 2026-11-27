@@ -1194,9 +1194,17 @@ function chooseFromMenuBlock({
 function wrapShortcutPlist(
   actionBlocks: string[],
   importQuestions: ShortcutImportQuestion[] = [],
-  options: { hasShortcutInputVariables?: boolean } = {},
+  options: { hasShortcutInputVariables?: boolean; triggersXml?: string[] } = {},
 ): string {
   const hasInputVarsTag = options.hasShortcutInputVariables ? "\t<true/>" : "\t<false/>";
+  const triggersLines = options.triggersXml?.length
+    ? [
+        "\t<key>WFWorkflowTriggers</key>",
+        "\t<array>",
+        ...options.triggersXml,
+        "\t</array>",
+      ]
+    : [];
   const importQuestionsLines = importQuestions.length
     ? [
         "\t<key>WFWorkflowImportQuestions</key>",
@@ -1239,6 +1247,7 @@ function wrapShortcutPlist(
     "\t<false/>",
     "\t<key>WFWorkflowHasShortcutInputVariables</key>",
     hasInputVarsTag,
+    ...triggersLines,
     "\t<key>WFWorkflowIcon</key>",
     "\t<dict>",
     "\t\t<key>WFWorkflowIconGlyphNumber</key>",
@@ -2380,6 +2389,325 @@ export function buildIronlogUnifiedAppleHubShortcut({
     metricCount: selectedMetrics.length,
     groups: selectedGroups,
     windowMinutes: resolvedMinutes,
+    xml,
+    base64: encodeShortcutXmlToBase64(xml),
+  };
+}
+
+export type AutomationTriggerSpec =
+  | { kind: "workout_start"; activityTypeIds: number[] }
+  | { kind: "workout_end_any" }
+  | { kind: "app_open"; bundleId: string; appName: string; teamId?: string };
+
+export interface AppleAutomationShortcutPreset {
+  id: string;
+  param: string;
+  label: string;
+  filenameStem: string;
+  triggerDesc: string;
+  group: "required" | "common" | "extra";
+  badge?: string;
+  trigger: AutomationTriggerSpec;
+}
+
+export const APPLE_AUTOMATION_SHORTCUT_PRESETS: ReadonlyArray<AppleAutomationShortcutPreset> = [
+  {
+    id: "end",
+    param: "end",
+    label: "结束任何体能训练",
+    filenameStem: "铁记-自动化-结束训练",
+    triggerDesc: "所有力量与有氧结束时共用这 1 条",
+    group: "required",
+    badge: "必配",
+    trigger: { kind: "workout_end_any" },
+  },
+  {
+    id: "daily",
+    param: "daily",
+    label: "打开「健康」App 同步每日",
+    filenameStem: "铁记-自动化-每日健康",
+    triggerDesc: "打开 iPhone「健康」App 时自动静默同步",
+    group: "required",
+    badge: "必配",
+    trigger: { kind: "app_open", bundleId: "com.apple.Health", appName: "健康", teamId: "0000000000" },
+  },
+  {
+    id: "strength",
+    param: "strength",
+    label: "传统力量训练",
+    filenameStem: "铁记-自动化-传统力量开始",
+    triggerDesc: "手表开始「传统力量训练」时",
+    group: "common",
+    trigger: { kind: "workout_start", activityTypeIds: [50] },
+  },
+  {
+    id: "cardio:run",
+    param: "cardio:run",
+    label: "跑步",
+    filenameStem: "铁记-自动化-跑步开始",
+    triggerDesc: "手表开始「跑步」时 · 室内/户外通用",
+    group: "common",
+    trigger: { kind: "workout_start", activityTypeIds: [37] },
+  },
+  {
+    id: "cardio:stair_climbing",
+    param: "cardio:stair_climbing",
+    label: "踏步机 / 爬楼机",
+    filenameStem: "铁记-自动化-爬楼开始",
+    triggerDesc: "手表开始「踏步机 / 爬楼梯」时",
+    group: "common",
+    trigger: { kind: "workout_start", activityTypeIds: [44, 68] },
+  },
+  {
+    id: "cardio:cycle",
+    param: "cardio:cycle",
+    label: "单车 / 骑行",
+    filenameStem: "铁记-自动化-单车开始",
+    triggerDesc: "手表开始「单车」时 · 室内/户外通用",
+    group: "common",
+    trigger: { kind: "workout_start", activityTypeIds: [13] },
+  },
+  {
+    id: "strength:functional",
+    param: "strength:functional",
+    label: "功能性力量训练",
+    filenameStem: "铁记-自动化-功能性力量开始",
+    triggerDesc: "手表开始「功能性力量训练」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [20] },
+  },
+  {
+    id: "strength:core",
+    param: "strength:core",
+    label: "核心训练",
+    filenameStem: "铁记-自动化-核心训练开始",
+    triggerDesc: "手表开始「核心训练」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [59] },
+  },
+  {
+    id: "cardio:walk",
+    param: "cardio:walk",
+    label: "步行",
+    filenameStem: "铁记-自动化-步行开始",
+    triggerDesc: "手表开始「步行」时 · 室内/户外通用",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [52] },
+  },
+  {
+    id: "cardio:elliptical",
+    param: "cardio:elliptical",
+    label: "椭圆机",
+    filenameStem: "铁记-自动化-椭圆机开始",
+    triggerDesc: "手表开始「椭圆机」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [16] },
+  },
+  {
+    id: "cardio:rowing",
+    param: "cardio:rowing",
+    label: "划船机",
+    filenameStem: "铁记-自动化-划船机开始",
+    triggerDesc: "手表开始「划船」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [35] },
+  },
+  {
+    id: "cardio:swimming",
+    param: "cardio:swimming",
+    label: "游泳",
+    filenameStem: "铁记-自动化-游泳开始",
+    triggerDesc: "手表开始「游泳」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [46] },
+  },
+  {
+    id: "cardio:hiit",
+    param: "cardio:hiit",
+    label: "高强度间歇 (HIIT)",
+    filenameStem: "铁记-自动化-HIIT开始",
+    triggerDesc: "手表开始「高强度间歇训练」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [63] },
+  },
+  {
+    id: "cardio:jump_rope",
+    param: "cardio:jump_rope",
+    label: "跳绳",
+    filenameStem: "铁记-自动化-跳绳开始",
+    triggerDesc: "手表开始「跳绳」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [64] },
+  },
+  {
+    id: "cardio:hiking",
+    param: "cardio:hiking",
+    label: "徒步",
+    filenameStem: "铁记-自动化-徒步开始",
+    triggerDesc: "手表开始「徒步」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [24] },
+  },
+  {
+    id: "cardio:mixed_cardio",
+    param: "cardio:mixed_cardio",
+    label: "混合有氧",
+    filenameStem: "铁记-自动化-混合有氧开始",
+    triggerDesc: "手表开始「混合有氧」时",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [73] },
+  },
+  {
+    id: "cardio:indoor_run",
+    param: "cardio:indoor_run",
+    label: "室内跑步（仅跑跑步机时可选）",
+    filenameStem: "铁记-自动化-室内跑步开始",
+    triggerDesc: "绑定「跑步」并固定记为室内",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [37] },
+  },
+  {
+    id: "cardio:outdoor_run",
+    param: "cardio:outdoor_run",
+    label: "户外跑步（仅路跑时可选）",
+    filenameStem: "铁记-自动化-户外跑步开始",
+    triggerDesc: "绑定「跑步」并固定记为户外",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [37] },
+  },
+  {
+    id: "cardio:indoor_cycle",
+    param: "cardio:indoor_cycle",
+    label: "室内单车（仅动感单车可选）",
+    filenameStem: "铁记-自动化-室内单车开始",
+    triggerDesc: "绑定「单车」并固定记为室内",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [13] },
+  },
+  {
+    id: "cardio:outdoor_cycle",
+    param: "cardio:outdoor_cycle",
+    label: "户外骑行（仅户外骑行可选）",
+    filenameStem: "铁记-自动化-户外骑行开始",
+    triggerDesc: "绑定「单车」并固定记为户外",
+    group: "extra",
+    trigger: { kind: "workout_start", activityTypeIds: [13] },
+  },
+];
+
+function buildTriggerEntryXml(trigger: AutomationTriggerSpec, triggerUuid: string): string {
+  if (trigger.kind === "workout_end_any") {
+    return [
+      "\t\t<dict>",
+      "\t\t\t<key>WFTriggerIdentifier</key>",
+      "\t\t\t<string>WFWorkoutTrigger</string>",
+      "\t\t\t<key>WFTriggerSerializedParameters</key>",
+      "\t\t\t<dict>",
+      "\t\t\t\t<key>WFWorkoutEvent</key>",
+      "\t\t\t\t<string>end</string>",
+      "\t\t\t</dict>",
+      "\t\t\t<key>WFTriggerUUID</key>",
+      `\t\t\t<string>${escapeXml(triggerUuid)}</string>`,
+      "\t\t</dict>",
+    ].join("\n");
+  }
+  if (trigger.kind === "app_open") {
+    return [
+      "\t\t<dict>",
+      "\t\t\t<key>WFTriggerIdentifier</key>",
+      "\t\t\t<string>WFAppInFocusTrigger</string>",
+      "\t\t\t<key>WFTriggerSerializedParameters</key>",
+      "\t\t\t<dict>",
+      "\t\t\t\t<key>WFSelectedApps</key>",
+      "\t\t\t\t<dict>",
+      "\t\t\t\t\t<key>BundleIdentifier</key>",
+      `\t\t\t\t\t<string>${escapeXml(trigger.bundleId)}</string>`,
+      "\t\t\t\t\t<key>Name</key>",
+      `\t\t\t\t\t<string>${escapeXml(trigger.appName)}</string>`,
+      "\t\t\t\t\t<key>TeamIdentifier</key>",
+      `\t\t\t\t\t<string>${escapeXml(trigger.teamId ?? "0000000000")}</string>`,
+      "\t\t\t\t</dict>",
+      "\t\t\t</dict>",
+      "\t\t\t<key>WFTriggerUUID</key>",
+      `\t\t\t<string>${escapeXml(triggerUuid)}</string>`,
+      "\t\t</dict>",
+    ].join("\n");
+  }
+  return [
+    "\t\t<dict>",
+    "\t\t\t<key>WFTriggerIdentifier</key>",
+    "\t\t\t<string>WFWorkoutTrigger</string>",
+    "\t\t\t<key>WFTriggerSerializedParameters</key>",
+    "\t\t\t<dict>",
+    "\t\t\t\t<key>WFWorkoutTypes</key>",
+    "\t\t\t\t<array>",
+    ...trigger.activityTypeIds.flatMap((id) => [
+      "\t\t\t\t\t<dict>",
+      "\t\t\t\t\t\t<key>activityType</key>",
+      `\t\t\t\t\t\t<integer>${id}</integer>`,
+      "\t\t\t\t\t</dict>",
+    ]),
+    "\t\t\t\t</array>",
+    "\t\t\t</dict>",
+    "\t\t\t<key>WFTriggerUUID</key>",
+    `\t\t\t<string>${escapeXml(triggerUuid)}</string>`,
+    "\t\t</dict>",
+  ].join("\n");
+}
+
+/**
+ * Generates a ready-to-import iOS Shortcuts automation (.shortcut) with native
+ * `WFWorkflowTriggers` (verified on iOS Shortcuts 5203.0.1) that passes the preset
+ * parameter to Ironlog's unified Apple Health Hub shortcut.
+ */
+export function buildIronlogAutomationShortcut({
+  presetId,
+  targetShortcutName = DEFAULT_APPLE_HUB_SHORTCUT_NAME,
+  uuidFactory = makeUuid,
+}: {
+  presetId: string;
+  targetShortcutName?: string;
+  uuidFactory?: () => string;
+}) {
+  const preset = APPLE_AUTOMATION_SHORTCUT_PRESETS.find((p) => p.id === presetId || p.param === presetId);
+  if (!preset) throw new Error(`未知的自动化预设：${presetId}`);
+  const cleanTarget = targetShortcutName.trim() || DEFAULT_APPLE_HUB_SHORTCUT_NAME;
+  const textUuid = uuidFactory();
+  const runUuid = uuidFactory();
+  const triggerUuid = uuidFactory();
+
+  const textAction = textActionXml({ uuid: textUuid, text: preset.param });
+  const runAction = actionBlockXml(
+    "is.workflow.actions.runworkflow",
+    [
+      "\t\t\t\t<key>UUID</key>",
+      `\t\t\t\t<string>${escapeXml(runUuid)}</string>`,
+      "\t\t\t\t<key>WFInput</key>",
+      actionOutputAttachmentXml({ outputUuid: textUuid, outputName: "Text", indent: 4 }),
+      "\t\t\t\t<key>WFWorkflow</key>",
+      "\t\t\t\t<dict>",
+      "\t\t\t\t\t<key>isSelf</key>",
+      "\t\t\t\t\t<false/>",
+      "\t\t\t\t\t<key>workflowName</key>",
+      `\t\t\t\t\t<string>${escapeXml(cleanTarget)}</string>`,
+      "\t\t\t\t</dict>",
+      "\t\t\t\t<key>WFWorkflowName</key>",
+      `\t\t\t\t<string>${escapeXml(cleanTarget)}</string>`,
+    ].join("\n"),
+  );
+
+  const xml = wrapShortcutPlist([textAction, runAction], [], {
+    hasShortcutInputVariables: false,
+    triggersXml: [buildTriggerEntryXml(preset.trigger, triggerUuid)],
+  });
+
+  const filename = `${preset.filenameStem}.shortcut`;
+  return {
+    filename,
+    shortcutName: preset.filenameStem,
+    param: preset.param,
+    label: preset.label,
+    targetShortcutName: cleanTarget,
     xml,
     base64: encodeShortcutXmlToBase64(xml),
   };

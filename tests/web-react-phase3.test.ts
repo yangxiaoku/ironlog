@@ -877,11 +877,8 @@ test("Watch-first Apple Health UI exposes one-tap automation copy panel and remo
 
   assert.match(appleModals, /export function AppleAutomationCopyPanel/);
   assert.match(appleModals, /export function AppleSyncStatusCard/);
-  assert.match(appleModals, /cardio:run/);
-  assert.match(appleModals, /cardio:cycle/);
-  assert.match(appleModals, /cardio:walk/);
-  assert.match(appleModals, /cardio:indoor_run/);
-  assert.match(appleModals, /cardio:stair_climbing/);
+  assert.match(appleModals, /APPLE_AUTOMATION_SHORTCUT_PRESETS/);
+  assert.match(appleModals, /buildIronlogAutomationShortcut/);
   assert.match(settingsView, /<AppleAutomationCopyPanel/);
   assert.match(settingsView, /<AppleSyncStatusCard/);
   assert.match(settingsView, /自动化参数 · 一键复制/);

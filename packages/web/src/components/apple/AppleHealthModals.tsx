@@ -7,6 +7,7 @@ import { duration, fmt, today } from "../../lib/date";
 import { FEELINGS } from "../../lib/domain";
 import { formatClock, triggerHaptic } from "../../lib/haptics-audio";
 import {
+  APPLE_AUTOMATION_SHORTCUT_PRESETS,
   APPLE_HEALTH_AUTO_METRICS,
   APPLE_HEALTH_DAILY_GROUPS,
   APPLE_HEALTH_DEFAULT_METRICS,
@@ -15,11 +16,13 @@ import {
   APPLE_SHORTCUT_SPORTS,
   DEFAULT_APPLE_HUB_SHORTCUT_NAME,
   assessServerOrigin,
+  buildIronlogAutomationShortcut,
   buildIronlogDailyHealthShortcut,
   buildIronlogEventShortcut,
   buildIronlogRecentWorkoutShortcut,
   buildIronlogUnifiedAppleHubShortcut,
   buildMacSignCommand,
+  type AppleAutomationShortcutPreset,
   type ShortcutEnvironment,
 } from "../../lib/shortcut-gen";
 import { writeWorkoutPreference } from "../../lib/workout-helpers";
@@ -959,41 +962,9 @@ const WIZARD_STEPS: ReadonlyArray<{ step: WizardStep; shortLabel: string }> = [
   { step: 5, shortLabel: "验证" },
 ];
 
-interface AppleAutomationPreset {
-  param: string;
-  label: string;
-  trigger: string;
-  badge?: string;
-}
-
-const REQUIRED_APPLE_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
-  { param: "end", label: "结束任何体能训练", trigger: "所有力量与有氧共用这 1 条", badge: "必配" },
-  { param: "daily", label: "每日定时同步健康", trigger: "特定时间（如每天 23:30）", badge: "必配" },
-];
-
-const COMMON_START_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
-  { param: "strength", label: "传统力量训练", trigger: "手表开始「传统力量训练」时" },
-  { param: "cardio:run", label: "跑步", trigger: "手表开始「跑步」时 · 室内/户外通用" },
-  { param: "cardio:stair_climbing", label: "踏步机 / 爬楼机", trigger: "手表开始「踏步机」时" },
-  { param: "cardio:cycle", label: "单车 / 骑行", trigger: "手表开始「单车」时 · 室内/户外通用" },
-];
-
-const EXTRA_START_AUTOMATIONS: ReadonlyArray<AppleAutomationPreset> = [
-  { param: "strength:functional", label: "功能性力量训练", trigger: "手表开始时" },
-  { param: "strength:core", label: "核心训练", trigger: "手表开始时" },
-  { param: "cardio:walk", label: "步行", trigger: "手表开始「步行」时 · 室内/户外通用" },
-  { param: "cardio:elliptical", label: "椭圆机", trigger: "手表开始时" },
-  { param: "cardio:rowing", label: "划船机", trigger: "手表开始时" },
-  { param: "cardio:swimming", label: "游泳", trigger: "手表开始时" },
-  { param: "cardio:hiit", label: "高强度间歇 (HIIT)", trigger: "手表开始时" },
-  { param: "cardio:jump_rope", label: "跳绳", trigger: "手表开始时" },
-  { param: "cardio:hiking", label: "徒步", trigger: "手表开始时" },
-  { param: "cardio:mixed_cardio", label: "混合有氧", trigger: "手表开始时" },
-  { param: "cardio:indoor_run", label: "室内跑步（仅跑跑步机时可选）", trigger: "绑定「跑步」并固定记为室内" },
-  { param: "cardio:outdoor_run", label: "户外跑步（仅路跑时可选）", trigger: "绑定「跑步」并固定记为户外" },
-  { param: "cardio:indoor_cycle", label: "室内单车（仅动感单车可选）", trigger: "绑定「单车」并固定记为室内" },
-  { param: "cardio:outdoor_cycle", label: "户外骑行（仅户外骑行可选）", trigger: "绑定「单车」并固定记为户外" },
-];
+const REQUIRED_APPLE_AUTOMATIONS = APPLE_AUTOMATION_SHORTCUT_PRESETS.filter((p) => p.group === "required");
+const COMMON_START_AUTOMATIONS = APPLE_AUTOMATION_SHORTCUT_PRESETS.filter((p) => p.group === "common");
+const EXTRA_START_AUTOMATIONS = APPLE_AUTOMATION_SHORTCUT_PRESETS.filter((p) => p.group === "extra");
 
 export function AppleAutomationCopyPanel({
   shortcutName = DEFAULT_APPLE_HUB_SHORTCUT_NAME,
@@ -1011,11 +982,11 @@ export function AppleAutomationCopyPanel({
     };
   }, []);
 
-  const handleCopy = (value: string, noticeLabel?: string) => {
+  const handleCopy = (value: string, noticeLabel?: string, trackKey = value) => {
     triggerHaptic("light");
     void copyText(value).then((ok) => {
       if (ok) {
-        setCopiedKey(value);
+        setCopiedKey(trackKey);
         if (timerRef.current != null) window.clearTimeout(timerRef.current);
         timerRef.current = window.setTimeout(() => setCopiedKey(""), 1800);
       }
@@ -1023,29 +994,77 @@ export function AppleAutomationCopyPanel({
     });
   };
 
-  const renderChip = (item: AppleAutomationPreset) => {
-    const isCopied = copiedKey === item.param;
+  const handleDownloadAutomation = (item: AppleAutomationShortcutPreset) => {
+    triggerHaptic("light");
+    try {
+      const built = buildIronlogAutomationShortcut({
+        presetId: item.id,
+        targetShortcutName: resolvedName,
+      });
+      triggerShortcutDownload(built.filename, built.xml);
+      notify(`已导出 ${built.filename}（含原生触发器，签名导入后开启开关即可）`);
+    } catch (err) {
+      notify((err as Error)?.message || "导出自动化快捷指令失败");
+    }
+  };
+
+  const handleCopyAutomationBase64 = (item: AppleAutomationShortcutPreset) => {
+    try {
+      const built = buildIronlogAutomationShortcut({
+        presetId: item.id,
+        targetShortcutName: resolvedName,
+      });
+      handleCopy(built.base64, `${built.filename} 的 Base64`, `b64:${item.id}`);
+    } catch (err) {
+      notify((err as Error)?.message || "生成 Base64 失败");
+    }
+  };
+
+  const renderChip = (item: AppleAutomationShortcutPreset) => {
+    const isCopiedParam = copiedKey === item.param;
+    const isCopiedB64 = copiedKey === `b64:${item.id}`;
     return (
-      <button
-        key={item.param}
-        type="button"
-        className={`apple-auto-chip${isCopied ? " is-copied" : ""}`}
-        onClick={() => handleCopy(item.param, `${item.label}（${item.param}）`)}
-      >
+      <div key={item.id} className={`apple-auto-chip${isCopiedParam || isCopiedB64 ? " is-copied" : ""}`}>
         <div className="apple-auto-chip-top">
           <strong>{item.label}</strong>
-          <span className="apple-auto-chip-badge">{isCopied ? "✓ 已复制" : item.badge ?? "复制"}</span>
+          {item.badge ? <span className="apple-auto-chip-badge">{item.badge}</span> : null}
         </div>
         <code className="apple-auto-chip-param">{item.param}</code>
-        <small>{item.trigger}</small>
-      </button>
+        <small>{item.triggerDesc}</small>
+        <div className="apple-auto-chip-actions">
+          <button
+            type="button"
+            className="secondary-button"
+            title="导出已预配原生触发器的 .shortcut 自动化文件"
+            onClick={() => handleDownloadAutomation(item)}
+          >
+            <Icon name="download" size={12} /> 导出自动化
+          </button>
+          <button
+            type="button"
+            className="quiet"
+            title="复制 Base64 供手机端签名导入"
+            onClick={() => handleCopyAutomationBase64(item)}
+          >
+            {isCopiedB64 ? "✓ Base64" : "Base64"}
+          </button>
+          <button
+            type="button"
+            className="quiet"
+            title="仅复制入参文本用于手动配置"
+            onClick={() => handleCopy(item.param, `${item.label}（${item.param}）`)}
+          >
+            {isCopiedParam ? "✓ 已复制" : "复制参数"}
+          </button>
+        </div>
+      </div>
     );
   };
 
   return (
     <div className="apple-auto-panel">
       <p className="apple-auto-hint">
-        在 iPhone <b>快捷指令 → 自动化 → ＋ → 立即运行</b> → 放 2 个动作：① <b>「文本」</b>粘贴下方参数 → ② <b>「运行快捷指令」</b>选目标指令即可。
+        支持<b>一键导出预配触发器的自动化 `.shortcut`</b>（签名导入后只需在「自动化」里打开开关即可，免手拼动作）；也可点击「复制参数」手动配置。
       </p>
 
       <div className="apple-auto-shortcut-bar">

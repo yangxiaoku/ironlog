@@ -15,6 +15,8 @@ import {
 } from "../web/src/shortcut-gen.js";
 import {
   buildIronlogDailyHealthShortcut as buildWebDailyHealthShortcut,
+  APPLE_AUTOMATION_SHORTCUT_PRESETS,
+  buildIronlogAutomationShortcut,
   buildIronlogUnifiedAppleHubShortcut,
 } from "../packages/web/src/lib/shortcut-gen.js";
 
@@ -550,4 +552,41 @@ test("buildIronlogUnifiedAppleHubShortcut 生成纯后台静默上报版（不�
   assert.match(stepQuery!, /<key>WFHKSampleFilteringGroupBy<\/key>\s*<string>Hour<\/string>/);
   assert.match(sleepQuery!, /<key>Property<\/key>\s*<string>Start Date<\/string>/);
   assert.match(sleepQuery!, /<key>Number<\/key>\s*<string>2<\/string>/);
+});
+
+test("buildIronlogAutomationShortcut 生成带原生 WFWorkflowTriggers 的自动化 .shortcut（开始/结束/打开健康）", () => {
+  assert.ok(APPLE_AUTOMATION_SHORTCUT_PRESETS.length >= 16);
+
+  const endAuto = buildIronlogAutomationShortcut({ presetId: "end" });
+  assertValidPlistStructure(endAuto.xml);
+  assert.equal(endAuto.filename, "铁记-自动化-结束训练.shortcut");
+  assert.ok(endAuto.xml.includes("<key>WFWorkflowTriggers</key>"));
+  assert.ok(endAuto.xml.includes("<string>WFWorkoutTrigger</string>"));
+  assert.ok(endAuto.xml.includes("<key>WFWorkoutEvent</key>\n\t\t\t\t<string>end</string>"));
+  assert.ok(!endAuto.xml.includes("<key>WFWorkoutTypes</key>"));
+  assert.ok(endAuto.xml.includes("<string>end</string>"));
+  assert.ok(endAuto.xml.includes("<string>is.workflow.actions.runworkflow</string>"));
+  assert.ok(!endAuto.xml.includes("workflowIdentifier"), "should resolve target shortcut by name without foreign UUID");
+
+  const dailyAuto = buildIronlogAutomationShortcut({ presetId: "daily" });
+  assertValidPlistStructure(dailyAuto.xml);
+  assert.equal(dailyAuto.filename, "铁记-自动化-每日健康.shortcut");
+  assert.ok(dailyAuto.xml.includes("<string>WFAppInFocusTrigger</string>"));
+  assert.ok(dailyAuto.xml.includes("<string>com.apple.Health</string>"));
+  assert.ok(dailyAuto.xml.includes("<string>daily</string>"));
+
+  const stairAuto = buildIronlogAutomationShortcut({ presetId: "cardio:stair_climbing" });
+  assertValidPlistStructure(stairAuto.xml);
+  assert.ok(stairAuto.xml.includes("<key>activityType</key>\n\t\t\t\t\t\t<integer>44</integer>"));
+  assert.ok(stairAuto.xml.includes("<key>activityType</key>\n\t\t\t\t\t\t<integer>68</integer>"));
+  assert.ok(stairAuto.xml.includes("<string>cardio:stair_climbing</string>"));
+
+  const runAuto = buildIronlogAutomationShortcut({ presetId: "cardio:run" });
+  assertValidPlistStructure(runAuto.xml);
+  assert.ok(runAuto.xml.includes("<key>activityType</key>\n\t\t\t\t\t\t<integer>37</integer>"));
+  assert.ok(runAuto.xml.includes("<string>cardio:run</string>"));
+
+  const strengthAuto = buildIronlogAutomationShortcut({ presetId: "strength" });
+  assertValidPlistStructure(strengthAuto.xml);
+  assert.ok(strengthAuto.xml.includes("<key>activityType</key>\n\t\t\t\t\t\t<integer>50</integer>"));
 });
