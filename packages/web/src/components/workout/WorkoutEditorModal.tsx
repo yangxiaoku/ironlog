@@ -3341,10 +3341,7 @@ export function WorkoutEditorModal({
                   <div className="ex-benchmark-box">
                     <div className="ex-benchmark-strip" aria-label="动作重量与历史基准">
                       <div className="ex-benchmark-card is-primary">
-                        <span>
-                          {benchmark.lastTopLabel}
-                          {refDate ? <small> · {shortDate(refDate)}</small> : null}
-                        </span>
+                        <span>{benchmark.lastTopLabel}</span>
                         <strong>{benchmark.lastTopValue}</strong>
                       </div>
                       <div className="ex-benchmark-card">
@@ -3361,7 +3358,7 @@ export function WorkoutEditorModal({
                       <div className="ex-benchmark-foot">
                         {benchmark.lastSummary ? (
                           <span className="ex-benchmark-sets" title="上次训练工作组记录">
-                            上次各组：{benchmark.lastSummary}
+                            上次{refDate ? ` (${shortDate(refDate)})` : ""}：{benchmark.lastSummary}
                           </span>
                         ) : null}
                         <div className="ex-benchmark-actions">
