@@ -269,7 +269,38 @@ export function LoadChart({
   const barW = Math.min(24, Math.max(3, colW * 0.6));
   const rx = Math.min(7, barW / 2);
   const latestIdx = useMemo(() => series.findLastIndex((row) => row.value > 0), [series]);
+  const firstActiveIdx = useMemo(() => series.findIndex((row) => row.value > 0), [series]);
+  const showSparseStartMarker = firstActiveIdx > 0 && firstActiveIdx >= Math.floor(count * 0.3);
   const baseY = y(0);
+
+  const fourthMetric =
+    metric === "volume"
+      ? {
+          label: "累计总量",
+          value: fmt(data.totals.volume, 0),
+          unit: "kg",
+          sub: `${fmt(data.totals.sets)} 组`,
+        }
+      : metric === "sets"
+        ? {
+            label: "累计工作组",
+            value: fmt(data.totals.sets, 0),
+            unit: "组",
+            sub: `${fmt(data.totals.workouts)} 次力量`,
+          }
+        : metric === "workouts"
+          ? {
+              label: "总容量",
+              value: fmt(data.totals.volume, 0),
+              unit: "kg",
+              sub: `${fmt(data.totals.sets)} 组`,
+            }
+          : {
+              label: "累计时长",
+              value: duration(data.totals.seconds),
+              unit: "",
+              sub: `${fmt(data.totals.timedWorkouts)} 次计时`,
+            };
 
   return (
     <section className="panel panel-load" id="panel-load">
@@ -331,11 +362,32 @@ export function LoadChart({
               const row = series[idx]!;
               const cx = left + (innerW * (idx + 0.5)) / count;
               return (
-                <text key={idx} x={cx} y={height - 8} textAnchor="middle">
-                  {shortDate(row.date)}
-                </text>
+                <g key={idx}>
+                  <line x1={cx} y1={top} x2={cx} y2={baseY} className="gridline-v" />
+                  <text x={cx} y={height - 8} textAnchor="middle">
+                    {shortDate(row.date)}
+                  </text>
+                </g>
               );
             })}
+
+            {showSparseStartMarker && series[firstActiveIdx] ? (() => {
+              const startX = left + (innerW * (firstActiveIdx + 0.5)) / count;
+              const alignRight = startX > width - right - 54;
+              return (
+                <g className="chart-start-marker" aria-hidden="true">
+                  <line x1={startX} y1={top + 4} x2={startX} y2={baseY} className="gridline-start" />
+                  <text
+                    x={alignRight ? startX - 5 : startX + 5}
+                    y={top + 11}
+                    textAnchor={alignRight ? "end" : "start"}
+                    className="chart-start-label"
+                  >
+                    起点 {shortDate(series[firstActiveIdx]!.date)}
+                  </text>
+                </g>
+              );
+            })() : null}
 
             {series.map((row, idx) => {
               const val = row.value;
@@ -428,6 +480,14 @@ export function LoadChart({
               <strong>
                 {fmt(activeDays)} <small>/ {data.period} 天</small>
               </strong>
+            </div>
+            <div>
+              <span>{fourthMetric.label}</span>
+              <strong>
+                {fourthMetric.value}
+                {fourthMetric.unit ? <> <small>{fourthMetric.unit}</small></> : null}
+              </strong>
+              {fourthMetric.sub ? <small>{fourthMetric.sub}</small> : null}
             </div>
           </div>
 
@@ -806,10 +866,33 @@ export function WeightChart({
         ))}
 
         {dateMarks.map((mark) => (
-          <text key={mark.date} x={mark.x} y={height - 8} textAnchor="middle">
-            {shortDate(mark.date)}
-          </text>
+          <g key={mark.date}>
+            <line x1={mark.x} y1={top} x2={mark.x} y2={height - bottom} className="gridline-v" />
+            <text x={mark.x} y={height - 8} textAnchor="middle">
+              {shortDate(mark.date)}
+            </text>
+          </g>
         ))}
+
+        {primaryPoints[0] && primaryPoints[0].px - left > innerW * 0.3 ? (
+          <g className="chart-start-marker" aria-hidden="true">
+            <line
+              x1={primaryPoints[0].px}
+              y1={top + 4}
+              x2={primaryPoints[0].px}
+              y2={height - bottom}
+              className="gridline-start"
+            />
+            <text
+              x={primaryPoints[0].px > width - right - 54 ? primaryPoints[0].px - 5 : primaryPoints[0].px + 5}
+              y={top + 11}
+              textAnchor={primaryPoints[0].px > width - right - 54 ? "end" : "start"}
+              className="chart-start-label"
+            >
+              首条 {shortDate(primaryPoints[0].row.date)}
+            </text>
+          </g>
+        ) : null}
 
         {goal != null ? (
           <path d={`M${left},${y(goal)}H${width - right}`} className="goal-line">

@@ -4881,3 +4881,146 @@ dialog.cardio-dialog .dialog-head {
   min-width: 64px;
   padding: 5px 8px !important;
 }
+
+/* ===== Visual Audit Batch 3: Overview Charts, Analytics & Desktop Settings ===== */
+/* 9. Overview: 4-cell symmetric LoadChart metrics, sparse reference gridlines & equal-height desktop cards */
+.chart .gridline-v {
+  stroke: var(--edge);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  opacity: 0.45;
+}
+.chart .gridline-start {
+  stroke: color-mix(in srgb, var(--red) 45%, var(--edge));
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.chart .chart-start-label {
+  font: 500 10px var(--mono);
+  fill: var(--muted);
+}
+.load-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+}
+@media (max-width: 819px) {
+  .load-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .load-metrics > div:nth-child(3) {
+    grid-column: auto !important;
+    border-left: 0 !important;
+  }
+  .load-metrics > div:nth-child(4) {
+    border-left: 1px dotted var(--rule) !important;
+  }
+}
+@media (min-width: 960px) {
+  .dashboard {
+    align-items: stretch !important;
+  }
+  .dashboard > .panel-load {
+    display: flex;
+    flex-direction: column;
+  }
+  .dashboard > .panel-load .chart-wrap {
+    flex: 1 1 auto;
+    align-content: center;
+  }
+}
+
+/* 10. Analytics: single-row period pills, clean KPI selection without half-cut red bar, 2-col mobile recovery, full-width adherence & ACWR edge safety */
+.masthead-analytics .period-controls {
+  max-width: 100%;
+  min-width: 0;
+}
+.analytics-period-segments {
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  overflow-x: auto !important;
+  max-width: 100%;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.analytics-period-segments::-webkit-scrollbar {
+  display: none;
+}
+.analytics-period-segments button {
+  flex: 0 0 auto !important;
+  white-space: nowrap !important;
+  padding: 6px 10px !important;
+}
+.kpi-card-btn.is-selected::after {
+  display: none !important;
+  content: none !important;
+}
+.kpi-card-btn.is-selected {
+  background: color-mix(in srgb, var(--accent, var(--red)) 6%, var(--surface)) !important;
+}
+.kpi-card-btn.is-selected .kpi-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent, var(--red));
+  margin-right: 6px;
+  vertical-align: 1px;
+}
+.panel-plan-adherence {
+  grid-column: 1 / -1 !important;
+}
+.acwr-gauge-strip {
+  padding-inline: 2px;
+}
+.acwr-pointer.is-near-right {
+  transform: translateX(-82%) !important;
+}
+.acwr-pointer.is-near-left {
+  transform: translateX(-18%) !important;
+}
+@media (max-width: 630px) {
+  .apple-signal-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+  .apple-signal-card {
+    padding: 10px !important;
+    gap: 3px !important;
+  }
+  .apple-signal-top {
+    flex-wrap: wrap;
+    gap: 4px !important;
+    font-size: 11px !important;
+  }
+  .apple-signal-top .kpi-pill {
+    font-size: 10px !important;
+    padding: 1px 6px !important;
+  }
+  .apple-signal-card strong {
+    font-size: 15px !important;
+  }
+  .apple-signal-card small {
+    font-size: 11px !important;
+    line-height: 1.35 !important;
+  }
+  .apple-signal-card:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+    border-right: 0;
+  }
+}
+
+/* 11. Desktop Settings: restrain oversized Apple Health CTAs & toggles */
+@media (min-width: 820px) {
+  .settings-hero-cta {
+    max-width: 440px;
+  }
+  .settings-quick-grid {
+    max-width: 440px;
+  }
+  .apple-auto-toolbar {
+    max-width: 560px;
+  }
+  .apple-auto-format-seg {
+    max-width: 320px;
+    width: auto;
+  }
+}

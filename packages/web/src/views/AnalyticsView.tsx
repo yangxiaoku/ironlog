@@ -315,7 +315,7 @@ export function AnalyticsView() {
               }}
             />
           </label>
-          <div className="segments">
+          <div className="segments analytics-period-segments">
             {ANALYTICS_PERIODS.map((days) => (
               <button key={days} type="button" aria-pressed={period === days} onClick={() => setPeriod(days)}>
                 {days} 天
@@ -1046,13 +1046,20 @@ export function AnalyticsView() {
                   <div className="zone-bar sweet" title="正常 (0.8–1.3)" />
                   <div className="zone-bar caution" title="偏高 (1.3–1.5)" />
                   <div className="zone-bar danger" title="过高 (≥1.5)" />
-                  <div
-                    className="acwr-pointer"
-                    style={{ left: `${Math.min(100, Math.max(0, (currAcwr.acwr / 2.0) * 100))}%` }}
-                  >
-                    <i />
-                    <b>{fmt(currAcwr.acwr, 2)}</b>
-                  </div>
+                  {(() => {
+                    const pointerPct = Math.min(97, Math.max(3, (currAcwr.acwr / 2.0) * 100));
+                    const edgeClass =
+                      pointerPct >= 88 ? " is-near-right" : pointerPct <= 12 ? " is-near-left" : "";
+                    return (
+                      <div
+                        className={`acwr-pointer${edgeClass}`}
+                        style={{ left: `${pointerPct}%` }}
+                      >
+                        <i />
+                        <b>{fmt(currAcwr.acwr, 2)}</b>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="acwr-zone-legend" aria-hidden="true">
                   <span>&lt;0.8 偏低</span>
