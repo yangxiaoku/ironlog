@@ -12,6 +12,7 @@ import {
 } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
 import { enqueueMutation, getOfflineStorage, isNetworkError } from "../../lib/offline-queue";
+import { PROFILE_VERSION_EVENT } from "../../lib/workout-helpers";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -162,13 +163,16 @@ export function DietEditorModal({
     }
     setSavingQuickFood(true);
     try {
-      const res = await apiFetch<{ quickFoods?: QuickFoodItem[] }>("/api/web/profile/quick-foods", {
+      const res = await apiFetch<{ quickFoods?: QuickFoodItem[]; version?: number }>("/api/web/profile/quick-foods", {
         method: "PUT",
         body,
       });
       if (Array.isArray(res?.quickFoods)) {
         setQuickFoods(res.quickFoods);
         writeLocalQuickFoods(userId, res.quickFoods);
+      }
+      if (typeof res?.version === "number" && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
       }
       bumpDataEpoch();
       notify(toastMsg);
@@ -233,8 +237,7 @@ export function DietEditorModal({
     setter(decimals ? String(Math.round(next * 10) / 10) : String(Math.round(next)));
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const submitDiet = async (keepOpen: boolean) => {
     if (saving) return;
     const cleanName = name.trim();
     if (!cleanName) {
@@ -267,8 +270,18 @@ export function DietEditorModal({
       await apiFetch("/api/records", { method: "POST", body: payload });
       triggerHaptic("success");
       bumpDataEpoch();
-      closeAllModals();
-      notify(record ? "饮食记录已更新" : "饮食已记录");
+      if (keepOpen && !record) {
+        setName("");
+        setCalories("0");
+        setProtein("0");
+        setCarbs("0");
+        setFat("0");
+        clearScale();
+        notify(`已保存「${cleanName}」，可继续录入下一项`);
+      } else {
+        closeAllModals();
+        notify(record ? "饮食记录已更新" : "饮食已记录");
+      }
     } catch (err) {
       if (isNetworkError(err) && userId) {
         const queued = enqueueMutation(getOfflineStorage(), userId, {
@@ -283,14 +296,29 @@ export function DietEditorModal({
           return;
         }
         refreshPendingCount(userId);
-        closeAllModals();
-        notify("离线状态：已保存在本地，恢复网络后自动同步");
+        if (keepOpen && !record) {
+          setName("");
+          setCalories("0");
+          setProtein("0");
+          setCarbs("0");
+          setFat("0");
+          clearScale();
+          notify(`离线状态：已暂存「${cleanName}」，可继续录入`);
+        } else {
+          closeAllModals();
+          notify("离线状态：已保存在本地，恢复网络后自动同步");
+        }
         return;
       }
       setError((err as Error)?.message || "保存失败，请重试");
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    await submitDiet(false);
   };
 
   const handleDelete = () => {
@@ -425,9 +453,16 @@ export function DietEditorModal({
                   disabled={savingQuickFood}
                   aria-label={`移除常用单品 ${q.name}`}
                   onClick={() => {
-                    const nextList = quickFoods.filter((x) => x.id !== q.id);
-                    if (scaleBase?.baseName === q.name) clearScale();
-                    void mutateQuickFoodsRemote(nextList, { removeId: q.id }, `已移除「${q.name}」`);
+                    openConfirm({
+                      title: "移除常用单品",
+                      message: `确定要从个人常用单品中移除「${q.name}」吗？`,
+                      confirmLabel: "移除",
+                      onConfirm: () => {
+                        const nextList = quickFoods.filter((x) => x.id !== q.id);
+                        if (scaleBase?.baseName === q.name) clearScale();
+                        void mutateQuickFoodsRemote(nextList, { removeId: q.id }, `已移除「${q.name}」`);
+                      },
+                    });
                   }}
                 >
                   ×
@@ -652,10 +687,16 @@ export function DietEditorModal({
         </div>
       </div>
 
-      {estimatedKcal > 0 ? (
+      {estimatedKcal > 0 || (name.trim() && (Number(calories) || 0) > 0) ? (
         <div className="macro-calc-bar">
           <span className="macro-calc-hint">
-            按三大营养素折算约 <strong>{fmt(estimatedKcal, 0)}</strong> kcal <small>(4·4·9)</small>
+            {estimatedKcal > 0 ? (
+              <>
+                按三大营养素折算约 <strong>{fmt(estimatedKcal, 0)}</strong> kcal <small>(4·4·9)</small>
+              </>
+            ) : (
+              <>可保存当前单品，下次一键快填</>
+            )}
           </span>
           <div className="diet-calc-actions">
             {name.trim() ? (
@@ -668,16 +709,18 @@ export function DietEditorModal({
                 {savingQuickFood ? "收藏中…" : "存为常用单品"}
               </button>
             ) : null}
-            <button
-              type="button"
-              className="quiet macro-calc-apply"
-              onClick={() => {
-                triggerHaptic("light");
-                setCalories(String(estimatedKcal));
-              }}
-            >
-              填入热量
-            </button>
+            {estimatedKcal > 0 ? (
+              <button
+                type="button"
+                className="quiet macro-calc-apply"
+                onClick={() => {
+                  triggerHaptic("light");
+                  setCalories(String(estimatedKcal));
+                }}
+              >
+                填入热量
+              </button>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -686,7 +729,7 @@ export function DietEditorModal({
         {error}
       </p>
 
-      <footer className={`dialog-foot${record ? " has-remove" : ""}`}>
+      <footer className={`dialog-foot${record ? " has-remove" : ""}`} style={{ flexWrap: "wrap", gap: 8 }}>
         {record ? (
           <button type="button" className="danger" onClick={handleDelete}>
             删除记录
@@ -696,9 +739,21 @@ export function DietEditorModal({
             取消
           </button>
         )}
-        <button type="submit" className="primary-button" disabled={saving}>
-          {saving ? "保存中…" : record ? "保存修改" : "保存饮食"}
-        </button>
+        <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+          {!record ? (
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={saving}
+              onClick={() => void submitDiet(true)}
+            >
+              保存并继续
+            </button>
+          ) : null}
+          <button type="submit" className="primary-button" disabled={saving}>
+            {saving ? "保存中…" : record ? "保存修改" : "保存饮食"}
+          </button>
+        </div>
       </footer>
     </form>
   );

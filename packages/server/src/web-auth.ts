@@ -12,7 +12,7 @@ const username = z.string().max(100)
 const password = z.string()
   .min(10, "密码至少 10 个字符")
   .max(128, "密码最多 128 个字符")
-  .refine((value) => !/[^A-Za-z0-9]/.test(value), "密码只能包含英文字母和数字");
+  .refine((value) => /^[\x21-\x7E]+$/.test(value), "密码只能包含英文字母、数字及常见符号（不含空格）");
 export const webCredentialsInput = z.object({ username, password });
 export const webLoginInput = webCredentialsInput.extend({ password: z.string().min(1).max(128) });
 export const webPasswordChangeInput = z.object({

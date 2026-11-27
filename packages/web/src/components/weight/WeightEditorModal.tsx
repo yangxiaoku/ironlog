@@ -67,7 +67,7 @@ export function WeightEditorModal({
     dirtyRef.current = true;
     const cur = Number(weight) || defaultWeight || 65;
     const next = Math.max(1, Math.min(500, Math.round((cur + delta) * 100) / 100));
-    setWeight(next.toFixed(1));
+    setWeight(Number.isInteger(Math.round(next * 100) / 10) ? next.toFixed(1) : next.toFixed(2));
   };
 
   const handleSubmit = async (e: FormEvent) => {
@@ -170,6 +170,7 @@ export function WeightEditorModal({
   };
 
   const yesterday = shiftDateStr(todayStr, -1);
+  const dayBeforeYesterday = shiftDateStr(todayStr, -2);
 
   return (
     <form className="dialog-form modern-weight-form" onSubmit={(e) => void handleSubmit(e)}>
@@ -192,6 +193,15 @@ export function WeightEditorModal({
             onClick={() => setDate(yesterday)}
           >
             昨天
+          </button>
+          <button
+            type="button"
+            className="date-pill"
+            aria-pressed={date === dayBeforeYesterday}
+            disabled={Boolean(record)}
+            onClick={() => setDate(dayBeforeYesterday)}
+          >
+            前天
           </button>
         </div>
         <input

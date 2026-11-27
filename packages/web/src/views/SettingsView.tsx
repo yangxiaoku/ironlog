@@ -379,8 +379,8 @@ export function SettingsView() {
       setPwdError("两次输入的新密码不一致");
       return;
     }
-    if (newPassword.length < 10 || /[^A-Za-z0-9]/.test(newPassword)) {
-      setPwdError("新密码需为 10–128 位英文字母和数字");
+    if (newPassword.length < 10 || !/^[\x21-\x7E]+$/.test(newPassword)) {
+      setPwdError("新密码需为 10–128 位英文字母、数字或常见符号（不含空格）");
       return;
     }
     setPwdSaving(true);
@@ -1388,9 +1388,9 @@ export function SettingsView() {
                               autoComplete="new-password"
                               minLength={10}
                               maxLength={128}
-                              pattern="[A-Za-z0-9]{10,128}"
+                              pattern="[!-~]{10,128}"
                               required
-                              placeholder="至少 10 位字母或数字"
+                              placeholder="至少 10 位，支持字母、数字及符号"
                               value={newPassword}
                               onChange={(e) => setNewPassword(e.target.value)}
                             />
@@ -1402,7 +1402,7 @@ export function SettingsView() {
                               autoComplete="new-password"
                               minLength={10}
                               maxLength={128}
-                              pattern="[A-Za-z0-9]{10,128}"
+                              pattern="[!-~]{10,128}"
                               required
                               placeholder="再次输入新密码"
                               value={confirmPassword}

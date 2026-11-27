@@ -195,6 +195,11 @@ export function ShareCardModal({ date, singleReport = null, singleHealth = null,
               系统分享
             </button>
           ) : null}
+          {rendered && !canNativeShare ? (
+            <small className="muted" style={{ fontSize: 11.5 }}>
+              手机可长按上方海报直接存相册
+            </small>
+          ) : null}
           {rendered ? (
             <a className="primary-button" id="download-share-card" href={rendered.dataUrl} download={rendered.filename}>
               <Icon name="download" size={15} /> 下载 PNG 图片

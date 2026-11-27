@@ -499,7 +499,11 @@ export function AnalyticsView() {
       notify("当前区间暂无可导出的健康与训练记录");
       return;
     }
-    const csvCell = (val: unknown) => `"${String(val ?? "").replace(/"/g, '""')}"`;
+    const csvCell = (val: unknown) => {
+      const raw = String(val ?? "");
+      const safe = /^[=+\-@\t\r]/.test(raw) ? `'${raw}` : raw;
+      return `"${safe.replace(/"/g, '""')}"`;
+    };
     const lines: string[] = [
       [
         "记录类型",

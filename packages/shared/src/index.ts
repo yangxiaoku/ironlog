@@ -312,6 +312,7 @@ export const profileSchema = z.object({
   protein: nonnegative.default(150),
   carbs: nonnegative.default(220),
   fat: nonnegative.default(65),
+  waterGoalMl: z.number().int().min(500).max(10000).default(2000),
   targetWeight: z.number().min(1).max(500).nullable().default(null),
   restSeconds: z.number().int().min(0).max(900).default(90),
   goal: z.string().max(1000).default(""),

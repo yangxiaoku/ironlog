@@ -10,12 +10,13 @@ export function AuthScreen() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const confirmRef = useRef<HTMLInputElement>(null);
 
   const registering = authMode === "register";
   const label = authenticating ? (registering ? "正在注册…" : "正在登录…") : registering ? "注册账号" : "登录";
-  const passwordPattern = registering ? "[A-Za-z0-9]{10,128}" : undefined;
+  const passwordPattern = registering ? "[!-~]{10,128}" : undefined;
 
   const switchMode = (next: AuthMode) => {
     setAuthMode(next);
@@ -92,18 +93,28 @@ export function AuthScreen() {
         </label>
 
         <label className="field">
-          <span>密码</span>
+          <span style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>密码</span>
+            <button
+              type="button"
+              className="quiet"
+              style={{ padding: "0 4px", minHeight: 22, fontSize: 12 }}
+              onClick={() => setShowPassword((v) => !v)}
+            >
+              {showPassword ? "隐藏" : "显示"}
+            </button>
+          </span>
           <input
             name="password"
-            type="password"
+            type={showPassword ? "text" : "password"}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
             maxLength={128}
             minLength={registering ? 10 : undefined}
             pattern={passwordPattern}
-            title={registering ? "请输入至少 10 个英文字母或数字" : undefined}
-            placeholder={registering ? "至少 10 个字母或数字" : undefined}
+            title={registering ? "请输入 10–128 位英文字母、数字或常见符号（不含空格）" : undefined}
+            placeholder={registering ? "至少 10 位，支持字母、数字及符号" : undefined}
             autoComplete={registering ? "new-password" : "current-password"}
           />
         </label>
@@ -114,14 +125,14 @@ export function AuthScreen() {
             <input
               ref={confirmRef}
               name="confirm"
-              type="password"
+              type={showPassword ? "text" : "password"}
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               maxLength={128}
               minLength={10}
-              pattern="[A-Za-z0-9]{10,128}"
-              title="请输入至少 10 个英文字母或数字"
+              pattern="[!-~]{10,128}"
+              title="请输入 10–128 位英文字母、数字或常见符号（不含空格）"
               autoComplete="new-password"
             />
           </label>

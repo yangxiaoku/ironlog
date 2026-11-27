@@ -559,6 +559,25 @@ export function createApp(
       return { complete: true };
     }).immediate());
   });
+  app.delete("/api/web/nutrition-day", (c) => {
+    const date = z.iso.date().parse(c.req.query("date"));
+    const userId = c.get("userId");
+    return c.json(db.transaction(() => {
+      const id = "nutritionDay_" + date;
+      const record = store.get(userId, "nutritionDay", id);
+      if (record && !record.deleted) {
+        store.mutate(userId, {
+          kind: "nutritionDay",
+          id,
+          opId: crypto.randomUUID(),
+          baseVersion: record.version,
+          deleted: true,
+          data: record.data,
+        });
+      }
+      return { complete: false };
+    }).immediate());
+  });
   app.get("/api/web/profile", (c) => {
     const record = store.get(c.get("userId"), "profile", "settings");
     return c.json({ profile: profileSchema.parse(record?.deleted ? {} : record?.data ?? {}), version: record?.version ?? 0 });
@@ -665,6 +684,26 @@ export function createApp(
       });
       if (result.status === "conflict") throw new DomainError("个人食物库已在其他设备更新，请重新加载", 409);
       return { quickFoods: nextQuickFoods, version: result.record!.version };
+    }).immediate());
+  });
+  app.put("/api/web/profile/water-goal", async (c) => {
+    const { waterGoalMl } = z.object({ waterGoalMl: z.number().int().min(500).max(10000) }).parse(await c.req.json());
+    const userId = c.get("userId");
+    return c.json(db.transaction(() => {
+      const existing = store.get(userId, "profile", "settings");
+      const baseVersion = existing?.version ?? 0;
+      const previous = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
+      const nextProfile = { ...previous, waterGoalMl };
+      const result = store.mutate(userId, {
+        id: "settings",
+        kind: "profile",
+        opId: crypto.randomUUID(),
+        baseVersion,
+        data: nextProfile,
+        deleted: false,
+      });
+      if (result.status === "conflict") throw new DomainError("饮水目标已在其他设备更新，请重新加载", 409);
+      return { waterGoalMl, version: result.record!.version };
     }).immediate());
   });
   app.get(`${apple}/tokens`, (c) => c.json(health.devices(c.get("userId"))));

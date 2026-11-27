@@ -1189,3 +1189,42 @@ test("Batch 2 P1 upgrades: superset auto-alternation defers rest until round com
   assert.match(workoutView, /丢弃未保存训练草稿/);
   assert.match(css, /\.live-workout-bar-stack\s*\{[^}]*position:\s*sticky;/);
 });
+
+test("Batch 3 P2 polish: diet save-and-continue, water -250ml/unmark, draft edit/delete, weight ranges, password/nav/share fixes", () => {
+  const dietModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/diet/DietEditorModal.tsx"), "utf8");
+  const dietView = readFileSync(resolve(process.cwd(), "packages/web/src/views/DietView.tsx"), "utf8");
+  const weightModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/weight/WeightEditorModal.tsx"), "utf8");
+  const weightView = readFileSync(resolve(process.cwd(), "packages/web/src/views/WeightView.tsx"), "utf8");
+  const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+  const authScreen = readFileSync(resolve(process.cwd(), "packages/web/src/components/AuthScreen.tsx"), "utf8");
+  const appShell = readFileSync(resolve(process.cwd(), "packages/web/src/components/AppShell.tsx"), "utf8");
+  const cmdk = readFileSync(resolve(process.cwd(), "packages/web/src/components/CommandPaletteModal.tsx"), "utf8");
+  const exercisesView = readFileSync(resolve(process.cwd(), "packages/web/src/views/ExercisesView.tsx"), "utf8");
+  const shareCard = readFileSync(resolve(process.cwd(), "packages/web/src/lib/share-card.ts"), "utf8");
+  const shareModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/share/ShareCardModal.tsx"), "utf8");
+  const analyticsView = readFileSync(resolve(process.cwd(), "packages/web/src/views/AnalyticsView.tsx"), "utf8");
+
+  assert.match(dietModal, /保存并继续/);
+  assert.match(dietModal, /移除常用单品/);
+  assert.match(dietModal, /PROFILE_VERSION_EVENT/);
+  assert.match(dietView, /-250ml/);
+  assert.match(dietView, /取消标记/);
+  assert.match(dietView, /\/api\/web\/profile\/water-goal/);
+  assert.match(weightModal, /前天/);
+  assert.match(weightModal, /toFixed\(2\)/);
+  assert.match(weightView, /chartRange/);
+  assert.match(weightView, /180天/);
+  assert.match(planModals, /编辑草稿/);
+  assert.match(planModals, /删除草稿/);
+  assert.match(authScreen, /showPassword/);
+  assert.doesNotMatch(authScreen, /\[A-Za-z0-9\]\{10,128\}/);
+  assert.match(appShell, /view === target/);
+  assert.match(cmdk, /userId && aiReady/);
+  assert.match(cmdk, /customExercises/);
+  assert.match(cmdk, /\.slice\(0, 30\)/);
+  assert.match(exercisesView, /setMuscle\(muscle === k \? "" : k\)/);
+  assert.match(exercisesView, /继续向后检索更多动作/);
+  assert.match(shareCard, /effectiveToday/);
+  assert.match(shareModal, /长按上方海报/);
+  assert.match(analyticsView, /\^\[=\+\\-@\\t\\r\]/);
+});

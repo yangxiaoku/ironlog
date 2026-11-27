@@ -18,6 +18,7 @@ import {
 } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
+import { PROFILE_VERSION_EVENT } from "../lib/workout-helpers";
 import {
   openDietEditor,
   openEditMealTemplateModal,
@@ -71,8 +72,8 @@ export function DietView() {
   const lastHydrationKeyRef = useRef(`${userId}:${date}`);
 
   useEffect(() => {
-    setWaterGoal(getWaterGoalMl(userId));
-  }, [userId]);
+    setWaterGoal(goals?.waterGoalMl ?? getWaterGoalMl(userId));
+  }, [userId, goals?.waterGoalMl]);
 
   useEffect(() => {
     let active = true;
@@ -217,7 +218,8 @@ export function DietView() {
       if (dateRef.current === reqDate) {
         setWaterMl(res.waterMl);
       }
-      notify(setMl === 0 ? "已重置今日饮水记录" : `今日饮水 ${fmt(res.waterMl, 0)} ml`);
+      const dayLabel = reqDate === todayStr ? "今日饮水" : `${shortDate(reqDate)} 饮水`;
+      notify(setMl === 0 ? `已重置${dayLabel}记录` : `${dayLabel} ${fmt(res.waterMl, 0)} ml`);
     } catch (err) {
       notify((err as Error)?.message || "更新饮水失败");
     } finally {
@@ -241,6 +243,24 @@ export function DietView() {
       notify("已标记全天饮食记录完成");
     } catch (err) {
       notify((err as Error)?.message || "操作失败");
+    } finally {
+      setMarkingDone(false);
+    }
+  };
+
+  const handleUnmarkDone = async () => {
+    if (markingDone) return;
+    const reqDate = date;
+    setMarkingDone(true);
+    try {
+      await apiFetch(`/api/web/nutrition-day?date=${encodeURIComponent(reqDate)}`, { method: "DELETE" });
+      triggerHaptic("light");
+      if (dateRef.current === reqDate) {
+        setDietDone(false);
+      }
+      notify("已取消全天已记录标记");
+    } catch (err) {
+      notify((err as Error)?.message || "取消标记失败");
     } finally {
       setMarkingDone(false);
     }
@@ -444,7 +464,17 @@ export function DietView() {
                   try {
                     localStorage.setItem(waterGoalKey(userId), String(next));
                   } catch {}
-                  notify(`每日饮水目标已设为 ${fmt(next, 0)} ml`);
+                  void apiFetch<{ version?: number }>("/api/web/profile/water-goal", {
+                    method: "PUT",
+                    body: { waterGoalMl: next },
+                  })
+                    .then((res) => {
+                      if (typeof res?.version === "number" && typeof window !== "undefined") {
+                        window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
+                      }
+                    })
+                    .catch(() => {});
+                  notify(`每日饮水目标已设为 ${fmt(next, 0)} ml（已同步云端）`);
                 }}
               >
                 {waterPct}% · 目标
@@ -459,9 +489,19 @@ export function DietView() {
                 +500ml
               </button>
               {waterMl > 0 ? (
-                <button type="button" className="micro-chip" disabled={busyWater} onClick={() => void updateWater(0, 0)}>
-                  清零
-                </button>
+                <>
+                  <button
+                    type="button"
+                    className="micro-chip"
+                    disabled={busyWater}
+                    onClick={() => void updateWater(-Math.min(250, waterMl))}
+                  >
+                    -250ml
+                  </button>
+                  <button type="button" className="micro-chip" disabled={busyWater} onClick={() => void updateWater(0, 0)}>
+                    清零
+                  </button>
+                </>
               ) : null}
             </div>
           </div>
@@ -479,6 +519,15 @@ export function DietView() {
               </button>
               <span className="diet-done" role="status" hidden={!dietDone}>
                 <Icon name="check" size={17} /> 全天已记录
+                <button
+                  type="button"
+                  className="quiet"
+                  disabled={markingDone}
+                  style={{ marginLeft: 8, padding: "2px 6px", fontSize: 12, minHeight: 24 }}
+                  onClick={() => void handleUnmarkDone()}
+                >
+                  取消标记
+                </button>
               </span>
             </footer>
           ) : null}

@@ -1026,18 +1026,45 @@ export function PlanDraftModal({
   record,
   catalogueMap,
   expectedRevision,
+  onEditDraft,
 }: {
   record: RecordEnvelope<PlanData>;
   catalogueMap: Map<string, CatalogueExercise>;
   expectedRevision: number;
+  onEditDraft?: () => void;
 }) {
   const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const openConfirm = useUiStore((s) => s.openConfirm);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const openPlanSection = useUiStore((s) => s.openPlanSection);
   const notify = useUiStore((s) => s.notify);
 
   const [armed, setArmed] = useState(false);
   const [applying, setApplying] = useState(false);
+
+  const handleDeleteDraft = () => {
+    openConfirm({
+      title: "删除计划草稿",
+      message: `确定要删除计划草稿「${record.data.name}」吗？此操作不可撤销。`,
+      confirmLabel: "删除草稿",
+      onConfirm: async () => {
+        await apiFetch("/api/records", {
+          method: "POST",
+          body: {
+            opId: safeUuid(),
+            id: record.id,
+            kind: "plan",
+            baseVersion: record.version,
+            deleted: true,
+            data: record.data,
+          },
+        });
+        bumpDataEpoch();
+        closeAllModals();
+        notify("已删除计划草稿");
+      },
+    });
+  };
 
   const applyDraft = async () => {
     if (!armed) {
@@ -1084,13 +1111,23 @@ export function PlanDraftModal({
           </section>
         );
       })}
-      <footer>
-        <button type="button" className="secondary-button" onClick={() => exportPlanAsJson(record.data, notify)}>
-          <Icon name="download" size={14} /> 导出 JSON
+      <footer className="dialog-foot has-remove" style={{ flexWrap: "wrap", gap: 8 }}>
+        <button type="button" className="danger" onClick={handleDeleteDraft}>
+          删除草稿
         </button>
-        <button type="button" className="primary-button" disabled={applying} onClick={() => void applyDraft()}>
-          {applying ? "启用中…" : armed ? "确认启用" : "启用此计划"}
-        </button>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginLeft: "auto" }}>
+          {onEditDraft ? (
+            <button type="button" className="secondary-button" onClick={onEditDraft}>
+              编辑草稿
+            </button>
+          ) : null}
+          <button type="button" className="secondary-button" onClick={() => exportPlanAsJson(record.data, notify)}>
+            <Icon name="download" size={14} /> 导出 JSON
+          </button>
+          <button type="button" className="primary-button" disabled={applying} onClick={() => void applyDraft()}>
+            {applying ? "启用中…" : armed ? "确认启用" : "启用此计划"}
+          </button>
+        </div>
       </footer>
     </div>
   );

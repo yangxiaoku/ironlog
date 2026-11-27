@@ -88,7 +88,11 @@ export function AppShell({ children }: { children: ReactNode }) {
   const handleNavClick = (e: React.MouseEvent<HTMLAnchorElement>, target: WorkspaceId) => {
     e.preventDefault();
     triggerHaptic("light");
-    if (e.currentTarget.getAttribute("aria-current") === "page" && e.currentTarget.closest(".mobile-nav")) {
+    if (
+      view === target &&
+      e.currentTarget.getAttribute("aria-current") === "page" &&
+      e.currentTarget.closest(".mobile-nav")
+    ) {
       try {
         window.scrollTo({ top: 0, behavior: "smooth" });
       } catch {

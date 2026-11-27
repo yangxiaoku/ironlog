@@ -80,11 +80,13 @@ export function WeightView() {
   const weightGoal = goals?.targetWeight ?? null;
   const heightCm = goals?.energyProfile?.heightCm ?? null;
 
-  const since30 = shiftDateStr(todayKey, -29);
+  const [chartRange, setChartRange] = useState<30 | 90 | 180 | 0>(30);
+  const earliestWeightDate = records.at(-1)?.data.date ?? shiftDateStr(todayKey, -29);
+  const rangeStart = chartRange === 0 ? earliestWeightDate : shiftDateStr(todayKey, -(chartRange - 1));
   const { recentWithAvg, change30d } = useMemo(() => {
     const byDay = new Map<string, WeightData>();
     for (const r of records) {
-      if (r.data.date >= since30 && r.data.date <= todayKey && !byDay.has(r.data.date)) {
+      if (r.data.date >= rangeStart && r.data.date <= todayKey && !byDay.has(r.data.date)) {
         byDay.set(r.data.date, r.data);
       }
     }
@@ -106,7 +108,7 @@ export function WeightView() {
       };
     });
     return { recentWithAvg: withAvg, change30d: diff };
-  }, [records, since30, todayKey]);
+  }, [records, rangeStart, todayKey]);
 
   const byMonth = useMemo(() => {
     const map = new Map<string, Array<RecordEnvelope<WeightData>>>();
@@ -330,24 +332,40 @@ export function WeightView() {
             </section>
 
             <section className="panel weight-trend">
-              <header className="panel-head">
+              <header className="panel-head" style={{ flexWrap: "wrap", gap: 8 }}>
                 <div>
-                  <h2>近 30 天趋势</h2>
+                  <h2>{chartRange === 0 ? "全部体重趋势" : `近 ${chartRange} 天趋势`}</h2>
                   <p>
-                    {shortDate(since30)} – {shortDate(todayKey)} · {recentWithAvg.length} 天有称重
+                    {shortDate(rangeStart)} – {shortDate(todayKey)} · {recentWithAvg.length} 天有称重
                   </p>
+                </div>
+                <div className="segments" role="group" aria-label="体重趋势周期">
+                  {(
+                    [
+                      [30, "30天"],
+                      [90, "90天"],
+                      [180, "180天"],
+                      [0, "全部"],
+                    ] as const
+                  ).map(([days, lbl]) => (
+                    <button key={days} type="button" aria-pressed={chartRange === days} onClick={() => setChartRange(days)}>
+                      {lbl}
+                    </button>
+                  ))}
                 </div>
               </header>
               {recentWithAvg.length ? (
                 <WeightChart
                   rows={recentWithAvg}
-                  from={since30}
+                  from={rangeStart}
                   to={todayKey}
                   goal={weightGoal}
                   showAverage={recentWithAvg.length >= 2}
                 />
               ) : (
-                <p className="weight-chart-empty muted">最近 30 天暂无称重记录。</p>
+                <p className="weight-chart-empty muted">
+                  {chartRange === 0 ? "暂无称重记录。" : `最近 ${chartRange} 天暂无称重记录。`}
+                </p>
               )}
               {recentWithAvg.length && (recentWithAvg.length >= 2 || weightGoal) ? (
                 <footer className="panel-foot">

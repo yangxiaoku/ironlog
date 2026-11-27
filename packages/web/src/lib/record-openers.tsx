@@ -659,10 +659,21 @@ export function openPlanDraftModal(
   catalogueMap: Map<string, CatalogueExercise>,
   expectedRevision: number,
 ): void {
-  useUiStore.getState().openModal({
+  const ui = useUiStore.getState();
+  ui.openModal({
     title: `计划草稿：${record.data.name}`,
     wide: true,
-    content: <PlanDraftModal record={record} catalogueMap={catalogueMap} expectedRevision={expectedRevision} />,
+    content: (
+      <PlanDraftModal
+        record={record}
+        catalogueMap={catalogueMap}
+        expectedRevision={expectedRevision}
+        onEditDraft={() => {
+          ui.closeTopModal();
+          openPlanBuilderModal({ id: record.id, version: record.version, data: record.data });
+        }}
+      />
+    ),
   });
 }
 

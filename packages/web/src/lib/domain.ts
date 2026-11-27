@@ -201,6 +201,7 @@ export interface ProfileGoals {
   protein: number;
   carbs: number;
   fat: number;
+  waterGoalMl?: number;
   daysPerWeek: number;
   restSeconds: number;
   targetWeight: number | null;

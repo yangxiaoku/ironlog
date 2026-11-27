@@ -699,7 +699,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     };
   });
   const hydrationLogged = dailyNutritionSeries.filter((d) => typeof d.waterMl === "number" && d.waterMl > 0);
-  const targetWaterMl = 2000;
+  const targetWaterMl = profile.waterGoalMl ?? 2000;
   const hydrationMet = hydrationLogged.filter((d) => (d.waterMl ?? 0) >= targetWaterMl).length;
   const hydrationReport = {
     targetMl: targetWaterMl,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { today } from "../lib/date";
-import { EQUIPMENT, MUSCLES, type CatalogueExercise } from "../lib/domain";
+import { EQUIPMENT, MUSCLES, type CatalogueExercise, type RecordEnvelope } from "../lib/domain";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch } from "../lib/query-cache";
 import {
@@ -33,6 +33,7 @@ interface PaletteItem {
 
 export function CommandPaletteModal() {
   const userId = useAuthStore((s) => s.userId);
+  const aiReady = useAuthStore((s) => s.aiReady);
   const navigate = useUiStore((s) => s.navigate);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const theme = useUiStore((s) => s.theme);
@@ -40,6 +41,7 @@ export function CommandPaletteModal() {
 
   const [query, setQuery] = useState("");
   const [exResults, setExResults] = useState<CatalogueExercise[]>([]);
+  const [customExercises, setCustomExercises] = useState<CatalogueExercise[]>([]);
   const [searchingEx, setSearchingEx] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -47,6 +49,25 @@ export function CommandPaletteModal() {
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    if (!userId) {
+      setCustomExercises([]);
+      return;
+    }
+    let active = true;
+    void cachedApiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise", { userId, epoch: 0 })
+      .then((rows) => {
+        if (!active || !Array.isArray(rows)) return;
+        setCustomExercises(
+          rows.filter((r) => !r.deleted && r.data).map((r) => ({ ...r.data, id: r.id, custom: true })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -57,6 +78,7 @@ export function CommandPaletteModal() {
     }
     let active = true;
     setSearchingEx(true);
+    const qLower = trimmed.toLowerCase();
     const timer = window.setTimeout(() => {
       const qs = new URLSearchParams({ q: trimmed, limit: "8" }).toString();
       void cachedApiFetch<{ items: CatalogueExercise[] }>(`/api/catalogue/exercises?${qs}`, {
@@ -65,7 +87,14 @@ export function CommandPaletteModal() {
         epoch: 0,
       })
         .then((res) => {
-          if (active) setExResults(res.items ?? []);
+          if (!active) return;
+          const customHits = customExercises.filter((ex) =>
+            [ex.name, ex.englishName, ...(ex.aliases ?? [])]
+              .filter(Boolean)
+              .some((t) => String(t).toLowerCase().includes(qLower)),
+          );
+          const seen = new Set(customHits.map((c) => c.id));
+          setExResults([...customHits, ...(res.items ?? []).filter((ex) => !seen.has(ex.id))].slice(0, 10));
         })
         .catch(() => {
           if (active) setExResults([]);
@@ -78,7 +107,7 @@ export function CommandPaletteModal() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, customExercises]);
 
   const staticItems = useMemo<PaletteItem[]>(() => {
     const actions: PaletteItem[] = [
@@ -134,7 +163,7 @@ export function CommandPaletteModal() {
           openStrengthCalcModal();
         },
       },
-      ...(userId
+      ...(userId && aiReady
         ? [
             {
               id: "act:ai-workout",
@@ -184,6 +213,10 @@ export function CommandPaletteModal() {
                 openAiPlanModal();
               },
             },
+          ]
+        : []),
+      ...(userId
+        ? [
             {
               id: "act:share",
               group: "实用工具",
@@ -242,7 +275,7 @@ export function CommandPaletteModal() {
     }));
 
     return [...actions, ...navItems];
-  }, [userId, theme, navigate, toggleTheme, closeAllModals]);
+  }, [userId, aiReady, theme, navigate, toggleTheme, closeAllModals]);
 
   const allItems = useMemo<PaletteItem[]>(() => {
     const q = query.trim().toLowerCase();
@@ -257,7 +290,7 @@ export function CommandPaletteModal() {
 
     const exItems: PaletteItem[] = exResults.map((ex) => ({
       id: `ex:${ex.id}`,
-      group: "动作百科",
+      group: ex.custom ? "自定义动作" : "动作百科",
       label: ex.name,
       hint: `${MUSCLES[ex.muscle] ?? ex.muscle} · ${EQUIPMENT[ex.equipment] ?? ex.equipment}`,
       keywords: ex.id,
@@ -268,7 +301,7 @@ export function CommandPaletteModal() {
       },
     }));
 
-    return [...exItems, ...matchedStatic].slice(0, 18);
+    return [...exItems, ...matchedStatic].slice(0, 30);
   }, [query, staticItems, exResults, closeAllModals]);
 
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);

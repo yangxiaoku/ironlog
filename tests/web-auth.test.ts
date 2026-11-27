@@ -71,7 +71,7 @@ test("HTTPS 会话带 Secure，跨源请求和旧账号页不能更改当前账�
     assert.equal((await app.request(path + "/auth/web/register", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(credentials),
     })).status, 403);
-    for (const password of ["123456789", "0123456789!", "0123456789\n", "1".repeat(129)]) {
+    for (const password of ["123456789", "0123456789 ", "0123456789\n", "1".repeat(129)]) {
       assert.equal((await send("/auth/web/register", "POST", { ...credentials, password }, sameSite)).status, 400);
     }
     const first = await send("/auth/web/register", "POST", credentials, sameSite);
@@ -141,4 +141,71 @@ test("重复的无效注册请求受限且不会创建账号", async () => {
     assert.equal((await attempt()).status, 429);
     assert.equal(db.prepare("SELECT 1 FROM users").get(), undefined);
   } finally { db.close(); }
+});
+
+test("支持 iCloud Keychain 连字符与符号强密码注册，并支持云端饮水目标和取消全天饮食标记", async () => {
+  const db = openDatabase(":memory:");
+  try {
+    const { app, auth } = createApp(db);
+    const reg = await app.request("/auth/web/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "icloud_user", password: "abC123-xyZ789-!@#$" }),
+    });
+    assert.equal(reg.status, 201);
+
+    // Reject passwords containing spaces
+    const badSpace = await app.request("/auth/web/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "space_user", password: "abC123 xyZ789" }),
+    });
+    assert.equal(badSpace.status, 400);
+
+    // Cloud waterGoalMl + DELETE /api/web/nutrition-day
+    const { token } = auth.login("water-nutrition-user");
+    const authHeaders = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+    const wgRes = await app.request("/api/web/profile/water-goal", {
+      method: "PUT",
+      headers: authHeaders,
+      body: JSON.stringify({ waterGoalMl: 3000 }),
+    });
+    assert.equal(wgRes.status, 200);
+    assert.equal(((await wgRes.json()) as { waterGoalMl: number }).waterGoalMl, 3000);
+    const profRes = await app.request("/api/web/profile", { headers: authHeaders });
+    assert.equal(((await profRes.json()) as { profile: { waterGoalMl: number } }).profile.waterGoalMl, 3000);
+
+    const day = "2026-11-20";
+    const dietRes = await app.request("/api/records", {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        opId: "op-diet-1",
+        id: "diet-1",
+        kind: "diet",
+        baseVersion: 0,
+        deleted: false,
+        data: { date: day, meal: "lunch", name: "鸡胸肉", calories: 350, protein: 45, carbs: 10, fat: 5 },
+      }),
+    });
+    assert.equal(dietRes.status, 200);
+    const markRes = await app.request("/api/web/nutrition-day", {
+      method: "PUT",
+      headers: authHeaders,
+      body: JSON.stringify({ date: day, opId: "op-mark-1" }),
+    });
+    assert.equal(markRes.status, 200);
+    assert.equal(((await markRes.json()) as { complete: boolean }).complete, true);
+
+    const unmarkRes = await app.request(`/api/web/nutrition-day?date=${day}`, {
+      method: "DELETE",
+      headers: authHeaders,
+    });
+    assert.equal(unmarkRes.status, 200);
+    assert.equal(((await unmarkRes.json()) as { complete: boolean }).complete, false);
+    const checkRes = await app.request(`/api/web/nutrition-day?date=${day}`, { headers: authHeaders });
+    assert.equal(((await checkRes.json()) as { complete: boolean }).complete, false);
+  } finally {
+    db.close();
+  }
 });

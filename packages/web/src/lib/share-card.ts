@@ -192,7 +192,8 @@ export function buildDailySharePayload({
 } = {}): DailySharePayload {
   const targetDate = date || singleReport?.date || todayKey || new Date().toISOString().slice(0, 10);
   const dateDot = String(targetDate).replace(/-/g, ".");
-  const headline = "今日记录";
+  const effectiveToday = todayKey || new Date().toISOString().slice(0, 10);
+  const headline = targetDate === effectiveToday ? "今日记录" : `${dateDot.slice(5)} 记录`;
   const authorLabel = username ? `铁记 · ${username}` : "铁记 · IRONLOG";
 
   let strengthSeconds = 0;

@@ -446,7 +446,7 @@ export function ExercisesView() {
               全部肌群
             </button>
             {(Object.entries(MUSCLES) as Array<[MuscleKey, string]>).map(([k, lbl]) => (
-              <button key={k} type="button" aria-pressed={muscle === k} onClick={() => setMuscle(k)}>
+              <button key={k} type="button" aria-pressed={muscle === k} onClick={() => setMuscle(muscle === k ? "" : k)}>
                 {lbl}
               </button>
             ))}
@@ -571,19 +571,33 @@ export function ExercisesView() {
                       : "没有找到匹配的动作"}
               </strong>
               <p>
-                {scope === "trained"
-                  ? "记录并完成几次训练后，所有已练动作的个人 PR 都会自动汇集于此。"
-                  : scope === "favorites"
-                    ? "点击任意动作卡片右上角星标即可快速收藏。"
-                    : scope === "custom"
-                      ? "点击右上角「自定义动作」录入专属器械或训练动作。"
-                      : "试试简称、英文名，或新建自定义动作。"}
+                {nextCursor && equipmentFilter === "__mine__"
+                  ? "本页暂未匹配到你的可用器械，可点击下方继续向后检索。"
+                  : scope === "trained"
+                    ? "记录并完成几次训练后，所有已练动作的个人 PR 都会自动汇集于此。"
+                    : scope === "favorites"
+                      ? "点击任意动作卡片右上角星标即可快速收藏。"
+                      : scope === "custom"
+                        ? "点击右上角「自定义动作」录入专属器械或训练动作。"
+                        : "试试简称、英文名，或新建自定义动作。"}
               </p>
-              {userId && (scope === "custom" || scope === "all") ? (
-                <button type="button" className="secondary-button" onClick={() => openCustomExerciseModal()}>
-                  新建自定义动作
-                </button>
-              ) : null}
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "center" }}>
+                {nextCursor ? (
+                  <button
+                    type="button"
+                    className="primary-button"
+                    disabled={loadingMore}
+                    onClick={() => void fetchCatalogue(true, nextCursor)}
+                  >
+                    {loadingMore ? "加载中…" : "继续向后检索更多动作"}
+                  </button>
+                ) : null}
+                {userId && (scope === "custom" || scope === "all") ? (
+                  <button type="button" className="secondary-button" onClick={() => openCustomExerciseModal()}>
+                    新建自定义动作
+                  </button>
+                ) : null}
+              </div>
             </div>
           )}
         </section>
