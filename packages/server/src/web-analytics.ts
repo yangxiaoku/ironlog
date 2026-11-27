@@ -1009,6 +1009,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     ),
     profile.energyProfile?.birthDate ?? null,
     through,
+    workouts.filter((w) => w.workout.date >= displayStart && w.workout.date <= through),
   );
 
   const best1RMMap = new Map<string, number>();
@@ -1054,8 +1055,9 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       }
     }
   }
+  const yearCutoff = yearEnd < through ? yearEnd : through;
   const yearDietDays = new Set(
-    store.list(userId, "diet").map((r) => (r.data as Diet).date).filter((d) => d >= yearStart && d <= yearEnd),
+    store.list(userId, "diet").map((r) => (r.data as Diet).date).filter((d) => d >= yearStart && d <= yearCutoff),
   ).size;
   const yearInReview = {
     year: Number(reviewYear),
@@ -1392,20 +1394,85 @@ function computeAppleWorkoutBucket(
   };
 }
 
+function parseManualCardioDistanceMeters(workout: Workout): number | null {
+  if (workout.cardioMeta?.distanceMeters != null && Number.isFinite(workout.cardioMeta.distanceMeters) && workout.cardioMeta.distanceMeters > 0) {
+    return workout.cardioMeta.distanceMeters;
+  }
+  const m = (workout.notes ?? "").match(/距离[：:]\s*(\d+(?:[.,]\d+)?)\s*km/i);
+  if (m) {
+    const km = Number(m[1]!.replace(",", "."));
+    if (Number.isFinite(km) && km > 0 && km <= 500) return Math.round(km * 1000);
+  }
+  return null;
+}
+
 function summarizeAppleWorkouts(
   entries: ReturnType<typeof projectAppleTraining>["entries"],
   birthDate: string | null = null,
   asOfDate = localDate(),
+  manualWorkouts: readonly { id: string; workout: Workout }[] = [],
 ) {
   const hrMax = resolveHrMax(birthDate, asOfDate);
-  const allStats = computeAppleWorkoutBucket(entries, hrMax, asOfDate);
-  const realDeviceEntries = entries.filter((item) => !item.id.startsWith("demo_"));
+  // #77: Merge standalone manual cardio workouts into unified cardio analytics while deduplicating overlapping Apple workouts.
+  const linkedManualIds = new Set(entries.map((e) => e.manualWorkoutId).filter((id): id is string => Boolean(id)));
+  const appleTimeRanges = entries.map((e) => ({
+    startMs: Date.parse(e.startedAt),
+    endMs: Date.parse(e.endedAt),
+  }));
+  const syntheticManualEntries: ReturnType<typeof projectAppleTraining>["entries"] = [];
+  for (const { id, workout } of manualWorkouts) {
+    if (linkedManualIds.has(id)) continue;
+    const isManualCardio =
+      Boolean(workout.cardioMeta) ||
+      (workout.exercises.length > 0 && workout.exercises.every((row) => row.snapshot?.muscle === "cardio" || row.exerciseId.startsWith("cardio-")));
+    if (!isManualCardio) continue;
+    const durSec = workoutDurationSeconds(workout) ?? 0;
+    if (durSec <= 0) continue;
+    const wStartMs = Date.parse(workout.startedAt);
+    const wEndMs = Date.parse(workout.endedAt ?? workout.startedAt);
+    const overlapsApple =
+      Number.isFinite(wStartMs) &&
+      Number.isFinite(wEndMs) &&
+      appleTimeRanges.some((a) => Number.isFinite(a.startMs) && Number.isFinite(a.endMs) && wStartMs <= a.endMs + 15 * 60_000 && wEndMs >= a.startMs - 15 * 60_000);
+    if (overlapsApple) continue;
+    const activityType =
+      workout.cardioMeta?.activityType ||
+      workout.exercises[0]?.exerciseId.replace(/^cardio-/, "") ||
+      "mixedCardio";
+    const distanceMeters = parseManualCardioDistanceMeters(workout) ?? undefined;
+    syntheticManualEntries.push({
+      schemaVersion: 1,
+      id: `manual:${id}`,
+      date: workout.date,
+      startedAt: workout.startedAt,
+      endedAt: workout.endedAt ?? workout.startedAt,
+      receivedAt: workout.endedAt ?? workout.startedAt,
+      activityType,
+      environment: workout.cardioMeta?.environment ?? "unknown",
+      captureMethod: "workout",
+      durationSeconds: durSec,
+      durationKind: "workout_active",
+      activeEnergyKcal: workout.cardioMeta?.estimatedKcal ?? undefined,
+      energyKind: workout.cardioMeta?.estimatedKcal != null ? "window_estimate" : undefined,
+      distanceMeters,
+      heartRate: undefined,
+      activity: {
+        family: "cardio",
+        title: workout.title || "有氧训练",
+      },
+      manualWorkoutId: id,
+      plan: null,
+    } as unknown as ReturnType<typeof projectAppleTraining>["entries"][number]);
+  }
+  const mergedEntries = syntheticManualEntries.length ? [...entries, ...syntheticManualEntries] : entries;
+  const allStats = computeAppleWorkoutBucket(mergedEntries, hrMax, asOfDate);
+  const realDeviceEntries = mergedEntries.filter((item) => !item.id.startsWith("demo_"));
   const realDeviceStats = computeAppleWorkoutBucket(realDeviceEntries, hrMax, asOfDate);
 
   return {
     ...allStats,
     realDeviceCount: realDeviceEntries.length,
-    demoCount: entries.length - realDeviceEntries.length,
+    demoCount: mergedEntries.length - realDeviceEntries.length,
     realDeviceStats,
   };
 }

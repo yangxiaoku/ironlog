@@ -1,3 +1,4 @@
+import { weightToKg } from "@ironlog/shared";
 import { fmt } from "./date";
 import type { CatalogueExercise, DietData, ExerciseMode, RecordEnvelope, SetType, TodayResponse, WorkoutData, WorkoutReportResponse } from "./domain";
 
@@ -156,14 +157,14 @@ function bestSetObject(pool: ShareSetLike[], mode: ExerciseMode): ShareSetLike |
   });
 }
 
-function posterExerciseSetSummary(pool: ShareSetLike[], mode: ExerciseMode): string {
+function posterExerciseSetSummary(pool: ShareSetLike[], mode: ExerciseMode, unit: "kg" | "lb" = "kg"): string {
   const count = pool.length;
   if (!count) return "已完成";
   const best = bestSetObject(pool, mode);
   if (!best) return `${count} 组`;
   if (mode === "timed") return `${best.seconds || 0} 秒 × ${count} 组`;
-  if (mode === "assisted") return `辅助 ${fmt(best.weight)} kg × ${best.reps || 0} × ${count} 组`;
-  if ((best.weight || 0) > 0) return `${fmt(best.weight)} kg × ${best.reps || 0} × ${count} 组`;
+  if (mode === "assisted") return `辅助 ${fmt(best.weight)} ${unit} × ${best.reps || 0} × ${count} 组`;
+  if ((best.weight || 0) > 0) return `${fmt(best.weight)} ${unit} × ${best.reps || 0} × ${count} 组`;
   return `徒手 × ${best.reps || 0} × ${count} 组`;
 }
 
@@ -248,15 +249,16 @@ export function buildDailySharePayload({
         }
         workoutHasStrength = true;
         totalSets += work.length;
+        const rowUnit: "kg" | "lb" = row.weightUnit === "lb" ? "lb" : "kg";
         for (const s of work) {
           if (mode === "reps" && (s.weight || 0) > 0 && (s.reps || 0) > 0) {
-            totalVolumeKg += s.weight * s.reps * mult;
+            totalVolumeKg += weightToKg(s.weight, rowUnit) * s.reps * mult;
           }
         }
         exercises.push({
           name,
           setsCount: pool.length,
-          summary: posterExerciseSetSummary(pool, mode),
+          summary: posterExerciseSetSummary(pool, mode, rowUnit),
         });
       }
       if (workoutHasStrength && dur > 0) {

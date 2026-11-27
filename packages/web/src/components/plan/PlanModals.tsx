@@ -279,21 +279,27 @@ export function DaySchedulerModal({
     setExercises(
       w.data.exercises.map((exRow) => {
         const info = map.get(exRow.exerciseId);
-        const timed = info?.mode === "timed";
+        const mode = info?.mode ?? exRow.snapshot?.mode ?? "reps";
+        const timed = mode === "timed";
+        const assisted = mode === "assisted";
         const work = exRow.sets.filter((s) => s.completed && s.type !== "warmup");
-        const topWeight = work.length ? Math.max(...work.map((s) => s.weight)) : null;
+        const topWeight = work.length
+          ? (assisted ? Math.min : Math.max)(...work.map((s) => s.weight))
+          : null;
         const reps = work.length ? Math.max(...work.map((s) => s.reps)) : 8;
+        const rowUnit = exRow.weightUnit === "lb" || exRow.weightUnit === "kg" ? exRow.weightUnit : undefined;
         return {
           exerciseId: exRow.exerciseId,
           sets: Math.max(1, work.length || exRow.sets.length || 3),
           repsMin: timed ? 1 : Math.max(1, Math.min(reps, 12)),
           repsMax: timed ? 1 : Math.max(Math.min(reps + 2, 15), reps, 10),
           weight: timed ? null : topWeight,
+          ...(rowUnit ? { weightUnit: rowUnit } : {}),
           seconds: timed ? Math.max(15, ...exRow.sets.map((s) => s.seconds || 0)) : 0,
           restSeconds: exRow.restSeconds ?? 90,
           targetRir: 2,
           progression: timed ? "manual" : "double",
-          increment: 2.5,
+          increment: rowUnit === "lb" ? 5 : 2.5,
           backupExerciseId: null,
           supersetGroup: exRow.supersetGroup ?? null,
         };

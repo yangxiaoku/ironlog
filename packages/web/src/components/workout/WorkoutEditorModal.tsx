@@ -54,6 +54,7 @@ import {
   shiftRestTimer,
   speakCue,
   triggerHaptic,
+  triggerRestFinalCountdownBeep,
   type RestTimerState,
   type WorkoutTiming,
 } from "../../lib/haptics-audio";
@@ -802,13 +803,16 @@ export function WorkoutEditorModal({
     };
   }, []);
 
-  // Rest 10-second voice cue & completion alarm
+  // Rest 10-second voice cue, final 3-2-1 countdown beeps (#83) & completion alarm
   useEffect(() => {
     if (!rest || rest.pausedLeftMs != null) return;
     const leftSec = Math.ceil((rest.end - nowMs) / 1000);
     if (voiceRestCues && leftSec === 10 && restTenSecSpokenForRef.current !== rest.end) {
       restTenSecSpokenForRef.current = rest.end;
       speakCue("还剩 10 秒", { enabled: true });
+    }
+    if (leftSec >= 1 && leftSec <= 3 && nowMs < rest.end) {
+      triggerRestFinalCountdownBeep(rest.end, leftSec, audio);
     }
     if (nowMs >= rest.end && restAlarmFiredForRef.current !== rest.end) {
       restAlarmFiredForRef.current = rest.end;

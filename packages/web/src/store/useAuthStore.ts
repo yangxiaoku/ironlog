@@ -30,6 +30,7 @@ export interface AuthState {
   applyAccountMeta: (account: MeResponse | null | undefined) => void;
   bootstrap: () => Promise<void>;
   authenticate: (mode: AuthMode, username: string, password: string) => Promise<MeResponse>;
+  verifySessionAfterLogin: () => Promise<MeResponse>;
   refreshAccountMeta: () => Promise<void>;
   logout: () => Promise<void>;
   clearUser: () => void;
@@ -129,8 +130,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           } catch { /* Show the sign-in screen when there is no demo session. */ }
         }
         if (!loggedDemo) {
-          set({ offlineBoot: false });
-          resetLocalWorkoutPreferences();
+          // #111: Clear any stale offline-boot userId when /api/me confirms 401.
+          get().clearUser();
         }
       } else {
         // Offline / network timeout cold start: preserve last signed-in user so local drafts & offline queue remain accessible.
@@ -174,6 +175,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     } finally {
       set({ authenticating: false });
     }
+  },
+
+  async verifySessionAfterLogin() {
+    const prevUserId = get().userId;
+    const account = await apiFetch<MeResponse>("/api/me", browserSession).catch((err) => {
+      if ((err as { status?: number })?.status === 401) {
+        throw new Error("浏览器未保存登录状态，请允许本站使用 Cookie 后重新登录");
+      }
+      throw err;
+    });
+    if (account.userId !== prevUserId) {
+      resetLocalWorkoutPreferences();
+    }
+    set({ demo: false, demoToken: "", offlineBoot: false, authMode: "login", booted: true });
+    get().applyAccountMeta(account);
+    try {
+      localStorage.setItem("ironlog-web-account-seen", "1");
+    } catch {}
+    invalidateQueryCache();
+    useUiStore.getState().bumpDataEpoch();
+    return account;
   },
 
   async refreshAccountMeta() {

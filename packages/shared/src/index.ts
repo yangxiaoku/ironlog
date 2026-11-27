@@ -178,6 +178,15 @@ export const workoutSchema = z
     restEndsAt: z.number().nullable().default(null),
     restStartedAt: z.number().int().nonnegative().nullish(),
     adjustments: z.preprocess((v) => (v === null ? [] : v), z.array(workoutAdaptationSchema).max(100).default([])),
+    cardioMeta: z
+      .object({
+        activityType: z.string().trim().min(1).max(80),
+        environment: z.enum(["indoor", "outdoor", "unknown"]).default("unknown"),
+        distanceMeters: z.number().finite().min(0).max(500_000).nullable().optional(),
+        estimatedKcal: z.number().finite().min(0).max(20_000).nullable().optional(),
+        lapSeconds: z.array(z.number().int().min(0).max(86400)).max(200).optional(),
+      })
+      .optional(),
   })
   .superRefine((value, ctx) => {
     const ids = value.exercises.flatMap((item) => [

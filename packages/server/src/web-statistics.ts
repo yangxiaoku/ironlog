@@ -184,7 +184,7 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
   const recent = [];
   const feelings = { easy: 0, balanced: 0, fatigued: 0, missing: 0 };
   for (const { id, workout } of workouts) {
-    if (workout.date >= earliest) activityDays.add(workout.date);
+    activityDays.add(workout.date);
     const day = days.get(workout.date);
     const duration = workoutDurationSeconds(workout);
     let sessionSets = 0;
@@ -306,7 +306,7 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
       ...nutritionTotals(meals.map(({ data }) => data as Diet)) };
   });
   const apple = projectAppleTraining(store, userId, through, catalogue, workouts).entries.flatMap((item) => {
-    if (!item.manualWorkoutId && item.date >= earliest) activityDays.add(item.date);
+    if (!item.manualWorkoutId) activityDays.add(item.date);
     const day = days.get(item.date);
     if (day) {
       day.apple++;

@@ -186,7 +186,7 @@ export function WorkoutView() {
     try {
       const todayKey = today();
       const existing = await apiFetch<RecordEnvelope<{ date: string; weight: number; bodyFat?: number | null }> | null>(
-        `/api/web/records/weight/${encodeURIComponent(`weight_${todayKey}`)}`,
+        `/api/web/records/weight/${encodeURIComponent(`weight_${todayKey}`)}?includeDeleted=1`,
       ).catch(() => null);
       await apiFetch("/api/records", {
         method: "POST",
@@ -199,7 +199,7 @@ export function WorkoutView() {
           data: {
             date: todayKey,
             weight: Math.round(val * 100) / 100,
-            bodyFat: existing?.data?.bodyFat ?? null,
+            bodyFat: existing && !existing.deleted ? (existing.data?.bodyFat ?? null) : null,
           },
         },
       });

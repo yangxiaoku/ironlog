@@ -51,20 +51,42 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
 
-  const [fileName, setFileName] = useState("");
+  const [loadedFileName, setLoadedFileName] = useState("");
+  const [editedAfterLoad, setEditedAfterLoad] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [includeSuspected, setIncludeSuspected] = useState(false);
-  const [preview, setPreview] = useState<CsvPreviewRes | null>(null);
+  const previewReqRef = useRef(0);
+  const [validated, setValidated] = useState<{
+    csv: string;
+    skipDuplicates: boolean;
+    includeSuspected: boolean;
+    sourceLabel: string;
+    preview: CsvPreviewRes;
+  } | null>(null);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
 
-  const runPreview = async (rawCsv: string, skip: boolean, includeSusp = includeSuspected) => {
+  const preview = validated?.preview ?? null;
+  const currentSourceLabel = loadedFileName
+    ? editedAfterLoad
+      ? `已编辑内容（原自 ${loadedFileName}）`
+      : `文件：${loadedFileName}`
+    : "粘贴的文本内容";
+
+  const runPreview = async (
+    rawCsv: string,
+    skip: boolean,
+    includeSusp = includeSuspected,
+    sourceLabel = currentSourceLabel,
+  ) => {
+    const reqId = ++previewReqRef.current;
     const csv = rawCsv.trim();
     setError("");
+    setValidated(null);
     if (!csv) {
-      setPreview(null);
+      setPreviewing(false);
       return;
     }
     setPreviewing(true);
@@ -73,24 +95,35 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         method: "POST",
         body: { csv, skipDuplicates: skip, includeSuspectedDuplicates: includeSusp },
       });
-      setPreview(res);
+      // #90: Discard stale preview responses if input/options changed while request was in flight.
+      if (reqId !== previewReqRef.current) return;
+      setValidated({ csv, skipDuplicates: skip, includeSuspected: includeSusp, sourceLabel, preview: res });
     } catch (err) {
-      setPreview(null);
+      if (reqId !== previewReqRef.current) return;
+      setValidated(null);
       setError((err as Error)?.message || "解析 CSV 失败");
     } finally {
-      setPreviewing(false);
+      if (reqId === previewReqRef.current) setPreviewing(false);
     }
   };
 
   const commitImport = async () => {
-    const csv = csvText.trim();
-    if (!csv || committing) return;
+    // #90: Commit strictly from the exact snapshot shown in preview.
+    if (!validated || previewing || committing) return;
+    if (validated.preview.importableWorkouts <= 0) return;
     setCommitting(true);
     setError("");
     try {
       const res = await apiFetch<{ formatLabel: string; importedWorkouts: number; importedSets: number }>(
         "/api/web/import-csv/commit",
-        { method: "POST", body: { csv, skipDuplicates, includeSuspectedDuplicates: includeSuspected } },
+        {
+          method: "POST",
+          body: {
+            csv: validated.csv,
+            skipDuplicates: validated.skipDuplicates,
+            includeSuspectedDuplicates: validated.includeSuspected,
+          },
+        },
       );
       bumpDataEpoch();
       closeAllModals();
@@ -111,33 +144,49 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         <input
           type="file"
           accept=".csv,text/csv,text/plain"
+          disabled={committing}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (!file) return;
+            const reqId = ++previewReqRef.current;
+            setValidated(null);
             if (file.size > 2_000_000) {
-              setPreview(null);
+              setPreviewing(false);
               setError("CSV 文件超过 2 MB，请分批导入。");
               return;
             }
-            setFileName(`已加载：${file.name}`);
+            setLoadedFileName(file.name);
+            setEditedAfterLoad(false);
+            const nextSource = `文件：${file.name}`;
             void file.text().then((txt) => {
+              if (reqId !== previewReqRef.current) return;
               setCsvText(txt);
-              void runPreview(txt, skipDuplicates);
+              void runPreview(txt, skipDuplicates, includeSuspected, nextSource);
             });
           }}
         />
         <span>
           <Icon name="upload" size={16} /> 选择 CSV 文件
         </span>
-        <small>{fileName || "或直接在下方粘贴 CSV 文本（含表头）"}</small>
+        <small>
+          {loadedFileName
+            ? editedAfterLoad
+              ? `已编辑内容（原自 ${loadedFileName}）`
+              : `已加载：${loadedFileName}`
+            : "或直接在下方粘贴 CSV 文本（含表头）"}
+        </small>
       </label>
 
       <textarea
         rows={5}
         value={csvText}
+        disabled={committing}
         onChange={(e) => {
+          ++previewReqRef.current;
           setCsvText(e.target.value);
-          setPreview(null);
+          if (loadedFileName) setEditedAfterLoad(true);
+          setValidated(null);
+          setPreviewing(false);
           setError("");
         }}
         placeholder={"例如：Date,Workout Name,Exercise Name,Weight,Reps\n2026-11-20,Push Day,Bench Press (Barbell),100,5"}
@@ -149,11 +198,16 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
           <input
             className="switch"
             type="checkbox"
+            disabled={committing}
             checked={skipDuplicates}
             onChange={(e) => {
               const checked = e.target.checked;
               setSkipDuplicates(checked);
               if (csvText.trim()) void runPreview(csvText, checked, includeSuspected);
+              else {
+                ++previewReqRef.current;
+                setValidated(null);
+              }
             }}
           />
         </label>
@@ -163,6 +217,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
             <input
               className="switch"
               type="checkbox"
+              disabled={committing}
               checked={includeSuspected}
               onChange={(e) => {
                 const checked = e.target.checked;
@@ -172,7 +227,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
             />
           </label>
         ) : null}
-        <button type="button" className="secondary-button" disabled={previewing} onClick={() => void runPreview(csvText, skipDuplicates, includeSuspected)}>
+        <button type="button" className="secondary-button" disabled={previewing || committing} onClick={() => void runPreview(csvText, skipDuplicates, includeSuspected)}>
           {previewing ? "解析中…" : "解析预览"}
         </button>
       </div>
@@ -181,16 +236,16 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         {error}
       </p>
 
-      {preview ? (
+      {preview && validated ? (
         <div className="csv-preview-box">
           <div className="csv-preview-head">
             <span className="starter-tag">识别格式：{preview.formatLabel}</span>
-            <small>已匹配动作 {preview.matchedExercises} 个</small>
+            <small>来源：{validated.sourceLabel} · 已匹配动作 {preview.matchedExercises} 个</small>
           </div>
           <div className="csv-preview-stats">
             <div><span>解析场次</span><strong>{preview.totalWorkouts} <small>场</small></strong></div>
             <div><span>将导入</span><strong>{preview.importableWorkouts} <small>场</small></strong></div>
-            <div><span>重复跳过</span><strong>{preview.duplicateWorkouts + (skipDuplicates && !includeSuspected ? (preview.suspectedDuplicateWorkouts ?? 0) : 0)} <small>场</small></strong></div>
+            <div><span>重复跳过</span><strong>{preview.duplicateWorkouts + (validated.skipDuplicates && !validated.includeSuspected ? (preview.suspectedDuplicateWorkouts ?? 0) : 0)} <small>场</small></strong></div>
             <div><span>有效组数</span><strong>{preview.totalSets} <small>组</small></strong></div>
           </div>
           {preview.suspectedWorkouts?.length ? (
@@ -229,7 +284,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         <button
           type="button"
           className="primary-button"
-          disabled={committing || !(preview && preview.importableWorkouts > 0)}
+          disabled={committing || previewing || !(validated && validated.preview.importableWorkouts > 0)}
           onClick={() => void commitImport()}
         >
           {committing ? "导入中…" : "确认导入"}
@@ -253,7 +308,29 @@ interface BackupPreviewRes {
     appleDaily?: number;
     appleWorkouts?: number;
   };
-  diff?: { toImport?: number; toUpdate?: number; unchanged?: number };
+  photos?: {
+    total: number;
+    toImport: number;
+    skippedDuplicate: number;
+    skippedCapacity: number;
+    remainingCapacity: number;
+    capacityLimit: number;
+  };
+  diff?: {
+    toImport?: number;
+    toUpdate?: number;
+    unchanged?: number;
+    toDelete?: number;
+    deletions?: {
+      records: number;
+      measurements: number;
+      progressPhotos: number;
+      exerciseNotes: number;
+      appleDaily: number;
+      appleWorkouts: number;
+      total: number;
+    };
+  };
 }
 
 export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
@@ -314,7 +391,12 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
     setCommitting(true);
     setError("");
     try {
-      const res = await apiFetch<{ imported: number; updated: number }>("/api/web/restore-backup", {
+      const res = await apiFetch<{
+        imported: number;
+        updated: number;
+        skipped?: number;
+        photos?: { imported: number; skippedCapacity: number };
+      }>("/api/web/restore-backup", {
         method: "POST",
         timeout: BACKUP_REQUEST_TIMEOUT_MS,
         body: { backup: validated.backup, mode: "commit", strategy, opId: validated.opId },
@@ -322,7 +404,10 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       bumpDataEpoch();
       closeAllModals();
       onSuccess?.();
-      notify(`全量备份恢复完成：新增 ${res.imported} 项，更新 ${res.updated} 项`);
+      const capWarn = res.photos?.skippedCapacity
+        ? `（照片达 60 张上限，跳过 ${res.photos.skippedCapacity} 张）`
+        : "";
+      notify(`全量备份恢复完成：新增 ${res.imported} 项，更新 ${res.updated} 项${capWarn}`);
     } catch (err) {
       setError((err as Error)?.message || "恢复备份失败");
       setCommitting(false);
@@ -432,6 +517,27 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
             {c.progressPhotos ? ` · 体态照片 ${c.progressPhotos} 张` : ""}
             {c.appleDaily || c.appleWorkouts ? ` · 含 Apple 健康 ${c.appleDaily ?? 0} 天 / ${c.appleWorkouts ?? 0} 场训练` : ""}
           </p>
+          {preview.strategy === "replace" && (d.toDelete ?? 0) > 0 && d.deletions ? (
+            <p className="form-error" role="alert" style={{ marginTop: 6 }}>
+              完整覆盖将永久清除当前账号独有的 <b>{d.deletions.total}</b> 项数据：
+              {[
+                d.deletions.records ? `通用记录 ${d.deletions.records} 条` : "",
+                d.deletions.measurements ? `身体围度 ${d.deletions.measurements} 条` : "",
+                d.deletions.progressPhotos ? `体态照片 ${d.deletions.progressPhotos} 张` : "",
+                d.deletions.exerciseNotes ? `动作备忘 ${d.deletions.exerciseNotes} 条` : "",
+                d.deletions.appleDaily ? `Apple 日常 ${d.deletions.appleDaily} 天` : "",
+                d.deletions.appleWorkouts ? `Apple 训练 ${d.deletions.appleWorkouts} 场` : "",
+              ]
+                .filter(Boolean)
+                .join("、")}
+            </p>
+          ) : null}
+          {preview.photos && preview.photos.skippedCapacity > 0 ? (
+            <p className="form-error" role="alert" style={{ marginTop: 6 }}>
+              体态照片空间不足（上限 {preview.photos.capacityLimit} 张，当前剩余 {preview.photos.remainingCapacity} 个空位）：本次将导入{" "}
+              <b>{preview.photos.toImport}</b> 张，<b>跳过 {preview.photos.skippedCapacity} 张</b>。建议先清理旧照片后再恢复。
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -597,20 +703,36 @@ export function PlanImportModal({
   const openPlanSection = useUiStore((s) => s.openPlanSection);
   const notify = useUiStore((s) => s.notify);
 
-  const [fileName, setFileName] = useState("");
+  const [loadedFileName, setLoadedFileName] = useState("");
+  const [editedAfterLoad, setEditedAfterLoad] = useState(false);
   const [jsonText, setJsonText] = useState("");
-  const [preview, setPreview] = useState<PlanImportPreviewRes | null>(null);
-  const [armedApply, setArmedApply] = useState(false);
+  const previewReqRef = useRef(0);
+  const [validated, setValidated] = useState<{
+    json: string;
+    sourceLabel: string;
+    preview: PlanImportPreviewRes;
+  } | null>(null);
+  const [armedApplyJson, setArmedApplyJson] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
 
-  const runPreview = async (rawJson: string) => {
+  const preview = validated?.preview ?? null;
+  const armedApply = Boolean(validated && armedApplyJson === validated.json);
+  const currentSourceLabel = loadedFileName
+    ? editedAfterLoad
+      ? `已编辑内容（原自 ${loadedFileName}）`
+      : `文件：${loadedFileName}`
+    : "粘贴的 JSON 内容";
+
+  const runPreview = async (rawJson: string, sourceLabel = currentSourceLabel) => {
+    const reqId = ++previewReqRef.current;
     const clean = rawJson.trim();
     setError("");
-    setArmedApply(false);
+    setArmedApplyJson(null);
+    setValidated(null);
     if (!clean) {
-      setPreview(null);
+      setPreviewing(false);
       return;
     }
     setPreviewing(true);
@@ -619,20 +741,23 @@ export function PlanImportModal({
         method: "POST",
         body: { json: clean, mode: "preview" },
       });
-      setPreview(res);
+      // #91 (P1): Discard stale preview responses when user edits text before previous request returns.
+      if (reqId !== previewReqRef.current) return;
+      setValidated({ json: clean, sourceLabel, preview: res });
     } catch (err) {
-      setPreview(null);
+      if (reqId !== previewReqRef.current) return;
+      setValidated(null);
       setError((err as Error)?.message || "解析计划 JSON 失败");
     } finally {
-      setPreviewing(false);
+      if (reqId === previewReqRef.current) setPreviewing(false);
     }
   };
 
   const commitPlan = async (mode: "draft" | "apply") => {
-    const json = jsonText.trim();
-    if (!json || committing) return;
-    if (mode === "apply" && hasActivePlan && !armedApply) {
-      setArmedApply(true);
+    // #91 (P1): Bind preview, second-step overwrite confirm, and submission to the exact same validated snapshot.
+    if (!validated || previewing || committing) return;
+    if (mode === "apply" && hasActivePlan && armedApplyJson !== validated.json) {
+      setArmedApplyJson(validated.json);
       return;
     }
     setCommitting(true);
@@ -640,7 +765,7 @@ export function PlanImportModal({
     try {
       const res = await apiFetch<{ plan: { name: string } }>("/api/web/plans/import-json", {
         method: "POST",
-        body: { json, mode, expectedRevision },
+        body: { json: validated.json, mode, expectedRevision },
       });
       bumpDataEpoch();
       closeAllModals();
@@ -663,35 +788,51 @@ export function PlanImportModal({
         <input
           type="file"
           accept=".json,application/json"
+          disabled={committing}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (!file) return;
+            const reqId = ++previewReqRef.current;
+            setValidated(null);
+            setArmedApplyJson(null);
             if (file.size > 500_000) {
-              setPreview(null);
-              setArmedApply(false);
+              setPreviewing(false);
               setError("计划 JSON 文件超过 500 KB。");
               return;
             }
-            setFileName(`已加载：${file.name}`);
+            setLoadedFileName(file.name);
+            setEditedAfterLoad(false);
+            const nextSource = `文件：${file.name}`;
             void file.text().then((txt) => {
+              if (reqId !== previewReqRef.current) return;
               setJsonText(txt);
-              void runPreview(txt);
+              void runPreview(txt, nextSource);
             });
           }}
         />
         <span>
           <Icon name="upload" size={16} /> 选择计划 JSON 文件
         </span>
-        <small>{fileName || "或在下方直接粘贴计划 JSON 内容"}</small>
+        <small>
+          {loadedFileName
+            ? editedAfterLoad
+              ? `已编辑内容（原自 ${loadedFileName}）`
+              : `已加载：${loadedFileName}`
+            : "或在下方直接粘贴计划 JSON 内容"}
+        </small>
       </label>
 
       <textarea
         rows={5}
         value={jsonText}
+        disabled={committing}
         onChange={(e) => {
+          ++previewReqRef.current;
           setJsonText(e.target.value);
-          setPreview(null);
-          setArmedApply(false);
+          if (loadedFileName) setEditedAfterLoad(true);
+          setValidated(null);
+          setArmedApplyJson(null);
+          setPreviewing(false);
           setError("");
         }}
         placeholder='{"format":"ironlog-plan","version":1,"plan":{"name":"示例推拉计划","weeks":6,"schedule":"rotation","routines":[...]}}'
@@ -699,7 +840,7 @@ export function PlanImportModal({
 
       <div className="csv-import-options">
         <span />
-        <button type="button" className="secondary-button" disabled={previewing} onClick={() => void runPreview(jsonText)}>
+        <button type="button" className="secondary-button" disabled={previewing || committing} onClick={() => void runPreview(jsonText)}>
           {previewing ? "解析中…" : "解析预览"}
         </button>
       </div>
@@ -708,12 +849,12 @@ export function PlanImportModal({
         {error}
       </p>
 
-      {preview ? (
+      {preview && validated ? (
         <div className="csv-preview-box">
           <div className="csv-preview-head">
             <strong>{preview.plan.name}</strong>
             <small>
-              {preview.plan.weeks} 周 · {preview.plan.schedule === "rotation" ? "按顺序轮换" : "按星期执行"} · {preview.routineCount} 练 /{" "}
+              来源：{validated.sourceLabel} · {preview.plan.weeks} 周 · {preview.plan.schedule === "rotation" ? "按顺序轮换" : "按星期执行"} · {preview.routineCount} 练 /{" "}
               {preview.exerciseCount} 动作
             </small>
           </div>
@@ -740,6 +881,11 @@ export function PlanImportModal({
               </li>
             ))}
           </ul>
+          {armedApply ? (
+            <p className="muted csv-warn-note" role="status">
+              再次点击将启用计划「<b>{preview.plan.name}</b>」（{preview.routineCount} 个训练日，来源：{validated.sourceLabel}）并替换当前生效计划。
+            </p>
+          ) : null}
         </div>
       ) : null}
 
@@ -747,10 +893,10 @@ export function PlanImportModal({
         <button type="button" className="quiet" onClick={closeAllModals}>
           取消
         </button>
-        <button type="button" className="secondary-button" disabled={committing || !preview} onClick={() => void commitPlan("draft")}>
+        <button type="button" className="secondary-button" disabled={committing || previewing || !validated} onClick={() => void commitPlan("draft")}>
           存为草稿
         </button>
-        <button type="button" className="primary-button" disabled={committing || !preview} onClick={() => void commitPlan("apply")}>
+        <button type="button" className="primary-button" disabled={committing || previewing || !validated} onClick={() => void commitPlan("apply")}>
           {armedApply ? "确认覆盖当前计划" : "一键启用"}
         </button>
       </footer>

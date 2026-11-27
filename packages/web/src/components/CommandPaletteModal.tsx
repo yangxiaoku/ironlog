@@ -38,6 +38,7 @@ export function CommandPaletteModal() {
   const toggleTheme = useUiStore((s) => s.toggleTheme);
   const theme = useUiStore((s) => s.theme);
   const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const dataEpoch = useUiStore((s) => s.dataEpoch);
 
   const [query, setQuery] = useState("");
   const [exResults, setExResults] = useState<CatalogueExercise[]>([]);
@@ -56,7 +57,7 @@ export function CommandPaletteModal() {
       return;
     }
     let active = true;
-    void cachedApiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise", { userId, epoch: 0 })
+    void cachedApiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise", { userId, epoch: dataEpoch })
       .then((rows) => {
         if (!active || !Array.isArray(rows)) return;
         setCustomExercises(
@@ -67,7 +68,7 @@ export function CommandPaletteModal() {
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, dataEpoch]);
 
   useEffect(() => {
     const trimmed = query.trim();

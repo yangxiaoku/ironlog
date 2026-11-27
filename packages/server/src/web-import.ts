@@ -144,7 +144,8 @@ function compactName(value: string): string {
 
 function unescapeCell(raw: string): string {
   const trimmed = raw.trim();
-  // Strip spreadsheet-safe single-quote prefix emitted during Ironlog CSV formula escaping
+  // #109: Strip spreadsheet-safe single-quote prefix emitted during Ironlog CSV formula escaping
+  if (/^'[=+\-@\t\r]/.test(trimmed)) return trimmed.slice(1);
   return trimmed;
 }
 
@@ -231,6 +232,12 @@ function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
+function isRealCalendarDate(y: number, m: number, d: number): boolean {
+  if (y < 1902 || y > 2100 || m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const check = new Date(Date.UTC(y, m - 1, d));
+  return check.getUTCFullYear() === y && check.getUTCMonth() === m - 1 && check.getUTCDate() === d;
+}
+
 function parseDateAndIso(raw: string): { date: string; iso: string } | null {
   const clean = raw.trim();
   if (!clean) return null;
@@ -241,19 +248,20 @@ function parseDateAndIso(raw: string): { date: string; iso: string } | null {
     const y = Number(ymd[1]);
     const m = Number(ymd[2]);
     const d = Number(ymd[3]);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+    if (isRealCalendarDate(y, m, d)) {
       const date = `${y}-${pad2(m)}-${pad2(d)}`;
       const hasExplicitTz = /(?:Z|\bUTC\b|\bGMT\b|[+-]\d{2}:?\d{2})$/i.test(clean);
       const parsedMs = hasExplicitTz ? Date.parse(clean.replace(/\s+(?:UTC|GMT)$/i, "Z")) : NaN;
       if (hasExplicitTz && Number.isFinite(parsedMs)) {
         return { date: localDate(parsedMs), iso: new Date(parsedMs).toISOString() };
       }
-      const hh = Number(ymd[4] ?? 18);
-      const mm = Number(ymd[5] ?? 0);
-      const ss = Number(ymd[6] ?? 0);
+      const hh = Math.min(23, Math.max(0, Number(ymd[4] ?? 18)));
+      const mm = Math.min(59, Math.max(0, Number(ymd[5] ?? 0)));
+      const ss = Math.min(59, Math.max(0, Number(ymd[6] ?? 0)));
       const ms = Date.UTC(y, m - 1, d, hh, mm, ss) - 8 * 3600000;
       return { date, iso: new Date(ms).toISOString() };
     }
+    return null;
   }
 
   // Hevy style: "21 Nov 2026, 09:30" or "24 Nov 2026, 18:00 UTC" or "Nov 21, 2026 9:30 AM"
@@ -262,7 +270,7 @@ function parseDateAndIso(raw: string): { date: string; iso: string } | null {
     const d = Number(dmy[1]);
     const mIdx = MONTH_MAP[dmy[2]!.toLowerCase()];
     const y = Number(dmy[3]);
-    if (mIdx !== undefined && d >= 1 && d <= 31) {
+    if (mIdx !== undefined && isRealCalendarDate(y, mIdx + 1, d)) {
       const tz = dmy[7];
       if (tz) {
         const parsedMs = Date.parse(clean.replace(/,/g, ""));
@@ -564,7 +572,8 @@ function buildNormalizedRows(
       const hasReliableStartTime = hasExplicitClockTime(startRaw || dateStr);
       const sourceSessionId = col(row, "训练id", "workout_id", "session_id").trim() || null;
       const title = col(row, "训练标题").trim() || "导入训练";
-      const mins = Number(col(row, "时长(分钟)")) || 0;
+      const rawMins = Number(col(row, "时长(分钟)"));
+      const mins = Number.isFinite(rawMins) && rawMins >= 0 && rawMins <= 1440 ? rawMins : 0;
       const feelingRaw = col(row, "体感").trim().toLowerCase();
       const doneRaw = col(row, "已完成").trim().toLowerCase();
       const supersetGroup = col(row, "超级组").trim().slice(0, 16) || null;
@@ -912,12 +921,15 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
     }
     if (!title) title = "导入训练";
 
-    const durSec = first.durationSeconds;
+    const durSec = Number.isFinite(first.durationSeconds) && first.durationSeconds > 0
+      ? Math.min(86400, Math.round(first.durationSeconds))
+      : 0;
     const startMs = Date.parse(first.startedAt);
+    if (!Number.isFinite(startMs)) continue;
     const endedAt = new Date(startMs + (durSec > 0 ? durSec * 1000 : 0)).toISOString();
     const notes = [...new Set(sRows.map((r) => r.notes).filter(Boolean))].join("\n").slice(0, 4000);
 
-    const workoutData = workoutSchema.parse({
+    const parsedWo = workoutSchema.safeParse({
       title: title.slice(0, 120),
       date: first.date,
       startedAt: first.startedAt,
@@ -936,6 +948,10 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
       restEndsAt: null,
       adjustments: [],
     });
+    if (!parsedWo.success) {
+      throw new DomainError(`训练「${title}」（${first.date}）数据格式无效，请检查日期与数值列`, 400);
+    }
+    const workoutData = parsedWo.data;
 
     const titleKey = `${workoutData.date}||${workoutData.title.trim().toLowerCase()}`;
     const sigKey = `${workoutData.date}||${workoutData.exercises.map((e) => e.exerciseId).sort().join(",")}`;
@@ -1118,10 +1134,12 @@ export function importPlanJson(
     throw new DomainError("计划最多支持 7 个训练日", 400);
   }
 
-  const catalogue = store.catalogueMap(userId, true);
+  // #100 (P1): Validate against active catalogue only so preview & draft/apply use identical rules.
+  const catalogue = store.catalogueMap(userId);
   const lookup = buildLookup(catalogue);
   const missingExercises: string[] = [];
   const usedRoutineIds = new Set<string>();
+  const optNum = (v: unknown): number => (v === null || v === undefined || v === "" ? NaN : Number(v));
 
   const resolveCandidateExercise = (exObj: Record<string, unknown>): Exercise | null => {
     const idStr = typeof exObj.exerciseId === "string" ? exObj.exerciseId.trim() : "";
@@ -1177,24 +1195,36 @@ export function importPlanJson(
         };
       }
       const timed = resolved.mode === "timed";
-      const sets = Math.max(1, Math.min(100, Math.round(Number(exObj.sets) || 3)));
-      const rawRepsMin = Math.round(Number(exObj.repsMin ?? exObj.reps) || 8);
-      const repsMin = timed ? 1 : Math.max(1, Math.min(1000, rawRepsMin));
-      const rawRepsMax = Math.round(Number(exObj.repsMax ?? exObj.reps) || (exObj.reps ? repsMin : 12));
-      const repsMax = timed ? 1 : Math.max(repsMin, Math.min(1000, rawRepsMax));
-      const weightNum = exObj.weight != null && exObj.weight !== "" ? Number(exObj.weight) : NaN;
+      const setsNum = optNum(exObj.sets);
+      const sets = Number.isFinite(setsNum) && setsNum >= 1 ? Math.max(1, Math.min(100, Math.round(setsNum))) : 3;
+      const rawRepsMinNum = optNum(exObj.repsMin ?? exObj.reps);
+      const repsMin = timed ? 1 : Math.max(1, Math.min(1000, Number.isFinite(rawRepsMinNum) && rawRepsMinNum >= 1 ? Math.round(rawRepsMinNum) : 8));
+      const rawRepsMaxNum = optNum(exObj.repsMax ?? exObj.reps);
+      const repsMax = timed
+        ? 1
+        : Math.max(repsMin, Math.min(1000, Number.isFinite(rawRepsMaxNum) && rawRepsMaxNum >= 1 ? Math.round(rawRepsMaxNum) : (exObj.reps ? repsMin : 12)));
+      const weightNum = optNum(exObj.weight);
       const weight = Number.isFinite(weightNum) && weightNum >= 0 && weightNum <= 100000 ? weightNum : null;
-      const seconds = timed ? Math.max(1, Math.min(86400, Math.round(Number(exObj.seconds) || 45))) : 0;
-      const restNum = Number(exObj.restSeconds);
+      const weightUnit = exObj.weightUnit === "lb" || exObj.weightUnit === "kg" ? exObj.weightUnit : undefined;
+      const secNum = optNum(exObj.seconds);
+      const seconds = timed ? Math.max(1, Math.min(86400, Number.isFinite(secNum) && secNum >= 1 ? Math.round(secNum) : 45)) : 0;
+      const restNum = optNum(exObj.restSeconds);
       const restSeconds = Number.isFinite(restNum) && restNum >= 0 ? Math.min(900, Math.round(restNum)) : 90;
-      const rirNum = Number(exObj.targetRir);
+      const rirNum = optNum(exObj.targetRir);
       const targetRir = Number.isFinite(rirNum) && rirNum >= 0 ? Math.min(10, Math.round(rirNum)) : 2;
       const rawProg = String(exObj.progression ?? "");
-      const progression = (["double", "linear", "greyskull", "manual"].includes(rawProg)
+      const progression = (["double", "triple", "linear", "greyskull", "manual"].includes(rawProg)
         ? rawProg
         : (timed ? "manual" : "double")) as Plan["routines"][number]["exercises"][number]["progression"];
-      const incNum = Number(exObj.increment);
-      const increment = Number.isFinite(incNum) && incNum >= 0 ? Math.min(20, incNum) : 2.5;
+      const incNum = optNum(exObj.increment);
+      const defaultIncrement = weightUnit === "lb" ? 5 : 2.5;
+      const increment = Number.isFinite(incNum) && incNum >= 0 ? Math.min(20, incNum) : defaultIncrement;
+      const setsMaxNum = optNum(exObj.setsMax);
+      const setsMax = Number.isFinite(setsMaxNum) && setsMaxNum >= sets && setsMaxNum <= 100 ? Math.round(setsMaxNum) : undefined;
+      const deloadMissNum = optNum(exObj.deloadMissThreshold);
+      const deloadMissThreshold = Number.isFinite(deloadMissNum) && deloadMissNum >= 2 && deloadMissNum <= 5
+        ? Math.round(deloadMissNum)
+        : undefined;
 
       let backupExerciseId: string | null = null;
       if (typeof exObj.backupExerciseId === "string" && exObj.backupExerciseId.trim()) {
@@ -1206,14 +1236,18 @@ export function importPlanJson(
       return {
         exerciseId: resolved.id,
         sets,
+        ...(setsMax !== undefined ? { setsMax } : {}),
         repsMin,
         repsMax,
         weight,
+        ...(weightUnit ? { weightUnit } : {}),
         seconds,
         restSeconds,
         targetRir,
         progression,
         increment,
+        ...(deloadMissThreshold !== undefined ? { deloadMissThreshold } : {}),
+        ...(exObj.autoWarmup === true ? { autoWarmup: true } : {}),
         backupExerciseId,
         supersetGroup: typeof exObj.supersetGroup === "string" && exObj.supersetGroup.trim()
           ? exObj.supersetGroup.trim().slice(0, 16)
@@ -1221,7 +1255,12 @@ export function importPlanJson(
       };
     });
 
-    return { id: rId, name: rName, exercises };
+    return {
+      id: rId,
+      name: rName,
+      exercises,
+      ...(rt.isDeload === true ? { isDeload: true } : {}),
+    };
   });
 
   if (missingExercises.length) {
@@ -1244,12 +1283,13 @@ export function importPlanJson(
     }
   }
 
+  const weeksNum = optNum(candidate.weeks);
   const plan = planSchema.parse({
     name: typeof candidate.name === "string" && candidate.name.trim()
       ? candidate.name.trim().slice(0, 120)
       : "导入训练计划",
-    weeks: Number.isFinite(Number(candidate.weeks))
-      ? Math.max(1, Math.min(52, Math.round(Number(candidate.weeks))))
+    weeks: Number.isFinite(weeksNum) && weeksNum >= 1
+      ? Math.max(1, Math.min(52, Math.round(weeksNum)))
       : 8,
     schedule,
     weekdays,

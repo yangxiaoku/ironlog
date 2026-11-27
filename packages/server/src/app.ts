@@ -79,11 +79,13 @@ import {
   deleteProgressPhoto,
   exerciseNoteInput,
   getExerciseHistory,
+  getProgressPhoto,
   getTrainedExercisesSummary,
   listExerciseNotes,
   listMeasurements,
   MeasurementConflictError,
   listProgressPhotos,
+  listProgressPhotosSummary,
   measurementInput,
   progressPhotoInput,
   saveExerciseNote,
@@ -140,9 +142,13 @@ const httpLoopback = new Set(["localhost", "127.0.0.1", "[::1]"]);
 const readOnlyMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 function browserOrigin(c: Context, trustProxy: boolean) {
   const url = new URL(c.req.url);
-  const forwarded = trustProxy ? c.req.header("X-Forwarded-Proto")?.trim().toLowerCase() : undefined;
-  const secure = url.protocol === "https:" || forwarded === "https";
-  return { origin: (secure ? "https://" : "http://") + url.host, secure, local: httpLoopback.has(url.hostname) };
+  // #99: Handle multi-hop X-Forwarded-Proto ("https, http") and normalize default :443/:80 ports.
+  const forwardedProto = trustProxy
+    ? c.req.header("X-Forwarded-Proto")?.split(",")[0]?.trim().toLowerCase()
+    : undefined;
+  const secure = url.protocol === "https:" || forwardedProto === "https";
+  const origin = new URL((secure ? "https://" : "http://") + url.host).origin;
+  return { origin, secure, local: httpLoopback.has(url.hostname) };
 }
 function checkBrowserWrite(c: Context, trustProxy: boolean) {
   const { origin, secure, local } = browserOrigin(c, trustProxy);
@@ -260,10 +266,24 @@ export function createApp(
     await next();
   });
   const resolveOriginAndRp = (c: Context) => {
+    const trusted = browserOrigin(c, trustProxy);
     const rawOrigin = c.req.header("Origin");
-    const origin = rawOrigin ? new URL(rawOrigin).origin : new URL(c.req.url).origin;
-    const rpId = new URL(origin).hostname;
-    return { origin, rpId };
+    if (rawOrigin !== undefined) {
+      let parsedOrigin: URL;
+      try {
+        parsedOrigin = new URL(rawOrigin);
+      } catch {
+        throw new DomainError("无效的请求来源 Origin", 400);
+      }
+      if ((parsedOrigin.protocol !== "http:" && parsedOrigin.protocol !== "https:") || parsedOrigin.origin === "null") {
+        throw new DomainError("无效的请求来源 Origin", 400);
+      }
+      if (parsedOrigin.origin !== trusted.origin) {
+        throw new DomainError("通行密钥来源域名不匹配", 403);
+      }
+    }
+    const rpId = new URL(trusted.origin).hostname;
+    return { origin: trusted.origin, rpId };
   };
   app.post("/auth/web/pairing-login", async (c) => {
     const peer = requestPeer(c, trustProxy);
@@ -499,8 +519,11 @@ export function createApp(
     c.json(listMeasurements(db, c.get("userId"))));
   app.put("/api/web/measurements", async (c) =>
     c.json(saveMeasurement(db, c.get("userId"), measurementInput.parse(await c.req.json()))));
-  app.delete("/api/web/measurements/:date", (c) =>
-    c.json(deleteMeasurement(db, c.get("userId"), z.iso.date().parse(c.req.param("date")))));
+  app.delete("/api/web/measurements/:date", (c) => {
+    const rawExpected = c.req.query("expectedUpdatedAt");
+    const expectedUpdatedAt = rawExpected !== undefined ? rawExpected : undefined;
+    return c.json(deleteMeasurement(db, c.get("userId"), z.iso.date().parse(c.req.param("date")), expectedUpdatedAt));
+  });
   app.post("/api/web/water", async (c) =>
     c.json(updateDailyWater(db, c.get("userId"), waterUpdateInput.parse(await c.req.json()))));
   app.get("/api/web/export-csv/:kind", (c) => {
@@ -775,9 +798,20 @@ export function createApp(
   });
   // 3.2 Progress Photos (bodyLimit 1.5MB for compressed JPEG/WebP)
   const photoBodyLimit = bodyLimit({ maxSize: 1_500_000 });
-  app.get("/api/web/progress-photos", (c) => c.json(listProgressPhotos(db, c.get("userId"))));
-  app.post("/api/web/progress-photos", photoBodyLimit, async (c) =>
-    c.json(saveProgressPhoto(db, c.get("userId"), progressPhotoInput.parse(await c.req.json())), 201));
+  app.get("/api/web/progress-photos", (c) => {
+    const mode = c.req.query("mode");
+    return c.json(
+      mode === "summary"
+        ? listProgressPhotosSummary(db, c.get("userId"))
+        : listProgressPhotos(db, c.get("userId")),
+    );
+  });
+  app.get("/api/web/progress-photos/:id", (c) =>
+    c.json(getProgressPhoto(db, c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")))));
+  app.post("/api/web/progress-photos", photoBodyLimit, async (c) => {
+    const res = saveProgressPhoto(db, c.get("userId"), progressPhotoInput.parse(await c.req.json()));
+    return c.json(res, res.deleted ? 200 : 201);
+  });
   app.delete("/api/web/progress-photos/:id", (c) =>
     c.json(deleteProgressPhoto(db, c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")))));
 
@@ -895,11 +929,12 @@ export function createApp(
       credentialId: z.string().min(1).max(512),
       publicKeySpki: z.string().min(1).max(4096),
       clientDataJSON: z.string().min(1).max(4096),
+      attestationObject: z.string().min(1).max(16384).optional(),
       transports: z.array(z.string().max(32)).max(8).optional(),
       label: z.string().max(60).optional(),
     }).parse(await c.req.json());
-    const { origin } = resolveOriginAndRp(c);
-    return c.json(browser.verifyPasskeyRegistration(c.get("userId"), input, origin), 201);
+    const { origin, rpId } = resolveOriginAndRp(c);
+    return c.json(browser.verifyPasskeyRegistration(c.get("userId"), input, origin, rpId), 201);
   });
   app.get(`${apple}/tokens`, (c) => c.json(health.devices(c.get("userId"))));
   app.post(`${apple}/tokens`, async (c) => {

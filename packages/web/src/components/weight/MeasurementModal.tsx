@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import { shortDate, today } from "../../lib/date";
 import { MEASUREMENT_SPECS, type MeasurementEntry, type MeasurementValues } from "../../lib/domain";
@@ -37,11 +37,14 @@ export function MeasurementModal({
   const [loadedFromDate, setLoadedFromDate] = useState<string>(existing?.date ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const dateRef = useRef(date);
+  dateRef.current = date;
+  const dirtyFieldsRef = useRef<Set<keyof MeasurementValues | "notes">>(new Set());
 
   useEffect(() => {
     if (initialHistory.length > 0) {
       if (!existing) {
-        const matched = initialHistory.find((r) => r.date === date);
+        const matched = initialHistory.find((r) => r.date === dateRef.current);
         if (matched) {
           setValues(valuesFromEntry(matched));
           setNotes(matched.notes ?? "");
@@ -57,12 +60,23 @@ export function MeasurementModal({
         if (!active || !Array.isArray(rows)) return;
         setHistory(rows);
         if (!existing) {
-          const matched = rows.find((r) => r.date === date);
+          // #86: Always match against currently selected dateRef.current and merge only untouched fields.
+          const currentDate = dateRef.current;
+          const matched = rows.find((r) => r.date === currentDate) ?? null;
+          setBaseEntry(matched);
+          setLoadedFromDate(matched?.date ?? "");
           if (matched) {
-            setValues(valuesFromEntry(matched));
-            setNotes(matched.notes ?? "");
-            setBaseEntry(matched);
-            setLoadedFromDate(matched.date);
+            const serverVals = valuesFromEntry(matched);
+            setValues((prev) => {
+              const merged = { ...prev };
+              for (const [k] of MEASUREMENT_SPECS) {
+                if (!dirtyFieldsRef.current.has(k)) merged[k] = serverVals[k];
+              }
+              return merged;
+            });
+            if (!dirtyFieldsRef.current.has("notes")) {
+              setNotes(matched.notes ?? "");
+            }
           }
         }
       })
@@ -73,7 +87,12 @@ export function MeasurementModal({
   }, []);
 
   const byDate = useMemo(() => new Map(history.map((m) => [m.date, m])), [history]);
-  const activeExisting = baseEntry ?? existing ?? byDate.get(date) ?? null;
+  // #86: Never attach a baseEntry belonging to a different date than the currently selected date.
+  const activeExisting =
+    (baseEntry && baseEntry.date === date ? baseEntry : null) ??
+    (existing && existing.date === date ? existing : null) ??
+    byDate.get(date) ??
+    null;
 
   const latestByKey = useMemo(() => {
     const out: Partial<Record<keyof MeasurementValues, number>> = {};
@@ -87,6 +106,8 @@ export function MeasurementModal({
 
   const handleDateChange = (nextDate: string) => {
     setDate(nextDate);
+    dateRef.current = nextDate;
+    dirtyFieldsRef.current.clear();
     setConflictCurrent(null);
     setError("");
     const matched = byDate.get(nextDate);
@@ -214,15 +235,36 @@ export function MeasurementModal({
 
   const handleDelete = () => {
     if (!activeExisting) return;
+    const target = activeExisting;
     openConfirm({
       title: "删除围度记录",
-      message: `确定要删除 ${activeExisting.date} 的身体围度记录吗？`,
+      message: `确定要删除 ${target.date} 的身体围度记录吗？`,
       confirmLabel: "删除记录",
       onConfirm: async () => {
-        await apiFetch(`/api/web/measurements/${encodeURIComponent(activeExisting.date)}`, { method: "DELETE" });
-        bumpDataEpoch();
-        closeAllModals();
-        notify("已删除围度记录");
+        const qs = target.updatedAt ? `?expectedUpdatedAt=${encodeURIComponent(target.updatedAt)}` : "";
+        try {
+          await apiFetch(`/api/web/measurements/${encodeURIComponent(target.date)}${qs}`, { method: "DELETE" });
+          bumpDataEpoch();
+          closeAllModals();
+          notify("已删除围度记录");
+        } catch (err) {
+          const apiErr = err as Error & { status?: number; payload?: { current?: MeasurementEntry | null } };
+          if (apiErr.status === 409) {
+            const latest = apiErr.payload?.current ?? null;
+            setConflictCurrent(latest);
+            if (latest) {
+              setHistory((prev) => [latest, ...prev.filter((r) => r.date !== latest.date)]);
+              setBaseEntry(latest);
+              setValues(valuesFromEntry(latest));
+              setNotes(latest.notes ?? "");
+              dirtyFieldsRef.current.clear();
+            }
+            setError(apiErr.message || "该日期的围度已在其他设备更新，已载入最新数据，请确认后再删除");
+            notify("围度已在其他设备更新，已取消删除并载入最新数据");
+            return;
+          }
+          throw err;
+        }
       },
     });
   };
@@ -261,7 +303,10 @@ export function MeasurementModal({
                 max={maxVal}
                 value={values[key]}
                 placeholder={latestByKey[key] != null ? `上次 ${latestByKey[key]}` : ""}
-                onChange={(e) => setValues((prev) => ({ ...prev, [key]: e.target.value }))}
+                onChange={(e) => {
+                  dirtyFieldsRef.current.add(key);
+                  setValues((prev) => ({ ...prev, [key]: e.target.value }));
+                }}
               />
               <span>cm</span>
             </div>
@@ -274,7 +319,10 @@ export function MeasurementModal({
         <input
           maxLength={300}
           value={notes}
-          onChange={(e) => setNotes(e.target.value)}
+          onChange={(e) => {
+            dirtyFieldsRef.current.add("notes");
+            setNotes(e.target.value);
+          }}
           placeholder="例如：晨起空腹、冷态测量"
         />
       </label>

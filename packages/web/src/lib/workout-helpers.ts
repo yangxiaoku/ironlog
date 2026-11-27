@@ -507,7 +507,15 @@ function scheduleWorkoutPrefsSync(): void {
   syncDebounceTimer = setTimeout(() => {
     syncDebounceTimer = null;
     try {
-      void Promise.resolve(pusher(readWorkoutPreferences())).catch(() => {});
+      // #110: Always include explicit empty platePairs/hiddenModules in cloud sync payload so clearing them wipes cloud state.
+      const current = readWorkoutPreferences();
+      void Promise.resolve(
+        pusher({
+          ...current,
+          platePairs: current.platePairs ?? {},
+          hiddenModules: current.hiddenModules ?? [],
+        }),
+      ).catch(() => {});
     } catch {}
   }, 400);
 }

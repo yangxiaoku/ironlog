@@ -737,12 +737,16 @@ export function evaluateWeightChangeRate(
   weightPoints: { date: string; weight: number }[],
 ): WeightRateReport | null {
   if (weightPoints.length < 2) return null;
-  const sorted = [...weightPoints].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const sorted = [...weightPoints]
+    .filter((p) => Number.isFinite(p.weight) && p.weight > 0)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const daily = collapseDailyWeights(sorted);
-  const series = daily.length >= 2 ? daily : sorted;
+  // #107: Require at least 2 distinct calendar days with positive weights; never compute slope from same-day weigh-ins.
+  if (daily.length < 2) return null;
+  const series = daily;
   const start = series[0];
   const end = series[series.length - 1];
-  if (!start || !end) return null;
+  if (!start || !end || start.weight <= 0 || end.weight <= 0) return null;
 
   const daysDiff = Math.max(1, (Date.parse(end.date + "T00:00:00Z") - Date.parse(start.date + "T00:00:00Z")) / 86400000);
   const weeks = Math.max(0.5, daysDiff / 7);

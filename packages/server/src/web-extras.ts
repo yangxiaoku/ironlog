@@ -398,9 +398,26 @@ export function saveMeasurement(
   }).immediate();
 }
 
-export function deleteMeasurement(db: Db, userId: string, date: string) {
-  db.prepare("DELETE FROM body_measurements WHERE user_id=? AND date=?").run(userId, date);
-  return { ok: true };
+export function deleteMeasurement(db: Db, userId: string, date: string, expectedUpdatedAt?: string | null) {
+  return db.transaction(() => {
+    if (expectedUpdatedAt !== undefined) {
+      const existing = db
+        .prepare(
+          `SELECT date, waist_cm AS waistCm, chest_cm AS chestCm, arm_cm AS armCm,
+                  thigh_cm AS thighCm, hip_cm AS hipCm, notes, updated_at AS updatedAt
+           FROM body_measurements WHERE user_id=? AND date=?`,
+        )
+        .get(userId, date) as BodyMeasurementRow | undefined;
+      if (existing && existing.updatedAt !== expectedUpdatedAt) {
+        throw new MeasurementConflictError(
+          "该日期的围度已在其他设备更新，请核对最新记录后再确认删除",
+          existing,
+        );
+      }
+    }
+    db.prepare("DELETE FROM body_measurements WHERE user_id=? AND date=?").run(userId, date);
+    return { ok: true };
+  }).immediate();
 }
 
 // ===== 3.2 Progress Photos =====
@@ -414,6 +431,11 @@ export const progressPhotoInput = z.object({
     .min(32, "图片数据为空")
     .max(1_000_000, "图片压缩后仍超过上限（最大约 700KB）")
     .refine((v) => /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v), "仅支持 JPEG / PNG / WebP 图片数据"),
+  thumbnailData: z
+    .string()
+    .max(160_000)
+    .refine((v) => /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v), "缩略图格式无效")
+    .optional(),
   note: z.string().trim().max(200).default(""),
 });
 
@@ -423,24 +445,59 @@ export interface ProgressPhotoRow {
   pose: "front" | "side" | "back" | "free";
   mime: string;
   imageData: string;
+  thumbnailData?: string | null;
   note: string;
   createdAt: string;
 }
 
+export interface ProgressPhotoSummaryRow {
+  id: string;
+  date: string;
+  pose: "front" | "side" | "back" | "free";
+  mime: string;
+  thumbnailData: string | null;
+  note: string;
+  createdAt: string;
+}
+
+export type SaveProgressPhotoResult =
+  | (ProgressPhotoRow & { deleted?: false })
+  | { id: string; deleted: true; photo: null; message: string };
+
 export function listProgressPhotos(db: Db, userId: string): ProgressPhotoRow[] {
   return db
     .prepare(
-      `SELECT id, date, pose, mime, image_data AS imageData, note, created_at AS createdAt
+      `SELECT id, date, pose, mime, image_data AS imageData, thumbnail_data AS thumbnailData, note, created_at AS createdAt
        FROM progress_photos WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 60`,
     )
     .all(userId) as ProgressPhotoRow[];
+}
+
+export function listProgressPhotosSummary(db: Db, userId: string): ProgressPhotoSummaryRow[] {
+  return db
+    .prepare(
+      `SELECT id, date, pose, mime, thumbnail_data AS thumbnailData, note, created_at AS createdAt
+       FROM progress_photos WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 60`,
+    )
+    .all(userId) as ProgressPhotoSummaryRow[];
+}
+
+export function getProgressPhoto(db: Db, userId: string, id: string): ProgressPhotoRow {
+  const row = db
+    .prepare(
+      `SELECT id, date, pose, mime, image_data AS imageData, thumbnail_data AS thumbnailData, note, created_at AS createdAt
+       FROM progress_photos WHERE user_id=? AND id=?`,
+    )
+    .get(userId, id) as ProgressPhotoRow | undefined;
+  if (!row) throw new DomainError("找不到该体态照片", 404);
+  return row;
 }
 
 export function saveProgressPhoto(
   db: Db,
   userId: string,
   input: z.infer<typeof progressPhotoInput>,
-): ProgressPhotoRow {
+): SaveProgressPhotoResult {
   if (input.date > localDate()) {
     throw new DomainError("照片日期不能晚于今天", 400);
   }
@@ -468,19 +525,17 @@ export function saveProgressPhoto(
         const meta = JSON.parse(saved.result) as { id: string; createdAt: string };
         const existingPhoto = db
           .prepare(
-            `SELECT id, date, pose, mime, image_data AS imageData, note, created_at AS createdAt
+            `SELECT id, date, pose, mime, image_data AS imageData, thumbnail_data AS thumbnailData, note, created_at AS createdAt
              FROM progress_photos WHERE user_id=? AND id=?`,
           )
           .get(userId, meta.id) as ProgressPhotoRow | undefined;
         if (existingPhoto) return existingPhoto;
+        // #88: Never fabricate a fake photo when a replayed opId's original photo was already deleted.
         return {
           id: meta.id,
-          date: input.date,
-          pose: input.pose,
-          mime: input.mime,
-          imageData: input.imageData,
-          note: input.note ?? "",
-          createdAt: meta.createdAt,
+          deleted: true as const,
+          photo: null,
+          message: "该照片已在其他设备删除，如需保留请重新选择上传",
         };
       }
     }
@@ -494,9 +549,9 @@ export function saveProgressPhoto(
     const id = `photo_${randomUUID()}`;
     const createdAt = new Date().toISOString();
     db.prepare(
-      `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, note, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, userId, input.date, input.pose, input.mime, input.imageData, input.note ?? "", createdAt);
+      `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, thumbnail_data, note, created_at, source_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, userId, input.date, input.pose, input.mime, input.imageData, input.thumbnailData ?? null, input.note ?? "", createdAt, id);
     if (opKey && requestPayload) {
       db.prepare("INSERT INTO operations (user_id, op_id, request, result) VALUES (?, ?, ?, ?)").run(
         userId,
@@ -511,6 +566,7 @@ export function saveProgressPhoto(
       pose: input.pose,
       mime: input.mime,
       imageData: input.imageData,
+      thumbnailData: input.thumbnailData ?? null,
       note: input.note ?? "",
       createdAt,
     };

@@ -88,9 +88,13 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
     const sessionMs = Date.parse(session.endedAt ?? session.startedAt) || 0;
     if (entry.id === id || session.status !== "completed" || session.date > workout.date ||
       (session.date === workout.date && sessionMs >= targetTimeMs)) continue;
-    const sameRoutine = workout.routineId
-      ? session.routineId === workout.routineId
-      : session.title.trim() === workout.title.trim();
+    // #81: Match planId + routineId together so identical routine IDs across different plans never cross-compare.
+    const sameRoutine =
+      workout.planId && workout.routineId
+        ? session.planId === workout.planId && session.routineId === workout.routineId
+        : !workout.planId && workout.routineId
+          ? !session.planId && session.routineId === workout.routineId
+          : !session.planId && !session.routineId && session.title.trim() === workout.title.trim();
     if (sameRoutine && (
       !prevEntry ||
       session.date > prevEntry.workout.date ||

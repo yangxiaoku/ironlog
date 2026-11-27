@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { weightToKg } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import { cachedApiFetch } from "../../lib/query-cache";
 import { duration, fmt, formatWeekdayZh, shortDate, today } from "../../lib/date";
@@ -80,9 +81,10 @@ function computeWorkoutSummary(data: WorkoutData, catalogueMap: Map<string, Cata
     const work = (row.sets ?? []).filter((s) => s.completed && s.type !== "warmup");
     const done = (row.sets ?? []).filter((s) => s.completed);
     completedSets += work.length;
+    const rowUnit: "kg" | "lb" = row.weightUnit === "lb" ? "lb" : "kg";
     if (mode === "reps") {
       for (const s of work) {
-        if (s.weight > 0 && s.reps > 0) volume += s.weight * s.reps * mult;
+        if (s.weight > 0 && s.reps > 0) volume += weightToKg(s.weight, rowUnit) * s.reps * mult;
       }
     }
     let best = `${done.length} 组`;
@@ -104,7 +106,7 @@ function computeWorkoutSummary(data: WorkoutData, catalogueMap: Map<string, Cata
         const topR = top.reps || 0;
         best =
           topW > 0
-            ? `${mode === "assisted" ? "助" : ""}${fmt(topW)}kg×${topR}`
+            ? `${mode === "assisted" ? "助" : ""}${fmt(topW)}${rowUnit}×${topR}`
             : topR > 0
               ? `${topR}次`
               : `${work.length} 组`;

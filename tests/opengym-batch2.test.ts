@@ -168,10 +168,11 @@ test("2.2 triple progression advances reps -> sets -> weight reset, and tracks c
     [
       { feeling: "balanced", row: missRow },
       { feeling: "balanced", row: missRow },
+      { feeling: "balanced", row: missRow },
     ],
     "reps",
   );
-  assert.equal(missReport.consecutiveMisses, 2);
+  assert.equal(missReport.consecutiveMisses, 3);
   assert.equal(missReport.deloadMissThreshold, 3);
   assert.equal(missReport.status, "plateau_deload");
 

@@ -7,12 +7,45 @@ import { shiftDay } from "./web-statistics.js";
 
 type CompletionLink = Pick<Workout, "planId" | "planVersion" | "routineId">;
 
+function activeVersionsOnDate(
+  planSchedule: ScheduledPlan | null,
+  date: string,
+  planId: string,
+): Set<number> {
+  const versions = new Set<number>();
+  if (!planSchedule) return versions;
+  const history = planSchedule.history ?? [];
+  let priorLatest: PlanActivation | null = null;
+  for (const entry of history) {
+    if (!entry.updatedAt) continue;
+    const entryDate = localDate(Date.parse(entry.updatedAt));
+    if (entryDate < date) {
+      priorLatest = entry;
+    } else if (entryDate === date) {
+      if (entry.id === planId && entry.version != null) versions.add(entry.version);
+    }
+  }
+  if (priorLatest && priorLatest.id === planId && priorLatest.version != null) versions.add(priorLatest.version);
+  if (planSchedule.id === planId && planSchedule.version != null && (!planSchedule.updatedAt || localDate(Date.parse(planSchedule.updatedAt)) <= date)) {
+    versions.add(planSchedule.version);
+  }
+  return versions;
+}
+
 export function matchesScheduledWorkout(
-  schedule: ScheduledDay, link: CompletionLink, active: PlanActivation | null,
+  schedule: ScheduledDay,
+  link: CompletionLink,
+  active: PlanActivation | null,
+  validVersions?: ReadonlySet<number>,
 ) {
+  const versionOk =
+    active?.id !== link.planId ||
+    link.planVersion == null ||
+    link.planVersion === active?.version ||
+    Boolean(validVersions?.has(link.planVersion));
   return link.routineId === (schedule.routineId ?? `schedule_${schedule.date}`) &&
     link.planId === schedule.planId &&
-    (active?.id !== link.planId || link.planVersion == null || link.planVersion === active?.version);
+    versionOk;
 }
 
 export function summarizePlanAdherence(
@@ -70,20 +103,21 @@ export function summarizePlanAdherence(
       planIds.add(active.id);
       lastPlan = active;
     }
+    const validVersions = active ? activeVersionsOnDate(planSchedule, date, active.id) : undefined;
     if (override?.mode === "workout") {
       const routineId = override.routineId ?? `schedule_${date}`;
       countSlot(override.routineId ? `${override.planId ?? ""}:${routineId}` : `manual:${override.title}`,
         override.title || "排期训练",
-        matches.some((m) => matchesScheduledWorkout(override, m, active)), date);
+        matches.some((m) => matchesScheduledWorkout(override, m, active, validVersions)), date);
     } else if (!override && active?.data.schedule === "weekdays") {
       const routine = active.data.routines[active.data.weekdays.indexOf(weekday)];
       if (routine) countSlot(`${active.id}:${routine.id}`, routine.name,
         matches.some((m) => m.planId === active.id && m.routineId === routine.id &&
-          (m.planVersion == null || m.planVersion === active.version)), date);
+          (m.planVersion == null || m.planVersion === active.version || Boolean(validVersions?.has(m.planVersion)))), date);
     }
     if (active?.data.schedule === "rotation") {
       const monday = shiftDay(date, 1 - weekday);
-      const key = `${active.id}:${active.updatedAt ?? active.version ?? ""}:${monday}`;
+      const key = `${active.id}:${active.startedAt ?? active.updatedAt ?? active.version ?? ""}:${monday}`;
       const week = rotations.get(key) ?? {
         elapsedDays: 0, days: 0, elapsedFixed: 0, fixed: 0, elapsedFree: 0, free: 0, completed: 0,
         daysPerWeek: goalsOn(profile, date)?.daysPerWeek ?? profile.daysPerWeek,
@@ -97,7 +131,7 @@ export function summarizePlanAdherence(
         week.free++;
         if (date < today) week.elapsedFree++;
         week.completed += new Set(matches.filter((m) => m.planId === active.id &&
-          (m.planVersion == null || m.planVersion === active.version) &&
+          (m.planVersion == null || m.planVersion === active.version || Boolean(validVersions?.has(m.planVersion))) &&
           active.data.routines.some((r) => r.id === m.routineId)).map((m) => m.routineId)).size;
       }
       firstScheduledDay ??= date;

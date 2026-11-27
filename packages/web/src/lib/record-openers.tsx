@@ -724,8 +724,15 @@ export async function launchRoutineDirectly({
       apiFetch<RoutineLaunchPayload>(`/api/web/routine?${params.toString()}`),
       goals ? Promise.resolve({ profile: goals }) : apiFetch<{ profile?: ProfileGoals }>("/api/web/profile").catch(() => null),
     ]);
-    const seed = buildWorkoutSeedFromRoutine(result, { date });
+    // #101 (P1): Live direct-launch workouts must land on today() rather than a future scheduled date.
+    const todayStr = today();
+    const isFuturePlan = Boolean(date && date > todayStr);
+    const sessionDate = isFuturePlan ? todayStr : date;
+    const seed = buildWorkoutSeedFromRoutine(result, { date: sessionDate });
     openWorkoutEditor({ seed, goals: goals ?? prof?.profile ?? null });
+    if (isFuturePlan) {
+      ui.notify(`已提前开练 ${date.slice(5)} 的计划，本次训练将计入今天`);
+    }
   } catch (err) {
     ui.notify((err as Error)?.message || "直接开练失败，已为你打开预览");
     openRoutinePreview({ id, source, date });

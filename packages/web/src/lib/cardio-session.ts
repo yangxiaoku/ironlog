@@ -14,6 +14,12 @@ export interface CardioLap {
   recordedAt: string;
 }
 
+export interface PendingCardioSave {
+  opId: string;
+  payload: Record<string, unknown>;
+  sentAt: string;
+}
+
 export interface LiveCardioSession {
   id: string;
   presetId: AppleCardioPresetId;
@@ -30,6 +36,7 @@ export interface LiveCardioSession {
   notes: string;
   finishedAt?: string;
   appleSyncRequestedAt?: string;
+  pendingSave?: PendingCardioSave;
 }
 
 const ACTIVITY_METS: Record<string, number> = {
@@ -128,6 +135,14 @@ export function readCardioSession(userId: string): LiveCardioSession | null {
       finishedAt: typeof parsed.finishedAt === "string" && Number.isFinite(Date.parse(parsed.finishedAt)) ? parsed.finishedAt : undefined,
       appleSyncRequestedAt: typeof parsed.appleSyncRequestedAt === "string" && Number.isFinite(Date.parse(parsed.appleSyncRequestedAt))
         ? parsed.appleSyncRequestedAt : undefined,
+      pendingSave:
+        parsed.pendingSave &&
+        typeof parsed.pendingSave === "object" &&
+        typeof parsed.pendingSave.opId === "string" &&
+        parsed.pendingSave.payload &&
+        typeof parsed.pendingSave.payload === "object"
+          ? parsed.pendingSave
+          : undefined,
     };
   } catch {
     return null;
@@ -268,21 +283,48 @@ export function matchesCardioAppleWorkout(session: LiveCardioSession, workout: {
     Date.parse(workout.endedAt) <= Date.parse(session.appleSyncRequestedAt) + 120_000;
 }
 
+/**
+ * Strict distance parser that normalizes comma decimal separators ("5,5" -> 5.5) and rejects malformed text (#79).
+ */
+export function parseCardioDistanceKm(raw: string): { valid: boolean; valueKm: number | null; normalized: string } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { valid: true, valueKm: null, normalized: "" };
+  const normalized = trimmed.replace(",", ".");
+  if (!/^\d+(?:\.\d+)?$/.test(normalized)) {
+    return { valid: false, valueKm: null, normalized: "" };
+  }
+  const value = Number(normalized);
+  if (!Number.isFinite(value) || value <= 0 || value > 500) {
+    return { valid: false, valueKm: null, normalized: "" };
+  }
+  const rounded = Math.round(value * 100) / 100;
+  return { valid: true, valueKm: rounded, normalized: String(rounded) };
+}
+
 export function buildCardioAppleAnnotation(session: LiveCardioSession): AppleWorkoutAnnotationInput {
   const notes = session.notes.trim();
-  const distanceKm = session.distanceKm.trim();
+  const parsedDist = parseCardioDistanceKm(session.distanceKm);
+  const distanceKm = parsedDist.valid ? parsedDist.normalized : "";
   const lapSeconds = session.laps.map((lap) => lap.splitSeconds);
   return { sessionId: session.id, notes, distanceKm, feeling: session.feeling, lapSeconds };
 }
 
-export function buildCardioWorkoutMutation(session: LiveCardioSession, now = Date.now()) {
+export function buildCardioWorkoutMutation(
+  session: LiveCardioSession,
+  now = Date.now(),
+  options?: { weightKg?: number; opId?: string; baseVersion?: number },
+) {
   const finished = finishCardioTiming(session, now);
   const totalSec = Math.max(1, finished.timing.elapsedSeconds);
   const endedAt = finished.finishedAt!;
-  const pace = formatCardioPaceOrSpeed(finished.activityType, totalSec, finished.distanceKm);
+  const parsedDist = parseCardioDistanceKm(finished.distanceKm);
+  const normalizedDistStr = parsedDist.valid ? parsedDist.normalized : "";
+  const distanceMeters = parsedDist.valueKm != null ? Math.round(parsedDist.valueKm * 1000) : null;
+  const pace = formatCardioPaceOrSpeed(finished.activityType, totalSec, normalizedDistStr);
+  const estimatedKcal = estimateCardioCalories(finished.activityType, totalSec, options?.weightKg ?? 70);
   const laps = finished.laps.map((lap) => `#${lap.index} ${formatClock(lap.splitSeconds)}`).join(" / ");
   const notes = [
-    finished.distanceKm.trim() && `距离：${finished.distanceKm.trim()} km`,
+    normalizedDistStr && `距离：${normalizedDistStr} km`,
     pace && `${pace.label}：${pace.value}`,
     laps && `分段：${laps}`,
     finished.notes.trim(),
@@ -290,8 +332,9 @@ export function buildCardioWorkoutMutation(session: LiveCardioSession, now = Dat
   const id = `cardio-${finished.id}`;
   return {
     id,
-    opId: `${id}-save`,
-    baseVersion: 0,
+    opId: options?.opId ?? `${id}-save`,
+    baseVersion: options?.baseVersion ?? 0,
+    deleted: false,
     kind: "workout" as const,
     data: {
       title: finished.label,
@@ -303,6 +346,13 @@ export function buildCardioWorkoutMutation(session: LiveCardioSession, now = Dat
       timing: finished.timing,
       feeling: finished.feeling,
       notes,
+      cardioMeta: {
+        activityType: finished.activityType,
+        environment: finished.environment,
+        distanceMeters,
+        estimatedKcal,
+        lapSeconds: finished.laps.map((l) => l.splitSeconds),
+      },
       exercises: [{
         id: `${id}-exercise`,
         exerciseId: `cardio-${finished.presetId}`,
@@ -323,6 +373,8 @@ export function recordCardioLap(session: LiveCardioSession, now = Date.now()): L
   const cumulativeSeconds = elapsedAt(session.timing, now);
   const prevTotal = session.laps.at(-1)?.cumulativeSeconds ?? 0;
   const splitSeconds = Math.max(0, cumulativeSeconds - prevTotal);
+  // #80: Never append a 0-second lap when no new elapsed time occurred since the previous lap (e.g., while paused).
+  if (splitSeconds <= 0) return session;
   const nextLap: CardioLap = {
     id: `lap-${session.laps.length + 1}-${now}`,
     index: session.laps.length + 1,
@@ -338,9 +390,10 @@ export function recordCardioLap(session: LiveCardioSession, now = Date.now()): L
 
 export function estimateCardioCalories(activityType: string, elapsedSeconds: number, weightKg = 70): number {
   if (elapsedSeconds <= 0) return 0;
+  const safeWeight = Number.isFinite(weightKg) && weightKg >= 20 && weightKg <= 350 ? weightKg : 70;
   const met = ACTIVITY_METS[activityType] ?? 7.0;
   const hours = elapsedSeconds / 3600;
-  return Math.round(met * weightKg * hours);
+  return Math.round(met * safeWeight * hours);
 }
 
 export function formatCardioPaceOrSpeed(
@@ -348,8 +401,9 @@ export function formatCardioPaceOrSpeed(
   elapsedSeconds: number,
   distanceKmRaw: string,
 ): { label: string; value: string } | null {
-  const km = Number.parseFloat(distanceKmRaw.trim());
-  if (!Number.isFinite(km) || km <= 0 || elapsedSeconds <= 0) return null;
+  const parsed = parseCardioDistanceKm(distanceKmRaw);
+  const km = parsed.valueKm;
+  if (!parsed.valid || km == null || km <= 0 || elapsedSeconds <= 0) return null;
   if (activityType === "cycling") {
     const kmh = km / (elapsedSeconds / 3600);
     if (!Number.isFinite(kmh) || kmh <= 0 || kmh > 120) return null;

@@ -26,6 +26,7 @@ import {
   resumeRestTimer,
   shiftRestTimer,
   triggerHaptic,
+  triggerRestFinalCountdownBeep,
   type RestTimerState,
   type WorkoutTiming,
 } from "../lib/haptics-audio";
@@ -203,6 +204,10 @@ export function LiveWorkoutBar() {
 
   useEffect(() => {
     if (!draft?.rest || draft.rest.pausedLeftMs != null) return;
+    const leftSec = Math.ceil((draft.rest.end - nowMs) / 1000);
+    if (leftSec >= 1 && leftSec <= 3 && nowMs < draft.rest.end) {
+      triggerRestFinalCountdownBeep(draft.rest.end, leftSec, audio);
+    }
     if (nowMs >= draft.rest.end && firedRestEndRef.current !== draft.rest.end) {
       firedRestEndRef.current = draft.rest.end;
       if (nowMs - draft.rest.end <= 60_000) {

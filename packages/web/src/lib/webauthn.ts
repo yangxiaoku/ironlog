@@ -72,6 +72,7 @@ export async function registerPasskeyCredential(label: string): Promise<{ creden
       credentialId: cred.id,
       publicKeySpki: bufferToBase64Url(spki),
       clientDataJSON: bufferToBase64Url(response.clientDataJSON),
+      ...(response.attestationObject ? { attestationObject: bufferToBase64Url(response.attestationObject) } : {}),
       transports,
       label: label.trim() || "本机通行密钥",
     },

@@ -797,15 +797,18 @@ export class Store {
     const VALID_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
     const validProgressPhotos: Array<{
       id: string;
+      sourceKey: string;
       date: string;
       pose: "front" | "side" | "back" | "free";
       mime: string;
       imageData: string;
+      thumbnailData: string | null;
       note: string;
       createdAt: string;
     }> = [];
     rawProgressPhotos.forEach((p, idx) => {
       const pid = typeof p?.id === "string" ? p.id.trim() : "";
+      const sourceKey = typeof p?.sourceKey === "string" && p.sourceKey.trim() ? p.sourceKey.trim() : pid;
       const date = isValidYmd(p?.date) ? p.date : "";
       const pose = typeof p?.pose === "string" && VALID_POSES.has(p.pose) ? (p.pose as "front" | "side" | "back" | "free") : null;
       const mime = typeof p?.mime === "string" && VALID_MIMES.has(p.mime) ? p.mime : null;
@@ -816,6 +819,13 @@ export class Store {
         /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(p.imageData)
           ? p.imageData
           : null;
+      const thumbnailData =
+        typeof p?.thumbnailData === "string" &&
+        p.thumbnailData.length >= 32 &&
+        p.thumbnailData.length <= 160_000 &&
+        /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(p.thumbnailData)
+          ? p.thumbnailData
+          : null;
       if (!pid || !date || !pose || !mime || !imageData) {
         if (strategy === "replace") {
           throw new DomainError(`备份中第 ${idx + 1} 张体态照片无效，已中止覆盖恢复`, 400);
@@ -824,10 +834,12 @@ export class Store {
       }
       validProgressPhotos.push({
         id: pid,
+        sourceKey,
         date,
         pose,
         mime,
         imageData,
+        thumbnailData,
         note: typeof p.note === "string" ? p.note.slice(0, 200) : "",
         createdAt: backupInstant(p.createdAt) ?? now,
       });
@@ -969,22 +981,139 @@ export class Store {
       totalRecords: validRecords.length,
     };
 
+    // #93 & #95: Compute photo dedup (via id/source_key) and remaining 60-photo capacity for both preview and commit
+    const PHOTO_LIMIT = 60;
+    const existingUserPhotos = this.db
+      .prepare("SELECT id, source_key AS sourceKey FROM progress_photos WHERE user_id = ?")
+      .all(userId) as Array<{ id: string; sourceKey: string | null }>;
+    const existingPhotoIds = new Set(existingUserPhotos.map((r) => r.id));
+    const existingPhotoSourceKeys = new Set(
+      existingUserPhotos.flatMap((r) => (r.sourceKey ? [r.sourceKey] : [r.id])),
+    );
+    const willClearPhotos = strategy === "replace" && hasProgressPhotosArray;
+    const basePhotoCount = willClearPhotos ? 0 : existingUserPhotos.length;
+    const remainingCapacity = Math.max(0, PHOTO_LIMIT - basePhotoCount);
+    const seenBackupPhotoKeys = new Set<string>();
+    let previewPhotoDuplicates = 0;
+    let previewPhotoCandidates = 0;
+    for (const photo of validProgressPhotos) {
+      const alreadyOwned =
+        !willClearPhotos &&
+        (existingPhotoIds.has(photo.id) || existingPhotoSourceKeys.has(photo.sourceKey) || existingPhotoSourceKeys.has(photo.id));
+      if (alreadyOwned || seenBackupPhotoKeys.has(photo.sourceKey)) {
+        previewPhotoDuplicates++;
+        continue;
+      }
+      seenBackupPhotoKeys.add(photo.sourceKey);
+      previewPhotoCandidates++;
+    }
+    const previewPhotosToImport = Math.min(previewPhotoCandidates, remainingCapacity);
+    const previewPhotosSkippedCapacity = Math.max(0, previewPhotoCandidates - remainingCapacity);
+    const photoPlanSummary = {
+      total: validProgressPhotos.length,
+      toImport: previewPhotosToImport,
+      skippedDuplicate: previewPhotoDuplicates,
+      skippedCapacity: previewPhotosSkippedCapacity,
+      remainingCapacity,
+      capacityLimit: PHOTO_LIMIT,
+    };
+
     if (mode === "preview") {
       let toImport = 0;
       let toUpdate = 0;
       let unchanged = 0;
+      const incomingRecordKeys = new Set<string>();
       for (const rec of validRecords) {
+        incomingRecordKeys.add(backupRecordKey(rec));
         const existing = this.get(userId, rec.kind, rec.id);
         if (!existing) toImport++;
         else if (strategy === "replace" || newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) toUpdate++;
         else unchanged++;
       }
+
+      // #92: In replace strategy, compute exact deletion counts across generic records and auxiliary tables.
+      const deletions = {
+        records: 0,
+        measurements: 0,
+        progressPhotos: 0,
+        exerciseNotes: 0,
+        appleDaily: 0,
+        appleWorkouts: 0,
+        total: 0,
+      };
+      if (strategy === "replace") {
+        const curRecords = this.db
+          .prepare("SELECT kind, id FROM records WHERE user_id = ? AND deleted = 0")
+          .all(userId) as Array<{ kind: string; id: string }>;
+        for (const r of curRecords) {
+          const incoming = validRecords.find((v) => v.kind === r.kind && v.id === r.id);
+          if (!incoming || incoming.deleted) deletions.records++;
+        }
+        const incomingMeasDates = new Set(validMeasurements.map((m) => m.date));
+        const curMeas = this.db
+          .prepare("SELECT date FROM body_measurements WHERE user_id = ?")
+          .all(userId) as Array<{ date: string }>;
+        deletions.measurements = curMeas.filter((m) => !incomingMeasDates.has(m.date)).length;
+
+        const incomingNoteExIds = new Set(validNotes.map((n) => n.exerciseId));
+        const curNotes = this.db
+          .prepare("SELECT exercise_id AS exerciseId FROM exercise_notes WHERE user_id = ?")
+          .all(userId) as Array<{ exerciseId: string }>;
+        deletions.exerciseNotes = curNotes.filter((n) => !incomingNoteExIds.has(n.exerciseId)).length;
+
+        if (hasProgressPhotosArray) {
+          const incomingPhotoKeys = new Set(validProgressPhotos.flatMap((p) => [p.id, p.sourceKey]));
+          deletions.progressPhotos = existingUserPhotos.filter(
+            (p) => !incomingPhotoKeys.has(p.id) && !(p.sourceKey && incomingPhotoKeys.has(p.sourceKey)),
+          ).length;
+        }
+
+        const incomingDailyDates = new Set(dailyHealthRows.map((d) => d.date));
+        const curDaily = this.db
+          .prepare("SELECT date FROM apple_health_daily WHERE user_id = ?")
+          .all(userId) as Array<{ date: string }>;
+        deletions.appleDaily = curDaily.filter((d) => !incomingDailyDates.has(d.date)).length;
+
+        const incomingAppleIds = new Set(
+          validAppleWorkouts.map((w) => {
+            const rawKey = typeof w.identityKey === "string" ? w.identityKey.trim() : "";
+            if (rawKey) return rawKey;
+            const extId = w.externalWorkoutId ?? w.externalId;
+            return appleWorkoutIdentity({
+              externalWorkoutId: typeof extId === "string" && extId.trim() ? extId.trim() : null,
+              activityType: w.activityType as string,
+              startedAt: backupInstant(w.startedAt)!,
+              endedAt: backupInstant(w.endedAt)!,
+            });
+          }),
+        );
+        const curApple = this.db
+          .prepare("SELECT identity_key AS identityKey FROM apple_health_workouts WHERE user_id = ?")
+          .all(userId) as Array<{ identityKey: string }>;
+        deletions.appleWorkouts = curApple.filter((a) => !incomingAppleIds.has(a.identityKey)).length;
+
+        deletions.total =
+          deletions.records +
+          deletions.measurements +
+          deletions.progressPhotos +
+          deletions.exerciseNotes +
+          deletions.appleDaily +
+          deletions.appleWorkouts;
+      }
+
       return {
         mode: "preview" as const,
         strategy,
         exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
         counts,
-        diff: { toImport, toUpdate, unchanged },
+        photos: photoPlanSummary,
+        diff: {
+          toImport,
+          toUpdate,
+          unchanged,
+          toDelete: deletions.total,
+          deletions,
+        },
       };
     }
 
@@ -1147,20 +1276,46 @@ export class Store {
         );
       }
 
-      // Restore progressPhotos (#18)
+      // Restore progressPhotos (#18, #93 stable source_key dedup, #95 accurate capacity accounting)
       const stmtPhotoIdInUse = this.db.prepare("SELECT user_id FROM progress_photos WHERE id = ?");
+      const stmtUserHasSourcePhoto = this.db.prepare(
+        "SELECT 1 FROM progress_photos WHERE user_id = ? AND (id = ? OR source_key = ?) LIMIT 1",
+      );
       const stmtInsertPhoto = this.db.prepare(
-        `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, note, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, thumbnail_data, note, created_at, source_key)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const stmtPhotoCount = this.db.prepare("SELECT COUNT(*) AS cnt FROM progress_photos WHERE user_id = ?");
+      let photosImported = 0;
+      let photosSkippedDuplicate = 0;
+      let photosSkippedCapacity = 0;
       for (const photo of validProgressPhotos) {
-        const ownerRow = stmtPhotoIdInUse.get(photo.id) as { user_id: string } | undefined;
-        if (ownerRow && ownerRow.user_id === userId) continue;
+        const alreadyOwned = stmtUserHasSourcePhoto.get(userId, photo.id, photo.sourceKey);
+        if (alreadyOwned) {
+          photosSkippedDuplicate++;
+          continue;
+        }
         const currentCount = (stmtPhotoCount.get(userId) as { cnt: number }).cnt;
-        if (currentCount >= 60) break;
+        if (currentCount >= PHOTO_LIMIT) {
+          photosSkippedCapacity++;
+          skippedCount++;
+          continue;
+        }
+        const ownerRow = stmtPhotoIdInUse.get(photo.id) as { user_id: string } | undefined;
         const targetId = ownerRow ? `photo_${randomUUID()}` : photo.id;
-        stmtInsertPhoto.run(targetId, userId, photo.date, photo.pose, photo.mime, photo.imageData, photo.note, photo.createdAt);
+        stmtInsertPhoto.run(
+          targetId,
+          userId,
+          photo.date,
+          photo.pose,
+          photo.mime,
+          photo.imageData,
+          photo.thumbnailData,
+          photo.note,
+          photo.createdAt,
+          photo.sourceKey,
+        );
+        photosImported++;
       }
 
       // Restore appleHealthDaily
@@ -1268,6 +1423,13 @@ export class Store {
         strategy,
         exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
         counts,
+        photos: {
+          total: validProgressPhotos.length,
+          imported: photosImported,
+          skippedDuplicate: photosSkippedDuplicate,
+          skippedCapacity: photosSkippedCapacity,
+          capacityLimit: PHOTO_LIMIT,
+        },
         imported: importedCount,
         updated: updatedCount,
         skipped: skippedCount,

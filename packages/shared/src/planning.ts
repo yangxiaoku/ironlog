@@ -334,7 +334,7 @@ export function evaluateExerciseProgression(
   if (item.progression !== "manual" && !computed.increased && !computed.setsIncreased && recentSameExercise.length >= 2 && mode !== "timed") {
     const recentTwo = recentSameExercise.slice(0, 2);
     const fatiguedStreak = recentTwo.every(({ feeling }) => feeling === "fatigued");
-    if (consecutiveMisses >= Math.min(deloadMissThreshold, 2) || fatiguedStreak) plateau = true;
+    if (consecutiveMisses >= deloadMissThreshold || fatiguedStreak) plateau = true;
   }
 
   const nextMilestoneWeight = mode === "timed"
@@ -915,11 +915,12 @@ export function resolveRoutineWithTelemetry(params: {
     const previousRow = matchingRows.find((r) => r.targetIndex === index) ?? (matchingRows.length === 1 ? matchingRows[0] : undefined);
     const previousTarget = previousRoutine?.targetSnapshot?.exercises[index];
     const prescribedChanged = item.weight !== null && (previousTarget?.exerciseId !== item.exerciseId || previousTarget.weight !== item.weight);
+    const recentCap = Math.max(5, item.deloadMissThreshold ?? 3);
     const recentSameExercise: { feeling: Workout["feeling"]; row: Workout["exercises"][number] }[] = [];
     for (const w of history) {
       const r = w.exercises.find(matches);
       if (r) recentSameExercise.push({ feeling: w.feeling, row: r });
-      if (recentSameExercise.length >= 3) break;
+      if (recentSameExercise.length >= recentCap) break;
     }
     const historicalRow = recentSameExercise[0]?.row;
 

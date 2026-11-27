@@ -8,7 +8,7 @@ export function AuthScreen() {
   const authenticating = useAuthStore((s) => s.authenticating);
   const setAuthMode = useAuthStore((s) => s.setAuthMode);
   const authenticate = useAuthStore((s) => s.authenticate);
-  const bootstrap = useAuthStore((s) => s.bootstrap);
+  const verifySessionAfterLogin = useAuthStore((s) => s.verifySessionAfterLogin);
 
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -54,7 +54,7 @@ export function AuthScreen() {
       setAltBusy(true);
       try {
         await apiFetch("/auth/web/pairing-login", { method: "POST", body: { code: cleanCode } });
-        await bootstrap();
+        await verifySessionAfterLogin();
       } catch (err) {
         setError((err as Error)?.message || "配对登录失败，请检查配对码是否过期");
       } finally {
@@ -81,7 +81,7 @@ export function AuthScreen() {
     setAltBusy(true);
     try {
       await loginWithPasskey(username);
-      await bootstrap();
+      await verifySessionAfterLogin();
     } catch (err) {
       setError((err as Error)?.message || "通行密钥登录失败");
     } finally {

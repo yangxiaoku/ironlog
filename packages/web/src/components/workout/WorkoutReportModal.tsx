@@ -502,14 +502,34 @@ export function WorkoutReportModal({
       </div>
 
       {cmp ? (
+        <div className="report-comparison-bar" style={{ justifyContent: "space-between", flexWrap: "wrap", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
+            <span>
+              较上次 {shortDate(cmp.date)}「{cmp.title}」
+            </span>
+            <b className={cmp.volumeDelta > 0 ? "is-up" : cmp.volumeDelta < 0 ? "is-down" : ""}>
+              容量 {cmp.volumeDelta >= 0 ? "+" : ""}
+              {fmt(cmp.volumeDelta, 1)} kg
+              {cmp.volumePct != null ? ` (${cmp.volumePct >= 0 ? "+" : ""}${cmp.volumePct}%)` : ""}
+            </b>
+            {cmp.setsDelta ? <small>工作组 {cmp.setsDelta > 0 ? "+" : ""}{cmp.setsDelta}</small> : null}
+          </div>
+          {cmp.workoutId ? (
+            <button
+              type="button"
+              className="micro-chip"
+              onClick={() => {
+                triggerHaptic("light");
+                openWorkoutReport({ workoutId: cmp.workoutId });
+              }}
+            >
+              查看原记录
+            </button>
+          ) : null}
+        </div>
+      ) : report.planId || report.routineId ? (
         <div className="report-comparison-bar">
-          <span>较上次 {shortDate(cmp.date)}</span>
-          <b className={cmp.volumeDelta > 0 ? "is-up" : cmp.volumeDelta < 0 ? "is-down" : ""}>
-            容量 {cmp.volumeDelta >= 0 ? "+" : ""}
-            {fmt(cmp.volumeDelta, 1)} kg
-            {cmp.volumePct != null ? ` (${cmp.volumePct >= 0 ? "+" : ""}${cmp.volumePct}%)` : ""}
-          </b>
-          {cmp.setsDelta ? <small>工作组 {cmp.setsDelta > 0 ? "+" : ""}{cmp.setsDelta}</small> : null}
+          <span className="muted">暂无同计划对应训练日的可比记录</span>
         </div>
       ) : null}
 

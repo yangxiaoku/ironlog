@@ -4,6 +4,7 @@ import {
   isValidWorkSet,
   localDate,
   nutritionDayComplete,
+  weightToKg,
   workoutDurationSeconds,
   type Diet,
   type NutritionDay,
@@ -81,9 +82,16 @@ function makeBadge(
 ): BadgeItem {
   const unlocked = spec.unlocked ?? spec.current >= spec.target;
   const clamped = Math.min(spec.target, Math.max(0, spec.current));
+  const rounded = Math.round(clamped * 10) / 10;
+  // #105: Never allow display rounding to show target reached when unrounded current < target.
+  const displayCurrent = unlocked
+    ? spec.target
+    : rounded >= spec.target && spec.target > 0
+      ? Math.max(0, Math.floor(clamped * 10) / 10)
+      : rounded;
   return {
     ...spec,
-    current: unlocked ? spec.target : Math.round(clamped * 10) / 10,
+    current: displayCurrent,
     categoryLabel: categoryLabels[spec.category],
     progress: spec.target > 0 ? Math.min(1, Math.max(0, clamped / spec.target)) : 0,
     unlocked,
@@ -243,13 +251,6 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     let hasCardio = false;
     let sessionVolume = 0;
     let sessionSets = 0;
-    const durSec = workoutDurationSeconds(workout) ?? 0;
-    if (durSec > 0) {
-      totalSeconds += durSec;
-      if (durSec > maxSessionSeconds) maxSessionSeconds = durSec;
-      sessionMinTracker.observe(durSec / 60, workout.date);
-      hoursTracker.observe(totalSeconds / 3600, workout.date);
-    }
     if (workout.feeling === "balanced") balancedDates.push(workout.date);
     if (workout.feeling === "fatigued") fatiguedDates.push(workout.date);
 
@@ -289,16 +290,18 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
         }
 
         if (exercise.mode === "reps" && set.weight > 0) {
-          const setVol = set.weight * set.reps * exercise.volumeMultiplier;
+          // #104 (P1): Convert lb weights to kg before volume, 1RM, milestones and PR checks.
+          const weightKg = weightToKg(set.weight, row.weightUnit);
+          const setVol = weightKg * set.reps * exercise.volumeMultiplier;
           totalVolume += setVol;
           sessionVolume += setVol;
           tonnageTracker.observe(totalVolume, workout.date);
 
-          sessionBestWeight = Math.max(sessionBestWeight, set.weight);
-          const est = set.reps <= 10 ? estimatedOneRepMax(set.weight, set.reps) : null;
+          sessionBestWeight = Math.max(sessionBestWeight, weightKg);
+          const est = set.reps <= 10 ? estimatedOneRepMax(weightKg, set.reps) : null;
           if (est !== null) sessionBestEst = Math.max(sessionBestEst, est);
 
-          const liftScore = Math.max(set.weight, est ?? 0);
+          const liftScore = Math.max(weightKg, est ?? 0);
           const tag = `${row.exerciseId} ${exercise.name}`;
 
           if (row.exerciseId === "bench-press" || exercise.name.includes("杠铃卧推")) {
@@ -359,22 +362,38 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     if (hasCardio) cardioDates.add(workout.date);
   }
 
+  // #105: Merge manual workouts and unlinked Apple workouts chronologically before accumulating duration badges.
+  const durationEvents: Array<{ date: string; startedMs: number; durationSeconds: number }> = [];
+  for (const workout of workouts) {
+    const durSec = workoutDurationSeconds(workout) ?? 0;
+    if (durSec > 0) {
+      durationEvents.push({ date: workout.date, startedMs: Date.parse(workout.startedAt) || 0, durationSeconds: durSec });
+    }
+  }
+  for (const entry of projected) {
+    if (!entry.manualWorkoutId && entry.durationSeconds && entry.durationSeconds > 0) {
+      durationEvents.push({ date: entry.date, startedMs: entry.startedMs || 0, durationSeconds: entry.durationSeconds });
+    }
+  }
+  durationEvents.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.startedMs - b.startedMs));
+  for (const ev of durationEvents) {
+    totalSeconds += ev.durationSeconds;
+    if (ev.durationSeconds > maxSessionSeconds) maxSessionSeconds = ev.durationSeconds;
+    sessionMinTracker.observe(ev.durationSeconds / 60, ev.date);
+    hoursTracker.observe(totalSeconds / 3600, ev.date);
+  }
+
   let totalAppleBurnKcal = 0;
   const appleBurnTracker = new ThresholdTracker([5000]);
   for (const entry of projected) {
-    if (!entry.manualWorkoutId && entry.durationSeconds && entry.durationSeconds > 0) {
-      totalSeconds += entry.durationSeconds;
-      if (entry.durationSeconds > maxSessionSeconds) maxSessionSeconds = entry.durationSeconds;
-      sessionMinTracker.observe(entry.durationSeconds / 60, entry.date);
-      hoursTracker.observe(totalSeconds / 3600, entry.date);
-    }
     if (entry.activeEnergyKcal && entry.activeEnergyKcal > 0) {
       totalAppleBurnKcal += entry.activeEnergyKcal;
       appleBurnTracker.observe(totalAppleBurnKcal, entry.date);
     }
     const normalizedType = entry.activityType.replace(/[-_]/g, "").toLowerCase();
-    if (cardioTypes.has(normalizedType)) cardioDates.add(entry.date);
-    else if (normalizedType.includes("strengthtraining")) strengthDates.add(entry.date);
+    // #105: Use activity.family so outdoorRunning, indoorCycling, rowing, etc. count toward double-day.
+    if (entry.activity.family === "cardio" || cardioTypes.has(normalizedType)) cardioDates.add(entry.date);
+    else if (entry.activity.family === "resistance" || normalizedType.includes("strengthtraining")) strengthDates.add(entry.date);
   }
 
   const doubleDays = [...strengthDates].filter((date) => cardioDates.has(date)).sort();
@@ -544,7 +563,7 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     makeBadge({ id: "variety-10", title: "10 个动作", subtitle: "完成 10 种不同动作", category: "special", rule: "累计使用至少 10 个不同训练动作完成有效工作组", current: usedExercises.size, target: 10, unit: "种", unlockedAt: varietyTracker.dateFor(10), tier: "standard" }),
     makeBadge({ id: "variety-25", title: "25 个动作", subtitle: "完成 25 种不同动作", category: "special", rule: "累计使用至少 25 个不同训练动作完成有效工作组", current: usedExercises.size, target: 25, unit: "种", unlockedAt: varietyTracker.dateFor(25), tier: "milestone" }),
     makeBadge({ id: "equipment-4", title: "4 种器械", subtitle: "使用 4 类训练器械", category: "special", rule: "使用至少 4 种不同器械类型完成有效工作组", current: usedEquipments.size, target: 4, unit: "类", unlockedAt: equipTracker.dateFor(4), tier: "standard" }),
-    makeBadge({ id: "marathon-60m", title: "单次 60 分钟", subtitle: "单次训练 ≥60 分钟", category: "special", rule: "单次训练或运动有效时长达到 60 分钟以上", current: Math.round(maxSessionSeconds / 60), target: 60, unit: "分", unlockedAt: sessionMinTracker.dateFor(60), tier: "standard" }),
+    makeBadge({ id: "marathon-60m", title: "单次 60 分钟", subtitle: "单次训练 ≥60 分钟", category: "special", rule: "单次训练或运动有效时长达到 60 分钟以上", current: maxSessionSeconds / 60, target: 60, unit: "分", unlockedAt: sessionMinTracker.dateFor(60), tier: "standard" }),
     makeBadge({ id: "session-20sets", title: "单场 20 组", subtitle: "单场 ≥20 有效组", category: "special", rule: "单次正式训练完成至少 20 个有效工作组", current: maxSessionSets, target: 20, unit: "组", unlockedAt: sessionSetsTracker.dateFor(20), tier: "milestone" }),
     makeBadge({ id: "feeling-balanced-20", title: "适中体感 20 场", subtitle: "20 场标注「适中」", category: "special", rule: "累计完成 20 场训练体感标注为「适中」", current: balancedDates.length, target: 20, unit: "场", unlockedAt: balancedDates[19] ?? null, tier: "milestone" }),
     makeBadge({ id: "grit-fatigued-5", title: "疲惫完成 5 场", subtitle: "5 场标注「疲惫」", category: "special", rule: "累计完成 5 场训练体感标注为「疲惫」的坚持纪录", current: fatiguedDates.length, target: 5, unit: "场", unlockedAt: fatiguedDates[4] ?? null, tier: "milestone" }),

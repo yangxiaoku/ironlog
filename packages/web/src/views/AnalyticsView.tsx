@@ -1570,7 +1570,7 @@ export function AnalyticsView() {
                 </section>
               ) : null}
 
-              {appleWorkouts?.whoCardio && appleWorkouts.totalCount > 0 ? (
+              {appleWorkouts?.whoCardio && (appleWorkouts.totalCount > 0 || appleWorkouts.whoCardio.equivalentMinutes > 0 || (appleWorkouts.paceTrend?.length ?? 0) > 0) ? (
                 <section className="panel analytics-panel panel-who-cardio" id="panel-who-cardio">
                   <header className="panel-head">
                     <div>

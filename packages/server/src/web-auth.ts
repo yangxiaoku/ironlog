@@ -27,6 +27,119 @@ const dummyHash = Buffer.alloc(64);
 type Credentials = z.infer<typeof webCredentialsInput>;
 type CredentialRow = { userId: string; salt: Buffer; passwordHash: Buffer };
 
+function parseClientDataJson(b64url: string): { type?: string; challenge?: string; origin?: string } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(Buffer.from(b64url, "base64url").toString("utf8"));
+  } catch {
+    throw new DomainError("无效的通行密钥客户端数据", 400);
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new DomainError("无效的通行密钥客户端数据", 400);
+  }
+  return parsed as { type?: string; challenge?: string; origin?: string };
+}
+
+function decodeCborValue(buf: Buffer, offset: number): { value: unknown; next: number } {
+  if (offset >= buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
+  const initial = buf[offset]!;
+  const major = initial >> 5;
+  const addl = initial & 0x1f;
+  let pos = offset + 1;
+  const readLen = (): number => {
+    if (addl < 24) return addl;
+    if (addl === 24) {
+      if (pos + 1 > buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
+      const n = buf[pos]!;
+      pos += 1;
+      return n;
+    }
+    if (addl === 25) {
+      if (pos + 2 > buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
+      const n = buf.readUInt16BE(pos);
+      pos += 2;
+      return n;
+    }
+    if (addl === 26) {
+      if (pos + 4 > buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
+      const n = buf.readUInt32BE(pos);
+      pos += 4;
+      return n;
+    }
+    throw new DomainError("不支持的通行密钥证明数据编码", 400);
+  };
+  if (major === 0) return { value: readLen(), next: pos };
+  if (major === 1) return { value: -1 - readLen(), next: pos };
+  if (major === 2) {
+    const len = readLen();
+    if (pos + len > buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
+    return { value: buf.subarray(pos, pos + len), next: pos + len };
+  }
+  if (major === 3) {
+    const len = readLen();
+    if (pos + len > buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
+    return { value: buf.subarray(pos, pos + len).toString("utf8"), next: pos + len };
+  }
+  if (major === 4) {
+    const len = readLen();
+    const arr: unknown[] = [];
+    for (let i = 0; i < len; i++) {
+      const item = decodeCborValue(buf, pos);
+      arr.push(item.value);
+      pos = item.next;
+    }
+    return { value: arr, next: pos };
+  }
+  if (major === 5) {
+    const len = readLen();
+    const map: Record<string, unknown> = {};
+    for (let i = 0; i < len; i++) {
+      const k = decodeCborValue(buf, pos);
+      const v = decodeCborValue(buf, k.next);
+      map[String(k.value)] = v.value;
+      pos = v.next;
+    }
+    return { value: map, next: pos };
+  }
+  if (major === 7) {
+    if (addl === 20) return { value: false, next: pos };
+    if (addl === 21) return { value: true, next: pos };
+    if (addl === 22 || addl === 23) return { value: null, next: pos };
+    throw new DomainError("不支持的通行密钥证明数据编码", 400);
+  }
+  throw new DomainError("不支持的通行密钥证明数据编码", 400);
+}
+
+function verifyAttestationObject(attestationB64Url: string, expectedRpId: string, expectedCredentialId: string) {
+  const buf = Buffer.from(attestationB64Url, "base64url");
+  const decoded = decodeCborValue(buf, 0).value;
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new DomainError("无效的通行密钥证明对象", 400);
+  }
+  const authData = (decoded as Record<string, unknown>).authData;
+  if (!Buffer.isBuffer(authData) || authData.length < 55) {
+    throw new DomainError("通行密钥证明中缺少有效认证器数据", 400);
+  }
+  const rpIdHash = authData.subarray(0, 32);
+  const expectedRpHash = createHash("sha256").update(expectedRpId).digest();
+  if (!timingSafeEqual(rpIdHash, expectedRpHash)) {
+    throw new DomainError("通行密钥注册域名摘要校验失败", 400);
+  }
+  const flags = authData[32]!;
+  if ((flags & 0x01) === 0 || (flags & 0x40) === 0) {
+    throw new DomainError("通行密钥注册未包含有效的认证凭据数据", 400);
+  }
+  // Attested credential data starts at offset 37: 16 bytes AAGUID + 2 bytes credIdLen + credId
+  const credIdLen = authData.readUInt16BE(53);
+  if (credIdLen <= 0 || 55 + credIdLen > authData.length) {
+    throw new DomainError("通行密钥凭据 ID 长度无效", 400);
+  }
+  const attestedCredId = authData.subarray(55, 55 + credIdLen).toString("base64url");
+  if (attestedCredId !== expectedCredentialId) {
+    throw new DomainError("通行密钥凭据 ID 与证明对象不一致", 400);
+  }
+}
+
 export class WebAuth {
   private hashing = 0;
   private nextCleanup = 0;
@@ -267,17 +380,15 @@ export class WebAuth {
       credentialId: string;
       publicKeySpki: string;
       clientDataJSON: string;
+      attestationObject?: string;
       transports?: string[];
       label?: string;
     },
     expectedOrigin: string,
+    expectedRpId?: string,
   ) {
     this.purgeChallenges();
-    const clientData = JSON.parse(Buffer.from(input.clientDataJSON, "base64url").toString("utf8")) as {
-      type?: string;
-      challenge?: string;
-      origin?: string;
-    };
+    const clientData = parseClientDataJson(input.clientDataJSON);
     if (clientData.type !== "webauthn.create" || !clientData.challenge) {
       throw new DomainError("通行密钥注册响应类型不正确", 400);
     }
@@ -290,6 +401,10 @@ export class WebAuth {
     if (clientData.origin !== expectedOrigin) {
       throw new DomainError("通行密钥来源域名不匹配", 400);
     }
+    if (input.attestationObject) {
+      const rpId = expectedRpId ?? new URL(expectedOrigin).hostname;
+      verifyAttestationObject(input.attestationObject, rpId, input.credentialId);
+    }
     // Validate that publicKeySpki parses cleanly as a SPKI DER public key
     const spkiBuf = Buffer.from(input.publicKeySpki, "base64url");
     try {
@@ -300,32 +415,31 @@ export class WebAuth {
     const nowIso = new Date().toISOString();
     const cleanLabel = (input.label ?? "").trim().slice(0, 60) || "本机通行密钥";
     const transportsJson = JSON.stringify((input.transports ?? []).slice(0, 6));
-    this.db
-      .prepare(
-        `INSERT INTO web_passkeys (credential_id, user_id, public_key, counter, transports, label, created_at, last_used_at)
-         VALUES (?, ?, ?, 0, ?, ?, ?, NULL)
-         ON CONFLICT(credential_id) DO UPDATE SET public_key = excluded.public_key, label = excluded.label`,
-      )
-      .run(input.credentialId, userId, input.publicKeySpki, transportsJson, cleanLabel, nowIso);
+    // #96 (P0): Never overwrite an existing credential_id on conflict; reject with 409 to prevent cross-account takeover.
+    this.db.transaction(() => {
+      const existing = this.db
+        .prepare("SELECT user_id AS userId FROM web_passkeys WHERE credential_id = ?")
+        .get(input.credentialId) as { userId: string } | undefined;
+      if (existing) {
+        throw new DomainError("该通行密钥凭据已被注册，无法重复绑定", 409);
+      }
+      this.db
+        .prepare(
+          `INSERT INTO web_passkeys (credential_id, user_id, public_key, counter, transports, label, created_at, last_used_at)
+           VALUES (?, ?, ?, 0, ?, ?, ?, NULL)`,
+        )
+        .run(input.credentialId, userId, input.publicKeySpki, transportsJson, cleanLabel, nowIso);
+    }).immediate();
     return { ok: true, credentialId: input.credentialId, label: cleanLabel };
   }
 
-  createPasskeyLoginOptions(rpId: string, usernameHint?: string) {
+  createPasskeyLoginOptions(rpId: string, _usernameHint?: string) {
     this.purgeChallenges();
     const challenge = randomBytes(32).toString("base64url");
-    let allowCredentials: Array<{ id: string; type: "public-key" }> = [];
-    let hintedUserId: string | undefined;
-    if (usernameHint?.trim()) {
-      const cleanName = usernameHint.trim().normalize("NFKC").toLowerCase();
-      const row = this.stmtLogin.get(cleanName) as { userId: string } | undefined;
-      if (row) {
-        hintedUserId = row.userId;
-        allowCredentials = this.listPasskeys(row.userId).map((k) => ({ id: k.credentialId, type: "public-key" as const }));
-      }
-    }
+    // #96 (P0): Never expose another account's allowCredentials to unauthenticated requests.
+    // Rely on discoverable credentials (residentKey) without leaking credential IDs.
     this.challenges.set(`login:${challenge}`, {
       challenge,
-      userId: hintedUserId,
       kind: "login",
       expiresAt: Date.now() + 5 * 60_000,
     });
@@ -334,7 +448,6 @@ export class WebAuth {
       rpId,
       timeout: 120_000,
       userVerification: "preferred",
-      ...(allowCredentials.length ? { allowCredentials } : {}),
     };
   }
 
@@ -350,11 +463,7 @@ export class WebAuth {
   ): { userId: string } {
     this.purgeChallenges();
     const clientDataBuf = Buffer.from(input.clientDataJSON, "base64url");
-    const clientData = JSON.parse(clientDataBuf.toString("utf8")) as {
-      type?: string;
-      challenge?: string;
-      origin?: string;
-    };
+    const clientData = parseClientDataJson(input.clientDataJSON);
     if (clientData.type !== "webauthn.get" || !clientData.challenge) {
       throw new DomainError("通行密钥登录响应类型不正确", 400);
     }
@@ -382,7 +491,8 @@ export class WebAuth {
     const flags = authData[32]!;
     if ((flags & 0x01) === 0) throw new DomainError("认证器未确认用户在场", 401);
     const signCount = authData.readUInt32BE(33);
-    if (keyRow.counter > 0 && signCount > 0 && signCount <= keyRow.counter) {
+    // #98: Reject cloned/rolled-back counters including signCount === 0 whenever stored counter > 0.
+    if ((keyRow.counter > 0 || signCount > 0) && signCount <= keyRow.counter) {
       throw new DomainError("通行密钥计数器异常，可能存在克隆风险", 401);
     }
 

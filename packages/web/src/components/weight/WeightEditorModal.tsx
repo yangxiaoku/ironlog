@@ -37,25 +37,41 @@ export function WeightEditorModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const resolvedVersionsRef = useRef<Map<string, number>>(new Map());
-  const dirtyRef = useRef(false);
+  const resolvedExistingRef = useRef<Map<string, RecordEnvelope<WeightData>>>(new Map());
+  const weightDirtyRef = useRef(false);
+  const bodyFatDirtyRef = useRef(false);
+
+  const handleDateSelect = (nextDate: string) => {
+    if (nextDate === date) return;
+    weightDirtyRef.current = false;
+    bodyFatDirtyRef.current = false;
+    setDate(nextDate);
+  };
 
   useEffect(() => {
     if (record) return;
     let active = true;
-    const weightId = `weight_${date}`;
+    const targetDate = date;
+    const weightId = `weight_${targetDate}`;
     void apiFetch<RecordEnvelope<WeightData>>(
       `/api/web/records/weight/${encodeURIComponent(weightId)}?includeDeleted=1`,
     )
       .then((existing) => {
         if (!active) return;
-        resolvedVersionsRef.current.set(date, existing.version);
-        if (!dirtyRef.current && !existing.deleted && existing.data) {
-          setWeight(String(existing.data.weight));
-          setBodyFat(existing.data.bodyFat != null ? String(existing.data.bodyFat) : "");
+        resolvedVersionsRef.current.set(targetDate, existing.version);
+        resolvedExistingRef.current.set(targetDate, existing);
+        if (!existing.deleted && existing.data) {
+          // #76: Merge each field independently so editing weight before slow fetch resolves preserves existing bodyFat.
+          if (!weightDirtyRef.current) {
+            setWeight(String(existing.data.weight));
+          }
+          if (!bodyFatDirtyRef.current) {
+            setBodyFat(existing.data.bodyFat != null ? String(existing.data.bodyFat) : "");
+          }
         }
       })
       .catch(() => {
-        if (active) resolvedVersionsRef.current.set(date, 0);
+        if (active) resolvedVersionsRef.current.set(targetDate, 0);
       });
     return () => {
       active = false;
@@ -64,7 +80,7 @@ export function WeightEditorModal({
 
   const stepWeight = (delta: number) => {
     triggerHaptic("light");
-    dirtyRef.current = true;
+    weightDirtyRef.current = true;
     const cur = Number(weight) || defaultWeight || 65;
     const next = Math.max(1, Math.min(500, Math.round((cur + delta) * 100) / 100));
     setWeight(Number.isInteger(Math.round(next * 100) / 10) ? next.toFixed(1) : next.toFixed(2));
@@ -79,7 +95,7 @@ export function WeightEditorModal({
       return;
     }
     const bfTrim = bodyFat.trim();
-    const bfNum = bfTrim === "" ? null : Number(bfTrim);
+    let bfNum = bfTrim === "" ? null : Number(bfTrim);
     if (bfNum != null && (!Number.isFinite(bfNum) || bfNum < 1 || bfNum > 75)) {
       setError("请输入有效体脂率（1–75%）");
       return;
@@ -89,16 +105,23 @@ export function WeightEditorModal({
     setError("");
 
     let baseVersion = record?.version ?? resolvedVersionsRef.current.get(date);
+    let existingRec = record ?? resolvedExistingRef.current.get(date);
     if (!record && baseVersion === undefined) {
       try {
         const existing = await apiFetch<RecordEnvelope<WeightData>>(
           `/api/web/records/weight/${encodeURIComponent(`weight_${date}`)}?includeDeleted=1`,
         );
         baseVersion = existing.version;
+        existingRec = existing;
         resolvedVersionsRef.current.set(date, baseVersion);
+        resolvedExistingRef.current.set(date, existing);
       } catch {
         baseVersion = 0;
       }
+    }
+    // #76: Preserve existing bodyFat if user only edited weight and never touched bodyFat field.
+    if (!record && !bodyFatDirtyRef.current && bfNum === null && existingRec && !existingRec.deleted && existingRec.data?.bodyFat != null) {
+      bfNum = existingRec.data.bodyFat;
     }
 
     const payload = {
@@ -181,7 +204,7 @@ export function WeightEditorModal({
             className="date-pill"
             aria-pressed={date === todayStr}
             disabled={Boolean(record)}
-            onClick={() => setDate(todayStr)}
+            onClick={() => handleDateSelect(todayStr)}
           >
             今天
           </button>
@@ -190,7 +213,7 @@ export function WeightEditorModal({
             className="date-pill"
             aria-pressed={date === yesterday}
             disabled={Boolean(record)}
-            onClick={() => setDate(yesterday)}
+            onClick={() => handleDateSelect(yesterday)}
           >
             昨天
           </button>
@@ -199,7 +222,7 @@ export function WeightEditorModal({
             className="date-pill"
             aria-pressed={date === dayBeforeYesterday}
             disabled={Boolean(record)}
-            onClick={() => setDate(dayBeforeYesterday)}
+            onClick={() => handleDateSelect(dayBeforeYesterday)}
           >
             前天
           </button>
@@ -213,7 +236,7 @@ export function WeightEditorModal({
           max={todayStr}
           required
           readOnly={Boolean(record)}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(e) => handleDateSelect(e.target.value)}
         />
       </div>
 
@@ -236,7 +259,7 @@ export function WeightEditorModal({
             autoFocus={!record}
             value={weight}
             onChange={(e) => {
-              dirtyRef.current = true;
+              weightDirtyRef.current = true;
               setWeight(e.target.value);
             }}
             placeholder="0.0"
@@ -268,7 +291,7 @@ export function WeightEditorModal({
             step="any"
             value={bodyFat}
             onChange={(e) => {
-              dirtyRef.current = true;
+              bodyFatDirtyRef.current = true;
               setBodyFat(e.target.value);
             }}
             placeholder="—"
@@ -281,6 +304,7 @@ export function WeightEditorModal({
                 className="micro-chip"
                 onClick={() => {
                   triggerHaptic("light");
+                  bodyFatDirtyRef.current = true;
                   const cur = Number(bodyFat) || 15;
                   setBodyFat(String(Math.max(1, Math.min(75, Math.round((cur + d) * 10) / 10))));
                 }}

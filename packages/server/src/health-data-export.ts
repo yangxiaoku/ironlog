@@ -42,17 +42,19 @@ function findWorkouts(value: unknown, depth = 0, workoutGroup = false): unknown[
       const lists = workoutDatasets.map((item) => findWorkouts(item, depth + 1, true));
       return lists.every((list) => list !== undefined) ? lists.flatMap((list) => list!) : undefined;
     }
-    if (workoutGroup || value.length === 0 || value.some((item) => hasWorkoutFields(asFields(item), false))) return value;
-    return undefined;
+    if (workoutGroup || value.some((item) => hasWorkoutFields(asFields(item), false))) return value;
+    return value.length === 0 ? [] : undefined;
   }
 
   const fields = asFields(value);
+  let emptyFallback: unknown[] | undefined;
   for (const name of [...workouts, "workout", "data", "payload", "exports", "datasets", "records", "samples", "items", "metrics"]) {
     if (!Object.hasOwn(fields, name)) continue;
     const list = findWorkouts(fields[name], depth + 1, workoutGroup || workouts.includes(name) || name === "workout");
-    if (list) return list;
+    if (list && list.length > 0) return list;
+    if (list && list.length === 0 && !emptyFallback) emptyFallback = list;
   }
-  return hasWorkoutFields(fields, workoutGroup) ? [value] : undefined;
+  return hasWorkoutFields(fields, workoutGroup) ? [value] : emptyFallback;
 }
 
 // HealthKit raw values for the workouts that Ironlog classifies explicitly.
@@ -153,9 +155,10 @@ function workout(value: unknown, index: number): AppleWorkoutInput {
       number(read(hr, ...nested.map((name) => name + "bpm"))) ??
       amount(hr, [], nested, ["unit", "units"], bpm);
   }
-  const avg = rate(["averageheartratebpm", "avgheartratebpm"], ["average", "avg"], ["averageheartrate", "avgheartrate"]);
-  const min = rate(["minheartratebpm", "minimumheartratebpm"], ["minimum", "min"], ["minimumheartrate", "minheartrate"]);
-  const max = rate(["maxheartratebpm", "maximumheartratebpm"], ["maximum", "max"], ["maximumheartrate", "maxheartrate"]);
+  const validBpm = (v: number | undefined) => (v !== undefined && v > 0 && v <= 260 ? v : undefined);
+  const avg = validBpm(rate(["averageheartratebpm", "avgheartratebpm"], ["average", "avg"], ["averageheartrate", "avgheartrate"]));
+  const min = validBpm(rate(["minheartratebpm", "minimumheartratebpm"], ["minimum", "min"], ["minimumheartrate", "minheartrate"]));
+  const max = validBpm(rate(["maxheartratebpm", "maximumheartratebpm"], ["maximum", "max"], ["maximumheartrate", "maxheartrate"]));
   const parsed = appleWorkoutInput.safeParse({
     schemaVersion: 1, captureMethod: "workout", activityType: type,
     startedAt: dateString(read(fields, ...starts)), endedAt: dateString(read(fields, ...ends)),

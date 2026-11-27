@@ -436,6 +436,28 @@ export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSou
   };
 }
 
+const firedRestCountdownBeeps = new Set<string>();
+
+/**
+ * Shared 3-2-1 rest countdown beep deduplicated across WorkoutEditorModal and LiveWorkoutBar (#83).
+ */
+export function triggerRestFinalCountdownBeep(
+  restEndMs: number,
+  leftSec: number,
+  audio: { play(complete: boolean): void },
+): boolean {
+  if (leftSec < 1 || leftSec > 3) return false;
+  const key = `${restEndMs}:${leftSec}`;
+  if (firedRestCountdownBeeps.has(key)) return false;
+  if (firedRestCountdownBeeps.size > 64) {
+    const first = firedRestCountdownBeeps.values().next().value;
+    if (first) firedRestCountdownBeeps.delete(first);
+  }
+  firedRestCountdownBeeps.add(key);
+  audio.play(false);
+  return true;
+}
+
 export function speakCue(
   text: string,
   options: { enabled?: boolean; lang?: string; rate?: number } = {},
