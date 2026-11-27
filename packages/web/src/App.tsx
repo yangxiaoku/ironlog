@@ -65,6 +65,12 @@ export function App() {
   const view = useUiStore((s) => s.view);
 
   useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" as ScrollBehavior });
+    }
+  }, [view]);
+
+  useEffect(() => {
     prefetchViewChunk(useUiStore.getState().view);
     void useAuthStore.getState().bootstrap().then(() => {
       const uid = useAuthStore.getState().userId;

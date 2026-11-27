@@ -4527,3 +4527,271 @@ dialog.cardio-dialog .dialog-head {
 .apple-advanced-block > strong {
   font-size: 13px;
 }
+
+/* ===== Visual Audit Batch 1: Global, Auth, Calendar, Exercises & Badges ===== */
+.connection i.online,
+.hero-status i {
+  background: #22c55e !important;
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.5) !important;
+}
+
+/* Login 3-tab single-row fix + crisp matte submit button */
+.auth-mode .segments,
+.guest-main .auth-mode .segments {
+  display: grid !important;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  width: 100%;
+  border-radius: 14px;
+  padding: 4px;
+}
+.auth-mode .segments button {
+  white-space: nowrap;
+  padding: 8px 6px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+.login-form .primary-button {
+  background: var(--ink);
+  color: var(--bg);
+  background-image: none;
+  box-shadow: none;
+}
+
+/* Calendar header nowrap + balanced actions + consistent dossier quick buttons */
+.calendar-header {
+  gap: 8px;
+}
+.calendar-month {
+  min-width: 0;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+.calendar-month-title {
+  white-space: nowrap;
+  font-size: 16px;
+  margin: 0;
+}
+.calendar-month-sync-badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.cal-schedule-preview .hero-drawer-actions {
+  justify-content: flex-start !important;
+}
+.dossier-quick-btn {
+  min-height: 30px !important;
+  padding: 4px 10px !important;
+  font-size: 12px !important;
+  border-radius: 999px !important;
+}
+.apple-daily-pills {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+}
+.apple-daily-pills .apple-daily-pill {
+  flex: 1 1 105px !important;
+  min-width: 96px;
+}
+
+/* Exercises: compact horizontal list card (no giant dashed placeholder box!) + sticky body-map toggle */
+.catalogue-pills-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.muscle-pills-scroll-wrap {
+  position: relative;
+  overflow: hidden;
+}
+.muscle-pills-scroll-wrap::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 28px;
+  pointer-events: none;
+  background: linear-gradient(to right, transparent, var(--bg));
+}
+.muscle-pills-scroll-wrap .muscle-pills {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  padding-right: 28px;
+  scrollbar-width: none;
+}
+.muscle-pills-scroll-wrap .muscle-pills::-webkit-scrollbar {
+  display: none;
+}
+.catalogue-submeta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.catalogue-submeta-row .catalogue-status {
+  margin: 0;
+}
+.catalogue-submeta-row .body-map-toggle-pill {
+  min-height: 30px;
+  padding: 4px 12px;
+  font-size: 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+#exercise-results .tile-grid {
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)) !important;
+  gap: 10px !important;
+}
+#exercise-results .exercise-card-shell {
+  position: relative;
+}
+#exercise-results .exercise-tile {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 10px 44px 10px 10px !important;
+  text-align: left !important;
+  min-height: 76px !important;
+  border-radius: 14px !important;
+}
+#exercise-results .exercise-art {
+  width: 56px !important;
+  height: 56px !important;
+  min-width: 56px !important;
+  flex: 0 0 56px !important;
+  border-radius: 12px !important;
+  border: 1px solid var(--edge) !important;
+  background: var(--inset) !important;
+  display: grid !important;
+  place-items: center !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+#exercise-results .exercise-art.has-thumb img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
+#exercise-results .exercise-art.no-thumb {
+  border-style: solid !important;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface)) !important;
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--line)) !important;
+}
+.exercise-muscle-glyph {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+}
+#exercise-results .exercise-tile-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+#exercise-results .exercise-tile-copy strong {
+  font-size: 14px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+#exercise-results .exercise-tile-pr {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex-shrink: 0;
+  font-size: 11px;
+}
+#exercise-results .exercise-fav-btn {
+  top: 50% !important;
+  right: 10px !important;
+  transform: translateY(-50%) !important;
+}
+@media (max-width: 630px) {
+  #exercise-results .tile-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 8px !important;
+  }
+}
+
+/* Badges: collapsible category accordions + compact 3-col mobile grid + legible locked silhouettes */
+.badge-section-details {
+  border: 1px solid var(--rule);
+  border-radius: 14px;
+  background: var(--surface);
+  padding: 10px 12px;
+}
+.badge-section-details > summary.badge-section-head {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  margin: 0;
+}
+.badge-section-details > summary.badge-section-head::-webkit-details-marker {
+  display: none;
+}
+.badge-section-details[open] > summary.badge-section-head {
+  margin-bottom: 10px;
+}
+.badge-section-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.badge-section-details[open] .badge-section-meta svg {
+  transform: rotate(90deg);
+}
+.badge-mini.is-locked .badge-mini-art img,
+.badge-card.is-locked .badge-art img {
+  opacity: 0.62 !important;
+  filter: grayscale(0.7) brightness(1.08) contrast(1.08) !important;
+}
+[data-theme="light"] .badge-mini.is-locked .badge-mini-art img,
+[data-theme="light"] .badge-card.is-locked .badge-art img {
+  opacity: 0.52 !important;
+  filter: grayscale(0.8) contrast(1.05) !important;
+}
+@media (max-width: 630px) {
+  .badge-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    gap: 8px !important;
+  }
+  .badge-card {
+    padding: 8px 6px !important;
+    gap: 4px !important;
+  }
+  .badge-art {
+    max-height: 68px !important;
+    padding: 2px 0 !important;
+  }
+  .badge-art img {
+    width: 62px !important;
+    height: 62px !important;
+  }
+  .badge-copy strong {
+    font-size: 11.5px !important;
+    line-height: 1.25 !important;
+  }
+  .badge-copy small {
+    display: none !important;
+  }
+  .badge-foot span {
+    font-size: 10px !important;
+  }
+}

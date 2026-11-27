@@ -428,10 +428,10 @@ export function CalendarView() {
               <button className="icon-button" type="button" aria-label="上个月" onClick={() => changeMonth(-1)}>
                 <Icon name="back" />
               </button>
-              <h2>
+              <h2 className="calendar-month-title">
                 {month.slice(0, 4)} 年 {Number(month.slice(5))} 月
               </h2>
-              {monthLoading ? <span className="calendar-month-sync-badge">刷新排期…</span> : null}
+              {monthLoading ? <span className="calendar-month-sync-badge">同步中…</span> : null}
               <button
                 className="icon-button"
                 type="button"

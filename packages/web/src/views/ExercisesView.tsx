@@ -453,25 +453,29 @@ export function ExercisesView() {
         </form>
 
         <div className="catalogue-pills-bar">
-          <div className="muscle-pills" role="group" aria-label="按肌群筛选">
-            <button type="button" aria-pressed={muscle === ""} onClick={() => setMuscle("")}>
-              全部肌群
-            </button>
-            {(Object.entries(MUSCLES) as Array<[MuscleKey, string]>).map(([k, lbl]) => (
-              <button key={k} type="button" aria-pressed={muscle === k} onClick={() => setMuscle(muscle === k ? "" : k)}>
-                {lbl}
+          <div className="muscle-pills-scroll-wrap">
+            <div className="muscle-pills" role="group" aria-label="按肌群筛选">
+              <button type="button" aria-pressed={muscle === ""} onClick={() => setMuscle("")}>
+                全部肌群
               </button>
-            ))}
+              {(Object.entries(MUSCLES) as Array<[MuscleKey, string]>).map(([k, lbl]) => (
+                <button key={k} type="button" aria-pressed={muscle === k} onClick={() => setMuscle(muscle === k ? "" : k)}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="catalogue-submeta-row">
+            <p className="catalogue-status">{statusText}</p>
             <button
               type="button"
-              className="body-map-toggle-pill"
+              className="secondary-button body-map-toggle-pill"
               aria-pressed={showBodyMap}
               onClick={() => setShowBodyMap((v) => !v)}
             >
               {showBodyMap ? "收起人体图" : "人体图选肌群"}
             </button>
           </div>
-          <p className="catalogue-status">{statusText}</p>
         </div>
 
         {showBodyMap ? (
@@ -551,11 +555,13 @@ export function ExercisesView() {
                         type="button"
                         onClick={() => openExerciseDetailModal(ex.id, ex.name, customMap.get(ex.id) ?? null)}
                       >
-                        <span className="exercise-art">
+                        <span className={`exercise-art${thumb ? " has-thumb" : " no-thumb"}`} data-muscle={ex.muscle}>
                           {thumb ? (
-                            <img src={thumb} width={96} height={84} loading="lazy" decoding="async" alt="" />
+                            <img src={thumb} width={56} height={56} loading="lazy" decoding="async" alt="" />
                           ) : (
-                            <Icon name="workout" size={27} />
+                            <span className="exercise-muscle-glyph" aria-hidden="true">
+                              {(MUSCLES[ex.muscle] ?? "练").slice(0, 1)}
+                            </span>
                           )}
                           {ex.custom ? <em className="tile-custom-tag">自定义</em> : null}
                         </span>

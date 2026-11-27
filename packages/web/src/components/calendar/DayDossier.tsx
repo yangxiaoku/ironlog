@@ -539,7 +539,7 @@ export function DayDossier({
                 </button>
               ) : null}
               {!isFuture ? (
-                <button type="button" className="quiet" onClick={() => openDietEditor({ date, meal: "snack" })}>
+                <button type="button" className="secondary-button dossier-quick-btn" onClick={() => openDietEditor({ date, meal: "snack" })}>
                   <Icon name="plus" size={14} /> 记饮食
                 </button>
               ) : null}
@@ -587,7 +587,7 @@ export function DayDossier({
             <h3>
               <Icon name="diet" size={15} /> 饮食与热量
             </h3>
-            <button type="button" className="quiet" onClick={() => openDietEditor({ date, meal: "lunch" })}>
+            <button type="button" className="secondary-button dossier-quick-btn" onClick={() => openDietEditor({ date, meal: "lunch" })}>
               <Icon name="plus" size={14} /> 记饮食
             </button>
           </header>
@@ -621,7 +621,7 @@ export function DayDossier({
               <Icon name="heart" size={14} /> 转入 Apple {fmt(appleDaily.weightKg, 2)} kg
             </button>
           ) : (
-            <button type="button" className="quiet" onClick={() => openWeightEditor({ date })}>
+            <button type="button" className="secondary-button dossier-quick-btn" onClick={() => openWeightEditor({ date })}>
               <Icon name="plus" size={14} /> 记体重
             </button>
           )}

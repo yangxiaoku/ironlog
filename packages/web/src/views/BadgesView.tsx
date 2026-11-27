@@ -167,58 +167,70 @@ export function BadgesView() {
 
       <div className="badge-sections">
         {sections.length ? (
-          sections.map(({ cat, items }) => (
-            <section key={cat.key} className="badge-section" aria-label={cat.label}>
-              <header className="badge-section-head">
-                <h2>{cat.label}</h2>
-                <span>{items.length === cat.total ? `${cat.earned} / ${cat.total}` : `${items.length} 枚`}</span>
-              </header>
-              <div className="badge-grid">
-                {items.map((badge) => {
-                  const pct = Math.round(badge.progress * 100);
-                  const pinned = badge.unlocked && pinnedSet.has(badge.id);
-                  const statusText = badge.unlocked
-                    ? `${badge.unlockedAt ? `${badge.unlockedAt.slice(5).replace("-", "/")} ` : ""}已点亮`
-                    : `${fmt(badge.current)} / ${fmt(badge.target)} ${badge.unit}`;
+          sections.map(({ cat, items }, sectionIdx) => {
+            const forceExpanded = Boolean(category || q || status !== "all");
+            const defaultOpen = forceExpanded || cat.earned > 0 || sectionIdx < 2;
+            return (
+              <details
+                key={`${cat.key}-${forceExpanded ? "open" : "auto"}`}
+                className="badge-section badge-section-details"
+                open={defaultOpen}
+                aria-label={cat.label}
+              >
+                <summary className="badge-section-head">
+                  <h2>{cat.label}</h2>
+                  <span className="badge-section-meta">
+                    <span>{items.length === cat.total ? `${cat.earned} / ${cat.total}` : `${items.length} 枚`}</span>
+                    <Icon name="chevron" size={14} />
+                  </span>
+                </summary>
+                <div className="badge-grid">
+                  {items.map((badge) => {
+                    const pct = Math.round(badge.progress * 100);
+                    const pinned = badge.unlocked && pinnedSet.has(badge.id);
+                    const statusText = badge.unlocked
+                      ? `${badge.unlockedAt ? `${badge.unlockedAt.slice(5).replace("-", "/")} ` : ""}已点亮`
+                      : `${fmt(badge.current)} / ${fmt(badge.target)} ${badge.unit}`;
 
-                  return (
-                    <button
-                      key={badge.id}
-                      type="button"
-                      className={`badge-card${badge.unlocked ? " is-unlocked" : " is-locked"}${pinned ? " is-pinned" : ""}`}
-                      onClick={() => openBadgeDetailModal(badge, setPinnedIds)}
-                    >
-                      <div className="badge-card-top">
-                        <span className="badge-tier">{BADGE_TIER_LABELS[badge.tier] ?? ""}</span>
-                        {pinned ? <span className="badge-pin-tag">已佩戴</span> : <i className="badge-dot" aria-hidden="true" />}
-                      </div>
-                      <div className="badge-art">
-                        <img
-                          src={`/app/badge-${badge.id}.png`}
-                          width={128}
-                          height={128}
-                          loading="lazy"
-                          decoding="async"
-                          alt=""
-                        />
-                      </div>
-                      <div className="badge-copy">
-                        <strong>{badge.title}</strong>
-                        <small>{badge.subtitle}</small>
-                      </div>
-                      <div className="badge-foot">
-                        <DotMeter ratio={badge.progress} count={10} />
-                        <span>
-                          {statusText}
-                          {badge.unlocked ? "" : ` · ${pct}%`}
-                        </span>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))
+                    return (
+                      <button
+                        key={badge.id}
+                        type="button"
+                        className={`badge-card${badge.unlocked ? " is-unlocked" : " is-locked"}${pinned ? " is-pinned" : ""}`}
+                        onClick={() => openBadgeDetailModal(badge, setPinnedIds)}
+                      >
+                        <div className="badge-card-top">
+                          <span className="badge-tier">{BADGE_TIER_LABELS[badge.tier] ?? ""}</span>
+                          {pinned ? <span className="badge-pin-tag">已佩戴</span> : <i className="badge-dot" aria-hidden="true" />}
+                        </div>
+                        <div className="badge-art">
+                          <img
+                            src={`/app/badge-${badge.id}.png`}
+                            width={128}
+                            height={128}
+                            loading="lazy"
+                            decoding="async"
+                            alt=""
+                          />
+                        </div>
+                        <div className="badge-copy">
+                          <strong>{badge.title}</strong>
+                          <small>{badge.subtitle}</small>
+                        </div>
+                        <div className="badge-foot">
+                          <DotMeter ratio={badge.progress} count={10} />
+                          <span>
+                            {statusText}
+                            {badge.unlocked ? "" : ` · ${pct}%`}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </details>
+            );
+          })
         ) : (
           <div className="empty">
             <strong>没有匹配的成就徽章</strong>
