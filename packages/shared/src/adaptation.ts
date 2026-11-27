@@ -89,14 +89,18 @@ export function validateWorkoutAdjustment(
   if (replacing && remaining > 0 && change.patch.weight === undefined)
     throw new Error("替换动作需要明确新的重量");
   if (remaining > 0) {
-    const base = before.openSets[0]!;
-    if (
-      exercise.mode === "timed" &&
-      (change.patch.seconds ?? base.seconds) <= 0
-    )
-      throw new Error("计时动作需要有效的持续时间");
-    if (exercise.mode !== "timed" && (change.patch.reps ?? base.reps) <= 0)
-      throw new Error("训练动作需要有效的次数");
+    // #129: Validate all preserved open sets AND the cloning template set (last open set) when patch omits reps/seconds.
+    const keptOpen = before.openSets.slice(0, Math.min(remaining, before.openSets.length));
+    const cloneTemplate = before.openSets[before.openSets.length - 1]!;
+    const setsToCheck = remaining > before.openSets.length ? [...keptOpen, cloneTemplate] : keptOpen;
+    for (const s of setsToCheck) {
+      if (exercise.mode === "timed" && (change.patch.seconds ?? s.seconds) <= 0) {
+        throw new Error("计时动作需要有效的持续时间");
+      }
+      if (exercise.mode !== "timed" && (change.patch.reps ?? s.reps) <= 0) {
+        throw new Error("训练动作需要有效的次数");
+      }
+    }
   }
   return { row, exercise, replacing, remaining };
 }

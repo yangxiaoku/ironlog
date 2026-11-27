@@ -457,7 +457,7 @@ export function PlanView() {
                   </span>
                   <span>
                     {row.sets} 组 × {row.seconds ? `${row.seconds} 秒` : `${row.repsMin}–${row.repsMax} 次`}
-                    {row.weight ? ` · ${fmt(row.weight)} kg` : ""}
+                    {row.weight ? ` · ${fmt(row.weight)} ${row.weightUnit === "lb" ? "lb" : "kg"}` : ""}
                   </span>
                 </li>
               );

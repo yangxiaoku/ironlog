@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MiniSparkline, WeightChart } from "../components/Charts";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
@@ -37,30 +37,54 @@ export function WeightView() {
   const [shownMeasures, setShownMeasures] = useState(8);
   const [loading, setLoading] = useState(() => !cached);
   const [error, setError] = useState("");
+  const lastUserRef = useRef(userId);
 
   useEffect(() => {
     let active = true;
-    if (!peekQuery("view:weight", userId)) setLoading(true);
+    const userChanged = lastUserRef.current !== userId;
+    lastUserRef.current = userId;
+    const hit = peekQuery<WeightViewSnap>("view:weight", userId)?.data;
+    if (userChanged) {
+      if (hit) {
+        setRecords(hit.records);
+        setMeasurements(hit.measurements);
+        setGoals(hit.goals);
+        setLoading(false);
+      } else {
+        setRecords([]);
+        setMeasurements([]);
+        setGoals(null);
+        setLoading(true);
+      }
+    } else if (!hit) {
+      setLoading(true);
+    }
     setError("");
     void Promise.all([
       cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }),
-      cachedApiFetch<MeasurementEntry[]>("/api/web/measurements", { epoch: dataEpoch, userId }).catch(() => []),
-      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<MeasurementEntry[]>("/api/web/measurements", { epoch: dataEpoch, userId })
+        .then((v) => ({ ok: true as const, v }))
+        .catch(() => ({ ok: false as const, v: null })),
+      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId })
+        .then((v) => ({ ok: true as const, v }))
+        .catch(() => ({ ok: false as const, v: null })),
     ])
-      .then(([weightRows, measureRows, profRes]) => {
+      .then(([weightRows, measureRes, profRes]) => {
         if (!active) return;
         const sorted = weightRows
           .filter((r) => !r.deleted)
           .sort((a, b) => b.data.date.localeCompare(a.data.date) || b.updatedAt.localeCompare(a.updatedAt));
-        const nextSnap: WeightViewSnap = {
-          records: sorted,
-          measurements: measureRows ?? [],
-          goals: profRes?.profile ?? null,
-        };
-        writeQueryCache("view:weight", nextSnap, { userId, epoch: dataEpoch });
-        setRecords(nextSnap.records);
-        setMeasurements(nextSnap.measurements);
-        setGoals(nextSnap.goals);
+        setRecords(sorted);
+        if (measureRes.ok && measureRes.v) setMeasurements(measureRes.v);
+        if (profRes.ok && profRes.v) setGoals(profRes.v.profile ?? null);
+        if (measureRes.ok && profRes.ok) {
+          const nextSnap: WeightViewSnap = {
+            records: sorted,
+            measurements: measureRes.v ?? [],
+            goals: profRes.v?.profile ?? null,
+          };
+          writeQueryCache("view:weight", nextSnap, { userId, epoch: dataEpoch });
+        }
       })
       .catch((err) => {
         if (active) setError((err as Error)?.message || "加载体重数据失败");
@@ -279,6 +303,15 @@ export function WeightView() {
         }
       />
 
+      {error && records.length > 0 ? (
+        <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+          <span>刷新体重数据失败：{error}</span>
+          <button type="button" className="quiet" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : null}
+
       {error && records.length === 0 ? (
         <div className="empty">
           <strong>体重数据加载失败</strong>
@@ -312,7 +345,7 @@ export function WeightView() {
               </div>
               <dl className="weight-facts">
                 <div>
-                  <dt>近 30 天变化</dt>
+                  <dt>{chartRange === 0 ? "全周期变化" : `近 ${chartRange} 天变化`}</dt>
                   <dd>
                     {change30d === null ? "—" : `${change30d > 0 ? "+" : ""}${fmt(change30d, 2)} kg`}
                   </dd>

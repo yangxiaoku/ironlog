@@ -211,13 +211,14 @@
 }
 
 .live-rest-plus {
-  min-height: 28px;
-  padding: 0 8px;
+  min-height: 40px;
+  min-width: 44px;
+  padding: 0 10px;
   border-radius: 999px;
   border: 1px solid var(--edge);
   background: var(--inset);
   color: var(--ink);
-  font: 600 11.5px/1 var(--mono);
+  font: 600 12px/1 var(--mono);
   cursor: pointer;
 }
 
@@ -230,14 +231,16 @@
 }
 
 .live-workout-bar-resume {
-  min-height: 34px;
-  padding: 0 13px;
-  font-size: 12.5px;
+  min-height: 42px;
+  padding: 0 15px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .live-workout-bar-discard {
-  width: 34px;
+  width: 42px;
+  min-width: 42px;
+  min-height: 42px;
   height: 34px;
   min-height: 34px;
   padding: 0;
@@ -2134,13 +2137,13 @@ dialog.workout-dialog .workout-inline-add-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  min-width: 34px;
-  min-height: 34px;
+  width: 42px;
+  height: 42px;
+  min-width: 42px;
+  min-height: 42px;
   padding: 0;
   border-radius: 999px;
-  font: 700 13px/1 var(--mono);
+  font: 700 13.5px/1 var(--mono);
   transition:
     transform 0.15s ease,
     background-color 0.15s ease,

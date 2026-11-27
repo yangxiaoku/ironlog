@@ -116,24 +116,38 @@ export function OnboardingModal({
     }
     setSaving(true);
     try {
-      const current = profileRes ?? (await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile"));
-      const prev = current.profile ?? ({} as ProfileGoals);
-      const updated = await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile", {
-        method: "PUT",
-        body: {
-          calories: Math.round(cal),
-          protein: Math.round(pro),
-          carbs: Number(prev.carbs ?? 240),
-          fat: Number(prev.fat ?? 70),
-          daysPerWeek,
-          restSeconds,
-          targetWeight: prev.targetWeight ?? null,
-          equipment: [...equipment],
-          energyProfile: prev.energyProfile ?? null,
-          version: current.version ?? 0,
-          opId: crypto.randomUUID(),
-        },
-      });
+      const saveOnce = async (current: { version: number; profile: ProfileGoals }) => {
+        const prev = current.profile ?? ({} as ProfileGoals);
+        return apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile", {
+          method: "PUT",
+          body: {
+            calories: Math.round(cal),
+            protein: Math.round(pro),
+            carbs: Number(prev.carbs ?? 240),
+            fat: Number(prev.fat ?? 70),
+            daysPerWeek,
+            restSeconds,
+            targetWeight: prev.targetWeight ?? null,
+            equipment: [...equipment],
+            energyProfile: prev.energyProfile ?? null,
+            version: current.version ?? 0,
+            opId: crypto.randomUUID(),
+          },
+        });
+      };
+      const initial = profileRes ?? (await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile"));
+      let updated: { version: number; profile: ProfileGoals };
+      try {
+        updated = await saveOnce(initial);
+      } catch (firstErr) {
+        if ((firstErr as { status?: number })?.status === 409) {
+          const fresh = await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile");
+          setProfileRes(fresh);
+          updated = await saveOnce(fresh);
+        } else {
+          throw firstErr;
+        }
+      }
       setProfileRes(updated);
       if (userId) {
         try {
@@ -356,10 +370,10 @@ export function OnboardingModal({
                 <small>进入「训练计划 → 经典方案」可一键启用 PPL、上下肢四分化或全身新手方案；也可以点顶部「+ 速记 → 记录训练」自由开练。</small>
               </li>
               <li>
-                <strong>2. 组行左右滑动，少按一次是一次</strong>
+                <strong>2. 单手点勾与组操作菜单，少按一次是一次</strong>
                 <small>
-                  在实时训练窗口中：组行<b>右滑直接勾选完成</b>并自动启动组间倒计时；<b>左滑删除该组</b>
-                  （支持 5 秒撤销）；点左侧组号可切换热身 / 递减 / 力竭组。
+                  在实时训练窗口中：轻点右侧<b>完成圆钮</b>直接勾选并自动启动组间倒计时；点左侧<b>组号徽标</b>
+                  可切换热身 / 递减 / 力竭组或删除该组（支持 5 秒撤销）；单卡模式下左右滑动可切换动作。
                 </small>
               </li>
               <li>

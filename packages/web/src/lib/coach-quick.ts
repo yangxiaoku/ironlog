@@ -54,6 +54,32 @@ export function buildCoachQuickAdvice(
         actionKind: "swap_backup",
       };
     }
+    if (mode === "assisted") {
+      return {
+        scenario,
+        headline: `建议对「${name}」增加 15% 辅助并放慢离心`,
+        rationale:
+          pendingCount > 0
+            ? `把剩余 ${pendingCount} 组辅助配重上调约 15%（减轻实际负重）、组间休息延长 30 秒，专注无痛全程控制；如仍不适请直接替换动作。`
+            : "当前动作已无待做组，建议直接记录组备注并下次训练前充分热身。",
+        actionLabel: "应用：待做组增加 15% 辅助 + 休息 +30s",
+        actionKind: "apply_sets",
+        apply: (cur, st) => ({
+          ...cur,
+          restSeconds: Math.min(300, (cur.restSeconds ?? 90) + 30),
+          sets: cur.sets.map((s) => {
+            if (s.completed || s.type === "warmup") return s;
+            const scaled = roundStep(s.weight * 1.15, st);
+            const nextWeight = s.weight > 0 ? Math.max(scaled, roundStep(s.weight + st, st)) : roundStep(st, st);
+            return {
+              ...s,
+              weight: nextWeight,
+              note: s.note ? s.note : "发紧增加辅助控制",
+            };
+          }),
+        }),
+      };
+    }
     return {
       scenario,
       headline: `建议对「${name}」减重 15% 并放慢离心`,

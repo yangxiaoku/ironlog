@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { apiFetch } from "../../lib/api";
 import { fmt } from "../../lib/date";
 import {
@@ -30,6 +30,7 @@ export function SaveMealTemplateModal({
   const [name, setName] = useState(defaultName);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const pendingSaveRef = useRef<{ sig: string; id: string; opId: string } | null>(null);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -48,18 +49,26 @@ export function SaveMealTemplateModal({
         source: "manual",
         rawPrompt: "",
       }));
-      const id = `mealTpl_${crypto.randomUUID().slice(0, 12)}`;
+      const sig = JSON.stringify({ name: clean, foods });
+      if (pendingSaveRef.current?.sig !== sig) {
+        pendingSaveRef.current = {
+          sig,
+          id: `mealTpl_${crypto.randomUUID().slice(0, 12)}`,
+          opId: crypto.randomUUID(),
+        };
+      }
       await apiFetch("/api/records", {
         method: "POST",
         body: {
-          opId: crypto.randomUUID(),
-          id,
+          opId: pendingSaveRef.current.opId,
+          id: pendingSaveRef.current.id,
           kind: "mealTemplate",
           baseVersion: 0,
           deleted: false,
           data: { name: clean, foods },
         },
       });
+      pendingSaveRef.current = null;
       triggerHaptic("success");
       bumpDataEpoch();
       closeAllModals();
@@ -115,29 +124,38 @@ export function SaveMealTemplateModal({
   );
 }
 
+interface EditableTemplateFood {
+  name: string;
+  calories: string;
+  protein: string;
+  carbs: string;
+  fat: string;
+}
+
 export function EditMealTemplateModal({ template }: { template: RecordEnvelope<MealTemplateData> }) {
   const closeAllModals = useUiStore((s) => s.closeAllModals);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
 
   const [name, setName] = useState(template.data.name ?? "");
-  const [foods, setFoods] = useState<MealTemplateFood[]>(() => {
+  const [foods, setFoods] = useState<EditableTemplateFood[]>(() => {
     const initial = (template.data.foods ?? []).map((f) => ({
       name: f.name ?? "",
-      calories: Number(f.calories) || 0,
-      protein: Number(f.protein) || 0,
-      carbs: Number(f.carbs) || 0,
-      fat: Number(f.fat) || 0,
+      calories: String(Number(f.calories) || 0),
+      protein: String(Number(f.protein) || 0),
+      carbs: String(Number(f.carbs) || 0),
+      fat: String(Number(f.fat) || 0),
     }));
-    return initial.length ? initial : [{ name: "", calories: 0, protein: 0, carbs: 0, fat: 0 }];
+    return initial.length ? initial : [{ name: "", calories: "", protein: "0", carbs: "0", fat: "0" }];
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const pendingEditRef = useRef<{ sig: string; opId: string } | null>(null);
 
   const totalKcal = Math.round(foods.reduce((s, f) => s + (Number(f.calories) || 0), 0));
   const totalProt = Math.round(foods.reduce((s, f) => s + (Number(f.protein) || 0), 0) * 10) / 10;
 
-  const updateFood = (idx: number, patch: Partial<MealTemplateFood>) => {
+  const updateFood = (idx: number, patch: Partial<EditableTemplateFood>) => {
     setFoods((prev) => prev.map((row, i) => (i === idx ? { ...row, ...patch } : row)));
   };
 
@@ -148,7 +166,15 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
     const cleaned = foods
       .filter((f) => f.name.trim().length > 0)
       .slice(0, 30)
-      .map((f) => ({ ...f, name: f.name.trim(), source: "manual", rawPrompt: "" }));
+      .map((f) => ({
+        name: f.name.trim(),
+        calories: Math.max(0, Number(f.calories) || 0),
+        protein: Math.max(0, Number(f.protein) || 0),
+        carbs: Math.max(0, Number(f.carbs) || 0),
+        fat: Math.max(0, Number(f.fat) || 0),
+        source: "manual",
+        rawPrompt: "",
+      }));
     if (!cleanName || !cleaned.length) {
       setError("请填写餐单名称并保留至少 1 项有效食物。");
       return;
@@ -156,10 +182,14 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
     setSaving(true);
     setError("");
     try {
+      const sig = JSON.stringify({ name: cleanName, foods: cleaned });
+      if (pendingEditRef.current?.sig !== sig) {
+        pendingEditRef.current = { sig, opId: crypto.randomUUID() };
+      }
       await apiFetch("/api/records", {
         method: "POST",
         body: {
-          opId: crypto.randomUUID(),
+          opId: pendingEditRef.current.opId,
           id: template.id,
           kind: "mealTemplate",
           baseVersion: template.version,
@@ -167,6 +197,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
           data: { name: cleanName, foods: cleaned },
         },
       });
+      pendingEditRef.current = null;
       triggerHaptic("success");
       bumpDataEpoch();
       closeAllModals();
@@ -203,7 +234,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
               notify("每个常用餐单最多保存 30 项食物");
               return;
             }
-            setFoods((prev) => [...prev, { name: "", calories: 0, protein: 0, carbs: 0, fat: 0 }]);
+            setFoods((prev) => [...prev, { name: "", calories: "", protein: "0", carbs: "0", fat: "0" }]);
           }}
         >
           <Icon name="plus" size={14} /> 添加一项
@@ -233,7 +264,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 step="any"
                 required
                 value={f.calories}
-                onChange={(e) => updateFood(idx, { calories: Math.max(0, Number(e.target.value) || 0) })}
+                onChange={(e) => updateFood(idx, { calories: e.target.value })}
               />
             </label>
             <label>
@@ -246,7 +277,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 step="any"
                 required
                 value={f.protein}
-                onChange={(e) => updateFood(idx, { protein: Math.max(0, Number(e.target.value) || 0) })}
+                onChange={(e) => updateFood(idx, { protein: e.target.value })}
               />
             </label>
             <label>
@@ -259,7 +290,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 step="any"
                 required
                 value={f.carbs}
-                onChange={(e) => updateFood(idx, { carbs: Math.max(0, Number(e.target.value) || 0) })}
+                onChange={(e) => updateFood(idx, { carbs: e.target.value })}
               />
             </label>
             <label>
@@ -272,7 +303,7 @@ export function EditMealTemplateModal({ template }: { template: RecordEnvelope<M
                 step="any"
                 required
                 value={f.fat}
-                onChange={(e) => updateFood(idx, { fat: Math.max(0, Number(e.target.value) || 0) })}
+                onChange={(e) => updateFood(idx, { fat: e.target.value })}
               />
             </label>
             <button

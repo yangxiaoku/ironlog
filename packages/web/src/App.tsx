@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from "react";
+import { Component, lazy, Suspense, useEffect, type ErrorInfo, type ReactNode } from "react";
 import { AppShell } from "./components/AppShell";
 import { AuthScreen } from "./components/AuthScreen";
 import { ModalHost } from "./components/ModalHost";
@@ -57,6 +57,64 @@ configureWorkoutPrefsSync(async (prefs) => {
     window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
   }
 });
+
+let pwaUpdateRunner: (() => void) | null = null;
+
+export function setPwaUpdateRunner(fn: () => void): void {
+  pwaUpdateRunner = fn;
+}
+
+class ViewErrorBoundary extends Component<
+  { resetKey: string; onGoHome: () => void; children: ReactNode },
+  { hasError: boolean; message: string }
+> {
+  state = { hasError: false, message: "" };
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || "页面渲染发生意外错误" };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    // Handled gracefully by fallback UI
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false, message: "" });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="empty" role="alert">
+          <strong>当前页面出现异常</strong>
+          <p>{this.state.message}</p>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 12 }}>
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => this.setState({ hasError: false, message: "" })}
+            >
+              重新加载本页
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                this.setState({ hasError: false, message: "" });
+                this.props.onGoHome();
+              }}
+            >
+              返回首页
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function App() {
   useMobileGuards();
@@ -175,12 +233,58 @@ export function App() {
     mainContent = <OverviewView />;
   }
 
+  const pwaUpdateReady = useUiStore((s) => s.pwaUpdateReady);
+  const setPwaUpdateReady = useUiStore((s) => s.setPwaUpdateReady);
+  const navigate = useUiStore((s) => s.navigate);
+  const dataEpoch = useUiStore((s) => s.dataEpoch);
+
   return (
     <>
       <AppShell>
-        <Suspense fallback={<div className="empty loading" role="status">正在加载页面…</div>}>
-          {mainContent}
-        </Suspense>
+        {pwaUpdateReady ? (
+          <div
+            className="panel"
+            role="status"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 10,
+              marginBottom: 12,
+              padding: "10px 14px",
+              flexWrap: "wrap",
+            }}
+          >
+            <span>发现新版本可用，可在当前操作完成后随时刷新生效</span>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                type="button"
+                className="primary-button"
+                style={{ minHeight: 34, padding: "4px 12px" }}
+                onClick={() => {
+                  setPwaUpdateReady(false);
+                  if (pwaUpdateRunner) pwaUpdateRunner();
+                  else window.location.reload();
+                }}
+              >
+                立即更新
+              </button>
+              <button
+                type="button"
+                className="quiet"
+                style={{ minHeight: 34, padding: "4px 10px" }}
+                onClick={() => setPwaUpdateReady(false)}
+              >
+                稍后
+              </button>
+            </div>
+          </div>
+        ) : null}
+        <ViewErrorBoundary resetKey={`${view}:${userId}:${dataEpoch}`} onGoHome={() => navigate("overview")}>
+          <Suspense fallback={<div className="empty loading" role="status">正在加载页面…</div>}>
+            {mainContent}
+          </Suspense>
+        </ViewErrorBoundary>
       </AppShell>
       <ModalHost />
       <ToastHost />

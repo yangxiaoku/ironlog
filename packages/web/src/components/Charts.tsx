@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { duration, fmt, shortDate } from "../lib/date";
 import { MUSCLES, type LoadMetricKey, type MuscleKey, type OverviewStatsResponse } from "../lib/domain";
 import { Icon } from "./Icon";
@@ -193,7 +193,14 @@ export function LoadChart({
 }) {
   const patternId = useId().replace(/:/g, "");
   const [readout, setReadout] = useState("");
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const draggingRef = useRef(false);
   const compact = useCompactViewport();
+
+  useEffect(() => {
+    setReadout("");
+    setActiveIdx(null);
+  }, [data.period, data.from, data.through, metric]);
   const width = compact ? 344 : 660;
   const height = 252;
   const left = 48;
@@ -207,13 +214,14 @@ export function LoadChart({
   const series = useMemo(() => {
     const valueOf = (row: OverviewStatsResponse["daily"][number]) =>
       metric === "seconds" ? row.seconds / 60 : metric === "workouts" ? row.workouts + (row.addedApple ?? 0) : row[metric];
-    if (data.period <= 30) return rows.map((r) => ({ date: r.date, value: valueOf(r), complete: r.complete }));
+    if (data.period <= 30) return rows.map((r) => ({ date: r.date, endDate: r.date, value: valueOf(r), complete: r.complete }));
     const size = data.period > 90 ? 14 : 7;
-    const groups: Array<{ date: string; value: number; complete?: boolean }> = [];
+    const groups: Array<{ date: string; endDate: string; value: number; complete?: boolean }> = [];
     for (let i = 0; i < rows.length; i += size) {
       const slice = rows.slice(i, i + size);
       groups.push({
         date: slice[0]?.date ?? "",
+        endDate: slice.at(-1)?.date ?? slice[0]?.date ?? "",
         value: slice.reduce((sum, item) => sum + valueOf(item), 0),
       });
     }
@@ -339,9 +347,43 @@ export function LoadChart({
           <svg
             className="chart"
             viewBox={`0 0 ${width} ${height}`}
-            role="img"
+            role="group"
             aria-label={METRIC_LABELS[metric]}
-            onMouseLeave={() => setReadout("")}
+            style={{ touchAction: "pan-y" }}
+            onMouseLeave={() => {
+              setReadout("");
+              setActiveIdx(null);
+            }}
+            onPointerDown={(e) => {
+              draggingRef.current = true;
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (rect.width <= 0 || !series.length) return;
+              const svgX = ((e.clientX - rect.left) / rect.width) * width;
+              const idx = Math.max(0, Math.min(series.length - 1, Math.floor(((svgX - left) / Math.max(1, innerW)) * series.length)));
+              const row = series[idx];
+              if (!row) return;
+              const labelDate = row.endDate && row.endDate !== row.date ? `${shortDate(row.date)}–${shortDate(row.endDate)}` : shortDate(row.date);
+              setActiveIdx(idx);
+              setReadout(`${labelDate} · ${fmt(row.value, 1)} ${loadUnit}`);
+            }}
+            onPointerMove={(e) => {
+              if (!draggingRef.current && e.pointerType !== "mouse") return;
+              const rect = e.currentTarget.getBoundingClientRect();
+              if (rect.width <= 0 || !series.length) return;
+              const svgX = ((e.clientX - rect.left) / rect.width) * width;
+              const idx = Math.max(0, Math.min(series.length - 1, Math.floor(((svgX - left) / Math.max(1, innerW)) * series.length)));
+              const row = series[idx];
+              if (!row) return;
+              const labelDate = row.endDate && row.endDate !== row.date ? `${shortDate(row.date)}–${shortDate(row.endDate)}` : shortDate(row.date);
+              setActiveIdx(idx);
+              setReadout(`${labelDate} · ${fmt(row.value, 1)} ${loadUnit}`);
+            }}
+            onPointerUp={() => {
+              draggingRef.current = false;
+            }}
+            onPointerCancel={() => {
+              draggingRef.current = false;
+            }}
           >
             <defs>
               <pattern id={`stipple-${patternId}`} width={4} height={4} patternUnits="userSpaceOnUse">
@@ -370,6 +412,18 @@ export function LoadChart({
                 </g>
               );
             })}
+
+            {activeIdx != null && series[activeIdx] ? (
+              <line
+                x1={left + (innerW * (activeIdx + 0.5)) / count}
+                y1={top}
+                x2={left + (innerW * (activeIdx + 0.5)) / count}
+                y2={baseY}
+                stroke="var(--red)"
+                strokeDasharray="2 3"
+                opacity={0.55}
+              />
+            ) : null}
 
             {showSparseStartMarker && series[firstActiveIdx] ? (() => {
               const startX = left + (innerW * (firstActiveIdx + 0.5)) / count;
@@ -413,7 +467,8 @@ export function LoadChart({
               const topY = y(val);
               const barH = Math.max(4, baseY - topY);
               const cls = `bars${row.complete === false ? " partial" : ""}${idx === latestIdx ? " bar-latest" : ""}`;
-              const tip = `${shortDate(row.date)} · ${fmt(val, 1)} ${loadUnit}`;
+              const rangeLabel = row.endDate && row.endDate !== row.date ? `${shortDate(row.date)}–${shortDate(row.endDate)}` : shortDate(row.date);
+              const tip = `${rangeLabel} · ${fmt(val, 1)} ${loadUnit}`;
               return (
                 <g key={row.date}>
                   <rect
@@ -433,13 +488,29 @@ export function LoadChart({
                     y={top}
                     width={Math.max(barW, 12)}
                     height={innerH}
-                    className="chart-hit"
+                    className={`chart-hit${activeIdx === idx ? " is-active" : ""}`}
                     tabIndex={0}
                     role="button"
                     aria-label={tip}
-                    onMouseEnter={() => setReadout(tip)}
-                    onFocus={() => setReadout(tip)}
-                    onClick={() => setReadout(tip)}
+                    onMouseEnter={() => {
+                      setActiveIdx(idx);
+                      setReadout(tip);
+                    }}
+                    onFocus={() => {
+                      setActiveIdx(idx);
+                      setReadout(tip);
+                    }}
+                    onClick={() => {
+                      setActiveIdx(idx);
+                      setReadout(tip);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setActiveIdx(idx);
+                        setReadout(tip);
+                      }
+                    }}
                   >
                     <title>{tip}</title>
                   </rect>
@@ -776,7 +847,14 @@ export function WeightChart({
   wide?: boolean;
 }) {
   const [readout, setReadout] = useState("");
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const draggingRef = useRef(false);
   const compact = useCompactViewport();
+
+  useEffect(() => {
+    setReadout("");
+    setActiveIdx(null);
+  }, [from, to, rows.length, rows[0]?.date, rows.at(-1)?.date]);
   const width = compact ? 344 : wide ? 660 : showAverage ? 420 : 660;
   const height = 200;
   const left = 48;
@@ -852,9 +930,55 @@ export function WeightChart({
       <svg
         className="chart"
         viewBox={`0 0 ${width} ${height}`}
-        role="img"
+        role="group"
         aria-label={showAverage ? "称重与滚动平均，单位千克" : "称重趋势，单位千克"}
-        onMouseLeave={() => setReadout("")}
+        style={{ touchAction: "pan-y" }}
+        onMouseLeave={() => {
+          setReadout("");
+          setActiveIdx(null);
+        }}
+        onPointerDown={(e) => {
+          draggingRef.current = true;
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0 || !primaryPoints.length) return;
+          const svgX = ((e.clientX - rect.left) / rect.width) * width;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < primaryPoints.length; i++) {
+            const d = Math.abs(primaryPoints[i]!.px - svgX);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          const pt = primaryPoints[bestIdx]!;
+          setActiveIdx(bestIdx);
+          setReadout(`${shortDate(pt.row.date)} · 称重 ${fmt(pt.row.weight, 2)} kg`);
+        }}
+        onPointerMove={(e) => {
+          if (!draggingRef.current && e.pointerType !== "mouse") return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          if (rect.width <= 0 || !primaryPoints.length) return;
+          const svgX = ((e.clientX - rect.left) / rect.width) * width;
+          let bestIdx = 0;
+          let bestDist = Infinity;
+          for (let i = 0; i < primaryPoints.length; i++) {
+            const d = Math.abs(primaryPoints[i]!.px - svgX);
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = i;
+            }
+          }
+          const pt = primaryPoints[bestIdx]!;
+          setActiveIdx(bestIdx);
+          setReadout(`${shortDate(pt.row.date)} · 称重 ${fmt(pt.row.weight, 2)} kg`);
+        }}
+        onPointerUp={() => {
+          draggingRef.current = false;
+        }}
+        onPointerCancel={() => {
+          draggingRef.current = false;
+        }}
       >
         {scale.ticks.map((tick) => (
           <g key={tick}>
@@ -873,6 +997,18 @@ export function WeightChart({
             </text>
           </g>
         ))}
+
+        {activeIdx != null && primaryPoints[activeIdx] ? (
+          <line
+            x1={primaryPoints[activeIdx]!.px}
+            y1={top}
+            x2={primaryPoints[activeIdx]!.px}
+            y2={height - bottom}
+            stroke="var(--red)"
+            strokeDasharray="2 3"
+            opacity={0.55}
+          />
+        ) : null}
 
         {primaryPoints[0] && primaryPoints[0].px - left > innerW * 0.3 ? (
           <g className="chart-start-marker" aria-hidden="true">
@@ -916,22 +1052,38 @@ export function WeightChart({
           points={primaryPoints.map(({ px, py }) => `${px},${py}`).join(" ")}
           className="trace primary"
         />
-        {primaryPoints.map(({ px, py, row }) => {
+        {primaryPoints.map(({ px, py, row }, idx) => {
           const tip = `${shortDate(row.date)} · 称重 ${fmt(row.weight, 2)} kg`;
           return (
             <g key={row.date}>
-              <circle cx={px} cy={py} r={primaryPoints.length > 38 ? 2.4 : 3.6} className="node-primary" />
+              <circle cx={px} cy={py} r={activeIdx === idx ? 5 : primaryPoints.length > 38 ? 2.4 : 3.6} className="node-primary" />
               <circle
                 cx={px}
                 cy={py}
                 r={10}
-                className="chart-hit"
+                className={`chart-hit${activeIdx === idx ? " is-active" : ""}`}
                 tabIndex={0}
                 role="button"
                 aria-label={tip}
-                onMouseEnter={() => setReadout(tip)}
-                onFocus={() => setReadout(tip)}
-                onClick={() => setReadout(tip)}
+                onMouseEnter={() => {
+                  setActiveIdx(idx);
+                  setReadout(tip);
+                }}
+                onFocus={() => {
+                  setActiveIdx(idx);
+                  setReadout(tip);
+                }}
+                onClick={() => {
+                  setActiveIdx(idx);
+                  setReadout(tip);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setActiveIdx(idx);
+                    setReadout(tip);
+                  }
+                }}
               >
                 <title>{tip}</title>
               </circle>

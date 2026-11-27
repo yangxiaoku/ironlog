@@ -120,7 +120,7 @@ export function getTrainingContext(store: Store, userId: string, days = 28) {
   }
   const appleDailyDigest = summarizeDailyHealth(
     listDailyHealth(store.db, userId, after, through),
-    { heightCm: profile.energyProfile?.heightCm ?? null, sex: profile.energyProfile?.sex === "female" ? "female" : "male" },
+    { heightCm: profile.energyProfile?.heightCm ?? null, sex: profile.energyProfile?.sex ?? undefined },
   );
   return {
     from: after,

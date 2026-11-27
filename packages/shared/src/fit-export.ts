@@ -102,6 +102,8 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   if (input.exercises?.length) {
     totalVolumeKg = 0;
     for (const ex of input.exercises) {
+      // #123 (P1): Only count reps-mode lifts toward totalVolumeKg (never assisted counterbalance weight).
+      if ((ex.snapshot?.mode ?? "reps") !== "reps") continue;
       const mult = ex.snapshot?.volumeMultiplier ?? 1;
       for (const s of ex.sets) {
         if (!s.completed || s.type === "warmup") continue;
@@ -145,30 +147,31 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   pushU32(records, startTs);
 
   if (hasVolumeDevField) {
-    // Developer Data ID (global msg 207) using local msg 4
+    // Developer Data ID (global msg 207) using local msg 4 (#123: field 3 is developer_data_index per FIT 2.0 spec)
     records.push(
       0x44, 0x00, 0x00,
       207, 0x00, // global msg 207 (developer_data_id)
       0x02,
       1, 16, 0x0d, // field 1: application_id (byte[16])
-      2, 1, 0x02,  // field 2: developer_data_index (uint8)
+      3, 1, 0x02,  // field 3: developer_data_index (uint8)
     );
     records.push(0x04, ...IRONLOG_DEV_APP_ID, 0);
 
     // Field Description (global msg 206) for total_volume_kg (scaled ×10, units "kg") on Session (18)
+    // #123: fit_base_type_id for uint32 MUST include endianness flag 0x80 -> 0x86 (134).
     records.push(
       0x45, 0x00, 0x00,
       206, 0x00, // global msg 206 (field_description)
       0x07,
       0, 1, 0x02,  // field 0: developer_data_index (uint8)
       1, 1, 0x02,  // field 1: field_definition_number (uint8)
-      2, 1, 0x02,  // field 2: fit_base_type_id (uint8: 6 = uint32)
+      2, 1, 0x02,  // field 2: fit_base_type_id (uint8: 0x86 = 134 = uint32)
       3, 16, 0x07, // field 3: field_name (string[16])
       6, 1, 0x02,  // field 6: scale (uint8 = 10)
       8, 4, 0x07,  // field 8: units (string[4])
       14, 2, 0x84, // field 14: native_mesg_num (uint16 = 18 session)
     );
-    records.push(0x05, 0, 0, 6);
+    records.push(0x05, 0, 0, 0x86);
     pushFixedString(records, "total_volume_kg", 16);
     records.push(10);
     pushFixedString(records, "kg", 4);

@@ -44,6 +44,7 @@ export function AccountSecurityAndEcosystemCards({
   const [whUrl, setWhUrl] = useState(initialWebhook?.url ?? "");
   const [whSecret, setWhSecret] = useState(initialWebhook?.secret ?? "");
   const [whPrivate, setWhPrivate] = useState(Boolean(initialWebhook?.allowPrivateNetwork));
+  const [whDirty, setWhDirty] = useState(false);
   const [whBusy, setWhBusy] = useState(false);
 
   // Modular UI toggles
@@ -52,11 +53,12 @@ export function AccountSecurityAndEcosystemCards({
   );
 
   useEffect(() => {
+    if (whDirty) return;
     setWhEnabled(Boolean(initialWebhook?.enabled));
     setWhUrl(initialWebhook?.url ?? "");
     setWhSecret(initialWebhook?.secret ?? "");
     setWhPrivate(Boolean(initialWebhook?.allowPrivateNetwork));
-  }, [initialWebhook]);
+  }, [initialWebhook, whDirty]);
 
   useEffect(() => {
     if (demo) return;
@@ -70,6 +72,7 @@ export function AccountSecurityAndEcosystemCards({
     try {
       const res = await apiFetch<{ code: string; expiresAt: string }>("/api/web/auth/pairing-code", {
         method: "POST",
+        skipMutateHook: true,
       });
       setPairingCode(res);
       notify("已生成 6 位一次性配对码（5 分钟有效）");
@@ -120,6 +123,7 @@ export function AccountSecurityAndEcosystemCards({
           allowPrivateNetwork: whPrivate,
         },
       });
+      setWhDirty(false);
       notify("Webhook 配置已保存");
     } catch (err) {
       notify((err as Error)?.message || "保存 Webhook 失败");
@@ -133,6 +137,7 @@ export function AccountSecurityAndEcosystemCards({
     try {
       const res = await apiFetch<{ delivered: boolean; status?: number; error?: string }>("/api/web/webhook/test", {
         method: "POST",
+        skipMutateHook: true,
         body: {
           enabled: true,
           url: whUrl.trim(),
@@ -299,7 +304,10 @@ export function AccountSecurityAndEcosystemCards({
                   type="checkbox"
                   className="switch"
                   checked={whEnabled}
-                  onChange={(e) => setWhEnabled(e.target.checked)}
+                  onChange={(e) => {
+                    setWhDirty(true);
+                    setWhEnabled(e.target.checked);
+                  }}
                 />
               </label>
               <label className="field">
@@ -309,7 +317,10 @@ export function AccountSecurityAndEcosystemCards({
                   maxLength={500}
                   placeholder="https://hooks.example.com/ironlog"
                   value={whUrl}
-                  onChange={(e) => setWhUrl(e.target.value)}
+                  onChange={(e) => {
+                    setWhDirty(true);
+                    setWhUrl(e.target.value);
+                  }}
                 />
               </label>
               <label className="field">
@@ -319,7 +330,10 @@ export function AccountSecurityAndEcosystemCards({
                   maxLength={128}
                   placeholder="用于校验 X-Ironlog-Signature"
                   value={whSecret}
-                  onChange={(e) => setWhSecret(e.target.value)}
+                  onChange={(e) => {
+                    setWhDirty(true);
+                    setWhSecret(e.target.value);
+                  }}
                 />
               </label>
               <label className="toggle-row">
@@ -331,7 +345,10 @@ export function AccountSecurityAndEcosystemCards({
                   type="checkbox"
                   className="switch"
                   checked={whPrivate}
-                  onChange={(e) => setWhPrivate(e.target.checked)}
+                  onChange={(e) => {
+                    setWhDirty(true);
+                    setWhPrivate(e.target.checked);
+                  }}
                 />
               </label>
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>

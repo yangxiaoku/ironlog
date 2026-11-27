@@ -239,11 +239,26 @@ export function DietEditorModal({
     setter(decimals ? String(Math.round(next * 10) / 10) : String(Math.round(next)));
   };
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
   const submitDiet = async (keepOpen: boolean) => {
     if (saving) return;
+    if (formRef.current && !formRef.current.reportValidity()) {
+      return;
+    }
     const cleanName = name.trim();
     if (!cleanName) {
       setError("请输入食物名称");
+      nameInputRef.current?.focus();
+      return;
+    }
+    if (date > todayStr) {
+      setError("饮食日期不能晚于今天");
+      return;
+    }
+    if (!calories.trim() || !Number.isFinite(Number(calories)) || Number(calories) < 0) {
+      setError("请输入有效的热量数值");
       return;
     }
     setSaving(true);
@@ -285,12 +300,13 @@ export function DietEditorModal({
       bumpDataEpoch();
       if (keepOpen && !record) {
         setName("");
-        setCalories("0");
+        setCalories("");
         setProtein("0");
         setCarbs("0");
         setFat("0");
         clearScale();
         notify(`已保存「${cleanName}」，可继续录入下一项`);
+        requestAnimationFrame(() => nameInputRef.current?.focus());
       } else {
         closeAllModals();
         notify(record ? "饮食记录已更新" : "饮食已记录");
@@ -312,12 +328,13 @@ export function DietEditorModal({
         refreshPendingCount(userId);
         if (keepOpen && !record) {
           setName("");
-          setCalories("0");
+          setCalories("");
           setProtein("0");
           setCarbs("0");
           setFat("0");
           clearScale();
           notify(`离线状态：已暂存「${cleanName}」，可继续录入`);
+          requestAnimationFrame(() => nameInputRef.current?.focus());
         } else {
           closeAllModals();
           notify("离线状态：已保存在本地，恢复网络后自动同步");
@@ -363,7 +380,7 @@ export function DietEditorModal({
   const yesterday = shiftDateStr(todayStr, -1);
 
   return (
-    <form className="dialog-form modern-diet-form" onSubmit={(e) => void handleSubmit(e)}>
+    <form ref={formRef} className="dialog-form modern-diet-form" onSubmit={(e) => void handleSubmit(e)}>
       <div className="diet-top-bar">
         <div className="meal-segmented-control" role="group" aria-label="选择餐次">
           {(Object.entries(MEALS) as Array<[MealKey, string]>).map(([k, lbl]) => (
@@ -421,6 +438,7 @@ export function DietEditorModal({
             <Icon name="diet" size={18} />
           </span>
           <input
+            ref={nameInputRef}
             name="name"
             value={name}
             onChange={(e) => {
@@ -586,6 +604,7 @@ export function DietEditorModal({
             <input
               type="number"
               inputMode="decimal"
+              aria-label="热量 (kcal)"
               min={0}
               max={100000}
               step="any"
@@ -600,7 +619,13 @@ export function DietEditorModal({
           </div>
           <div className="macro-steppers">
             {[50, 100, 200].map((d) => (
-              <button key={d} type="button" className="micro-chip" onClick={() => stepMacro(calories, setCalories, d)}>
+              <button
+                key={d}
+                type="button"
+                className="micro-chip"
+                aria-label={`热量增加 ${d} kcal`}
+                onClick={() => stepMacro(calories, setCalories, d)}
+              >
                 +{d}
               </button>
             ))}
@@ -618,6 +643,7 @@ export function DietEditorModal({
             <input
               type="number"
               inputMode="decimal"
+              aria-label="蛋白质 (g)"
               min={0}
               max={100000}
               step="any"
@@ -631,7 +657,13 @@ export function DietEditorModal({
           </div>
           <div className="macro-steppers">
             {[5, 10, 20].map((d) => (
-              <button key={d} type="button" className="micro-chip" onClick={() => stepMacro(protein, setProtein, d, 1)}>
+              <button
+                key={d}
+                type="button"
+                className="micro-chip"
+                aria-label={`蛋白质增加 ${d} g`}
+                onClick={() => stepMacro(protein, setProtein, d, 1)}
+              >
                 +{d}
               </button>
             ))}
@@ -649,6 +681,7 @@ export function DietEditorModal({
             <input
               type="number"
               inputMode="decimal"
+              aria-label="碳水 (g)"
               min={0}
               max={100000}
               step="any"
@@ -662,7 +695,13 @@ export function DietEditorModal({
           </div>
           <div className="macro-steppers">
             {[10, 25, 50].map((d) => (
-              <button key={d} type="button" className="micro-chip" onClick={() => stepMacro(carbs, setCarbs, d, 1)}>
+              <button
+                key={d}
+                type="button"
+                className="micro-chip"
+                aria-label={`碳水增加 ${d} g`}
+                onClick={() => stepMacro(carbs, setCarbs, d, 1)}
+              >
                 +{d}
               </button>
             ))}
@@ -680,6 +719,7 @@ export function DietEditorModal({
             <input
               type="number"
               inputMode="decimal"
+              aria-label="脂肪 (g)"
               min={0}
               max={100000}
               step="any"
@@ -693,7 +733,13 @@ export function DietEditorModal({
           </div>
           <div className="macro-steppers">
             {[5, 10, 15].map((d) => (
-              <button key={d} type="button" className="micro-chip" onClick={() => stepMacro(fat, setFat, d, 1)}>
+              <button
+                key={d}
+                type="button"
+                className="micro-chip"
+                aria-label={`脂肪增加 ${d} g`}
+                onClick={() => stepMacro(fat, setFat, d, 1)}
+              >
                 +{d}
               </button>
             ))}

@@ -197,9 +197,17 @@ export function nextTarget(
   const prevUnit = previous?.weightUnit ?? "kg";
   const toTargetWeight = (w: number) =>
     prevUnit === targetUnit ? w : kgToUnit(weightToKg(w, prevUnit), targetUnit);
+  // #129: Only count main working sets (exclude warmup, drop, rest_pause and 0-rep rows) for progression & deload evaluation.
   const completed =
     previous?.sets
-      .filter((set) => set.completed && set.type !== "warmup" && (!assisted || set.reps > 0))
+      .filter(
+        (set) =>
+          set.completed &&
+          set.type !== "warmup" &&
+          set.type !== "drop" &&
+          set.type !== "rest_pause" &&
+          set.reps > 0,
+      )
       .map((set) => ({ ...set, weight: toTargetWeight(set.weight) })) ??
     [];
   const weight = completed.length

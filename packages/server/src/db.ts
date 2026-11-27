@@ -169,6 +169,7 @@ export function openDatabase(path: string): Database.Database {
   ensureColumn("apple_health_events", "launch_group_id", "TEXT");
   ensureColumn("progress_photos", "thumbnail_data", "TEXT");
   ensureColumn("progress_photos", "source_key", "TEXT");
+  ensureColumn("tokens", "scope", "TEXT NOT NULL DEFAULT 'session'");
   db.exec(`
     UPDATE active_plans SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;
     UPDATE plan_activations SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;

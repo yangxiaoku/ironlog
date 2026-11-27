@@ -112,11 +112,13 @@ export function evaluateStrengthStandards(
   for (const key of order) {
     const max1rm = resolveBestLift(best1RMById, LIFT_ID_GROUPS[key]);
     if (max1rm <= 0) continue;
-    const ratio = round2(max1rm / bw);
+    // #129: Evaluate tier thresholds against unrounded ratio so 0.99625x does not prematurely round up to 1.00x.
+    const rawRatio = max1rm / bw;
+    const ratio = round2(rawRatio);
     const cuts = table[key];
     let tierIdx = 0;
     for (let i = 0; i < cuts.length; i++) {
-      if (ratio >= cuts[i]!) tierIdx = i + 1;
+      if (rawRatio >= cuts[i]!) tierIdx = i + 1;
     }
     const tierInfo = TIER_META[tierIdx]!;
     const nextCut = tierIdx < cuts.length ? cuts[tierIdx]! : null;

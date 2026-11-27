@@ -226,16 +226,17 @@ export function parseFlexibleInstant(value: unknown): string | null {
       hour = 0;
     }
     if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59 || second > 59) return null;
-    const probe = new Date(year, month - 1, day, hour, minute, second);
-    if (probe.getFullYear() !== year || probe.getMonth() !== month - 1 || probe.getDate() !== day) return null;
+    // #126: Validate calendar date and construct UTC+8 instant via Date.UTC so TZ=UTC servers do not shift by 8h.
+    const utcCheck = new Date(Date.UTC(year, month - 1, day));
+    if (utcCheck.getUTCFullYear() !== year || utcCheck.getUTCMonth() !== month - 1 || utcCheck.getUTCDate() !== day) return null;
     if (tz) {
       const isoWithTz = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}${tz}`;
       return strictIsoInstant.safeParse(isoWithTz).success ? new Date(isoWithTz).toISOString() : null;
     }
-    return probe.toISOString();
+    return new Date(Date.UTC(year, month - 1, day, hour, minute, second) - 8 * 3600_000).toISOString();
   }
 
-  // Time-only shortcuts output (e.g. "23:47", "23:47:12", "下午11:47") resolved against today
+  // Time-only shortcuts output (e.g. "23:47", "23:47:12", "下午11:47") resolved against today (+08:00)
   const timeOnly = text.match(/^(凌晨|早上|上午|中午|下午|晚上|AM|PM)?\s*(\d{1,2})[时:](\d{2})(?:[分:](\d{2})秒?)?\s*(AM|PM)?$/i);
   if (timeOnly) {
     let hour = Number(timeOnly[2]);
@@ -248,9 +249,8 @@ export function parseFlexibleInstant(value: unknown): string | null {
       hour = 0;
     }
     if (hour <= 23 && minute <= 59 && second <= 59) {
-      const d = new Date();
-      d.setHours(hour, minute, second, 0);
-      return d.toISOString();
+      const [yStr, mStr, dStr] = localDate().split("-");
+      return new Date(Date.UTC(Number(yStr), Number(mStr) - 1, Number(dStr), hour, minute, second) - 8 * 3600_000).toISOString();
     }
   }
 
@@ -1590,28 +1590,61 @@ function buildBodyCompositionReport(
 ) {
   const sex = options.sex ?? null;
   const weightKg = latestBody.weightKg?.value ?? null;
+  const weightDate = latestBody.weightKg?.date ?? null;
   const bodyFatPct = latestBody.bodyFatPct?.value ?? null;
-  const directLean = latestBody.leanBodyMassKg?.value ?? null;
-  const leanBodyMassKg = directLean ?? (weightKg != null && bodyFatPct != null ? roundTo(weightKg * (1 - bodyFatPct / 100), 2) : null);
-  const fatMassKg = weightKg != null && leanBodyMassKg != null
-    ? roundTo(Math.max(0, weightKg - leanBodyMassKg), 2)
-    : weightKg != null && bodyFatPct != null
-      ? roundTo((weightKg * bodyFatPct) / 100, 2)
+  const bodyFatDate = latestBody.bodyFatPct?.date ?? null;
+  const directLeanRow = latestBody.leanBodyMassKg;
+  const daysApart = (a: string | null, b: string | null) =>
+    a && b ? Math.abs((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000) : Infinity;
+
+  // #127: Only pair leanBodyMassKg / bodyFatPct with weightKg when aligned in date & physically consistent (never >100% lean share).
+  const leanAlignedWithWeight = Boolean(
+    directLeanRow &&
+      weightKg != null &&
+      daysApart(directLeanRow.date, weightDate) === 0 &&
+      directLeanRow.value <= weightKg,
+  );
+  const bfAlignedWithWeight = Boolean(
+    bodyFatPct != null && weightKg != null && daysApart(bodyFatDate, weightDate) <= 7,
+  );
+  const leanBodyMassKg = leanAlignedWithWeight
+    ? directLeanRow!.value
+    : bfAlignedWithWeight
+      ? roundTo(weightKg! * (1 - bodyFatPct! / 100), 2)
+      : weightKg == null
+        ? (directLeanRow?.value ?? null)
+        : null;
+  const fatMassKg =
+    weightKg != null && leanBodyMassKg != null && leanBodyMassKg <= weightKg
+      ? roundTo(Math.max(0, weightKg - leanBodyMassKg), 2)
+      : bfAlignedWithWeight
+        ? roundTo((weightKg! * bodyFatPct!) / 100, 2)
+        : null;
+  const leanSharePct =
+    weightKg && leanBodyMassKg != null && leanBodyMassKg <= weightKg
+      ? roundTo((leanBodyMassKg / weightKg) * 100, 1)
       : null;
-  const leanSharePct = weightKg && leanBodyMassKg != null ? roundTo((leanBodyMassKg / weightKg) * 100, 1) : null;
 
   const profileHeight = typeof options.heightCm === "number" && options.heightCm >= 100 && options.heightCm <= 250
     ? options.heightCm
     : null;
-  const rawBmi = latestBody.bmi?.value ?? null;
+  const rawBmiRow = latestBody.bmi;
+  const rawBmi = rawBmiRow?.value ?? null;
+  const rawBmiAlignedWithWeight = Boolean(rawBmiRow && weightDate && rawBmiRow.date >= weightDate);
   const heightCm = profileHeight != null
     ? roundTo(profileHeight, 1)
-    : weightKg != null && rawBmi != null && rawBmi > 0
+    : weightKg != null && rawBmi != null && rawBmi > 0 && rawBmiAlignedWithWeight
       ? roundTo(Math.sqrt(weightKg / rawBmi) * 100, 1)
       : null;
   const heightSource = profileHeight != null ? "profile" : heightCm != null ? "bmi_inferred" : null;
   const heightM = heightCm != null ? heightCm / 100 : null;
-  const bmi = rawBmi ?? (weightKg != null && heightM ? roundTo(weightKg / (heightM * heightM), 1) : null);
+  // #127: Prefer fresh BMI calculated from latest weight + profile height over a stale older rawBmi.
+  const computedBmi = weightKg != null && heightM ? roundTo(weightKg / (heightM * heightM), 1) : null;
+  const bmi = profileHeight != null && computedBmi != null
+    ? computedBmi
+    : rawBmiAlignedWithWeight
+      ? rawBmi
+      : (computedBmi ?? rawBmi);
 
   let bmiStatus: { label: string; tone: StatusTone } | null = null;
   if (bmi != null) {
@@ -1818,7 +1851,16 @@ function computeSampleMeanAndSd(values: number[]): { mean: number; sd: number } 
 }
 
 function buildRecoveryReport(entries: DailyHealthSnapshot[], stats: Record<string, MetricSummary | null>) {
-  const baselineMode = entries.length >= 3 ? "personal_baseline" : "single_day_reference";
+  // #127: Decide personal_baseline per metric using THAT metric's valid sample count (>= 3), not total daily rows.
+  const rhrValsAll = entries
+    .map((e) => e.restingHeartRateBpm)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
+  const hrvValsAll = entries
+    .map((e) => e.hrvMs)
+    .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
+  const rhrHasBaseline = rhrValsAll.length >= 3;
+  const hrvHasBaseline = hrvValsAll.length >= 3;
+  const baselineMode = rhrHasBaseline || hrvHasBaseline ? "personal_baseline" : "single_day_reference";
   type RangeBand = { min: number; max: number; optMin: number; optMax: number };
   type SignalItem = {
     key: string;
@@ -1847,11 +1889,8 @@ function buildRecoveryReport(entries: DailyHealthSnapshot[], stats: Record<strin
     let zScore: number | null = null;
     let swcHalfSd: number | null = null;
 
-    if (baselineMode === "personal_baseline") {
-      const rhrVals = entries
-        .map((e) => e.restingHeartRateBpm)
-        .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0);
-      const dist = computeSampleMeanAndSd(rhrVals);
+    if (rhrHasBaseline) {
+      const dist = computeSampleMeanAndSd(rhrValsAll);
       const diff = roundTo(rhr.latest - rhr.avg, 1);
 
       if (dist && dist.sd >= 0.5) {
@@ -1903,12 +1942,9 @@ function buildRecoveryReport(entries: DailyHealthSnapshot[], stats: Record<strin
     let detail = "单日参考（连续同步 3 天后按个人平时水平对比）";
     lnHrvLatest = hrv.latest > 0 ? roundTo(Math.log(hrv.latest), 2) : null;
 
-    if (baselineMode === "personal_baseline" && hrv.avg > 0 && hrv.latest > 0) {
+    if (hrvHasBaseline && hrv.avg > 0 && hrv.latest > 0) {
       // Plews et al. (2013): log-transformed ln(rMSSD) reduces skew; SWC = +-0.5 SD
-      const lnVals = entries
-        .map((e) => e.hrvMs)
-        .filter((v): v is number => typeof v === "number" && Number.isFinite(v) && v > 0)
-        .map((v) => Math.log(v));
+      const lnVals = hrvValsAll.map((v) => Math.log(v));
       const lnDist = computeSampleMeanAndSd(lnVals);
       const rawLnLatest = Math.log(hrv.latest);
 
@@ -2075,7 +2111,19 @@ function buildRecoveryReport(entries: DailyHealthSnapshot[], stats: Record<strin
       insights.push(`最近一晚实睡 ${durText}${stageNote}${avgNote}${bedNote}。`);
     }
     if (resp && spo2) {
-      insights.push(`血氧 ${spo2.latest}%、睡眠呼吸 ${resp.latest} 次/分，心肺基础指标平稳。`);
+      const spo2Alert = spo2.latest < 95;
+      const respAlert = resp.latest < 10 || resp.latest > 22;
+      if (spo2Alert || respAlert) {
+        insights.push(
+          `血氧 ${spo2.latest}%、睡眠呼吸 ${resp.latest} 次/分，心肺恢复指标偏离常规区间，建议减量休息并留意身体状态。`,
+        );
+      } else {
+        insights.push(`血氧 ${spo2.latest}%、睡眠呼吸 ${resp.latest} 次/分，心肺基础指标平稳。`);
+      }
+    } else if (spo2 && spo2.latest < 95) {
+      insights.push(`血氧 ${spo2.latest}% 偏低，建议减量休息并留意呼吸与恢复状态。`);
+    } else if (resp && (resp.latest < 10 || resp.latest > 22)) {
+      insights.push(`睡眠呼吸 ${resp.latest} 次/分偏离常规区间，建议留意身体恢复状态。`);
     }
   }
 

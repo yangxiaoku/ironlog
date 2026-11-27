@@ -79,6 +79,14 @@ function readParsedDraft(userId: string): ParsedLiveDraft | null {
   }
 }
 
+const WORKOUT_DRAFT_EVENT = "ironlog-workout-draft-change";
+
+function emitWorkoutDraftChange() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(WORKOUT_DRAFT_EVENT));
+  }
+}
+
 export function LiveWorkoutBar() {
   const userId = useAuthStore((s) => s.userId);
   const modals = useUiStore((s) => s.modals);
@@ -127,22 +135,37 @@ export function LiveWorkoutBar() {
       setNowMs(Date.now());
     };
     refresh();
-    const timer = window.setInterval(refresh, 500);
     const onVis = () => {
       if (document.visibilityState === "visible") refresh();
     };
+    window.addEventListener("storage", refresh);
+    window.addEventListener(WORKOUT_DRAFT_EVENT, refresh);
     window.addEventListener(CARDIO_SESSION_EVENT, refresh);
     window.addEventListener("focus", refresh);
     window.addEventListener("pageshow", refresh);
     document.addEventListener("visibilitychange", onVis);
     return () => {
-      window.clearInterval(timer);
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener(WORKOUT_DRAFT_EVENT, refresh);
       window.removeEventListener(CARDIO_SESSION_EVENT, refresh);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("pageshow", refresh);
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [userId, hasWorkoutOpen, hasCardioOpen, modals.length]);
+
+  const hasActiveRest = Boolean(draft?.rest && draft.rest.pausedLeftMs == null);
+  const hasRunningClock = Boolean(
+    (userId && !hasWorkoutOpen && (draft?.timing?.runningSince || hasActiveRest)) ||
+      (userId && !hasCardioOpen && cardioSession),
+  );
+
+  useEffect(() => {
+    if (!hasRunningClock) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), hasActiveRest ? 250 : 1000);
+    return () => window.clearInterval(timer);
+  }, [hasRunningClock, hasActiveRest]);
 
   useEffect(() => {
     if (!userId) return;
@@ -333,6 +356,7 @@ export function LiveWorkoutBar() {
       onConfirm: () => {
         try {
           localStorage.removeItem(draftKey);
+          emitWorkoutDraftChange();
         } catch {}
         setDraft(null);
         bumpDataEpoch();

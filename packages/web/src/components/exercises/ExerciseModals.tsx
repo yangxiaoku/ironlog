@@ -35,15 +35,25 @@ interface ExerciseHistoryResponse {
   sessions?: ExerciseHistorySession[];
 }
 
-function ExDetailSparkline({ sessions, timed }: { sessions: ExerciseHistorySession[]; timed: boolean }) {
+function ExDetailSparkline({
+  sessions,
+  timed,
+  assisted,
+}: {
+  sessions: ExerciseHistorySession[];
+  timed: boolean;
+  assisted: boolean;
+}) {
   const pts = sessions
     .slice()
     .reverse()
     .map((s) => ({
       date: s.date,
-      value: timed ? s.bestSeconds : s.estimated1rm ?? s.topWeight,
+      value: timed ? s.bestSeconds : assisted ? s.topWeight : s.estimated1rm ?? s.topWeight,
     }))
-    .filter((p): p is { date: string; value: number } => p.value != null && p.value > 0);
+    .filter((p): p is { date: string; value: number } =>
+      p.value != null && (assisted ? p.value >= 0 : p.value > 0),
+    );
   if (pts.length < 2) return null;
 
   const w = 280;
@@ -59,16 +69,18 @@ function ExDetailSparkline({ sessions, timed }: { sessions: ExerciseHistorySessi
     return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) };
   });
   const unit = timed ? "秒" : "kg";
+  const chartTitle = timed ? "最长保持趋势" : assisted ? "辅助重量走势（越低越强）" : "估算 1RM 走势";
+  const chartAria = timed ? "时长走势图" : assisted ? "辅助重量走势图" : "估算1RM走势图";
 
   return (
     <div className="ex-detail-chart">
       <div className="ex-chart-head">
-        <span>{timed ? "最长保持趋势" : "估算 1RM 走势"}</span>
+        <span>{chartTitle}</span>
         <small>
           {fmt(min)} → {fmt(max)} {unit}
         </small>
       </div>
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label={timed ? "时长走势图" : "估算1RM走势图"}>
+      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label={chartAria}>
         <polyline
           fill="none"
           stroke="currentColor"
@@ -187,9 +199,14 @@ export function ExerciseDetailModal({
     exercise.custom ? "自定义动作" : "",
   ].filter(Boolean);
   const timed = exercise.mode === "timed";
+  const assisted = exercise.mode === "assisted";
   const sessions = hist?.sessions ?? [];
   const totalWorkSets = sessions.reduce((s, r) => s + (r.workSets ?? 0), 0);
   const bestWeight = sessions.reduce((m, r) => (r.topWeight != null && r.topWeight > m ? r.topWeight : m), 0);
+  const bestAssistance = sessions.reduce<number | null>(
+    (m, r) => (r.topWeight != null && (m == null || r.topWeight < m) ? r.topWeight : m),
+    null,
+  );
   const best1rm = sessions.reduce((m, r) => (r.estimated1rm != null && r.estimated1rm > m ? r.estimated1rm : m), 0);
   const bestHold = sessions.reduce((m, r) => (r.bestSeconds != null && r.bestSeconds > m ? r.bestSeconds : m), 0);
   const isFav = Boolean(favRec);
@@ -347,6 +364,21 @@ export function ExerciseDetailModal({
                 <span>最佳时长</span>
                 <strong>{bestHold > 0 ? <>{bestHold} <small>秒</small></> : "—"}</strong>
               </div>
+            ) : assisted ? (
+              <div>
+                <span>最低辅助</span>
+                <strong>
+                  {bestAssistance != null ? (
+                    bestAssistance === 0 ? (
+                      <>0 <small>kg（无辅助）</small></>
+                    ) : (
+                      <>{fmt(bestAssistance)} <small>kg</small></>
+                    )
+                  ) : (
+                    "—"
+                  )}
+                </strong>
+              </div>
             ) : (
               <>
                 <div>
@@ -369,7 +401,7 @@ export function ExerciseDetailModal({
             </div>
           </div>
 
-          <ExDetailSparkline sessions={sessions} timed={timed} />
+          <ExDetailSparkline sessions={sessions} timed={timed} assisted={assisted} />
 
           <div className="ex-detail-note">
             <input

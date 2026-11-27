@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotMeter } from "../components/Meters";
@@ -27,18 +27,25 @@ export function BadgesView() {
   const [status, setStatus] = useState<"all" | "unlocked" | "chasing">("all");
   const [query, setQuery] = useState("");
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => getPinnedBadges(userId));
+  const lastUserRef = useRef(userId);
 
   useEffect(() => {
     setPinnedIds(getPinnedBadges(userId));
+    const onPinnedChange = () => setPinnedIds(getPinnedBadges(userId));
+    window.addEventListener("ironlog-pinned-badges-change", onPinnedChange);
+    return () => window.removeEventListener("ironlog-pinned-badges-change", onPinnedChange);
   }, [userId, dataEpoch]);
 
   useEffect(() => {
     let active = true;
+    const userChanged = lastUserRef.current !== userId;
+    lastUserRef.current = userId;
     const stale = peekQuery<BadgeSummary>("/api/web/badges", userId)?.data;
     if (stale) {
       setRawSummary(stale);
       setLoading(false);
     } else {
+      if (userChanged) setRawSummary(null);
       setLoading(true);
     }
     setError("");
@@ -106,6 +113,14 @@ export function BadgesView() {
 
   return (
     <>
+      {error ? (
+        <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+          <span>刷新成就徽章失败：{error}</span>
+          <button type="button" className="quiet" onClick={bumpDataEpoch}>
+            重试
+          </button>
+        </div>
+      ) : null}
       <header className="page-heading masthead-badges">
         <div>
           <h1>成就徽章</h1>

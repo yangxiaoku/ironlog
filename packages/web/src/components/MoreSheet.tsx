@@ -1,7 +1,10 @@
+import { useEffect, useState } from "react";
 import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
+import { prefetchViewChunk } from "../lib/prefetch";
 import { openDietEditor, openOnboardingModal, openStrengthCalcModal, openWeightEditor, openWorkoutEditor } from "../lib/record-openers";
 import { MORE_WORKSPACES, VIEW_WORKSPACE, WORKSPACES, type ViewId, type WorkspaceId } from "../lib/routes";
+import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../lib/workout-helpers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { Icon } from "./Icon";
@@ -31,6 +34,21 @@ export function MoreSheetBody() {
     settings: appleHealthConnected ? "目标、Apple 健康、AI、账号" : "目标、AI 助手、导出与账号",
   };
   const isDark = theme === "dark";
+  const [hiddenModules, setHiddenModules] = useState<string[]>(() => readWorkoutPreferences().hiddenModules ?? []);
+
+  useEffect(() => {
+    prefetchViewChunk("analytics");
+    prefetchViewChunk("badges");
+    prefetchViewChunk("weight");
+    const sync = () => setHiddenModules(readWorkoutPreferences().hiddenModules ?? []);
+    window.addEventListener(WORKOUT_PREFS_EVENT, sync);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
+  }, []);
+
+  const visibleMoreWorkspaces = MORE_WORKSPACES.filter(
+    (id) => !(id === "badges" && hiddenModules.includes("badges")),
+  );
+  const dietHidden = hiddenModules.includes("diet");
 
   const goTo = (target: ViewId | WorkspaceId) => {
     triggerHaptic("light");
@@ -54,18 +72,20 @@ export function MoreSheetBody() {
             <Icon name="workout" size={18} />
             <span>记训练</span>
           </button>
-          <button
-            type="button"
-            className="more-quick-btn"
-            onClick={() => {
-              triggerHaptic("light");
-              closeModalSilent();
-              openDietEditor({ date: today() });
-            }}
-          >
-            <Icon name="diet" size={18} />
-            <span>记饮食</span>
-          </button>
+          {!dietHidden ? (
+            <button
+              type="button"
+              className="more-quick-btn"
+              onClick={() => {
+                triggerHaptic("light");
+                closeModalSilent();
+                openDietEditor({ date: today() });
+              }}
+            >
+              <Icon name="diet" size={18} />
+              <span>记饮食</span>
+            </button>
+          ) : null}
           <button
             type="button"
             className="more-quick-btn"
@@ -82,11 +102,12 @@ export function MoreSheetBody() {
       ) : null}
 
       <nav className="more-links" aria-label="更多工作区">
-        {MORE_WORKSPACES.map((id) => (
+        {visibleMoreWorkspaces.map((id) => (
           <a
             key={id}
             href={`#${id}`}
             aria-current={id === activeWs ? "page" : undefined}
+            onPointerEnter={() => prefetchViewChunk(id)}
             onClick={(e) => {
               e.preventDefault();
               goTo(id);

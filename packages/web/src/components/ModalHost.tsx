@@ -1,8 +1,109 @@
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { useUiStore } from "../store/useUiStore";
+import { Suspense, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import { useUiStore, type ConfirmEntry } from "../store/useUiStore";
 import { Icon } from "./Icon";
 
 let overlaySeq = 0;
+
+function NestedConfirmOverlay({
+  confirm,
+  confirmBusy,
+  confirmError,
+  dialogRef,
+  onDismiss,
+  onRunOk,
+}: {
+  confirm: ConfirmEntry;
+  confirmBusy: boolean;
+  confirmError: string;
+  dialogRef: RefObject<HTMLDialogElement | null>;
+  onDismiss: () => void;
+  onRunOk: () => void;
+}) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const prevFocused = document.activeElement as HTMLElement | null;
+    const dialog = dialogRef.current;
+    const overlay = overlayRef.current;
+    const inerted: Array<HTMLElement & { inert?: boolean }> = [];
+    if (dialog && overlay) {
+      for (const child of Array.from(dialog.children)) {
+        if (child !== overlay) {
+          const el = child as HTMLElement & { inert?: boolean };
+          el.inert = true;
+          inerted.push(el);
+        }
+      }
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !overlay) return;
+      const focusables = Array.from(
+        overlay.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((n) => n.offsetParent !== null);
+      if (!focusables.length) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusables[0]!;
+      const last = focusables[focusables.length - 1]!;
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !overlay.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !overlay.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      for (const el of inerted) el.inert = false;
+      if (prevFocused && prevFocused.isConnected && typeof prevFocused.focus === "function") {
+        prevFocused.focus({ preventScroll: true });
+      }
+    };
+  }, [dialogRef]);
+
+  return (
+    <div
+      ref={overlayRef}
+      className="confirm-overlay"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="confirm-overlay-title"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !confirmBusy) onDismiss();
+      }}
+    >
+      <div className="confirm-overlay-card">
+        <h3 id="confirm-overlay-title">{confirm.title}</h3>
+        <p className="confirm-dialog-message">{confirm.message}</p>
+        <p className="form-error" role="alert" hidden={!confirmError}>
+          {confirmError}
+        </p>
+        <footer className="confirm-dialog-foot">
+          <button
+            type="button"
+            className="quiet"
+            disabled={confirmBusy}
+            autoFocus
+            onClick={onDismiss}
+          >
+            取消
+          </button>
+          <button type="button" className="danger" disabled={confirmBusy} onClick={onRunOk}>
+            {confirm.confirmLabel ?? "确认删除"}
+          </button>
+        </footer>
+      </div>
+    </div>
+  );
+}
 
 export function ModalHost() {
   const modals = useUiStore((s) => s.modals);
@@ -457,37 +558,14 @@ export function ModalHost() {
           ) : null}
 
           {nestedConfirm && confirm ? (
-            <div
-              className="confirm-overlay"
-              role="alertdialog"
-              aria-modal="true"
-              aria-labelledby="confirm-overlay-title"
-              onClick={(e) => {
-                if (e.target === e.currentTarget && !confirmBusy) dismissNestedConfirm();
-              }}
-            >
-              <div className="confirm-overlay-card">
-                <h3 id="confirm-overlay-title">{confirm.title}</h3>
-                <p className="confirm-dialog-message">{confirm.message}</p>
-                <p className="form-error" role="alert" hidden={!confirmError}>
-                  {confirmError}
-                </p>
-                <footer className="confirm-dialog-foot">
-                  <button
-                    type="button"
-                    className="quiet"
-                    disabled={confirmBusy}
-                    autoFocus
-                    onClick={dismissNestedConfirm}
-                  >
-                    取消
-                  </button>
-                  <button type="button" className="danger" disabled={confirmBusy} onClick={() => void runConfirmOk()}>
-                    {confirm.confirmLabel ?? "确认删除"}
-                  </button>
-                </footer>
-              </div>
-            </div>
+            <NestedConfirmOverlay
+              confirm={confirm}
+              confirmBusy={confirmBusy}
+              confirmError={confirmError}
+              dialogRef={dialogRef}
+              onDismiss={dismissNestedConfirm}
+              onRunOk={() => void runConfirmOk()}
+            />
           ) : null}
         </>
       ) : null}

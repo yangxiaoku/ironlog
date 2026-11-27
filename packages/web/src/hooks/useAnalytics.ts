@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AppleWorkoutAnnotation, SleepReport } from "@ironlog/shared";
 import type { AppleDailyEntry } from "../components/apple/AppleHealthModals";
 import { cachedApiFetch, peekQuery } from "../lib/query-cache";
@@ -485,8 +485,15 @@ export function useAnalytics(period: AnalyticsPeriod, through: string, userId: s
   const path = "/api/web/analytics?" + query.toString();
   const requestKey = JSON.stringify([userId, epoch, path]);
   const [result, setResult] = useState<AnalyticsResult>();
+  const lastValidRef = useRef<{ userId: string; data: AnalyticsResponse } | null>(null);
   const current = result?.requestKey === requestKey ? result : undefined;
-  const data = current?.data ?? peekQuery<AnalyticsResponse>(path, userId)?.data;
+  if (current?.data) {
+    lastValidRef.current = { userId, data: current.data };
+  } else if (lastValidRef.current && lastValidRef.current.userId !== userId) {
+    lastValidRef.current = null;
+  }
+  const cached = peekQuery<AnalyticsResponse>(path, userId)?.data;
+  const data = current?.data ?? cached ?? (lastValidRef.current?.userId === userId ? lastValidRef.current.data : undefined);
 
   useEffect(() => {
     let active = true;

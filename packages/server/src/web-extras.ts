@@ -109,15 +109,19 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
           continue;
         }
         const weightKg = toKg(s.weight, rowUnit);
-        if (weightKg > 0 && s.reps > 0) {
-          volume += weightKg * s.reps * mult;
-        }
         if (mode === "assisted") {
-          if (topWeight === null || weightKg < topWeight) {
+          if (
+            topWeight === null ||
+            weightKg < topWeight ||
+            (weightKg === topWeight && s.reps > (topReps ?? 0))
+          ) {
             topWeight = weightKg;
             topReps = s.reps;
           }
           continue;
+        }
+        if (weightKg > 0 && s.reps > 0) {
+          volume += weightKg * s.reps * mult;
         }
         const effectiveReps =
           s.rir != null && Number.isFinite(s.rir) && s.rir >= 0 && s.rir <= 4 ? s.reps + s.rir : s.reps;

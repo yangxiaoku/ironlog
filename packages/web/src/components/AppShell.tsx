@@ -33,6 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const theme = useUiStore((s) => s.theme);
   const online = useUiStore((s) => s.online);
   const pendingSyncCount = useUiStore((s) => s.pendingSyncCount);
+  const flushingQueue = useUiStore((s) => s.flushingQueue);
   const modals = useUiStore((s) => s.modals);
   const navigate = useUiStore((s) => s.navigate);
   const toggleTheme = useUiStore((s) => s.toggleTheme);
@@ -51,8 +52,8 @@ export function AppShell({ children }: { children: ReactNode }) {
     window.addEventListener(WORKOUT_PREFS_EVENT, sync);
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
   }, []);
+  const dietHidden = hiddenModules.includes("diet");
   const isWorkspaceHidden = (id: WorkspaceId) =>
-    (id === "diet" && hiddenModules.includes("diet")) ||
     (id === "badges" && hiddenModules.includes("badges"));
   const visibleDailyNav = DAILY_NAV.filter((id) => !isWorkspaceHidden(id));
   const visibleInsightNav = INSIGHT_NAV.filter((id) => !isWorkspaceHidden(id));
@@ -118,21 +119,44 @@ export function AppShell({ children }: { children: ReactNode }) {
     navigate(target);
   };
 
-  const renderDesktopLink = (id: WorkspaceId) => (
-    <a
-      key={id}
-      href={`#${id}`}
-      aria-label={WORKSPACES[id].label}
-      aria-current={id === activeWs ? "page" : undefined}
-      onPointerEnter={() => prefetchWorkspace(id, userId)}
-      onFocus={() => prefetchWorkspace(id, userId)}
-      onClick={(e) => handleNavClick(e, id)}
-    >
-      <Icon name={WORKSPACES[id].icon} />
-      <span>{WORKSPACES[id].label}</span>
-      {id === activeWs ? <i className="nav-dot" /> : null}
-    </a>
-  );
+  const renderDesktopLink = (id: WorkspaceId) => {
+    if (id === "diet" && dietHidden) {
+      const isWeightActive = view === "weight";
+      return (
+        <a
+          key="weight"
+          href="#weight"
+          aria-label="体重记录"
+          aria-current={isWeightActive ? "page" : undefined}
+          onPointerEnter={() => prefetchWorkspace("diet", userId)}
+          onFocus={() => prefetchWorkspace("diet", userId)}
+          onClick={(e) => {
+            e.preventDefault();
+            navigate("weight");
+          }}
+        >
+          <Icon name="weight" />
+          <span>体重记录</span>
+          {isWeightActive ? <i className="nav-dot" /> : null}
+        </a>
+      );
+    }
+    return (
+      <a
+        key={id}
+        href={`#${id}`}
+        aria-label={WORKSPACES[id].label}
+        aria-current={id === activeWs ? "page" : undefined}
+        onPointerEnter={() => prefetchWorkspace(id, userId)}
+        onFocus={() => prefetchWorkspace(id, userId)}
+        onClick={(e) => handleNavClick(e, id)}
+      >
+        <Icon name={WORKSPACES[id].icon} />
+        <span>{WORKSPACES[id].label}</span>
+        {id === activeWs ? <i className="nav-dot" /> : null}
+      </a>
+    );
+  };
 
   return (
     <>
@@ -181,18 +205,37 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <nav className="mobile-nav" aria-label="手机导航">
-          {visibleMobileTabs.map(({ id, label }) => (
-            <a
-              key={id}
-              href={`#${id}`}
-              aria-current={id === activeWs ? "page" : undefined}
-              onPointerEnter={() => prefetchWorkspace(id, userId)}
-              onClick={(e) => handleNavClick(e, id)}
-            >
-              <Icon name={id} />
-              <span>{label}</span>
-            </a>
-          ))}
+          {visibleMobileTabs.map(({ id, label }) => {
+            if (id === "diet" && dietHidden) {
+              return (
+                <a
+                  key="weight"
+                  href="#weight"
+                  aria-current={view === "weight" ? "page" : undefined}
+                  onPointerEnter={() => prefetchWorkspace("diet", userId)}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    navigate("weight");
+                  }}
+                >
+                  <Icon name="weight" />
+                  <span>体重</span>
+                </a>
+              );
+            }
+            return (
+              <a
+                key={id}
+                href={`#${id}`}
+                aria-current={id === activeWs ? "page" : undefined}
+                onPointerEnter={() => prefetchWorkspace(id, userId)}
+                onClick={(e) => handleNavClick(e, id)}
+              >
+                <Icon name={id} />
+                <span>{label}</span>
+              </a>
+            );
+          })}
           <button
             className="mobile-more"
             type="button"
@@ -281,7 +324,9 @@ export function AppShell({ children }: { children: ReactNode }) {
                 type="button"
                 className="sync-pending-pill"
                 aria-label="同步离线待上传记录"
+                disabled={flushingQueue}
                 onClick={() => {
+                  if (flushingQueue) return;
                   void syncOfflineQueue(userId, { silent: false }).then(() => {
                     const blocked = readQueue(getOfflineStorage(), userId).filter((item) => item.failure);
                     if (!blocked.length) return;
@@ -304,7 +349,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   });
                 }}
               >
-                待同步 {pendingSyncCount}
+                {flushingQueue ? "同步中…" : `待同步 ${pendingSyncCount}`}
               </button>
             ) : null}
             <button

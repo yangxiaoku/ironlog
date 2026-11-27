@@ -104,20 +104,27 @@ export function DietView() {
     setError("");
     void Promise.all([
       cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
-      cachedApiFetch<Array<RecordEnvelope<MealTemplateData>>>("/api/records/mealTemplate", { epoch: dataEpoch, userId }).catch(() => []),
-      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<Array<RecordEnvelope<MealTemplateData>>>("/api/records/mealTemplate", { epoch: dataEpoch, userId })
+        .then((v) => ({ ok: true as const, v }))
+        .catch(() => ({ ok: false as const, v: null })),
+      cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId })
+        .then((v) => ({ ok: true as const, v }))
+        .catch(() => ({ ok: false as const, v: null })),
     ])
-      .then(([dietRows, tplRows, profRes]) => {
+      .then(([dietRows, tplRes, profRes]) => {
         if (!active) return;
-        const snap: DietViewSnap = {
-          records: dietRows.filter((r) => !r.deleted),
-          templates: tplRows.filter((r) => !r.deleted),
-          goals: profRes?.profile ?? null,
-        };
-        writeQueryCache("view:diet", snap, { userId, epoch: dataEpoch });
-        setRecords(snap.records);
-        setTemplates(snap.templates);
-        setGoals(snap.goals);
+        const nextDiet = dietRows.filter((r) => !r.deleted);
+        setRecords(nextDiet);
+        if (tplRes.ok && tplRes.v) setTemplates(tplRes.v.filter((r) => !r.deleted));
+        if (profRes.ok && profRes.v) setGoals(profRes.v.profile ?? null);
+        if (tplRes.ok && profRes.ok) {
+          const snap: DietViewSnap = {
+            records: nextDiet,
+            templates: (tplRes.v ?? []).filter((r) => !r.deleted),
+            goals: profRes.v?.profile ?? null,
+          };
+          writeQueryCache("view:diet", snap, { userId, epoch: dataEpoch });
+        }
       })
       .catch((err) => {
         if (active) setError((err as Error)?.message || "加载饮食数据失败");
@@ -138,17 +145,23 @@ export function DietView() {
       setDietDone(false);
       setWaterMl(0);
       setPendingWaterOp(null);
+      setCustomWaterOpen(false);
+      setCustomWaterVal("");
     }
     void Promise.all([
-      cachedApiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId })
+        .then((v) => ({ ok: true as const, v }))
+        .catch(() => ({ ok: false as const, v: null })),
       cachedApiFetch<{ entries?: Array<{ waterMl?: number }> }>(
         `/api/integrations/apple-health/daily?from=${date}&through=${date}`,
         { epoch: dataEpoch, userId },
-      ).catch(() => null),
-    ]).then(([marker, dailyRes]) => {
+      )
+        .then((v) => ({ ok: true as const, v }))
+        .catch(() => ({ ok: false as const, v: null })),
+    ]).then(([markerRes, dailyRes]) => {
       if (!active) return;
-      setDietDone(Boolean(marker?.complete));
-      setWaterMl(dailyRes?.entries?.[0]?.waterMl ?? 0);
+      if (markerRes.ok) setDietDone(Boolean(markerRes.v?.complete));
+      if (dailyRes.ok) setWaterMl(dailyRes.v?.entries?.[0]?.waterMl ?? 0);
     });
     return () => {
       active = false;
@@ -237,6 +250,7 @@ export function DietView() {
     try {
       const res = await apiFetch<{ waterMl: number }>("/api/web/water", {
         method: "POST",
+        skipMutateHook: true,
         body: req.setMl != null
           ? { date: req.date, setMl: req.setMl, opId: req.opId }
           : { date: req.date, deltaMl: req.deltaMl ?? 250, opId: req.opId },
@@ -287,6 +301,7 @@ export function DietView() {
     try {
       await apiFetch("/api/web/nutrition-day", {
         method: "PUT",
+        skipMutateHook: true,
         body: { date: reqDate, opId: safeUuid() },
       });
       triggerHaptic("success");
@@ -306,7 +321,10 @@ export function DietView() {
     const reqDate = date;
     setMarkingDone(true);
     try {
-      await apiFetch(`/api/web/nutrition-day?date=${encodeURIComponent(reqDate)}`, { method: "DELETE" });
+      await apiFetch(`/api/web/nutrition-day?date=${encodeURIComponent(reqDate)}`, {
+        method: "DELETE",
+        skipMutateHook: true,
+      });
       triggerHaptic("light");
       if (dateRef.current === reqDate) {
         setDietDone(false);
@@ -449,14 +467,14 @@ export function DietView() {
           {targetKcal ? (
             <>
               <DotMeter ratio={dayRows.length ? totalKcal / targetKcal : 0} count={20} label="热量完成度" />
-              <div className="diet-budget-strip" aria-label="今日热量预算">
+              <div className="diet-budget-strip" aria-label={date === todayStr ? "今日热量预算" : `${shortDate(date)} 热量预算`}>
                 <div>
                   <span>已摄入</span>
                   <strong>{dayRows.length ? fmt(totalKcal, 0) : "0"}</strong>
                   <small>kcal</small>
                 </div>
                 <div className={kcalDiff != null && kcalDiff < 0 ? "is-over" : "is-focus"}>
-                  <span>{kcalDiff != null && kcalDiff < 0 ? "已超出" : "今日剩余"}</span>
+                  <span>{kcalDiff != null && kcalDiff < 0 ? "已超出" : date === todayStr ? "今日剩余" : "当日剩余"}</span>
                   <strong>{fmt(Math.abs(kcalDiff ?? targetKcal), 0)}</strong>
                   <small>kcal</small>
                 </div>
@@ -640,7 +658,12 @@ export function DietView() {
                 style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}
                 onSubmit={(e) => {
                   e.preventDefault();
-                  const parsed = Math.round(Number(customWaterVal));
+                  const trimmed = customWaterVal.trim();
+                  if (!trimmed) {
+                    notify("请输入 0–15000 ml 之间的有效饮水量");
+                    return;
+                  }
+                  const parsed = Math.round(Number(trimmed));
                   if (!Number.isFinite(parsed) || parsed < 0 || parsed > 15000) {
                     notify("请输入 0–15000 ml 之间的有效饮水量");
                     return;
@@ -654,8 +677,9 @@ export function DietView() {
                   inputMode="numeric"
                   min={0}
                   max={15000}
-                  step={50}
-                  placeholder="输入今日总饮水量 (ml)"
+                  step={1}
+                  aria-label="自定义饮水量 (ml)"
+                  placeholder={date === todayStr ? "输入今日总饮水量 (ml)" : `输入 ${shortDate(date)} 总饮水量 (ml)`}
                   value={customWaterVal}
                   onChange={(e) => setCustomWaterVal(e.target.value)}
                   style={{ flex: 1, minHeight: 34 }}
@@ -667,12 +691,12 @@ export function DietView() {
             ) : null}
           </div>
 
-          {dayRows.length ? (
+          {dayRows.length || dietDone ? (
             <footer className="diet-status">
               <button
                 type="button"
                 className="secondary-button"
-                hidden={dietDone}
+                hidden={dietDone || !dayRows.length}
                 disabled={markingDone}
                 onClick={() => void handleMarkDone()}
               >

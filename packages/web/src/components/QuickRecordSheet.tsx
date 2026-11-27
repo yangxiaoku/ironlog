@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { today } from "../lib/date";
 import { triggerHaptic } from "../lib/haptics-audio";
 import {
@@ -7,6 +8,7 @@ import {
   openWeightEditor,
   openWorkoutEditor,
 } from "../lib/record-openers";
+import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../lib/workout-helpers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { Icon, type IconName } from "./Icon";
@@ -61,10 +63,18 @@ const TEXT_LOG_OPTION: QuickOption = {
 export function QuickRecordSheetBody() {
   const aiReady = useAuthStore((s) => s.aiReady);
   const closeModalSilent = useUiStore((s) => s.closeModalSilent);
+  const [hiddenModules, setHiddenModules] = useState<string[]>(() => readWorkoutPreferences().hiddenModules ?? []);
 
-  const options = aiReady
+  useEffect(() => {
+    const sync = () => setHiddenModules(readWorkoutPreferences().hiddenModules ?? []);
+    window.addEventListener(WORKOUT_PREFS_EVENT, sync);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
+  }, []);
+
+  const rawOptions = aiReady && !hiddenModules.includes("ai")
     ? [...BASE_QUICK_OPTIONS.slice(0, 3), TEXT_LOG_OPTION, BASE_QUICK_OPTIONS[3]!]
     : BASE_QUICK_OPTIONS;
+  const options = rawOptions.filter((item) => !(item.kind === "diet" && hiddenModules.includes("diet")));
 
   return (
     <div className="quick-record-sheet-body">

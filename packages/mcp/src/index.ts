@@ -20,9 +20,31 @@ async function request(path: string, method = "GET", body?: unknown) {
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(120000),
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(JSON.stringify(result));
-  return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+  // #129: Handle non-JSON error pages (e.g., 502 Bad Gateway HTML) gracefully without uncaught SyntaxError.
+  const text = await response.text();
+  const contentType = response.headers.get("content-type") ?? "";
+  let parsed: unknown = null;
+  if (text.trim()) {
+    if (contentType.includes("json") || text.trim().startsWith("{") || text.trim().startsWith("[")) {
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        parsed = null;
+      }
+    }
+  }
+  if (!response.ok) {
+    const err = Object.assign(
+      new Error(
+        parsed != null
+          ? JSON.stringify(parsed)
+          : `HTTP ${response.status}: ${text.slice(0, 200) || response.statusText}`,
+      ),
+      { status: response.status },
+    );
+    throw err;
+  }
+  return { content: [{ type: "text" as const, text: parsed != null ? JSON.stringify(parsed) : text }] };
 }
 server.registerTool(
   "get_training_context",
@@ -77,9 +99,17 @@ server.registerTool(
       opId = `mcp_draft_${randomUUID()}`;
       pendingDraftOpIds.set(fingerprint, opId);
     }
-    const res = await request("/api/plans/drafts", "POST", { ...payload, opId });
-    pendingDraftOpIds.delete(fingerprint);
-    return res;
+    try {
+      const res = await request("/api/plans/drafts", "POST", { ...payload, opId });
+      pendingDraftOpIds.delete(fingerprint);
+      return res;
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status != null && status >= 400 && status < 500) {
+        pendingDraftOpIds.delete(fingerprint);
+      }
+      throw err;
+    }
   },
 );
 server.registerTool(

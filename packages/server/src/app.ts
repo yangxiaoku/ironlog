@@ -189,7 +189,7 @@ export function createApp(
   const stmtPlanHistory = db.prepare(
     "SELECT id,version,data,created_at AS createdAt FROM plan_versions WHERE user_id=? ORDER BY created_at DESC",
   );
-  const app = new Hono<{ Variables: { userId: string } }>();
+  const app = new Hono<{ Variables: { userId: string; authKind: "cookie" | "session" | "api" } }>();
   const defaultBody = bodyLimit({ maxSize: 2 * 1024 * 1024 });
   const healthExportBody = bodyLimit({
     maxSize: 16 * 1024 * 1024,
@@ -450,13 +450,20 @@ export function createApp(
     c.header("Link", `<${image.licenseUrl}>; rel="license"`);
     return c.body(new Uint8Array(image.bytes));
   });
+  const requireInteractiveAuth = (c: Context<{ Variables: { userId: string; authKind: "cookie" | "session" | "api" } }>) => {
+    if (c.get("authKind") === "api") {
+      throw new DomainError("API 令牌无权执行此账号安全或破坏性操作，请使用网页登录操作", 403);
+    }
+  };
   app.use("/api/*", async (c, next) => {
     const authorization = c.req.header("Authorization");
     c.header("Cache-Control", "no-store");
     if (authorization !== undefined) {
       const token = authorization.match(/^Bearer (.+)$/)?.[1];
       if (!token) throw new DomainError("请先登录", 401);
-      c.set("userId", auth.identify(token));
+      const identified = auth.identifyWithScope(token);
+      c.set("userId", identified.userId);
+      c.set("authKind", identified.scope);
     } else {
       const userId = browser.identify(getCookie(c, cookieName, cookieOptions(c, trustProxy).prefix));
       const expected = c.req.header("X-Ironlog-Account");
@@ -466,6 +473,7 @@ export function createApp(
         if (!expected) throw new DomainError("请从铁记网页操作", 403);
       }
       c.set("userId", userId);
+      c.set("authKind", "cookie");
     }
     await next();
   });
@@ -908,23 +916,29 @@ export function createApp(
     return c.json(outcome, outcome.delivered ? 200 : 400);
   });
 
-  // 3.4 Authenticated Pairing Code & Passkey management
+  // 3.4 Authenticated Pairing Code & Passkey management (#124: blocked for scoped API Bearer tokens)
   app.post("/api/web/auth/pairing-code", (c) => {
+    requireInteractiveAuth(c);
     c.header("Cache-Control", "no-store");
     return c.json(browser.issuePairingCode(c.get("userId")), 201);
   });
   app.get("/api/web/auth/passkeys", (c) => {
+    requireInteractiveAuth(c);
     c.header("Cache-Control", "no-store");
     return c.json(browser.listPasskeys(c.get("userId")));
   });
-  app.delete("/api/web/auth/passkeys/:id", (c) =>
-    c.json(browser.deletePasskey(c.get("userId"), c.req.param("id"))));
+  app.delete("/api/web/auth/passkeys/:id", (c) => {
+    requireInteractiveAuth(c);
+    return c.json(browser.deletePasskey(c.get("userId"), c.req.param("id")));
+  });
   app.post("/api/web/auth/passkey/register/options", (c) => {
+    requireInteractiveAuth(c);
     c.header("Cache-Control", "no-store");
     const { rpId } = resolveOriginAndRp(c);
     return c.json(browser.createPasskeyRegisterOptions(c.get("userId"), rpId));
   });
   app.post("/api/web/auth/passkey/register/verify", async (c) => {
+    requireInteractiveAuth(c);
     const input = z.object({
       credentialId: z.string().min(1).max(512),
       publicKeySpki: z.string().min(1).max(4096),
@@ -1206,14 +1220,19 @@ export function createApp(
     }).immediate();
     return c.json(result);
   });
-  app.get("/api/tokens", (c) => c.json(auth.list(c.get("userId"))));
+  app.get("/api/tokens", (c) => {
+    requireInteractiveAuth(c);
+    return c.json(auth.list(c.get("userId")));
+  });
   app.post("/api/tokens", async (c) => {
+    requireInteractiveAuth(c);
     const { label } = z
       .object({ label: z.string().trim().min(1).max(80) })
       .parse(await c.req.json());
     return c.json({ token: auth.issue(c.get("userId"), label) }, 201);
   });
   app.delete("/api/tokens/:id", (c) => {
+    requireInteractiveAuth(c);
     auth.revoke(c.get("userId"), c.req.param("id"));
     return c.json({ ok: true });
   });
@@ -1235,6 +1254,9 @@ export function createApp(
       strategy: z.enum(["merge", "replace"]).default("merge"),
       opId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
     }).parse(await c.req.json());
+    if (input.strategy === "replace" && input.mode === "commit") {
+      requireInteractiveAuth(c);
+    }
     return c.json(store.restoreBackup(c.get("userId"), input.backup, {
       mode: input.mode,
       strategy: input.strategy,
@@ -1242,6 +1264,7 @@ export function createApp(
     }));
   });
   app.post("/api/web/password", async (c) => {
+    requireInteractiveAuth(c);
     const userId = c.get("userId");
     browser.limit("password:user:" + userId, 10);
     const input = webPasswordChangeInput.parse(await c.req.json());

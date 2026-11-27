@@ -339,6 +339,15 @@ export function SettingsView() {
     setProfileError("");
     setProfileSaving(true);
     try {
+      const currentProfiles = profileGoalObj?.equipmentProfiles?.length
+        ? profileGoalObj.equipmentProfiles
+        : DEFAULT_EQUIPMENT_PROFILES;
+      const eqArr = [...equipment].sort();
+      const matchedPreset = currentProfiles.find(
+        (gp) =>
+          gp.equipment.length === eqArr.length &&
+          [...gp.equipment].sort().every((v, idx) => v === eqArr[idx]),
+      );
       const updated = await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile", {
         method: "PUT",
         body: {
@@ -350,6 +359,7 @@ export function SettingsView() {
           restSeconds: Number(restSeconds),
           targetWeight: targetWeight.trim() ? Number(targetWeight) : null,
           equipment: [...equipment],
+          activeEquipmentProfileId: matchedPreset ? matchedPreset.id : null,
           energyProfile: energyEnabled
             ? {
                 heightCm: Number(heightCm),
@@ -1157,19 +1167,24 @@ export function SettingsView() {
                     <div className="field">
                       <span>多场馆器械预设（一键切换杆重与片数库存）</span>
                       <div className="segments">
-                        {DEFAULT_EQUIPMENT_PROFILES.map((gp) => (
+                        {(profileGoalObj?.equipmentProfiles?.length
+                          ? profileGoalObj.equipmentProfiles
+                          : DEFAULT_EQUIPMENT_PROFILES
+                        ).map((gp) => (
                           <button
                             key={gp.id}
                             type="button"
                             aria-pressed={
-                              workoutPrefs.barWeight === gp.barWeight &&
-                              JSON.stringify(workoutPrefs.enabledPlates) === JSON.stringify(gp.enabledPlates)
+                              profileGoalObj?.activeEquipmentProfileId
+                                ? profileGoalObj.activeEquipmentProfileId === gp.id
+                                : workoutPrefs.barWeight === gp.barWeight &&
+                                  JSON.stringify(workoutPrefs.enabledPlates) === JSON.stringify(gp.enabledPlates)
                             }
                             onClick={() => {
                               updateWorkoutPref("barWeight", gp.barWeight);
                               updateWorkoutPref("enabledPlates", gp.enabledPlates);
-                              updateWorkoutPref("platePairs", gp.platePairs);
-                              setEquipment(new Set(gp.equipment));
+                              if (gp.platePairs) updateWorkoutPref("platePairs", gp.platePairs);
+                              setEquipment(new Set(gp.equipment as EquipmentKey[]));
                               notify(`已套用「${gp.name}」配置（${gp.barWeight}kg 杆），记得点击上方保存目标以同步器械筛选`);
                             }}
                           >

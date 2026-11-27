@@ -16,6 +16,8 @@ export const READ_ONLY_POST_PATHS = new Set<string>([
   "/api/web/exercise-references",
   "/api/web/exercise-prs",
   "/api/web/import-csv/preview",
+  "/api/web/webhook/test",
+  "/api/web/auth/pairing-code",
   "/api/ai/review",
   "/api/ai/parse-diet",
   "/api/ai/parse-workout",

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import {
   EQUIPMENT,
@@ -74,15 +74,22 @@ export function ExercisePickerModal({
   }, [userId, dataEpoch]);
 
   const favIds = new Set(favRecords.map((r) => r.data.exerciseId));
+  const favIdsRef = useRef<Set<string>>(favIds);
+  favIdsRef.current = favIds;
+  const searchGenRef = useRef(0);
   const selectedIds = new Set(selectedItems.map((ex) => ex.id));
+  const favFilterKey = equip === "__fav__" ? favRecords.map((r) => r.data.exerciseId).sort().join(",") : "";
 
   useEffect(() => {
     let active = true;
+    const gen = ++searchGenRef.current;
     setLoading(true);
+    setLoadingMore(false);
     setNextCursor(null);
     const cleanQ = query.trim();
 
     const load = async (): Promise<{ list: CatalogueExercise[]; cursor: string | null }> => {
+      const activeFavIds = favIdsRef.current;
       const qLower = cleanQ.toLowerCase();
       const matchesCustom = (ex: CatalogueExercise) => {
         if (muscle && ex.muscle !== muscle) return false;
@@ -95,8 +102,8 @@ export function ExercisePickerModal({
 
       if (equip === "__fav__") {
         const customIds = new Set(customExercises.map((c) => c.id));
-        const customFavs = customExercises.filter((ex) => favIds.has(ex.id) && matchesCustom(ex));
-        const builtinFavIds = [...favIds].filter((id) => !customIds.has(id));
+        const customFavs = customExercises.filter((ex) => activeFavIds.has(ex.id) && matchesCustom(ex));
+        const builtinFavIds = [...activeFavIds].filter((id) => !customIds.has(id));
         let builtinFavs: CatalogueExercise[] = [];
         if (builtinFavIds.length) {
           const res = await apiFetch<{ items?: CatalogueExercise[] }>("/api/catalogue/exercises/details", {
@@ -117,8 +124,8 @@ export function ExercisePickerModal({
       const customMatches = customExercises.filter(matchesCustom);
       const customIdSet = new Set(customExercises.map((c) => c.id));
       let pool = [...customMatches, ...(res.items ?? []).filter((ex) => !customIdSet.has(ex.id))];
-      if (!cleanQ && !muscle && favIds.size) {
-        const missingFavs = [...favIds].filter((id) => !pool.some((p) => p.id === id) && !customIdSet.has(id)).slice(0, 6);
+      if (!cleanQ && !muscle && activeFavIds.size) {
+        const missingFavs = [...activeFavIds].filter((id) => !pool.some((p) => p.id === id) && !customIdSet.has(id)).slice(0, 6);
         if (missingFavs.length) {
           const favRes = await apiFetch<{ items?: CatalogueExercise[] }>("/api/catalogue/exercises/details", {
             method: "POST",
@@ -129,26 +136,26 @@ export function ExercisePickerModal({
         }
       }
       const prioritized = prioritizeExact(pool, cleanQ);
-      const ordered = cleanQ ? prioritized : prioritized.sort((a, b) => Number(favIds.has(b.id)) - Number(favIds.has(a.id)));
+      const ordered = cleanQ ? prioritized : prioritized.sort((a, b) => Number(activeFavIds.has(b.id)) - Number(activeFavIds.has(a.id)));
       return { list: ordered, cursor: res.nextCursor ?? null };
     };
 
     const timer = window.setTimeout(() => {
       void load()
         .then(({ list, cursor }) => {
-          if (active) {
+          if (active && gen === searchGenRef.current) {
             setItems(list);
             setNextCursor(cursor);
           }
         })
         .catch(() => {
-          if (active) {
+          if (active && gen === searchGenRef.current) {
             setItems([]);
             setNextCursor(null);
           }
         })
         .finally(() => {
-          if (active) setLoading(false);
+          if (active && gen === searchGenRef.current) setLoading(false);
         });
     }, cleanQ ? 120 : 0);
 
@@ -156,10 +163,11 @@ export function ExercisePickerModal({
       active = false;
       window.clearTimeout(timer);
     };
-  }, [query, muscle, equip, customExercises, favRecords]);
+  }, [query, muscle, equip, customExercises, favFilterKey]);
 
   const handleLoadMore = async () => {
     if (!nextCursor || loadingMore || equip === "__fav__") return;
+    const gen = searchGenRef.current;
     setLoadingMore(true);
     try {
       const params = new URLSearchParams({ q: query.trim(), limit: "40", cursor: nextCursor });
@@ -168,6 +176,7 @@ export function ExercisePickerModal({
       const res = await apiFetch<{ items?: CatalogueExercise[]; nextCursor?: string | null }>(
         `/api/catalogue/exercises?${params.toString()}`,
       );
+      if (gen !== searchGenRef.current) return;
       setItems((prev) => {
         const seen = new Set(prev.map((x) => x.id));
         const extra = (res.items ?? []).filter((x) => !seen.has(x.id));
@@ -175,9 +184,9 @@ export function ExercisePickerModal({
       });
       setNextCursor(res.nextCursor ?? null);
     } catch {
-      notify("加载更多动作失败");
+      if (gen === searchGenRef.current) notify("加载更多动作失败");
     } finally {
-      setLoadingMore(false);
+      if (gen === searchGenRef.current) setLoadingMore(false);
     }
   };
 

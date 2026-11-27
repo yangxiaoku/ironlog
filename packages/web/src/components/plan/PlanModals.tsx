@@ -546,6 +546,7 @@ export function PlanBuilderModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const createdDraftRef = useRef<{ id: string; version: number; fingerprint: string } | null>(null);
+  const openingRevisionRef = useRef<number>(0);
 
   useEffect(() => {
     let active = true;
@@ -562,11 +563,13 @@ export function PlanBuilderModal({
             },
           }).catch(() => [])
         : Promise.resolve([]),
+      apiFetch<{ revision?: number } | null>("/api/plans/active").catch(() => null),
     ])
-      .then(([cat, prs]) => {
+      .then(([cat, prs, activePlan]) => {
         if (!active) return;
         setCatalogueMap(cat);
         setPrMap(new Map(prs.map((p) => [p.exerciseId, p])));
+        openingRevisionRef.current = activePlan?.revision ?? 0;
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -632,6 +635,7 @@ export function PlanBuilderModal({
       {
         id: `routine_${Date.now().toString(36)}_${idx}`,
         name: `${currentRoutine.name} (副本)`.slice(0, 120),
+        ...(currentRoutine.isDeload ? { isDeload: true } : {}),
         exercises: currentRoutine.exercises.map((e) => ({ ...e })),
       },
     ]);
@@ -707,13 +711,12 @@ export function PlanBuilderModal({
         }
       }
       if (mode === "apply" && targetDraft) {
-        const active = await apiFetch<{ revision?: number } | null>("/api/plans/active").catch(() => null);
         await apiFetch("/api/plans/apply", {
           method: "POST",
           body: {
             id: targetDraft.id,
             version: targetDraft.version,
-            expectedRevision: active?.revision ?? 0,
+            expectedRevision: openingRevisionRef.current,
           },
         });
       }
@@ -1299,7 +1302,7 @@ export function RoutinePreviewModal({
           row.sets,
           row.weight,
           row.snapshot.mode,
-          deloadPrefs.weightStepKg,
+          (row.weightUnit ?? "kg") === "lb" ? 5 : deloadPrefs.weightStepKg,
           deloadPrefs.deloadWeightPct,
           deloadPrefs.deloadSetsPct,
         )

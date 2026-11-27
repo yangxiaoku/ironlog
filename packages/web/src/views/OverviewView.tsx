@@ -42,6 +42,7 @@ import {
   openWorkoutReport,
   resumeLocalWorkoutDraft,
 } from "../lib/record-openers";
+import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../lib/workout-helpers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 
@@ -60,15 +61,23 @@ export function OverviewView() {
 
   const [period, setPeriod] = useState<PeriodDays | null>(null);
   const [through, setThrough] = useState<string>(() => today());
+  const [statsRetrySeq, setStatsRetrySeq] = useState(0);
   const [metric, setMetric] = useState<LoadMetricKey>("volume");
   const [atlasMode, setAtlasMode] = useState<"volume" | "recovery" | "recency">("volume");
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleKey | "">("");
   const [statsCategory, setStatsCategory] = useState<"all" | "load" | "muscle" | "weight">("all");
   const [weekDate, setWeekDate] = useState<string>("");
   const [quickDayBusy, setQuickDayBusy] = useState(false);
+  const [, setPinnedBadgesTick] = useState(0);
+  const [hiddenModules, setHiddenModules] = useState<string[]>(() => readWorkoutPreferences().hiddenModules ?? []);
 
-  interface OverviewSnapshot {
-    stats: OverviewStatsResponse;
+  useEffect(() => {
+    const onPrefs = () => setHiddenModules(readWorkoutPreferences().hiddenModules ?? []);
+    window.addEventListener(WORKOUT_PREFS_EVENT, onPrefs);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, onPrefs);
+  }, []);
+
+  interface OverviewAuxSnapshot {
     day: TodayResponse | null;
     badges: BadgeSummary | null;
     hasPlan: boolean;
@@ -80,90 +89,63 @@ export function OverviewView() {
   }
   const initialQuery = new URLSearchParams({ through });
   if (period) initialQuery.set("days", String(period));
-  const initialCacheKey = `view:overview:${initialQuery.toString()}:${appleHealthConnected ? 1 : 0}`;
-  const cachedInit = peekQuery<OverviewSnapshot>(initialCacheKey, userId)?.data;
+  const initialStatsKey = `view:overview:stats:${initialQuery.toString()}`;
+  const initialAuxKey = `view:overview:aux:${appleHealthConnected ? 1 : 0}`;
+  const cachedStatsInit = peekQuery<OverviewStatsResponse>(initialStatsKey, userId)?.data;
+  const cachedAuxInit = peekQuery<OverviewAuxSnapshot>(initialAuxKey, userId)?.data;
 
-  const [stats, setStats] = useState<OverviewStatsResponse | null>(() => cachedInit?.stats ?? null);
-  const [day, setDay] = useState<TodayResponse | null>(() => cachedInit?.day ?? null);
-  const [badges, setBadges] = useState<BadgeSummary | null>(() => cachedInit?.badges ?? null);
-  const [hasPlan, setHasPlan] = useState<boolean>(() => cachedInit?.hasPlan ?? false);
-  const [scheduleData, setScheduleData] = useState<ScheduleResponse | null>(() => cachedInit?.schedule ?? null);
-  const [visiblePanels, setVisiblePanels] = useState<string[] | null>(() => cachedInit?.visiblePanels ?? null);
-  const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(() => cachedInit?.appleDaily ?? null);
-  const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>(() => cachedInit?.appleAgenda ?? []);
-  const [appleStatus, setAppleStatus] = useState<AppleSyncStatus | null>(() => cachedInit?.appleStatus ?? null);
-  const [loading, setLoading] = useState(() => !cachedInit);
+  const [stats, setStats] = useState<OverviewStatsResponse | null>(() => cachedStatsInit ?? null);
+  const [day, setDay] = useState<TodayResponse | null>(() => cachedAuxInit?.day ?? null);
+  const [badges, setBadges] = useState<BadgeSummary | null>(() => cachedAuxInit?.badges ?? null);
+  const [hasPlan, setHasPlan] = useState<boolean>(() => cachedAuxInit?.hasPlan ?? false);
+  const [scheduleData, setScheduleData] = useState<ScheduleResponse | null>(() => cachedAuxInit?.schedule ?? null);
+  const [visiblePanels, setVisiblePanels] = useState<string[] | null>(() => cachedAuxInit?.visiblePanels ?? null);
+  const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(() => cachedAuxInit?.appleDaily ?? null);
+  const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>(() => cachedAuxInit?.appleAgenda ?? []);
+  const [appleStatus, setAppleStatus] = useState<AppleSyncStatus | null>(() => cachedAuxInit?.appleStatus ?? null);
+  const [loading, setLoading] = useState(() => !cachedStatsInit);
   const [error, setError] = useState("");
   const autoOnboardedUserRef = useRef("");
+  const lastUserRef = useRef(userId);
+  const manualRefreshToastRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const onPinnedChange = () => setPinnedBadgesTick((n) => n + 1);
+    window.addEventListener("ironlog-pinned-badges-change", onPinnedChange);
+    return () => window.removeEventListener("ironlog-pinned-badges-change", onPinnedChange);
+  }, []);
+
+  // Stats-only effect: changing period or through ONLY fetches /api/web/statistics
+  useEffect(() => {
     let active = true;
+    const userChanged = lastUserRef.current !== userId;
     const query = new URLSearchParams({ through });
     if (period) query.set("days", String(period));
-    const currentToday = today();
-    const viewKey = `view:overview:${query.toString()}:${appleHealthConnected ? 1 : 0}`;
-    const staleHit = peekQuery<OverviewSnapshot>(viewKey, userId)?.data;
-    if (staleHit) {
-      setStats(staleHit.stats);
-      setDay(staleHit.day);
-      setBadges(staleHit.badges);
-      setHasPlan(staleHit.hasPlan);
-      setScheduleData(staleHit.schedule ?? null);
-      setVisiblePanels(staleHit.visiblePanels);
-      setAppleDaily(staleHit.appleDaily);
-      setAppleAgenda(staleHit.appleAgenda);
-      setAppleStatus(staleHit.appleStatus ?? null);
+    const statsKey = `view:overview:stats:${query.toString()}`;
+    const staleStats = peekQuery<OverviewStatsResponse>(statsKey, userId)?.data;
+    if (staleStats) {
+      setStats(staleStats);
       setLoading(false);
-    } else {
+    } else if (userChanged) {
+      setStats(null);
+      setLoading(true);
+    } else if (!stats) {
       setLoading(true);
     }
     setError("");
-    void Promise.all([
-      cachedApiFetch<OverviewStatsResponse>(`/api/web/statistics?${query.toString()}`, { epoch: dataEpoch, userId }),
-      cachedApiFetch<TodayResponse>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId }).catch(() => null),
-      cachedApiFetch<BadgeSummary>("/api/web/badges", { epoch: dataEpoch, userId }).catch(() => null),
-      cachedApiFetch<{ panels?: string[] }>("/api/web/preferences", { epoch: dataEpoch, userId }).catch(() => null),
-      cachedApiFetch<ScheduleResponse>("/api/web/schedule", { epoch: dataEpoch, userId }).catch(() => null),
-      appleHealthConnected
-        ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
-            `/api/integrations/apple-health/daily?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
-            { epoch: dataEpoch, userId },
-          ).catch(() => null)
-        : Promise.resolve(null),
-      appleHealthConnected
-        ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
-            `/api/integrations/apple-health/agenda?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
-            { epoch: dataEpoch, userId },
-          ).catch(() => [])
-        : Promise.resolve([]),
-      appleHealthConnected
-        ? apiFetch<AppleSyncStatus>("/api/integrations/apple-health/status").catch(() => null)
-        : Promise.resolve(null),
-    ])
-      .then(([statsRes, todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes, statusRes]) => {
+    void cachedApiFetch<OverviewStatsResponse>(`/api/web/statistics?${query.toString()}`, {
+      epoch: dataEpoch + statsRetrySeq,
+      userId,
+    })
+      .then((statsRes) => {
         if (!active) return;
-        const nextSnap: OverviewSnapshot = {
-          stats: statsRes,
-          day: todayRes,
-          badges: badgesRes,
-          hasPlan: Boolean(schedRes?.activePlan?.id || todayRes?.planned),
-          schedule: schedRes ?? null,
-          visiblePanels: Array.isArray(prefsRes?.panels) ? prefsRes.panels : null,
-          appleDaily: dailyRes?.entries?.[0] ?? null,
-          appleAgenda: Array.isArray(agendaRes) ? agendaRes : [],
-          appleStatus: statusRes ?? null,
-        };
-        writeQueryCache(viewKey, nextSnap, { userId, epoch: dataEpoch });
-        setStats(nextSnap.stats);
-        setDay(nextSnap.day);
-        setBadges(nextSnap.badges);
-        setHasPlan(nextSnap.hasPlan);
-        setScheduleData(nextSnap.schedule);
-        setVisiblePanels(nextSnap.visiblePanels);
-        setAppleDaily(nextSnap.appleDaily);
-        setAppleAgenda(nextSnap.appleAgenda);
-        setAppleStatus(nextSnap.appleStatus);
-
+        writeQueryCache(statsKey, statsRes, { userId, epoch: dataEpoch });
+        setStats(statsRes);
+        if (manualRefreshToastRef.current) {
+          const msg = manualRefreshToastRef.current;
+          manualRefreshToastRef.current = null;
+          notify(msg);
+        }
         if (
           !demo &&
           userId &&
@@ -178,6 +160,7 @@ export function OverviewView() {
       })
       .catch((err) => {
         if (!active) return;
+        manualRefreshToastRef.current = null;
         setError((err as Error)?.message || "加载首页统计失败");
       })
       .finally(() => {
@@ -186,7 +169,104 @@ export function OverviewView() {
     return () => {
       active = false;
     };
-  }, [userId, demo, isNewUser, appleHealthConnected, dataEpoch, through, period]);
+  }, [userId, demo, isNewUser, dataEpoch, through, period, statsRetrySeq]);
+
+  // Aux & Today effect: independent of period/through switches, never overwrites state on transient failure
+  useEffect(() => {
+    let active = true;
+    const userChanged = lastUserRef.current !== userId;
+    lastUserRef.current = userId;
+    const currentToday = today();
+    const auxKey = `view:overview:aux:${appleHealthConnected ? 1 : 0}`;
+    const staleAux = peekQuery<OverviewAuxSnapshot>(auxKey, userId)?.data;
+    if (userChanged) {
+      if (staleAux) {
+        setDay(staleAux.day);
+        setBadges(staleAux.badges);
+        setHasPlan(staleAux.hasPlan);
+        setScheduleData(staleAux.schedule);
+        setVisiblePanels(staleAux.visiblePanels);
+        setAppleDaily(staleAux.appleDaily);
+        setAppleAgenda(staleAux.appleAgenda);
+        setAppleStatus(staleAux.appleStatus);
+      } else {
+        setDay(null);
+        setBadges(null);
+        setHasPlan(false);
+        setScheduleData(null);
+        setVisiblePanels(null);
+        setAppleDaily(null);
+        setAppleAgenda([]);
+        setAppleStatus(null);
+      }
+    }
+    const wrap = <T,>(p: Promise<T>) =>
+      p.then(
+        (v) => ({ ok: true as const, v }),
+        () => ({ ok: false as const, v: null }),
+      );
+    void Promise.all([
+      wrap(cachedApiFetch<TodayResponse>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId })),
+      wrap(cachedApiFetch<BadgeSummary>("/api/web/badges", { epoch: dataEpoch, userId })),
+      wrap(cachedApiFetch<{ panels?: string[] }>("/api/web/preferences", { epoch: dataEpoch, userId })),
+      wrap(cachedApiFetch<ScheduleResponse>("/api/web/schedule", { epoch: dataEpoch, userId })),
+      appleHealthConnected
+        ? wrap(
+            cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
+              `/api/integrations/apple-health/daily?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
+              { epoch: dataEpoch, userId },
+            ),
+          )
+        : Promise.resolve({ ok: true as const, v: null }),
+      appleHealthConnected
+        ? wrap(
+            cachedApiFetch<AppleWorkoutAgendaItem[]>(
+              `/api/integrations/apple-health/agenda?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
+              { epoch: dataEpoch, userId },
+            ),
+          )
+        : Promise.resolve({ ok: true as const, v: [] as AppleWorkoutAgendaItem[] }),
+      appleHealthConnected
+        ? wrap(cachedApiFetch<AppleSyncStatus>("/api/integrations/apple-health/status", { ttlMs: 30_000, epoch: dataEpoch, userId }))
+        : Promise.resolve({ ok: true as const, v: null }),
+    ]).then(([todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes, statusRes]) => {
+      if (!active) return;
+      if (todayRes.ok) setDay(todayRes.v);
+      if (badgesRes.ok) setBadges(badgesRes.v);
+      if (schedRes.ok) setScheduleData(schedRes.v ?? null);
+      if (todayRes.ok || schedRes.ok) {
+        setHasPlan(Boolean(schedRes.v?.activePlan?.id || todayRes.v?.planned));
+      }
+      if (prefsRes.ok) setVisiblePanels(Array.isArray(prefsRes.v?.panels) ? prefsRes.v.panels : null);
+      if (dailyRes.ok) setAppleDaily(dailyRes.v?.entries?.[0] ?? null);
+      if (agendaRes.ok) setAppleAgenda(Array.isArray(agendaRes.v) ? agendaRes.v : []);
+      if (statusRes.ok) setAppleStatus(statusRes.v ?? null);
+      if (
+        todayRes.ok &&
+        badgesRes.ok &&
+        prefsRes.ok &&
+        schedRes.ok &&
+        dailyRes.ok &&
+        agendaRes.ok &&
+        statusRes.ok
+      ) {
+        const nextAux: OverviewAuxSnapshot = {
+          day: todayRes.v,
+          badges: badgesRes.v,
+          hasPlan: Boolean(schedRes.v?.activePlan?.id || todayRes.v?.planned),
+          schedule: schedRes.v ?? null,
+          visiblePanels: Array.isArray(prefsRes.v?.panels) ? prefsRes.v.panels : null,
+          appleDaily: dailyRes.v?.entries?.[0] ?? null,
+          appleAgenda: Array.isArray(agendaRes.v) ? agendaRes.v : [],
+          appleStatus: statusRes.v ?? null,
+        };
+        writeQueryCache(auxKey, nextAux, { userId, epoch: dataEpoch });
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [userId, appleHealthConnected, dataEpoch]);
 
   if (loading && !stats) {
     return (
@@ -219,12 +299,13 @@ export function OverviewView() {
   if (!stats) return null;
 
   const todayKey = stats.today ?? today();
+  const isHistoricalThrough = through !== todayKey;
   const activities = stats.totals.activities ?? stats.totals.workouts;
   const prevActivities = stats.previous.activities ?? stats.previous.workouts;
 
   const weights = stats.weights ?? [];
-  const latestWeight = day?.weight ?? weights.at(-1)?.weight ?? null;
-  const prevWeight = weights.length >= 2 ? weights.at(-2)?.weight ?? null : null;
+  const latestWeight = day?.weight ?? (!isHistoricalThrough ? weights.at(-1)?.weight ?? null : null);
+  const prevWeight = !isHistoricalThrough && weights.length >= 2 ? weights.at(-2)?.weight ?? null : null;
   const wDiff = prevWeight != null && latestWeight != null ? Math.round((latestWeight - prevWeight) * 10) / 10 : null;
   const wDelta = wDiff != null && wDiff !== 0 ? `${wDiff > 0 ? "+" : ""}${fmt(wDiff, 1)} kg ${wDiff > 0 ? "↑" : "↓"}` : "";
   const weightSub =
@@ -251,7 +332,7 @@ export function OverviewView() {
       });
       return;
     }
-    const todayRecent = stats.recent.find((r) => r.date === todayKey);
+    const todayRecent = !isHistoricalThrough ? stats.recent.find((r) => r.date === todayKey) : undefined;
     if (todayRecent) {
       openWorkoutReport({ workoutId: todayRecent.id, goals: stats.goals });
       return;
@@ -489,8 +570,8 @@ export function OverviewView() {
                 aria-label="刷新首页数据"
                 title="刷新首页数据"
                 onClick={() => {
+                  manualRefreshToastRef.current = "已刷新首页数据";
                   bumpDataEpoch();
-                  notify("已刷新首页数据");
                 }}
               >
                 <Icon name="refresh" size={14} />
@@ -658,28 +739,30 @@ export function OverviewView() {
               </span>
             </button>
 
-            <button
-              type="button"
-              className="today-tile is-diet"
-              onClick={() => openDietEditor({ date: todayKey })}
-            >
-              <span className="tile-head">
-                <span>摄入</span>
-                {day.nutrition.complete ? <em className="tile-badge">完整</em> : null}
-                <Icon name="plus" size={14} />
-              </span>
-              <strong>
-                <MatrixText value={day.nutrition.count ? fmt(day.nutrition.calories, 0) : "0"} />
-              </strong>
-              <small>
-                {day.nutrition.target ? `/ ${fmt(day.nutrition.target, 0)} kcal` : "kcal"}
-                {day.nutrition.count && day.nutrition.protein > 0 ? ` · 蛋 ${fmt(day.nutrition.protein, 0)}g` : ""}
-              </small>
-              <ThinMeter
-                ratio={day.nutrition.count && day.nutrition.target ? day.nutrition.calories / day.nutrition.target : 0}
-                label="热量进度"
-              />
-            </button>
+            {!hiddenModules.includes("diet") ? (
+              <button
+                type="button"
+                className="today-tile is-diet"
+                onClick={() => openDietEditor({ date: todayKey })}
+              >
+                <span className="tile-head">
+                  <span>摄入</span>
+                  {day.nutrition.complete ? <em className="tile-badge">完整</em> : null}
+                  <Icon name="plus" size={14} />
+                </span>
+                <strong>
+                  <MatrixText value={day.nutrition.count ? fmt(day.nutrition.calories, 0) : "0"} />
+                </strong>
+                <small>
+                  {day.nutrition.target ? `/ ${fmt(day.nutrition.target, 0)} kcal` : "kcal"}
+                  {day.nutrition.count && day.nutrition.protein > 0 ? ` · 蛋 ${fmt(day.nutrition.protein, 0)}g` : ""}
+                </small>
+                <ThinMeter
+                  ratio={day.nutrition.count && day.nutrition.target ? day.nutrition.calories / day.nutrition.target : 0}
+                  label="热量进度"
+                />
+              </button>
+            ) : null}
 
             <button
               type="button"
@@ -737,13 +820,26 @@ export function OverviewView() {
               type="button"
               className="quiet"
               onClick={() => {
+                manualRefreshToastRef.current = "已刷新同步状态";
                 bumpDataEpoch();
-                notify("已刷新同步状态");
               }}
             >
               <Icon name="refresh" size={13} /> 刷新
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {error ? (
+        <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
+          <span>刷新统计失败：{error}</span>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => setStatsRetrySeq((n) => n + 1)}
+          >
+            重试
+          </button>
         </div>
       ) : null}
 
@@ -765,26 +861,35 @@ export function OverviewView() {
           <label aria-label="统计截止日期">
             <input
               type="date"
-              className={stats.through !== stats.today ? "is-custom-date" : undefined}
+              className={through !== stats.today ? "is-custom-date" : undefined}
               min="1902-01-01"
               max={stats.today}
-              value={stats.through}
+              value={through}
               onChange={(e) => {
                 if (e.target.value && e.target.validity.valid) setThrough(e.target.value);
               }}
             />
           </label>
           <div className="segments">
-            {INTERVALS.map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                aria-pressed={stats.period === opt.value}
-                onClick={() => setPeriod(opt.value)}
-              >
-                {opt.label}
-              </button>
-            ))}
+            {INTERVALS.map((opt) => {
+              const selectedPeriod = period ?? stats.period;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  aria-pressed={selectedPeriod === opt.value}
+                  onClick={() => {
+                    if (period === opt.value) {
+                      setStatsRetrySeq((n) => n + 1);
+                    } else {
+                      setPeriod(opt.value);
+                    }
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -1012,7 +1117,7 @@ export function OverviewView() {
         )}
       </section>
 
-      <BadgesOverviewStrip rawSummary={badges} />
+      {!hiddenModules.includes("badges") ? <BadgesOverviewStrip rawSummary={badges} /> : null}
 
       {appleHealthConnected && (!visiblePanels || visiblePanels.includes("apple")) && (appleDaily || appleAgenda.length > 0) ? (
         <details className="overview-more">

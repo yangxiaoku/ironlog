@@ -43,6 +43,9 @@ export function StrengthCalcModal() {
   const [targetInput, setTargetInput] = useState("80");
   const [barWeight, setBarWeight] = useState<number>(() => readWorkoutPreferences().barWeight);
   const [enabledPlates, setEnabledPlates] = useState<number[]>(() => readWorkoutPreferences().enabledPlates);
+  const [platePairs, setPlatePairs] = useState<Record<string, number> | undefined>(
+    () => readWorkoutPreferences().platePairs,
+  );
   const [activePct, setActivePct] = useState<number | null>(null);
 
   useEffect(() => {
@@ -51,6 +54,7 @@ export function StrengthCalcModal() {
       const next = readWorkoutPreferences();
       setBarWeight(next.barWeight);
       setEnabledPlates(next.enabledPlates);
+      setPlatePairs(next.platePairs);
     };
     window.addEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, syncPrefs);
@@ -65,7 +69,14 @@ export function StrengthCalcModal() {
   const rmLb = Math.round(rmKg * KG_TO_LB * 10) / 10;
 
   const targetKg = Math.min(2000, Math.max(0, Number(targetInput) || 0));
-  const bd = plateBreakdown(targetKg, barWeight, enabledPlates);
+  const bd = plateBreakdown(targetKg, barWeight, enabledPlates, platePairs);
+  const bdUnbounded = platePairs ? plateBreakdown(targetKg, barWeight, enabledPlates) : bd;
+  const limitedByInventory = Boolean(
+    platePairs &&
+      !bd.achievable &&
+      bdUnbounded.achievable &&
+      bd.remainder > bdUnbounded.remainder + 1e-6,
+  );
 
   const counts = new Map<number, number>();
   for (const p of bd.plates) counts.set(p, (counts.get(p) ?? 0) + 1);
@@ -169,11 +180,19 @@ export function StrengthCalcModal() {
               <div className="calc-1rm-main">
                 <span>估算极限 1RM</span>
                 <strong>
-                  {fmt(rmRoundedKg)} <small>kg</small>
+                  {unit === "lb" ? (
+                    <>
+                      {fmt(rmLb)} <small>lb</small>
+                    </>
+                  ) : (
+                    <>
+                      {fmt(rmRoundedKg)} <small>kg</small>
+                    </>
+                  )}
                 </strong>
               </div>
               <div className="calc-1rm-sub">
-                <span>≈ {fmt(rmLb)} lb</span>
+                <span>{unit === "lb" ? `≈ ${fmt(rmRoundedKg)} kg` : `≈ ${fmt(rmLb)} lb`}</span>
                 {rir > 0 ? <span>按有效次数 {effReps} 次折算</span> : null}
               </div>
             </>
@@ -186,6 +205,9 @@ export function StrengthCalcModal() {
           {rmRoundedKg > 0
             ? PCT_ZONES.map(([pct, repTxt, ratio]) => {
                 const loadKg = Math.max(2.5, Math.round((rmKg * ratio) / 2.5) * 2.5);
+                const loadLb = Math.max(5, Math.round((rmLb * ratio) / 5) * 5);
+                const targetForBarKg =
+                  unit === "lb" ? Math.round((loadLb / KG_TO_LB) * 2) / 2 : loadKg;
                 return (
                   <button
                     key={pct}
@@ -194,14 +216,14 @@ export function StrengthCalcModal() {
                     onClick={() => {
                       triggerHaptic("light");
                       setActivePct(pct);
-                      setTargetInput(String(loadKg));
+                      setTargetInput(String(targetForBarKg));
                     }}
                   >
                     <span className="calc-pct-top">
                       <b>{pct}%</b>
                       <small>{repTxt}</small>
                     </span>
-                    <strong>{fmt(loadKg)} kg</strong>
+                    <strong>{unit === "lb" ? `${fmt(loadLb)} lb` : `${fmt(loadKg)} kg`}</strong>
                   </button>
                 );
               })
@@ -317,7 +339,9 @@ export function StrengthCalcModal() {
             </div>
             {!bd.achievable ? (
               <p className="calc-remainder-warn">
-                受当前可用杠片最小规格限制，每侧差 {fmt(bd.remainder, 2)} kg（可勾选 0.5kg / 1.25kg 小片）
+                {limitedByInventory
+                  ? `受当前场馆杠片对数库存上限限制，每侧差 ${fmt(bd.remainder, 2)} kg（可在设置中调整可用片对数）`
+                  : `受当前可用杠片最小规格限制，每侧差 ${fmt(bd.remainder, 2)} kg（可勾选 0.5kg / 1.25kg 小片）`}
               </p>
             ) : null}
           </div>

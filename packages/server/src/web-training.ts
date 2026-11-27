@@ -175,7 +175,8 @@ const id = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
 const mode = z.enum(["reps", "timed", "assisted"]);
 export const referenceInput = z.object({
   date: z.iso.date(),
-  startedAt: z.iso.datetime(),
+  // #128: Accept timezone offsets such as +08:00 matching workoutSchema.
+  startedAt: z.iso.datetime({ offset: true }),
   workoutId: id.optional(),
   exercises: z.array(z.object({ id, mode: mode.optional() })).min(1).max(100),
 });
@@ -248,6 +249,10 @@ export function getWebRoutine(store: Store, userId: string, query: z.infer<typeo
     routine = template && !template.deleted ? template.data as Routine : null;
   } else if (query.source === "scheduled") {
     const scheduleDate = query.id.startsWith("schedule_") ? query.id.slice(9) : query.id;
+    // #128: Validate scheduled date format strictly instead of throwing RangeError 500.
+    if (!z.iso.date().safeParse(scheduleDate).success) {
+      throw new DomainError("排期日期格式无效", 400);
+    }
     const override = store.get(userId, "scheduledDay", "schedule_" + scheduleDate);
     if (override && !override.deleted && (override.data as ScheduledDay).mode === "workout") {
       const data = override.data as ScheduledDay;
@@ -657,10 +662,19 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
     const targetOverride = store.get(userId, "scheduledDay", "schedule_" + input.toDate);
     const curFromVersion = fromOverride?.version ?? 0;
     const curToVersion = targetOverride?.version ?? 0;
-    if (input.expectedFromVersion !== undefined && curFromVersion !== input.expectedFromVersion) {
+    // #125 (P1): Deleted schedule tombstones appear as null (version 0) to clients; allow expectedVersion === 0 to match deleted tombstones.
+    const fromVersionMatches =
+      input.expectedFromVersion === undefined ||
+      curFromVersion === input.expectedFromVersion ||
+      Boolean(fromOverride?.deleted && input.expectedFromVersion === 0);
+    if (!fromVersionMatches) {
       throw new DomainError("原日期排期已变更，请刷新后重试", 409);
     }
-    if (input.expectedToVersion !== undefined && curToVersion !== input.expectedToVersion) {
+    const toVersionMatches =
+      input.expectedToVersion === undefined ||
+      curToVersion === input.expectedToVersion ||
+      Boolean(targetOverride?.deleted && input.expectedToVersion === 0);
+    if (!toVersionMatches) {
       throw new DomainError("目标日期排期已变更，请刷新后重试", 409);
     }
 
@@ -728,7 +742,7 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
       from: getWebScheduleDay(store, userId, input.fromDate),
       to: getWebScheduleDay(store, userId, input.toDate),
     };
-  })();
+  }).immediate();
 }
 
 export function matchActivePlanRoutine(

@@ -243,6 +243,9 @@ export class WebAuth {
     this.db.transaction(() => {
       this.stmtUpdateCred.run(newSalt, newHash, userId);
       this.stmtRevokeUserSessions.run(userId);
+      // #124 (P1): Also revoke unused pairing codes and API/session Bearer tokens upon password change.
+      this.db.prepare("DELETE FROM web_pairing_codes WHERE user_id = ? AND used_at IS NULL").run(userId);
+      this.db.prepare("DELETE FROM tokens WHERE user_id = ?").run(userId);
     }).immediate();
     return { userId };
   }

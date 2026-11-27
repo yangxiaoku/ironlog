@@ -60,7 +60,8 @@ export function acceptsGzip(header: string | undefined | null): boolean {
   return wildcardQ !== null && wildcardQ > 0;
 }
 
-export function mountWebAssets(app: Hono<{ Variables: { userId: string } }>) {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function mountWebAssets(app: Hono<any>) {
   app.get("/", (c) => c.redirect("/app/", 302));
   app.get("/app", (c) => c.redirect("/app/", 302));
   app.get("/app/*", (c) => {

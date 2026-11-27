@@ -47,6 +47,7 @@ export interface UiState {
   online: boolean;
   pendingSyncCount: number;
   flushingQueue: boolean;
+  pwaUpdateReady: boolean;
   dataEpoch: number;
   toast: ToastState | null;
   modals: ModalEntry[];
@@ -62,6 +63,7 @@ export interface UiState {
   setTheme: (theme: ThemeMode) => void;
   toggleTheme: () => void;
   setOnline: (online: boolean) => void;
+  setPwaUpdateReady: (ready: boolean) => void;
   refreshPendingCount: (userId: string) => void;
   syncOfflineQueue: (userId: string, opts?: { silent?: boolean; attempt?: number }) => Promise<void>;
   bumpDataEpoch: () => void;
@@ -118,6 +120,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   online: typeof navigator !== "undefined" ? navigator.onLine : true,
   pendingSyncCount: 0,
   flushingQueue: false,
+  pwaUpdateReady: false,
   dataEpoch: 0,
   toast: null,
   modals: [],
@@ -177,6 +180,10 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   setOnline(online) {
     set({ online });
+  },
+
+  setPwaUpdateReady(pwaUpdateReady) {
+    set({ pwaUpdateReady });
   },
 
   refreshPendingCount(userId) {

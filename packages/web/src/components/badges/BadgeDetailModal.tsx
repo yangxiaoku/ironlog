@@ -15,7 +15,6 @@ export function BadgeDetailModal({
   onPinnedChange?: (pinned: string[]) => void;
 }) {
   const userId = useAuthStore((s) => s.userId);
-  const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
 
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => getPinnedBadges(userId));
@@ -28,7 +27,9 @@ export function BadgeDetailModal({
     const next = togglePinnedBadge(userId, badge.id);
     setPinnedIds(next);
     onPinnedChange?.(next);
-    bumpDataEpoch();
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("ironlog-pinned-badges-change", { detail: { userId, pinned: next } }));
+    }
     notify(next.includes(badge.id) ? `已将「${badge.title}」佩戴至首页` : "已取消首页佩戴");
   };
 

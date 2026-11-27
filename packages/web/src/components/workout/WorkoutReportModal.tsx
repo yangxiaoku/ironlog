@@ -199,7 +199,7 @@ export function WorkoutReportModal({
           `${row.supersetGroup ? `[超级组${row.supersetGroup}] ` : ""}${row.name}　${row.completed
             .map(
               (s) =>
-                formatSetValue(s, row.mode) +
+                formatSetValue(s, row.mode, row.weightUnit) +
                 (s.rir != null ? ` RIR${s.rir}` : "") +
                 (s.type !== "normal" ? `（${SET_TYPES[s.type]?.label ?? s.type}）` : ""),
             )

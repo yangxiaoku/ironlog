@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotMeter } from "../components/Meters";
@@ -66,9 +66,7 @@ function pickAvailableChartMetric<K extends string>(
   fallbackKey: K,
 ): K {
   if (requestedKey && metricsMap[requestedKey]) {
-    if (series.filter((e) => typeof e[requestedKey as keyof AppleDailyEntry] === "number").length >= 1) {
-      return requestedKey;
-    }
+    return requestedKey;
   }
   for (const key of Object.keys(metricsMap) as K[]) {
     if (series.filter((e) => typeof e[key as keyof AppleDailyEntry] === "number").length >= 2) return key;
@@ -76,7 +74,7 @@ function pickAvailableChartMetric<K extends string>(
   for (const key of Object.keys(metricsMap) as K[]) {
     if (series.filter((e) => typeof e[key as keyof AppleDailyEntry] === "number").length >= 1) return key;
   }
-  return requestedKey && metricsMap[requestedKey] ? requestedKey : fallbackKey;
+  return fallbackKey;
 }
 
 function SimpleTrendChart({
@@ -92,6 +90,21 @@ function SimpleTrendChart({
 }) {
   const gradId = useId();
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
+  const draggingRef = useRef(false);
+  const pointsKey = `${label}:${unit}:${points.length}:${points[0]?.date ?? ""}:${points.at(-1)?.date ?? ""}`;
+
+  useEffect(() => {
+    setActiveIdx(null);
+  }, [pointsKey]);
+
+  if (points.length === 0) {
+    return (
+      <div className="apple-baseline-note">
+        <Icon name="heart" size={14} />
+        <span>当前周期暂无{label}同步数据；待 Apple 健康写入后将自动展示趋势曲线。</span>
+      </div>
+    );
+  }
 
   if (points.length < 2) {
     return (
@@ -132,6 +145,14 @@ function SimpleTrendChart({
       ? `${shortDate(points[activeIdx]!.date)} · ${label} ${fmt(points[activeIdx]!.value, digits)} ${unit}`
       : "";
 
+  const pickIndexFromClientX = (svgEl: SVGSVGElement, clientX: number) => {
+    const rect = svgEl.getBoundingClientRect();
+    if (rect.width <= 0) return null;
+    const svgX = ((clientX - rect.left) / rect.width) * width;
+    const ratio = Math.max(0, Math.min(1, (svgX - padL) / Math.max(1, chartW)));
+    return Math.round(ratio * (points.length - 1));
+  };
+
   return (
     <>
       <div className="apple-trend-meta">
@@ -155,14 +176,24 @@ function SimpleTrendChart({
       <svg
         className="analytics-chart"
         viewBox={`0 0 ${width} ${height}`}
+        role="group"
         aria-label={`${label}趋势图`}
+        style={{ touchAction: "pan-y" }}
         onPointerDown={(e) => {
-          const rect = e.currentTarget.getBoundingClientRect();
-          if (rect.width <= 0) return;
-          const svgX = ((e.clientX - rect.left) / rect.width) * width;
-          const ratio = Math.max(0, Math.min(1, (svgX - padL) / Math.max(1, chartW)));
-          const nearest = Math.round(ratio * (points.length - 1));
-          setActiveIdx(nearest);
+          draggingRef.current = true;
+          const nearest = pickIndexFromClientX(e.currentTarget, e.clientX);
+          if (nearest != null) setActiveIdx(nearest);
+        }}
+        onPointerMove={(e) => {
+          if (!draggingRef.current && e.pointerType !== "mouse") return;
+          const nearest = pickIndexFromClientX(e.currentTarget, e.clientX);
+          if (nearest != null) setActiveIdx(nearest);
+        }}
+        onPointerUp={() => {
+          draggingRef.current = false;
+        }}
+        onPointerCancel={() => {
+          draggingRef.current = false;
         }}
       >
         <defs>
@@ -214,8 +245,14 @@ function SimpleTrendChart({
                 tabIndex={0}
                 role="button"
                 aria-label={tip}
-                onClick={() => setActiveIdx((cur) => (cur === i ? null : i))}
+                onClick={() => setActiveIdx(i)}
                 onFocus={() => setActiveIdx(i)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setActiveIdx((cur) => (cur === i ? null : i));
+                  }
+                }}
               >
                 <title>{tip}</title>
               </rect>
@@ -285,10 +322,15 @@ export function AnalyticsView() {
   const [targetGoalMode, setTargetGoalMode] = useState<"cut" | "maintain" | "bulk">("cut");
   const [nutritionChartMetric, setNutritionChartMetric] = useState<"calories" | "protein" | "waterMl">("calories");
   const [deloadMode, setDeloadMode] = useState(() => readWorkoutPreferences().deloadMode);
+  const [hiddenModules, setHiddenModules] = useState<string[]>(() => readWorkoutPreferences().hiddenModules ?? []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const sync = () => setDeloadMode(readWorkoutPreferences().deloadMode);
+    const sync = () => {
+      const p = readWorkoutPreferences();
+      setDeloadMode(p.deloadMode);
+      setHiddenModules(p.hiddenModules ?? []);
+    };
     window.addEventListener(WORKOUT_PREFS_EVENT, sync);
     return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
   }, []);
@@ -327,11 +369,13 @@ export function AnalyticsView() {
       </div>
       <nav className="analytics-subnav" aria-label="统计分类">
         <div className="segments analytics-section-tabs">
-          {analyticsSections.map(([key, label]) => (
-            <button key={key} type="button" aria-pressed={section === key} onClick={() => setSection(key)}>
-              {label}
-            </button>
-          ))}
+          {analyticsSections
+            .filter(([key]) => !(key === "sleep" && hiddenModules.includes("sleep")))
+            .map(([key, label]) => (
+              <button key={key} type="button" aria-pressed={section === key} onClick={() => setSection(key)}>
+                {label}
+              </button>
+            ))}
         </div>
       </nav>
     </>
@@ -353,6 +397,31 @@ export function AnalyticsView() {
       </>
     );
   }
+
+  const loadingStrip = loading ? (
+    <div
+      role="status"
+      aria-live="polite"
+      className="muted"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 12px",
+        marginBottom: 10,
+        borderRadius: 10,
+        background: "var(--inset)",
+        fontSize: 12.5,
+      }}
+    >
+      <span>正在更新 {period} 天周期分析数据…</span>
+    </div>
+  ) : error ? (
+    <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
+      <span>刷新数据分析失败：{error}</span>
+      <button type="button" className="quiet" onClick={bumpDataEpoch}>重试</button>
+    </div>
+  ) : null;
 
   const { acwr, monotony, muscles, inol, ipfGl, nutrition, bodyweight, appleDaily, appleWorkouts, userProfile } = data;
   const hasApple = Boolean(
@@ -795,18 +864,7 @@ export function AnalyticsView() {
   return (
     <>
       {controls}
-      {error ? (
-        <div
-          className="panel"
-          role="alert"
-          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 14 }}
-        >
-          <span>数据分析刷新失败：{error}</span>
-          <button type="button" className="secondary-button" onClick={bumpDataEpoch}>
-            重试
-          </button>
-        </div>
-      ) : null}
+      {loadingStrip}
 
       {activeSection !== "sleep" && activeSection !== "reports" ? <>
       <div className="section-bar stats-header analytics-meta-bar">
@@ -1158,8 +1216,14 @@ export function AnalyticsView() {
                             tabIndex={0}
                             role="button"
                             aria-label={tip}
-                            onClick={() => setAcwrActiveIdx((cur) => (cur === idx ? null : idx))}
+                            onClick={() => setAcwrActiveIdx(idx)}
                             onFocus={() => setAcwrActiveIdx(idx)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.preventDefault();
+                                setAcwrActiveIdx((cur) => (cur === idx ? null : idx));
+                              }
+                            }}
                           >
                             <title>{tip}</title>
                           </circle>
@@ -1210,7 +1274,13 @@ export function AnalyticsView() {
                 <div>
                   <span>单调度</span>
                   <strong>{fmt(monotony.current.monotony, 2)}</strong>
-                  <small>{monotony.current.monotony >= 2.0 ? "≥2.0 偏高" : "<1.5 正常"}</small>
+                  <small>
+                    {monotony.current.monotony >= 2.0
+                      ? "≥2.0 偏高"
+                      : monotony.current.monotony >= 1.5
+                        ? "1.5–2.0 略单一"
+                        : "<1.5 正常"}
+                  </small>
                 </div>
                 <div>
                   <span>训练负荷（Strain）</span>
@@ -1366,7 +1436,11 @@ export function AnalyticsView() {
                             <span>即时心率</span>
                             <span className="kpi-pill is-sweet">
                               {rec.heartRateLatest.spreadFromRhr != null
-                                ? `高于静息 +${fmt(rec.heartRateLatest.spreadFromRhr, 0)} bpm`
+                                ? rec.heartRateLatest.spreadFromRhr > 0
+                                  ? `高于静息 +${fmt(rec.heartRateLatest.spreadFromRhr, 0)} bpm`
+                                  : rec.heartRateLatest.spreadFromRhr < 0
+                                    ? `低于静息 ${fmt(Math.abs(rec.heartRateLatest.spreadFromRhr), 0)} bpm`
+                                    : "与静息持平"
                                 : shortDate(rec.heartRateLatest.date)}
                             </span>
                           </div>

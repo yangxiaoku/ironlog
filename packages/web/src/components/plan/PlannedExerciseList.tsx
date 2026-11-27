@@ -217,7 +217,25 @@ export function PlannedExerciseList({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogueExercise[]>([]);
   const [searching, setSearching] = useState(false);
+  const [customPool, setCustomPool] = useState<CatalogueExercise[]>([]);
   const searchSeqRef = useRef(0);
+
+  useEffect(() => {
+    let active = true;
+    void apiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise")
+      .then((customRecs) => {
+        if (!active) return;
+        setCustomPool(
+          customRecs
+            .filter((r) => !r.deleted && r.data?.id)
+            .map((r) => ({ ...r.data, custom: true })),
+        );
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     const seq = ++searchSeqRef.current;
@@ -226,24 +244,17 @@ export function PlannedExerciseList({
       const q = new URLSearchParams({ q: query.trim(), limit: "12" });
       if (pickerMuscle) q.set("muscle", pickerMuscle);
       if (pickerEquipment) q.set("equipment", pickerEquipment);
-      void Promise.all([
-        apiFetch<{ items?: CatalogueExercise[] }>(`/api/catalogue/exercises?${q.toString()}`, { token: "" }).catch(() => ({
-          items: [],
-        })),
-        apiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise").catch(() => []),
-      ])
-        .then(([catRes, customRecs]) => {
+      void apiFetch<{ items?: CatalogueExercise[] }>(`/api/catalogue/exercises?${q.toString()}`, { token: "" })
+        .catch(() => ({ items: [] as CatalogueExercise[] }))
+        .then((catRes) => {
           if (seq !== searchSeqRef.current) return;
           const needle = query.trim().toLowerCase();
-          const customs = customRecs
-            .filter((r) => !r.deleted && r.data?.id)
-            .map((r) => ({ ...r.data, custom: true }))
-            .filter((ex) => {
-              if (pickerMuscle && ex.muscle !== pickerMuscle) return false;
-              if (pickerEquipment && ex.equipment !== pickerEquipment) return false;
-              if (!needle) return true;
-              return [ex.name, ex.englishName, ...(ex.aliases ?? [])].some((t) => String(t ?? "").toLowerCase().includes(needle));
-            });
+          const customs = customPool.filter((ex) => {
+            if (pickerMuscle && ex.muscle !== pickerMuscle) return false;
+            if (pickerEquipment && ex.equipment !== pickerEquipment) return false;
+            if (!needle) return true;
+            return [ex.name, ex.englishName, ...(ex.aliases ?? [])].some((t) => String(t ?? "").toLowerCase().includes(needle));
+          });
           const merged = [...customs, ...(catRes.items ?? [])];
           const seen = new Set<string>();
           const unique: CatalogueExercise[] = [];
@@ -260,7 +271,7 @@ export function PlannedExerciseList({
         });
     }, 160);
     return () => window.clearTimeout(timer);
-  }, [query, pickerMuscle, pickerEquipment]);
+  }, [query, pickerMuscle, pickerEquipment, customPool]);
 
   const ssBadges = supersetBadges(items);
 
@@ -430,7 +441,15 @@ export function PlannedExerciseList({
                       step={1}
                       value={row.sets}
                       onKeyDown={stopEnter}
-                      onChange={(e) => updateRow(index, { sets: Number(e.target.value) })}
+                      onChange={(e) => {
+                        const nextSets = Number(e.target.value);
+                        updateRow(index, {
+                          sets: nextSets,
+                          ...(row.progression === "triple" && Number.isFinite(nextSets) && nextSets > (row.setsMax ?? 0)
+                            ? { setsMax: Math.min(20, Math.max(1, nextSets)) }
+                            : {}),
+                        });
+                      }}
                     />
                   </label>
                   {timed ? (
@@ -476,7 +495,7 @@ export function PlannedExerciseList({
                         />
                       </label>
                       <label>
-                        <span>目标 kg</span>
+                        <span>目标 {row.weightUnit === "lb" ? "lb" : "kg"}</span>
                         <input
                           type="number"
                           inputMode="decimal"
@@ -536,14 +555,34 @@ export function PlannedExerciseList({
                           min={Math.max(1, row.sets || 1)}
                           max={20}
                           step={1}
-                          value={row.setsMax ?? Math.min(20, (row.sets || 3) + 2)}
+                          value={Math.max(row.sets || 1, row.setsMax ?? Math.min(20, (row.sets || 3) + 2))}
                           onKeyDown={stopEnter}
                           onChange={(e) => updateRow(index, { setsMax: Math.max(row.sets || 1, Number(e.target.value) || row.sets || 3) })}
                         />
                       </label>
                     ) : null}
                     <label>
-                      <span>每次增量 kg</span>
+                      <span>单位</span>
+                      <select
+                        value={row.weightUnit === "lb" ? "lb" : "kg"}
+                        onChange={(e) => {
+                          const nextUnit = e.target.value === "lb" ? "lb" : "kg";
+                          updateRow(index, {
+                            weightUnit: nextUnit,
+                            increment: nextUnit === "lb" && (row.increment == null || row.increment === 2.5)
+                              ? 5
+                              : nextUnit === "kg" && row.increment === 5
+                                ? 2.5
+                                : row.increment,
+                          });
+                        }}
+                      >
+                        <option value="kg">kg</option>
+                        <option value="lb">lb</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>每次增量 {row.weightUnit === "lb" ? "lb" : "kg"}</span>
                       <input
                         type="number"
                         inputMode="decimal"

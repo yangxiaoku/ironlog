@@ -1672,7 +1672,7 @@ test("Pre-launch: full JSON backup restore, web password change, and MCP/API tok
     const tokensList = (await listTokRes.json()) as Array<{ id: string; label: string; expiresAt: string | null }>;
     const mcpEntry = tokensList.find((t) => t.label === "Claude Desktop MCP");
     assert.ok(mcpEntry);
-    assert.equal(mcpEntry!.expiresAt, null);
+    assert.ok(typeof mcpEntry!.expiresAt === "string" && Date.parse(mcpEntry!.expiresAt) > Date.now());
 
     const delTokRes = await call(`/api/tokens/${mcpEntry!.id}`, { method: "DELETE" });
     assert.equal(delTokRes.status, 200);

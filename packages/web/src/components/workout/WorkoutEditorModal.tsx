@@ -149,7 +149,7 @@ function sanitizeExerciseSnapshot(
 
 function sanitizeTargetSnapshot(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return null;
-  const r = raw as { id?: unknown; name?: unknown; exercises?: unknown };
+  const r = raw as { id?: unknown; name?: unknown; isDeload?: unknown; exercises?: unknown };
   if (!isValidRecordId(r.id)) return null;
   const name = typeof r.name === "string" ? r.name.trim().slice(0, 120) : "";
   if (!name || !Array.isArray(r.exercises) || r.exercises.length === 0 || r.exercises.length > 100) {
@@ -161,6 +161,8 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
     const it = item as Record<string, unknown>;
     if (!isValidRecordId(it.exerciseId)) return null;
     const sets = Math.max(1, Math.min(100, Math.round(Number(it.sets) || 1)));
+    const rawSetsMax = it.setsMax != null ? Number(it.setsMax) : NaN;
+    const setsMax = Number.isFinite(rawSetsMax) ? Math.max(sets, Math.min(50, Math.round(rawSetsMax))) : undefined;
     const repsMin = Math.max(1, Math.min(1000, Math.round(Number(it.repsMin) || 1)));
     const repsMax = Math.max(repsMin, Math.min(1000, Math.round(Number(it.repsMax) || repsMin)));
     const rawWeight = it.weight;
@@ -182,6 +184,10 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
         : "double";
     const rawInc = Number(it.increment);
     const increment = Number.isFinite(rawInc) ? Math.max(0, Math.min(20, rawInc)) : 2.5;
+    const rawDeloadMiss = it.deloadMissThreshold != null ? Number(it.deloadMissThreshold) : NaN;
+    const deloadMissThreshold = Number.isFinite(rawDeloadMiss)
+      ? Math.max(1, Math.min(10, Math.round(rawDeloadMiss)))
+      : undefined;
     const backupExerciseId = isValidRecordId(it.backupExerciseId) ? it.backupExerciseId : null;
     const supersetGroup =
       typeof it.supersetGroup === "string" && it.supersetGroup.trim()
@@ -190,6 +196,7 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
     cleanExercises.push({
       exerciseId: it.exerciseId,
       sets,
+      ...(setsMax != null ? { setsMax } : {}),
       repsMin,
       repsMax,
       weight,
@@ -198,13 +205,101 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
       targetRir,
       progression,
       increment,
+      ...(deloadMissThreshold != null ? { deloadMissThreshold } : {}),
       backupExerciseId,
       supersetGroup,
       ...(it.weightUnit === "kg" || it.weightUnit === "lb" ? { weightUnit: it.weightUnit } : {}),
       ...(it.autoWarmup === true ? { autoWarmup: true } : {}),
     });
   }
-  return { id: r.id, name, exercises: cleanExercises };
+  return { id: r.id, name, ...(r.isDeload === true ? { isDeload: true } : {}), exercises: cleanExercises };
+}
+
+function LiveElapsedClock({ timing, tag = "em" }: { timing: WorkoutTiming; tag?: "em" | "strong" }) {
+  const [tick, setTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!timing.runningSince) return;
+    setTick(Date.now());
+    const id = window.setInterval(() => setTick(Date.now()), 1000);
+    const onVis = () => {
+      if (document.visibilityState === "visible") setTick(Date.now());
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [timing.runningSince]);
+  const text = formatClock(elapsedAt(timing, timing.runningSince ? tick : Date.now()));
+  return tag === "strong" ? <strong>{text}</strong> : <em>{text}</em>;
+}
+
+function InnerOverlayDialog({
+  className = "session-menu-overlay",
+  label,
+  onClose,
+  children,
+}: {
+  className?: string;
+  label: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const prev = document.activeElement as HTMLElement | null;
+    const el = ref.current;
+    if (el) {
+      const focusable = el.querySelector<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      );
+      (focusable ?? el).focus({ preventScroll: true });
+    }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !el) return;
+      const nodes = Array.from(
+        el.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      ).filter((n) => n.offsetParent !== null);
+      if (!nodes.length) {
+        e.preventDefault();
+        return;
+      }
+      const first = nodes[0]!;
+      const last = nodes[nodes.length - 1]!;
+      const active = document.activeElement as HTMLElement | null;
+      if (e.shiftKey) {
+        if (!active || active === first || !el.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!active || active === last || !el.contains(active)) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      if (prev && prev.isConnected && typeof prev.focus === "function") {
+        prev.focus({ preventScroll: true });
+      }
+    };
+  }, []);
+  return (
+    <div ref={ref} className={className} role="dialog" aria-modal="true" aria-label={label} tabIndex={-1}>
+      {children}
+    </div>
+  );
 }
 
 function newId(): string {
@@ -738,6 +833,9 @@ export function WorkoutEditorModal({
           ...sessionMetaRef.current,
         }),
       );
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("ironlog-workout-draft-change"));
+      }
     } catch {}
   }, [draftStorageKey, initialDraftKey, isHistoricalEdit, title, date, notes, feeling, exercises, timing, rest, workoutId, record?.version, initialSnapshot.baseVersion]);
 
@@ -750,6 +848,9 @@ export function WorkoutEditorModal({
       const storage = getOfflineStorage();
       if (draftStorageKey) storage?.removeItem(draftStorageKey);
       if (initialDraftKey && initialDraftKey !== draftStorageKey) storage?.removeItem(initialDraftKey);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("ironlog-workout-draft-change"));
+      }
     } catch {}
   };
 
@@ -789,8 +890,14 @@ export function WorkoutEditorModal({
     };
   }, []);
 
-  // Timestamp-anchored clock tick & visibility recalibration
+  const exercisesRef = useRef(exercises);
+  exercisesRef.current = exercises;
+
+  // Timestamp-anchored clock tick ONLY when an active rest countdown or timed set countdown is running
+  const hasHighFreqClock = Boolean((rest && rest.pausedLeftMs == null) || timedSetClock);
   useEffect(() => {
+    if (!hasHighFreqClock) return;
+    setNowMs(Date.now());
     const tick = () => setNowMs(Date.now());
     const interval = window.setInterval(tick, 250);
     const onVis = () => {
@@ -801,7 +908,7 @@ export function WorkoutEditorModal({
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, []);
+  }, [hasHighFreqClock]);
 
   // Rest 10-second voice cue, final 3-2-1 countdown beeps (#83) & completion alarm
   useEffect(() => {
@@ -859,22 +966,48 @@ export function WorkoutEditorModal({
       audio.play(true);
       if (voiceRestCues) speakCue("计时完成", { enabled: true });
       triggerHaptic("success");
-      setExercises((prev) =>
-        prev.map((ex, ei) =>
-          ei !== doneClock.exIdx
-            ? ex
-            : {
-                ...ex,
-                sets: ex.sets.map((s, si) =>
-                  si === doneClock.setIdx
-                    ? { ...s, seconds: Math.max(s.seconds, doneClock.targetSeconds), completed: true, completedAt: new Date().toISOString() }
-                    : s,
-                ),
-              },
-        ),
-      );
+      const curList = exercisesRef.current;
+      let foundExIdx = -1;
+      let foundSetIdx = -1;
+      for (let ei = 0; ei < curList.length; ei++) {
+        const si = curList[ei]!.sets.findIndex((s) => s.id === doneClock.setId);
+        if (si >= 0) {
+          foundExIdx = ei;
+          foundSetIdx = si;
+          break;
+        }
+      }
+      if (foundExIdx >= 0 && foundSetIdx >= 0) {
+        const foundRow = curList[foundExIdx]!;
+        const foundSet = foundRow.sets[foundSetIdx]!;
+        const ensuredSec = Math.max(foundSet.seconds, doneClock.targetSeconds);
+        setExercises((prev) =>
+          prev.map((ex) =>
+            ex.id !== foundRow.id
+              ? ex
+              : {
+                  ...ex,
+                  sets: ex.sets.map((s) =>
+                    s.id === doneClock.setId
+                      ? { ...s, seconds: ensuredSec, completed: true, completedAt: new Date().toISOString() }
+                      : s,
+                  ),
+                },
+          ),
+        );
+        if (!foundSet.completed && !isHistoricalEdit && !isBackfillMode && autoStartRestTimer) {
+          const restSec =
+            foundSet.restAfterSeconds != null && Number.isFinite(foundSet.restAfterSeconds)
+              ? Math.max(0, Math.min(900, Math.round(foundSet.restAfterSeconds)))
+              : (foundRow.restSeconds ?? goals?.restSeconds ?? 90);
+          if (restSec > 0) {
+            restAlarmFiredForRef.current = null;
+            setRest(createRestTimer(restSec, foundSet.id));
+          }
+        }
+      }
     }
-  }, [timedSetClock, nowMs, audio, voiceRestCues]);
+  }, [timedSetClock, nowMs, audio, voiceRestCues, isHistoricalEdit, isBackfillMode, autoStartRestTimer, goals?.restSeconds]);
 
   // Wake lock guard (disabled in historical edit & past-date backfill mode)
   useEffect(() => {
@@ -1098,14 +1231,21 @@ export function WorkoutEditorModal({
   const appendExercises = (pickedList: CatalogueExercise[]) => {
     if (!pickedList.length) return;
     const addedRows: Array<{ rowId: string; ex: CatalogueExercise; isTimedEx: boolean; needsRef: boolean }> = [];
-    const buildInitialSets = (isTimedEx: boolean, refList?: ExerciseReferenceEntry["sets"]) => {
+    const convertRefWeight = (w: number, fromUnit: WeightUnit, toUnit: WeightUnit) =>
+      w > 0 && fromUnit !== toUnit ? round2(kgToUnit(weightToKg(w, fromUnit), toUnit)) : w;
+    const buildInitialSets = (
+      isTimedEx: boolean,
+      refList?: ExerciseReferenceEntry["sets"],
+      fromUnit: WeightUnit = "kg",
+      toUnit: WeightUnit = "kg",
+    ) => {
       const validList = refList?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
       const targetCount = Math.max(3, validList.length);
       return Array.from({ length: Math.min(6, targetCount) }, (_, idx) => {
         const ref = validList[idx] ?? validList.at(-1);
         if (ref && autoPrefillLast) {
           return defaultSet(
-            isTimedEx ? 0 : ref.weight ?? 0,
+            isTimedEx ? 0 : convertRefWeight(ref.weight ?? 0, fromUnit, toUnit),
             isTimedEx ? 0 : ref.reps || 8,
             isTimedEx ? ref.seconds || 30 : 0,
           );
@@ -1118,6 +1258,7 @@ export function WorkoutEditorModal({
       const rowId = newId();
       const isTimedEx = ex.mode === "timed";
       const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
+      const cachedRefUnit: WeightUnit = refUnitsByExId.get(ex.id) ?? "kg";
       addedRows.push({ rowId, ex, isTimedEx, needsRef: Boolean(autoPrefillLast && !cachedRef) });
       return {
         id: rowId,
@@ -1131,7 +1272,7 @@ export function WorkoutEditorModal({
           mode: ex.mode,
           volumeMultiplier: ex.volumeMultiplier ?? 1,
         },
-        sets: buildInitialSets(isTimedEx, cachedRef),
+        sets: buildInitialSets(isTimedEx, cachedRef, cachedRefUnit, "kg"),
       };
     });
 
@@ -1156,11 +1297,25 @@ export function WorkoutEditorModal({
         },
       })
         .then((list) => {
-          const byId = new Map(list.map((entry) => [entry.id, entry.sets]));
+          const byId = new Map(list.map((entry) => [entry.id, entry]));
           setRefsByExId((prev) => {
             const next = new Map(prev);
-            for (const [id, sets] of byId.entries()) {
-              if (sets?.length) next.set(id, sets);
+            for (const [id, entry] of byId.entries()) {
+              if (entry.sets?.length) next.set(id, entry.sets);
+            }
+            return next;
+          });
+          setRefUnitsByExId((prev) => {
+            const next = new Map(prev);
+            for (const [id, entry] of byId.entries()) {
+              if (entry.weightUnit === "lb" || entry.weightUnit === "kg") next.set(id, entry.weightUnit);
+            }
+            return next;
+          });
+          setRefDatesByExId((prev) => {
+            const next = new Map(prev);
+            for (const [id, entry] of byId.entries()) {
+              if (entry.date) next.set(id, entry.date);
             }
             return next;
           });
@@ -1168,13 +1323,16 @@ export function WorkoutEditorModal({
             prev.map((row) => {
               const meta = toFetch.find((r) => r.rowId === row.id);
               if (!meta) return row;
-              const foundSets = byId.get(meta.ex.id);
+              const entry = byId.get(meta.ex.id);
+              const foundSets = entry?.sets;
               if (!foundSets?.length) return row;
               const untouched = row.sets.every(
                 (s) => !s.completed && s.weight === 0 && (meta.isTimedEx ? s.seconds === 30 : s.reps === 8),
               );
               if (!untouched) return row;
-              return { ...row, sets: buildInitialSets(meta.isTimedEx, foundSets) };
+              const fromUnit: WeightUnit = entry?.weightUnit === "lb" ? "lb" : "kg";
+              const toUnit: WeightUnit = row.weightUnit ?? "kg";
+              return { ...row, sets: buildInitialSets(meta.isTimedEx, foundSets, fromUnit, toUnit) };
             }),
           );
         })
@@ -1205,19 +1363,24 @@ export function WorkoutEditorModal({
     const nextIsTimed = ex.mode === "timed";
     const modeChanged = prevMode !== ex.mode;
     const rowId = prevRow?.id ?? "";
+    const rowTargetUnit: WeightUnit = prevRow?.weightUnit ?? "kg";
     const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
+    const cachedRefUnit: WeightUnit = refUnitsByExId.get(ex.id) ?? "kg";
     const validCached = cachedRef?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
+    const convertRefW = (w: number, fromU: WeightUnit, toU: WeightUnit) =>
+      w > 0 && fromU !== toU ? round2(kgToUnit(weightToKg(w, fromU), toU)) : w;
 
     setExercises((prev) =>
       prev.map((row, i) => {
         if (i !== rowIdx) return row;
+        const curTargetUnit: WeightUnit = row.weightUnit ?? "kg";
         const nextSets = row.sets.map((s, sIdx) => {
           if (s.completed) return s;
           const ref = validCached[sIdx] ?? validCached.at(-1);
           if (ref && autoPrefillLast) {
             return {
               ...s,
-              weight: nextIsTimed ? 0 : ref.weight ?? 0,
+              weight: nextIsTimed ? 0 : convertRefW(ref.weight ?? 0, cachedRefUnit, curTargetUnit),
               reps: nextIsTimed ? 0 : ref.reps || 8,
               seconds: nextIsTimed ? ref.seconds || 30 : 0,
             };
@@ -1268,14 +1431,28 @@ export function WorkoutEditorModal({
           const found = list.find((entry) => entry.id === ex.id);
           const valid = found?.sets?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
           if (!valid.length) return;
+          const foundUnit: WeightUnit = found?.weightUnit === "lb" ? "lb" : "kg";
           setRefsByExId((prev) => {
             const next = new Map(prev);
             next.set(ex.id, found!.sets);
             return next;
           });
+          setRefUnitsByExId((prev) => {
+            const next = new Map(prev);
+            next.set(ex.id, foundUnit);
+            return next;
+          });
+          if (found?.date) {
+            setRefDatesByExId((prev) => {
+              const next = new Map(prev);
+              next.set(ex.id, found.date!);
+              return next;
+            });
+          }
           setExercises((prev) =>
             prev.map((row) => {
               if (row.id !== rowId || row.exerciseId !== ex.id) return row;
+              const toUnit: WeightUnit = row.weightUnit ?? rowTargetUnit;
               return {
                 ...row,
                 sets: row.sets.map((s, sIdx) => {
@@ -1284,7 +1461,7 @@ export function WorkoutEditorModal({
                   if (!ref) return s;
                   return {
                     ...s,
-                    weight: nextIsTimed ? 0 : ref.weight ?? 0,
+                    weight: nextIsTimed ? 0 : convertRefW(ref.weight ?? 0, foundUnit, toUnit),
                     reps: nextIsTimed ? 0 : ref.reps || 8,
                     seconds: nextIsTimed ? ref.seconds || 30 : 0,
                   };
@@ -1505,6 +1682,10 @@ export function WorkoutEditorModal({
   const addWarmupSets = (exIdx: number) => {
     const row = exercises[exIdx];
     if (!row) return;
+    if (row.snapshot?.mode === "assisted") {
+      notify("辅助动作热身请直接加大辅助配重，无需按负重百分比递减热身");
+      return;
+    }
     const isBarbell = row.snapshot?.equipment === "barbell";
     const firstWorkWeight = row.sets.find((s) => s.type !== "warmup" && s.weight > 0)?.weight ?? 60;
     const planned = buildWarmupSetsPlan(firstWorkWeight, isBarbell, barWeight, enabledPlates, warmupScheme);
@@ -1980,8 +2161,29 @@ export function WorkoutEditorModal({
   const coachTargetRow = coachExIdx != null ? exercises[coachExIdx] ?? null : null;
   const coachAdvice = coachTargetRow ? buildCoachQuickAdvice(coachScenario, coachTargetRow, weightStepKg) : null;
 
+  const workoutRootRef = useRef<HTMLDivElement>(null);
+  const anyInnerOverlayOpen = Boolean(
+    muscleProgressOpen ||
+      mergeRoutineOpen ||
+      (coachExIdx != null && coachTargetRow && coachAdvice) ||
+      historyModalEx ||
+      openMenu ||
+      (!isHistoricalEdit && finishPanelOpen),
+  );
+
+  useEffect(() => {
+    const root = workoutRootRef.current;
+    if (!root) return;
+    for (const child of Array.from(root.children)) {
+      const el = child as HTMLElement & { inert?: boolean };
+      const isOverlay = el.classList.contains("session-menu-overlay");
+      el.inert = anyInnerOverlayOpen && !isOverlay;
+    }
+  }, [anyInnerOverlayOpen]);
+
   return (
     <div
+      ref={workoutRootRef}
       className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""} layout-${workoutLayout}`}
     >
       {staleDraftConflict && record ? (
@@ -2065,7 +2267,7 @@ export function WorkoutEditorModal({
               <strong>{title || "自由训练"}</strong>
               <span className="workout-topbar-sub">
                 <i className="live-led" aria-hidden="true" />
-                <em>{formatClock(elapsedSeconds)}</em>
+                <LiveElapsedClock timing={timing} tag="em" />
                 <i>· {doneSets}/{totalSets} 组</i>
               </span>
             </button>
@@ -2116,7 +2318,7 @@ export function WorkoutEditorModal({
 
       {/* Live "本次练到哪里" Muscle Progress Overlay */}
       {muscleProgressOpen ? (
-        <div className="session-menu-overlay" role="dialog" aria-label="本次训练肌群进度">
+        <InnerOverlayDialog label="本次训练肌群进度" onClose={() => setMuscleProgressOpen(false)}>
           <div className="picker-overlay-head">
             <strong>这次训练练到哪里</strong>
             <button type="button" className="secondary-button picker-close-btn" onClick={() => setMuscleProgressOpen(false)}>
@@ -2146,12 +2348,12 @@ export function WorkoutEditorModal({
               ))}
             </div>
           </div>
-        </div>
+        </InnerOverlayDialog>
       ) : null}
 
       {/* Merge Another Routine Overlay */}
       {mergeRoutineOpen ? (
-        <div className="session-menu-overlay" role="dialog" aria-label="合并其他训练日">
+        <InnerOverlayDialog label="合并其他训练日" onClose={() => setMergeRoutineOpen(false)}>
           <div className="picker-overlay-head">
             <strong>合并其他训练日</strong>
             <button type="button" className="secondary-button picker-close-btn" onClick={() => setMergeRoutineOpen(false)}>
@@ -2185,12 +2387,12 @@ export function WorkoutEditorModal({
               </div>
             )}
           </div>
-        </div>
+        </InnerOverlayDialog>
       ) : null}
 
       {/* Contextual "问教练" Quick Scenario Overlay */}
       {coachExIdx != null && coachTargetRow && coachAdvice ? (
-        <div className="session-menu-overlay" role="dialog" aria-label="训中问教练">
+        <InnerOverlayDialog label="训中问教练" onClose={() => setCoachExIdx(null)}>
           <div className="picker-overlay-head">
             <strong>问教练 · {coachTargetRow.snapshot?.name ?? coachTargetRow.exerciseId}</strong>
             <button type="button" className="secondary-button picker-close-btn" onClick={() => setCoachExIdx(null)}>
@@ -2254,6 +2456,8 @@ export function WorkoutEditorModal({
                         ensureSavedWorkout: ensureSavedDraft,
                         onApplied: (updated) => {
                           savedRecordRef.current = updated;
+                          effectiveBaseVersionRef.current = updated.version;
+                          pendingSaveOpRef.current = null;
                           setSavedRecord(updated);
                           setExercises(updated.data.exercises);
                           bumpDataEpoch();
@@ -2268,12 +2472,12 @@ export function WorkoutEditorModal({
               </div>
             </div>
           </div>
-        </div>
+        </InnerOverlayDialog>
       ) : null}
 
       {/* Quick In-Session Exercise History Drawer */}
       {historyModalEx ? (
-        <div className="session-menu-overlay" role="dialog" aria-label="动作最近历史记录">
+        <InnerOverlayDialog label="动作最近历史记录" onClose={() => setHistoryModalEx(null)}>
           <div className="picker-overlay-head">
             <strong>最近历史 · {historyModalEx.name}</strong>
             <button
@@ -2326,12 +2530,12 @@ export function WorkoutEditorModal({
               </div>
             )}
           </div>
-        </div>
+        </InnerOverlayDialog>
       ) : null}
 
       {/* Topbar Dropdown / Overlay Settings */}
       {openMenu ? (
-        <div className="session-menu-overlay">
+        <InnerOverlayDialog label="训练会话设置" onClose={() => setOpenMenu(false)}>
           <div className="picker-overlay-head">
             <strong>训练会话设置</strong>
             <button type="button" className="secondary-button picker-close-btn" onClick={() => setOpenMenu(false)}>
@@ -2717,6 +2921,8 @@ export function WorkoutEditorModal({
                       ensureSavedWorkout: ensureSavedDraft,
                       onApplied: (updated) => {
                         savedRecordRef.current = updated;
+                        effectiveBaseVersionRef.current = updated.version;
+                        pendingSaveOpRef.current = null;
                         setSavedRecord(updated);
                         setExercises(updated.data.exercises);
                         setOpenMenu(false);
@@ -2755,12 +2961,16 @@ export function WorkoutEditorModal({
               )}
             </div>
           </div>
-        </div>
+        </InnerOverlayDialog>
       ) : null}
 
       {/* Live Dedicated Finish Overlay */}
       {!isHistoricalEdit && finishPanelOpen ? (
-        <div className="session-menu-overlay workout-finish-overlay" role="dialog" aria-label="结束训练确认">
+        <InnerOverlayDialog
+          className="session-menu-overlay workout-finish-overlay"
+          label="结束训练确认"
+          onClose={() => setFinishPanelOpen(false)}
+        >
           <div className="picker-overlay-head">
             <strong>结束本次训练</strong>
             <button type="button" className="secondary-button picker-close-btn" onClick={() => setFinishPanelOpen(false)}>
@@ -2771,7 +2981,7 @@ export function WorkoutEditorModal({
             <div className="finish-summary-strip">
               <div>
                 <span>已用时</span>
-                <strong>{formatClock(elapsedSeconds)}</strong>
+                <LiveElapsedClock timing={timing} tag="strong" />
               </div>
               <div>
                 <span>已完成组</span>
@@ -2926,7 +3136,7 @@ export function WorkoutEditorModal({
               {saving ? "保存中…" : `完成并保存训练 · ${doneSets} 组`}
             </button>
           </div>
-        </div>
+        </InnerOverlayDialog>
       ) : null}
 
       {/* Exercise Jump Bar */}
@@ -3506,7 +3716,7 @@ export function WorkoutEditorModal({
                         <div className="ex-benchmark-actions">
                           {e1rmGain > 0 ? (
                             <span className="ex-prog-pill is-pr">
-                              ↗ E1RM +{fmt(e1rmGain, 1)} kg
+                              ↗ E1RM +{fmt(e1rmGain, 1)} {exUnit}
                             </span>
                           ) : null}
                           {!isTimed && validRefs.length > 0 ? (
@@ -3516,24 +3726,32 @@ export function WorkoutEditorModal({
                                 className="ex-apply-ref"
                                 onClick={() => {
                                   triggerHaptic("light");
+                                  let wIdx = 0;
                                   let updatedCount = 0;
-                                  setExercises((prev) =>
-                                    prev.map((ex, i) => {
-                                      if (i !== exIdx) return ex;
-                                      let workIdx = 0;
-                                      return {
-                                        ...ex,
-                                        sets: ex.sets.map((s) => {
-                                          if (s.type === "warmup") return s;
-                                          const ref = validRefs[workIdx] ?? validRefs.at(-1);
-                                          workIdx++;
-                                          if (!ref || s.completed) return s;
-                                          updatedCount++;
-                                          return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
-                                        }),
-                                      };
-                                    }),
-                                  );
+                                  for (const s of row.sets) {
+                                    if (s.type === "warmup") continue;
+                                    const ref = validRefs[wIdx] ?? validRefs.at(-1);
+                                    wIdx++;
+                                    if (ref && !s.completed) updatedCount++;
+                                  }
+                                  if (updatedCount > 0) {
+                                    setExercises((prev) =>
+                                      prev.map((ex, i) => {
+                                        if (i !== exIdx) return ex;
+                                        let workIdx = 0;
+                                        return {
+                                          ...ex,
+                                          sets: ex.sets.map((s) => {
+                                            if (s.type === "warmup") return s;
+                                            const ref = validRefs[workIdx] ?? validRefs.at(-1);
+                                            workIdx++;
+                                            if (!ref || s.completed) return s;
+                                            return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
+                                          }),
+                                        };
+                                      }),
+                                    );
+                                  }
                                   notify(updatedCount > 0 ? "已按上次工作组填入重量与次数" : "没有可填入的未完成工作组");
                                 }}
                               >
@@ -3544,43 +3762,55 @@ export function WorkoutEditorModal({
                                 className="ex-apply-prog"
                                 onClick={() => {
                                   triggerHaptic("light");
+                                  let wIdx = 0;
                                   let updatedCount = 0;
-                                  setExercises((prev) =>
-                                    prev.map((ex, i) => {
-                                      if (i !== exIdx) return ex;
-                                      let workIdx = 0;
-                                      return {
-                                        ...ex,
-                                        sets: ex.sets.map((s) => {
-                                          if (s.type === "warmup") return s;
-                                          const ref = validRefs[workIdx] ?? validRefs.at(-1);
-                                          workIdx++;
-                                          if (!ref || s.completed) return s;
-                                          updatedCount++;
-                                          if (isAssisted) {
+                                  for (const s of row.sets) {
+                                    if (s.type === "warmup") continue;
+                                    const ref = validRefs[wIdx] ?? validRefs.at(-1);
+                                    wIdx++;
+                                    if (ref && !s.completed) updatedCount++;
+                                  }
+                                  if (updatedCount > 0) {
+                                    setExercises((prev) =>
+                                      prev.map((ex, i) => {
+                                        if (i !== exIdx) return ex;
+                                        let workIdx = 0;
+                                        return {
+                                          ...ex,
+                                          sets: ex.sets.map((s) => {
+                                            if (s.type === "warmup") return s;
+                                            const ref = validRefs[workIdx] ?? validRefs.at(-1);
+                                            workIdx++;
+                                            if (!ref || s.completed) return s;
+                                            if (isAssisted) {
+                                              return ref.weight > 0
+                                                ? {
+                                                    ...s,
+                                                    weight: Math.max(0, round2(ref.weight - exWeightStep)),
+                                                    reps: ref.reps || s.reps,
+                                                  }
+                                                : { ...s, reps: (ref.reps || s.reps) + 1 };
+                                            }
                                             return ref.weight > 0
                                               ? {
                                                   ...s,
-                                                  weight: Math.max(0, round2(ref.weight - weightStepKg)),
+                                                  weight: round2(ref.weight + exWeightStep),
                                                   reps: ref.reps || s.reps,
                                                 }
                                               : { ...s, reps: (ref.reps || s.reps) + 1 };
-                                          }
-                                          return ref.weight > 0
-                                            ? {
-                                                ...s,
-                                                weight: round2(ref.weight + weightStepKg),
-                                                reps: ref.reps || s.reps,
-                                              }
-                                            : { ...s, reps: (ref.reps || s.reps) + 1 };
-                                        }),
-                                      };
-                                    }),
+                                          }),
+                                        };
+                                      }),
+                                    );
+                                  }
+                                  notify(
+                                    updatedCount > 0
+                                      ? `已按渐进 ${isAssisted ? "-" : "+"}${exWeightStep}${exUnit} 预填未完成工作组`
+                                      : "没有可预填的未完成工作组",
                                   );
-                                  notify(updatedCount > 0 ? `已按渐进 +${weightStepKg}${exUnit} 预填未完成工作组` : "没有可预填的未完成工作组");
                                 }}
                               >
-                                渐进 +{exWeightStep}
+                                {isAssisted ? `渐进 -${exWeightStep}` : `渐进 +${exWeightStep}`}
                               </button>
                             </>
                           ) : null}
@@ -3808,6 +4038,9 @@ export function WorkoutEditorModal({
                                 <input
                                   type="number"
                                   inputMode="decimal"
+                                  enterKeyHint="next"
+                                  data-set-field={`w:${row.id}:${s.id}`}
+                                  aria-label={`第 ${setIdx + 1} 组重量 (${exUnit})`}
                                   step="any"
                                   min={0}
                                   max={5000}
@@ -3815,6 +4048,18 @@ export function WorkoutEditorModal({
                                   onFocus={(e) => {
                                     e.currentTarget.select();
                                     if (openSetMenuId) setOpenSetMenuId(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      const nextInput = document.querySelector<HTMLInputElement>(
+                                        `input[data-set-field="r:${row.id}:${s.id}"]`,
+                                      );
+                                      if (nextInput) {
+                                        nextInput.focus();
+                                        nextInput.select();
+                                      }
+                                    }
                                   }}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
@@ -3854,12 +4099,22 @@ export function WorkoutEditorModal({
                                 <input
                                   type="number"
                                   inputMode="numeric"
+                                  enterKeyHint="done"
+                                  data-set-field={`r:${row.id}:${s.id}`}
+                                  aria-label={`第 ${setIdx + 1} 组次数`}
                                   min={0}
                                   max={1000}
                                   value={s.reps}
                                   onFocus={(e) => {
                                     e.currentTarget.select();
                                     if (openSetMenuId) setOpenSetMenuId(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      e.currentTarget.blur();
+                                      if (!s.completed) toggleSetComplete(exIdx, setIdx, true);
+                                    }
                                   }}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
@@ -3900,12 +4155,21 @@ export function WorkoutEditorModal({
                                 <input
                                   type="number"
                                   inputMode="numeric"
+                                  enterKeyHint="done"
+                                  aria-label={`第 ${setIdx + 1} 组时长 (秒)`}
                                   min={0}
                                   max={86400}
                                   value={s.seconds}
                                   onFocus={(e) => {
                                     e.currentTarget.select();
                                     if (openSetMenuId) setOpenSetMenuId(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      e.currentTarget.blur();
+                                      if (!s.completed) toggleSetComplete(exIdx, setIdx, true);
+                                    }
                                   }}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
@@ -4317,7 +4581,7 @@ export function WorkoutEditorModal({
                           ) : null}
                         </>
                       ) : null}
-                      {!isTimed ? (
+                      {!isTimed && !isAssisted ? (
                         <button type="button" className="sets-foot-pill" onClick={() => addWarmupSets(exIdx)}>
                           + 热身组
                         </button>
