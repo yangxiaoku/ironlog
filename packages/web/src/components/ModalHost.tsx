@@ -7,6 +7,7 @@ let overlaySeq = 0;
 export function ModalHost() {
   const modals = useUiStore((s) => s.modals);
   const confirm = useUiStore((s) => s.confirm);
+  const innerOverlayDismiss = useUiStore((s) => s.innerOverlayDismiss);
   const silentCloseSeq = useUiStore((s) => s.silentCloseSeq);
   const closeTopModal = useUiStore((s) => s.closeTopModal);
   const closeAllModals = useUiStore((s) => s.closeAllModals);
@@ -19,6 +20,7 @@ export function ModalHost() {
   const expectedPopsRef = useRef(0);
   const lastSilentSeqRef = useRef(silentCloseSeq);
   const overlayTokenRef = useRef<number | null>(null);
+  const innerOverlayTokenRef = useRef<number | null>(null);
   const dragRef = useRef({ active: false, x: 0, y: 0, inHead: false, hasForm: false, dragging: false });
   const savedScrollYRef = useRef(0);
   const scrollLockedRef = useRef(false);
@@ -119,6 +121,7 @@ export function ModalHost() {
       const suppressed = lastSilentSeqRef.current !== silentCloseSeq;
       lastSilentSeqRef.current = silentCloseSeq;
       overlayTokenRef.current = null;
+      innerOverlayTokenRef.current = null;
       const depth = depthRef.current;
       depthRef.current = 0;
       if (
@@ -126,7 +129,10 @@ export function ModalHost() {
         !closingFromPopstateRef.current &&
         !suppressed &&
         typeof history !== "undefined" &&
-        (history.state?.ironlogModal || history.state?.ironlogOverlay || history.state?.ironlogStackedModal)
+        (history.state?.ironlogModal ||
+          history.state?.ironlogOverlay ||
+          history.state?.ironlogInnerOverlay ||
+          history.state?.ironlogStackedModal)
       ) {
         expectedPopsRef.current++;
         try {
@@ -137,6 +143,36 @@ export function ModalHost() {
       }
     }
   }, [isOpen, modals.length, silentCloseSeq]);
+
+  // Inner overlay (e.g. Workout settings/history/coach drawer) pushes its own history entry
+  // so mobile Back gesture or ESC closes ONLY the inner drawer instead of dismissing the whole workout.
+  const hasInnerOverlay = Boolean(activeModal && innerOverlayDismiss);
+  useEffect(() => {
+    if (hasInnerOverlay) {
+      if (innerOverlayTokenRef.current == null) {
+        const id = ++overlaySeq;
+        innerOverlayTokenRef.current = id;
+        try {
+          history.pushState({ ...(history.state ?? {}), ironlogInnerOverlay: id }, "", location.href);
+          depthRef.current++;
+        } catch {}
+      }
+      return;
+    }
+    const token = innerOverlayTokenRef.current;
+    if (token != null) {
+      innerOverlayTokenRef.current = null;
+      if (!closingFromPopstateRef.current && history.state?.ironlogInnerOverlay === token) {
+        depthRef.current = Math.max(0, depthRef.current - 1);
+        expectedPopsRef.current++;
+        try {
+          history.back();
+        } catch {
+          expectedPopsRef.current = Math.max(0, expectedPopsRef.current - 1);
+        }
+      }
+    }
+  }, [hasInnerOverlay]);
 
   // Nested confirm pushes its own overlay history entry so Back dismisses confirm first
   useEffect(() => {
@@ -177,6 +213,17 @@ export function ModalHost() {
         closingFromPopstateRef.current = true;
         try {
           ui.closeConfirm();
+        } finally {
+          closingFromPopstateRef.current = false;
+        }
+        return;
+      }
+      if (ui.innerOverlayDismiss && innerOverlayTokenRef.current != null) {
+        innerOverlayTokenRef.current = null;
+        depthRef.current = Math.max(0, depthRef.current - 1);
+        closingFromPopstateRef.current = true;
+        try {
+          ui.innerOverlayDismiss();
         } finally {
           closingFromPopstateRef.current = false;
         }
@@ -267,6 +314,10 @@ export function ModalHost() {
         }
         if (standaloneConfirm) {
           if (!confirmBusy) closeConfirm();
+          return;
+        }
+        if (innerOverlayDismiss) {
+          innerOverlayDismiss();
           return;
         }
         if (modals.length > 1) closeTopModal();
@@ -368,6 +419,7 @@ export function ModalHost() {
                 if ((standaloneConfirm || nestedConfirm) && confirmBusy) return;
                 if (nestedConfirm) dismissNestedConfirm();
                 else if (standaloneConfirm) closeConfirm();
+                else if (innerOverlayDismiss) innerOverlayDismiss();
                 else if (modals.length > 1) closeTopModal();
                 else closeAllModals();
               }}

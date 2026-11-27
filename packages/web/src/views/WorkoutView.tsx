@@ -22,6 +22,7 @@ import {
 import { triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
+  launchRoutineDirectly,
   openRoutinePreview,
   openWorkoutEditor,
   openWorkoutReport,
@@ -53,6 +54,7 @@ export function WorkoutView() {
   const [schedule, setSchedule] = useState<ScheduleResponse | null>(() => cached?.schedule ?? null);
   const [quickWeightInput, setQuickWeightInput] = useState("");
   const [savingQuickWeight, setSavingQuickWeight] = useState(false);
+  const [launchingKey, setLaunchingKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(() => !cached);
   const [error, setError] = useState("");
 
@@ -209,6 +211,33 @@ export function WorkoutView() {
   const launchRoutines = schedule?.activePlan?.routines ?? [];
   const launchTemplates = schedule?.templates ?? [];
   const plannedToday = todayInfo?.planned ?? null;
+  const primaryActiveCloud = activeWorkouts[0] ?? null;
+  const localDraftSummary = useMemo(() => {
+    if (!localDraft) return null;
+    try {
+      const parsed = JSON.parse(localDraft.raw) as {
+        title?: string;
+        exercises?: Array<{ sets?: Array<{ completed?: boolean }> }>;
+      };
+      const exList = Array.isArray(parsed.exercises) ? parsed.exercises : [];
+      const total = exList.reduce((sum, e) => sum + (e.sets?.length ?? 0), 0);
+      const done = exList.reduce((sum, e) => sum + (e.sets?.filter((s) => s.completed).length ?? 0), 0);
+      return { title: parsed.title?.trim() || "未命名训练草稿", exercisesCount: exList.length, done, total };
+    } catch {
+      return { title: "未保存的训练草稿", exercisesCount: 0, done: 0, total: 0 };
+    }
+  }, [localDraft]);
+
+  const handleDirectLaunch = async (key: string, params: { id: string; source: "plan" | "template" | "scheduled"; date: string }) => {
+    if (launchingKey) return;
+    triggerHaptic("light");
+    setLaunchingKey(key);
+    try {
+      await launchRoutineDirectly({ ...params, goals });
+    } finally {
+      setLaunchingKey(null);
+    }
+  };
 
   return (
     <>
@@ -225,65 +254,150 @@ export function WorkoutView() {
         }
       />
 
-      {/* OpenGym-style Workout Launchpad Console */}
-      <section className="panel workout-launchpad" aria-label="今日开练控制台">
+      {/* OpenGym-style Workout Launchpad Console (Draft-First & 1-Tap Direct Start) */}
+      <section
+        className={`panel workout-launchpad${primaryActiveCloud || localDraft ? " is-ongoing" : ""}`}
+        aria-label="今日开练控制台"
+      >
         <div className="launchpad-hero">
-          <div className="launchpad-hero-info">
-            <span className="launchpad-eyebrow">
-              {plannedToday
-                ? plannedToday.date === today()
-                  ? "今日计划"
-                  : `下一次计划 · ${shortDate(plannedToday.date)}`
-                : "自由开练"}
-              {plannedToday?.scheduleMode === "rotation" ? (
-                <em className="today-mode-pill">轮换顺延</em>
+          {primaryActiveCloud ? (
+            <>
+              <div className="launchpad-hero-info">
+                <span className="launchpad-eyebrow">进行中的训练</span>
+                <h2>{primaryActiveCloud.data.title}</h2>
+                <p className="muted">
+                  {shortDate(primaryActiveCloud.data.date)} · {primaryActiveCloud.data.exercises.length} 个动作 · 已完成{" "}
+                  {primaryActiveCloud.data.exercises.reduce((s, e) => s + e.sets.filter((x) => x.completed).length, 0)}/
+                  {primaryActiveCloud.data.exercises.reduce((s, e) => s + e.sets.length, 0)} 组
+                </p>
+              </div>
+              <div className="launchpad-hero-cta">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => openWorkoutEditor({ record: primaryActiveCloud, goals })}
+                >
+                  继续进行中的训练
+                </button>
+              </div>
+            </>
+          ) : localDraft && localDraftSummary ? (
+            <>
+              <div className="launchpad-hero-info">
+                <span className="launchpad-eyebrow">本机未保存草稿</span>
+                <h2>{localDraftSummary.title}</h2>
+                <p className="muted">
+                  {localDraftSummary.exercisesCount} 个动作 · 已完成 {localDraftSummary.done}/{localDraftSummary.total} 组
+                </p>
+              </div>
+              <div className="launchpad-hero-cta">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => void resumeLocalWorkoutDraft(userId, goals)}
+                >
+                  继续训练
+                </button>
+                <button
+                  type="button"
+                  className="quiet"
+                  onClick={() => {
+                    openConfirm({
+                      title: "丢弃未保存训练草稿",
+                      message: "确定要丢弃本机未保存的训练草稿吗？此操作不可撤销。",
+                      confirmLabel: "丢弃草稿",
+                      onConfirm: () => {
+                        try {
+                          localStorage.removeItem(localDraft.key);
+                        } catch {}
+                        bumpDataEpoch();
+                        notify("已丢弃本机训练草稿");
+                      },
+                    });
+                  }}
+                >
+                  丢弃
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="launchpad-hero-info">
+                <span className="launchpad-eyebrow">
+                  {plannedToday
+                    ? plannedToday.date === today()
+                      ? "今日计划"
+                      : `下一次计划 · ${shortDate(plannedToday.date)}`
+                    : "自由开练"}
+                  {plannedToday?.scheduleMode === "rotation" ? (
+                    <em className="today-mode-pill">轮换顺延</em>
+                  ) : null}
+                </span>
+                <h2>{plannedToday ? plannedToday.name : "随时开始自由训练"}</h2>
+                <p className="muted">
+                  {plannedToday
+                    ? `${plannedToday.exercises} 个动作 · 一键直达第 1 组并自动带出渐进目标`
+                    : "边练边选动作，或从下方挑一个常用训练日直接开练"}
+                </p>
+              </div>
+              {plannedToday?.muscleScores && Object.keys(plannedToday.muscleScores).length > 0 ? (
+                <MuscleBodyMap size="mini" scores={plannedToday.muscleScores} />
               ) : null}
-            </span>
-            <h2>{plannedToday ? plannedToday.name : "随时开始自由训练"}</h2>
-            <p className="muted">
-              {plannedToday
-                ? `${plannedToday.exercises} 个动作 · 自动带出渐进目标与配片参考`
-                : "边练边选动作，或从下方挑一个常用训练日直接开练"}
-            </p>
-          </div>
-          {plannedToday?.muscleScores && Object.keys(plannedToday.muscleScores).length > 0 ? (
-            <MuscleBodyMap size="mini" scores={plannedToday.muscleScores} />
-          ) : null}
-          <div className="launchpad-hero-cta">
-            {plannedToday ? (
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() =>
-                  openRoutinePreview({
-                    id: plannedToday.source === "scheduled" ? plannedToday.date : plannedToday.id,
-                    source: plannedToday.source === "scheduled" ? "scheduled" : "plan",
-                    date: plannedToday.date,
-                  })
-                }
-              >
-                开始今日计划
-              </button>
-            ) : (
-              <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
-                <Icon name="plus" size={15} /> 开始自由训练
-              </button>
-            )}
-          </div>
+              <div className="launchpad-hero-cta">
+                {plannedToday ? (
+                  <>
+                    <button
+                      type="button"
+                      className="primary-button"
+                      disabled={launchingKey !== null}
+                      onClick={() =>
+                        void handleDirectLaunch("today", {
+                          id: plannedToday.source === "scheduled" ? plannedToday.date : plannedToday.id,
+                          source: plannedToday.source === "scheduled" ? "scheduled" : "plan",
+                          date: plannedToday.date,
+                        })
+                      }
+                    >
+                      {launchingKey === "today" ? "准备中…" : "一键开练"}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-button"
+                      disabled={launchingKey !== null}
+                      onClick={() =>
+                        openRoutinePreview({
+                          id: plannedToday.source === "scheduled" ? plannedToday.date : plannedToday.id,
+                          source: plannedToday.source === "scheduled" ? "scheduled" : "plan",
+                          date: plannedToday.date,
+                        })
+                      }
+                    >
+                      预览目标
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="primary-button" onClick={() => openWorkoutEditor({ goals })}>
+                    <Icon name="plus" size={15} /> 开始自由训练
+                  </button>
+                )}
+              </div>
+            </>
+          )}
         </div>
 
         {(launchRoutines.length > 0 || launchTemplates.length > 0) ? (
           <div className="launchpad-quick-row">
-            <span className="muted">其他训练日：</span>
+            <span className="muted">快捷开练：</span>
             <div className="launchpad-chips">
               {launchRoutines.map((r) => (
                 <button
                   key={`r:${r.id}`}
                   type="button"
                   className="quiet"
-                  onClick={() => openRoutinePreview({ id: r.id, source: "plan", date: today() })}
+                  disabled={launchingKey !== null}
+                  onClick={() => void handleDirectLaunch(`r:${r.id}`, { id: r.id, source: "plan", date: today() })}
                 >
-                  {r.name}
+                  {launchingKey === `r:${r.id}` ? "准备中…" : r.name}
                 </button>
               ))}
               {launchTemplates.slice(0, 6).map((t) => (
@@ -291,13 +405,14 @@ export function WorkoutView() {
                   key={`t:${t.id}`}
                   type="button"
                   className="quiet"
-                  onClick={() => openRoutinePreview({ id: t.id, source: "template", date: today() })}
+                  disabled={launchingKey !== null}
+                  onClick={() => void handleDirectLaunch(`t:${t.id}`, { id: t.id, source: "template", date: today() })}
                 >
-                  {t.name}
+                  {launchingKey === `t:${t.id}` ? "准备中…" : t.name}
                 </button>
               ))}
               <button type="button" className="quiet" onClick={() => openWorkoutEditor({ goals })}>
-                + 自由训练（边练边选）
+                + 自由训练
               </button>
             </div>
           </div>
@@ -346,11 +461,11 @@ export function WorkoutView() {
         </div>
       ) : null}
 
-      {activeWorkouts.map((draft) => (
+      {activeWorkouts.slice(1).map((draft) => (
         <section key={draft.id} className="panel" style={{ marginBottom: 14, borderColor: "var(--red)" }}>
           <header className="panel-head">
             <div>
-              <h2>正在进行的训练 · {draft.data.title}</h2>
+              <h2>其他进行中的训练 · {draft.data.title}</h2>
               <p>{shortDate(draft.data.date)} · {draft.data.exercises.length} 个动作</p>
             </div>
             <button
@@ -363,41 +478,6 @@ export function WorkoutView() {
           </header>
         </section>
       ))}
-
-      {localDraft ? (
-        <section className="panel" style={{ marginBottom: 14, borderColor: "var(--red)" }}>
-          <header className="panel-head">
-            <div>
-              <h2>有一次训练没保存</h2>
-            </div>
-            <div className="heading-actions">
-              <button
-                type="button"
-                className="quiet"
-                onClick={() => {
-                  openConfirm({
-                    title: "丢弃未保存训练草稿",
-                    message: "确定要丢弃本机未保存的训练草稿吗？此操作不可撤销。",
-                    confirmLabel: "丢弃草稿",
-                    onConfirm: () => {
-                      try {
-                        localStorage.removeItem(localDraft.key);
-                      } catch {}
-                      bumpDataEpoch();
-                      notify("已丢弃未保存训练草稿");
-                    },
-                  });
-                }}
-              >
-                丢弃
-              </button>
-              <button type="button" className="primary-button" onClick={() => void resumeLocalWorkoutDraft(userId, goals)}>
-                继续
-              </button>
-            </div>
-          </header>
-        </section>
-      ) : null}
 
       {prPicks.length ? (
         <section className="panel pr-wall-panel" style={{ marginBottom: 14 }}>

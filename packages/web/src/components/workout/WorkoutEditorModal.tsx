@@ -33,6 +33,7 @@ import {
   type ProfileGoals,
   type RecordEnvelope,
   type SetType,
+  type TrainedExerciseSummary,
   type WeightUnit,
   type WorkoutData,
   type WorkoutExercise,
@@ -89,6 +90,7 @@ import {
   insertRestPauseSetAfter,
   type LiveExercisePrBaseline,
 } from "../../lib/workout-set-ops";
+import { isBackfillWorkoutDate, resolveAutoAdvanceDelayMs } from "../../lib/routine-launch";
 import {
   openAiAdaptWorkoutModal,
   openExerciseDetailModal,
@@ -259,6 +261,7 @@ export function WorkoutEditorModal({
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const refreshPendingCount = useUiStore((s) => s.refreshPendingCount);
   const notify = useUiStore((s) => s.notify);
+  const setInnerOverlayDismiss = useUiStore((s) => s.setInnerOverlayDismiss);
 
   const todayStr = today();
   const initialDraftKey = userId ? workoutDraftKey(userId, record?.id) : "";
@@ -304,15 +307,22 @@ export function WorkoutEditorModal({
           }
         : null;
 
+    const resolvedDate = seed?.date ?? baseData?.date ?? todayStr;
+    const initialBackfill = isBackfillWorkoutDate(
+      resolvedDate,
+      todayStr,
+      record?.data.status === "completed",
+    );
+
     return {
       title: seed?.title ?? baseData?.title ?? "自由训练",
-      date: seed?.date ?? baseData?.date ?? todayStr,
+      date: resolvedDate,
       notes: seed?.notes ?? baseData?.notes ?? "",
       feeling: seed?.feeling ?? baseData?.feeling ?? null,
       exercises: seed?.exercises ?? baseData?.exercises ?? [],
       timing:
         baseData?.timing ??
-        (record?.data.status === "completed"
+        (record?.data.status === "completed" || initialBackfill
           ? { elapsedSeconds: 0, runningSince: null }
           : { elapsedSeconds: 0, runningSince: new Date().toISOString() }),
       rest: baseRest,
@@ -397,9 +407,15 @@ export function WorkoutEditorModal({
   }, []);
 
   const [activeExIdx, setActiveExIdx] = useState(0);
+  const isBackfillMode = isBackfillWorkoutDate(date, todayStr, isHistoricalEdit);
   const [viewMode, setViewMode] = useState<"single" | "all">(() =>
-    isHistoricalEdit ? "all" : prefs.workoutLayout === "compact" ? "all" : "single",
+    isHistoricalEdit ||
+    isBackfillWorkoutDate(initialSnapshot.date, todayStr, isHistoricalEdit) ||
+    prefs.workoutLayout === "compact"
+      ? "all"
+      : "single",
   );
+  const [recentQuickPicks, setRecentQuickPicks] = useState<TrainedExerciseSummary[]>([]);
   const [expandedDoneIds, setExpandedDoneIds] = useState<Set<string>>(() => new Set());
   const [timedSetClock, setTimedSetClock] = useState<{
     exIdx: number;
@@ -510,6 +526,7 @@ export function WorkoutEditorModal({
     if (!exercises.length) return;
     const clamped = Math.max(0, Math.min(exercises.length - 1, idx));
     triggerHaptic("light");
+    setOpenSetMenuId(null);
     setActiveExIdx(clamped);
     if (viewMode === "single") {
       workoutScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
@@ -518,6 +535,57 @@ export function WorkoutEditorModal({
       if (targetId) cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   };
+
+  // Register inner overlays with ModalHost so mobile Back gesture / ESC closes ONLY the active drawer
+  const hasAnyInnerOverlay = Boolean(
+    historyModalEx ||
+      coachExIdx != null ||
+      mergeRoutineOpen ||
+      muscleProgressOpen ||
+      openMenu ||
+      (!isHistoricalEdit && finishPanelOpen),
+  );
+  useEffect(() => {
+    if (!hasAnyInnerOverlay) {
+      setInnerOverlayDismiss(null);
+      return;
+    }
+    setInnerOverlayDismiss(() => {
+      if (historyModalEx) setHistoryModalEx(null);
+      else if (coachExIdx != null) setCoachExIdx(null);
+      else if (mergeRoutineOpen) setMergeRoutineOpen(false);
+      else if (muscleProgressOpen) setMuscleProgressOpen(false);
+      else if (openMenu) setOpenMenu(false);
+      else if (!isHistoricalEdit && finishPanelOpen) setFinishPanelOpen(false);
+    });
+    return () => setInnerOverlayDismiss(null);
+  }, [
+    hasAnyInnerOverlay,
+    historyModalEx,
+    coachExIdx,
+    mergeRoutineOpen,
+    muscleProgressOpen,
+    openMenu,
+    finishPanelOpen,
+    isHistoricalEdit,
+    setInnerOverlayDismiss,
+  ]);
+
+  // Fetch recent frequently-trained exercises for 1-tap quick-picks in free workout empty state
+  useEffect(() => {
+    if (exercises.length > 0 || !userId || recentQuickPicks.length > 0) return;
+    let active = true;
+    void apiFetch<{ items?: TrainedExerciseSummary[] }>("/api/web/trained-exercises")
+      .then((res) => {
+        if (active && Array.isArray(res?.items)) {
+          setRecentQuickPicks(res.items.slice(0, 8));
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [exercises.length, userId, recentQuickPicks.length]);
 
   const swipeRef = useRef({
     active: false,
@@ -777,13 +845,13 @@ export function WorkoutEditorModal({
     }
   }, [timedSetClock, nowMs, audio, voiceRestCues]);
 
-  // Wake lock guard
+  // Wake lock guard (disabled in historical edit & past-date backfill mode)
   useEffect(() => {
-    if (isHistoricalEdit || !("wakeLock" in navigator)) return;
+    if (isHistoricalEdit || isBackfillMode || !("wakeLock" in navigator)) return;
     const mgr = keepWorkoutScreenAwake(() => screenAwakePref, setWakeActive);
     mgr.update();
     return () => mgr.stop();
-  }, [isHistoricalEdit, screenAwakePref]);
+  }, [isHistoricalEdit, isBackfillMode, screenAwakePref]);
 
   // Fetch previous-session reference sets, all-time PR baselines, and exercise demo GIF media
   const exIdsKey = exercises.map((e) => `${e.exerciseId}:${e.snapshot?.mode ?? "reps"}`).join(",");
@@ -861,7 +929,7 @@ export function WorkoutEditorModal({
         volume: number;
         sets: Array<{ type: string; weight: number; reps: number; seconds: number; rir: number | null }>;
       }>;
-    }>(`/api/web/exercises/${encodeURIComponent(exerciseId)}/history`)
+    }>(`/api/web/exercise-history/${encodeURIComponent(exerciseId)}`)
       .then((res) => {
         setHistoryModalEx((cur) =>
           cur && cur.id === exerciseId
@@ -1260,7 +1328,7 @@ export function WorkoutEditorModal({
       ? resolveSupersetTransition(exercises, exIdx, setIdx)
       : { inSuperset: false, shouldStartRest: false, nextExerciseIdx: null, reason: "single" as const };
 
-    if (nextCompleted && !isHistoricalEdit && autoStartRestTimer && ssTransition.shouldStartRest) {
+    if (nextCompleted && !isHistoricalEdit && !isBackfillMode && autoStartRestTimer && ssTransition.shouldStartRest) {
       const nextSet = row.sets[setIdx + 1];
       const hasCustomRest =
         targetSet.restAfterSeconds != null && Number.isFinite(targetSet.restAfterSeconds);
@@ -1315,6 +1383,7 @@ export function WorkoutEditorModal({
     if (
       nextCompleted &&
       !isHistoricalEdit &&
+      !isBackfillMode &&
       autoAdvanceExercise &&
       row.sets.every((s, idx) => idx === setIdx || s.completed)
     ) {
@@ -1323,6 +1392,7 @@ export function WorkoutEditorModal({
         afterIdx >= 0
           ? afterIdx
           : exercises.findIndex((ex, idx) => idx < exIdx && ex.sets.some((s) => !s.completed));
+      const advanceDelayMs = resolveAutoAdvanceDelayMs(Boolean(prHit));
       if (nextIdx >= 0) {
         const targetEx = exercises[nextIdx]!;
         const targetId = targetEx.id;
@@ -1335,12 +1405,12 @@ export function WorkoutEditorModal({
           } else {
             cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
           }
-        }, 320);
+        }, advanceDelayMs);
       } else if (exercises.every((ex, idx) => idx === exIdx || ex.sets.every((s) => s.completed))) {
         autoAdvanceTimerRef.current = window.setTimeout(() => {
           autoAdvanceTimerRef.current = null;
           notify("全部动作已完成，可点击底部「完成并结束训练」");
-        }, 320);
+        }, advanceDelayMs);
       }
     }
   };
@@ -2672,6 +2742,13 @@ export function WorkoutEditorModal({
 
       {/* Main Exercise Scroll Stack */}
       <div className="workout-scroll" ref={workoutScrollRef}>
+        {isBackfillMode ? (
+          <div className="backfill-banner" role="status">
+            <span>
+              <strong>历史补录模式（{date}）</strong> · 已自动关闭秒表与休息倒计时，保存时可直接填总时长
+            </span>
+          </div>
+        ) : null}
         {prefs.deloadMode && !isHistoricalEdit ? (
           <div className="deload-banner" role="status">
             <span>
@@ -2764,9 +2841,43 @@ export function WorkoutEditorModal({
 
         {exercises.length === 0 ? (
           <div className="workout-empty-state">
-            <strong>还没有动作</strong>
+            <strong>选择第一个训练动作</strong>
+            {recentQuickPicks.length > 0 ? (
+              <div className="workout-empty-picks">
+                <small className="muted">最近常练（点一下立即加入）：</small>
+                <div className="launchpad-chips">
+                  {recentQuickPicks.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="launchpad-chip"
+                      onClick={() => {
+                        triggerHaptic("light");
+                        void resolveCatalogueMap([item.id]).then((map) => {
+                          const cat = map.get(item.id);
+                          appendExercises([
+                            cat ?? {
+                              id: item.id,
+                              name: item.name,
+                              englishName: item.englishName,
+                              muscle: item.muscle,
+                              equipment: item.equipment,
+                              mode: item.mode,
+                              volumeMultiplier: 1,
+                              custom: item.custom,
+                            },
+                          ]);
+                        });
+                      }}
+                    >
+                      + {item.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <button type="button" className="primary-button" onClick={openAddExercisePicker}>
-              <Icon name="plus" size={16} /> 添加动作
+              <Icon name="plus" size={16} /> 浏览全部动作库
             </button>
           </div>
         ) : (
@@ -3450,7 +3561,10 @@ export function WorkoutEditorModal({
                                   min={0}
                                   max={5000}
                                   value={s.weight}
-                                  onFocus={(e) => e.currentTarget.select()}
+                                  onFocus={(e) => {
+                                    e.currentTarget.select();
+                                    if (openSetMenuId) setOpenSetMenuId(null);
+                                  }}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
                                       weight: Math.max(0, Number(e.target.value) || 0),
@@ -3492,7 +3606,10 @@ export function WorkoutEditorModal({
                                   min={0}
                                   max={1000}
                                   value={s.reps}
-                                  onFocus={(e) => e.currentTarget.select()}
+                                  onFocus={(e) => {
+                                    e.currentTarget.select();
+                                    if (openSetMenuId) setOpenSetMenuId(null);
+                                  }}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
                                       reps: Math.max(0, Math.round(Number(e.target.value) || 0)),
@@ -3535,7 +3652,10 @@ export function WorkoutEditorModal({
                                   min={0}
                                   max={86400}
                                   value={s.seconds}
-                                  onFocus={(e) => e.currentTarget.select()}
+                                  onFocus={(e) => {
+                                    e.currentTarget.select();
+                                    if (openSetMenuId) setOpenSetMenuId(null);
+                                  }}
                                   onChange={(e) =>
                                     updateSetAndCascade(exIdx, setIdx, {
                                       seconds: Math.max(0, Math.round(Number(e.target.value) || 0)),
@@ -3664,6 +3784,7 @@ export function WorkoutEditorModal({
                                     onClick={() => {
                                       triggerHaptic("light");
                                       updateSet(exIdx, setIdx, (cur) => ({ ...cur, type: kind }));
+                                      setOpenSetMenuId(null);
                                     }}
                                   >
                                     {SET_TYPES[kind].label}
@@ -3761,6 +3882,7 @@ export function WorkoutEditorModal({
                                         else next.restAfterSeconds = sec;
                                         return next;
                                       });
+                                      setOpenSetMenuId(null);
                                     }}
                                   >
                                     {sec == null ? "默认" : sec === 0 ? "免休" : `${sec}s`}

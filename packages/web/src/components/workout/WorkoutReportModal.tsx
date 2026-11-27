@@ -43,12 +43,14 @@ export function WorkoutReportModal({
   workoutId,
   record,
   goals,
+  justCompleted = false,
   onEditWorkout,
   onRepeatWorkout,
 }: {
   workoutId: string;
   record?: RecordEnvelope<WorkoutData>;
   goals?: ProfileGoals | null;
+  justCompleted?: boolean;
   onEditWorkout: (rec: RecordEnvelope<WorkoutData>, goals?: ProfileGoals | null) => void;
   onRepeatWorkout: (seed: Partial<WorkoutData>, goals?: ProfileGoals | null) => void;
 }) {
@@ -68,6 +70,7 @@ export function WorkoutReportModal({
   const [syncArmed, setSyncArmed] = useState(false);
   const [syncedRoutineName, setSyncedRoutineName] = useState("");
   const [savedTemplate, setSavedTemplate] = useState(false);
+  const [moreActionsOpen, setMoreActionsOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -573,55 +576,63 @@ export function WorkoutReportModal({
         </section>
       ) : null}
 
-      <footer className="report-foot-actions">
-        <div className="report-foot-secondary">
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={busyAction !== ""}
-            onClick={() => void handleEdit()}
-          >
-            编辑
-          </button>
-          {report.canSyncToActivePlan ? (
+      {report.canSyncToActivePlan ? (
+        <div className={`report-sync-banner${syncedRoutineName ? " is-synced" : ""}`} role="status">
+          <div>
+            <strong>{syncedRoutineName ? `已同步回计划「${syncedRoutineName}」` : "将本次改动同步回原计划？"}</strong>
+            <small className="muted">
+              {syncedRoutineName
+                ? "下次开练将按本次调整后的动作与组数执行"
+                : "若训中替换了动作或调整了组数/休息时长，可一键更新回当前计划"}
+            </small>
+          </div>
+          {!syncedRoutineName ? (
             <button
               type="button"
               className="secondary-button"
-              disabled={busyAction !== "" || Boolean(syncedRoutineName)}
+              disabled={busyAction !== ""}
               onClick={() => void handleSyncToPlan()}
             >
-              <Icon name="refresh" size={15} />{" "}
-              {syncedRoutineName ? "已同步回计划" : syncArmed ? "确认同步？" : "同步回计划"}
+              <Icon name="refresh" size={14} /> {syncArmed ? "确认同步" : "同步回计划"}
             </button>
           ) : null}
-          {report.exercises.length ? (
-            <>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={busyAction !== "" || savedTemplate}
-                onClick={() => void handleSaveTemplate()}
-              >
-                <Icon name="bookmark" size={15} /> {savedTemplate ? "已存为模板" : "存为模板"}
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={busyAction !== ""}
-                onClick={() => void handleExportFit()}
-              >
-                <Icon name="download" size={15} /> {busyAction === "fit" ? "导出中…" : "导出 .fit"}
-              </button>
-            </>
+        </div>
+      ) : null}
+
+      <footer className="report-foot-actions">
+        <div className="report-foot-primary-row">
+          {justCompleted ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busyAction !== ""}
+              onClick={() => {
+                triggerHaptic("light");
+                closeAllModals();
+              }}
+            >
+              完成并返回
+            </button>
+          ) : report.exercises.length ? (
+            <button
+              type="button"
+              className="primary-button"
+              disabled={busyAction !== ""}
+              onClick={() => void handleRepeat()}
+            >
+              <Icon name="refresh" size={15} /> 再练一次
+            </button>
           ) : null}
+
           <button
             type="button"
             className="secondary-button"
             disabled={busyAction !== ""}
             onClick={handleShare}
           >
-            <Icon name="download" size={15} /> 分享记录
+            <Icon name="download" size={15} /> {justCompleted ? "分享战报" : "分享记录"}
           </button>
+
           {aiReady ? (
             <button
               type="button"
@@ -632,22 +643,67 @@ export function WorkoutReportModal({
               AI 复盘
             </button>
           ) : null}
-          <button type="button" className="quiet" onClick={() => void handleCopy()}>
-            <Icon name="copy" size={15} /> {copied ? "已复制训练摘要" : "复制摘要"}
-          </button>
-          <button type="button" className="danger" onClick={handleDelete}>
-            删除
-          </button>
-        </div>
-        {report.exercises.length ? (
+
           <button
             type="button"
-            className="primary-button"
-            disabled={busyAction !== ""}
-            onClick={() => void handleRepeat()}
+            className="quiet"
+            aria-expanded={moreActionsOpen}
+            onClick={() => {
+              triggerHaptic("light");
+              setMoreActionsOpen((v) => !v);
+            }}
           >
-            <Icon name="refresh" size={15} /> 再练一次
+            {moreActionsOpen ? "收起更多" : "更多操作 ▾"}
           </button>
+        </div>
+
+        {moreActionsOpen ? (
+          <div className="report-foot-secondary">
+            {justCompleted && report.exercises.length ? (
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busyAction !== ""}
+                onClick={() => void handleRepeat()}
+              >
+                <Icon name="refresh" size={15} /> 再练一次
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={busyAction !== ""}
+              onClick={() => void handleEdit()}
+            >
+              编辑记录
+            </button>
+            {report.exercises.length ? (
+              <>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busyAction !== "" || savedTemplate}
+                  onClick={() => void handleSaveTemplate()}
+                >
+                  <Icon name="bookmark" size={15} /> {savedTemplate ? "已存为模板" : "存为模板"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={busyAction !== ""}
+                  onClick={() => void handleExportFit()}
+                >
+                  <Icon name="download" size={15} /> {busyAction === "fit" ? "导出中…" : "导出 .fit"}
+                </button>
+              </>
+            ) : null}
+            <button type="button" className="quiet" onClick={() => void handleCopy()}>
+              <Icon name="copy" size={15} /> {copied ? "已复制训练摘要" : "复制摘要"}
+            </button>
+            <button type="button" className="danger" onClick={handleDelete}>
+              删除
+            </button>
+          </div>
         ) : null}
       </footer>
     </div>

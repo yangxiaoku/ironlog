@@ -54,6 +54,7 @@ import type {
 import type { BadgeItem } from "./badges";
 import { copyText } from "./clipboard";
 import { shortDate, today } from "./date";
+import { buildWorkoutSeedFromRoutine, type RoutineLaunchPayload } from "./routine-launch";
 import {
   findLocalWorkoutDraft,
   type CatalogueExercise,
@@ -133,7 +134,7 @@ export function openWorkoutEditor(
         seed={seed}
         onCompleted={(saved) => {
           ui.closeAllModals();
-          openWorkoutReport({ workoutId: saved.id, record: saved, goals });
+          openWorkoutReport({ workoutId: saved.id, record: saved, goals, justCompleted: true });
         }}
       />
     ),
@@ -276,6 +277,7 @@ export interface WorkoutReportOptions {
   workoutId: string;
   record?: RecordEnvelope<WorkoutData>;
   goals?: ProfileGoals | null;
+  justCompleted?: boolean;
 }
 
 export function openWorkoutReport(options: WorkoutReportOptions): void;
@@ -291,7 +293,7 @@ export function openWorkoutReport(
 ): void {
   const opts: WorkoutReportOptions =
     typeof arg1 === "string" ? { workoutId: arg1, record: arg2, goals: arg3 } : arg1;
-  const { workoutId, record, goals } = opts;
+  const { workoutId, record, goals, justCompleted } = opts;
   const ui = useUiStore.getState();
   ui.openModal({
     title: record?.data.title ?? "训练复盘",
@@ -302,6 +304,7 @@ export function openWorkoutReport(
         workoutId={workoutId}
         record={record}
         goals={goals}
+        justCompleted={justCompleted}
         onEditWorkout={(fullRecord, profGoals) => {
           ui.closeAllModals();
           openWorkoutEditor({ record: fullRecord, goals: profGoals });
@@ -702,6 +705,33 @@ export function openDayScheduler(
   });
 }
 
+export async function launchRoutineDirectly({
+  id,
+  source = "plan",
+  date = today(),
+  goals = null,
+}: {
+  id: string;
+  source?: "plan" | "template" | "scheduled";
+  date?: string;
+  goals?: ProfileGoals | null;
+}): Promise<void> {
+  const ui = useUiStore.getState();
+  try {
+    const params = new URLSearchParams({ id, source });
+    if (date) params.set("date", date);
+    const [result, prof] = await Promise.all([
+      apiFetch<RoutineLaunchPayload>(`/api/web/routine?${params.toString()}`),
+      goals ? Promise.resolve({ profile: goals }) : apiFetch<{ profile?: ProfileGoals }>("/api/web/profile").catch(() => null),
+    ]);
+    const seed = buildWorkoutSeedFromRoutine(result, { date });
+    openWorkoutEditor({ seed, goals: goals ?? prof?.profile ?? null });
+  } catch (err) {
+    ui.notify((err as Error)?.message || "直接开练失败，已为你打开预览");
+    openRoutinePreview({ id, source, date });
+  }
+}
+
 export function openRoutinePreview({
   id,
   source = "plan",
@@ -766,6 +796,7 @@ export function openExerciseDetailModal(
   customRecord: RecordEnvelope<CatalogueExercise> | null = null,
 ): void {
   const ui = useUiStore.getState();
+  const inActiveWorkout = ui.modals.some((m) => m.layout === "workout");
   const titleRef = { current: customRecord?.data.name || exerciseName || exerciseId };
   ui.openModal({
     title: titleRef.current,
@@ -776,6 +807,7 @@ export function openExerciseDetailModal(
       <ExerciseDetailModal
         exerciseId={exerciseId}
         customRecord={customRecord}
+        inActiveWorkout={inActiveWorkout}
         onResolvedTitle={(resolved) => {
           titleRef.current = resolved;
           ui.updateTopModalTitle(resolved);

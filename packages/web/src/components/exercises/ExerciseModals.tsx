@@ -91,18 +91,21 @@ function ExDetailSparkline({ sessions, timed }: { sessions: ExerciseHistorySessi
 export function ExerciseDetailModal({
   exerciseId,
   customRecord,
+  inActiveWorkout = false,
   onQuickStart,
   onEditCustom,
   onResolvedTitle,
 }: {
   exerciseId: string;
   customRecord?: RecordEnvelope<CatalogueExercise> | null;
+  inActiveWorkout?: boolean;
   onQuickStart: (seed: Partial<WorkoutData>) => void;
   onEditCustom?: (rec: RecordEnvelope<CatalogueExercise>) => void;
   onResolvedTitle?: (name: string) => void;
 }) {
   const userId = useAuthStore((s) => s.userId);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const closeTopModal = useUiStore((s) => s.closeTopModal);
   const notify = useUiStore((s) => s.notify);
 
   const [exercise, setExercise] = useState<CatalogueExercise | null>(customRecord?.data ?? null);
@@ -302,9 +305,22 @@ export function ExerciseDetailModal({
 
       {userId ? (
         <div className="exercise-detail-actions">
-          <button type="button" className="primary-button" onClick={handleQuickStart}>
-            <Icon name="workout" size={15} /> 以此动作开始训练
-          </button>
+          {inActiveWorkout ? (
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => {
+                triggerHaptic("light");
+                closeTopModal();
+              }}
+            >
+              返回当前训练
+            </button>
+          ) : (
+            <button type="button" className="primary-button" onClick={handleQuickStart}>
+              <Icon name="workout" size={15} /> 以此动作开始训练
+            </button>
+          )}
           <button
             type="button"
             className={`secondary-button${isFav ? " is-faved" : ""}`}

@@ -51,6 +51,7 @@ export interface UiState {
   toast: ToastState | null;
   modals: ModalEntry[];
   confirm: ConfirmEntry | null;
+  innerOverlayDismiss: (() => void) | null;
   silentCloseSeq: number;
   setView: (view: ViewId) => void;
   navigate: (view: ViewId) => void;
@@ -73,6 +74,7 @@ export interface UiState {
   closeModalSilent: () => void;
   openConfirm: (entry: ConfirmEntry) => void;
   closeConfirm: () => void;
+  setInnerOverlayDismiss: (fn: (() => void) | null) => void;
 }
 
 function getInitialTheme(): ThemeMode {
@@ -109,6 +111,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   toast: null,
   modals: [],
   confirm: null,
+  innerOverlayDismiss: null,
   silentCloseSeq: 0,
 
   setView(view) {
@@ -265,7 +268,7 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   closeAllModals() {
     const closing = get().modals;
-    set({ modals: [], confirm: null });
+    set({ modals: [], confirm: null, innerOverlayDismiss: null });
     for (const entry of closing) {
       try {
         entry.onClose?.();
@@ -278,6 +281,7 @@ export const useUiStore = create<UiState>((set, get) => ({
     set((s) => ({
       modals: [],
       confirm: null,
+      innerOverlayDismiss: null,
       silentCloseSeq: s.silentCloseSeq + 1,
     }));
     for (const entry of closing) {
@@ -293,5 +297,9 @@ export const useUiStore = create<UiState>((set, get) => ({
 
   closeConfirm() {
     set({ confirm: null });
+  },
+
+  setInnerOverlayDismiss(fn) {
+    set({ innerOverlayDismiss: fn });
   },
 }));
