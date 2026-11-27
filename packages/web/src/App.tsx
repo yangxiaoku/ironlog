@@ -68,10 +68,23 @@ export function App() {
     prefetchViewChunk(useUiStore.getState().view);
     void useAuthStore.getState().bootstrap().then(() => {
       const uid = useAuthStore.getState().userId;
-      if (uid && navigator.onLine) {
+      if (uid && navigator.onLine && !useAuthStore.getState().offlineBoot) {
         void useUiStore.getState().syncOfflineQueue(uid, { silent: true });
       }
     });
+    const onOnline = () => {
+      if (useAuthStore.getState().offlineBoot) {
+        void useAuthStore.getState().bootstrap().then(() => {
+          const uid = useAuthStore.getState().userId;
+          if (uid && !useAuthStore.getState().offlineBoot) {
+            void useUiStore.getState().syncOfflineQueue(uid, { silent: true });
+            useUiStore.getState().bumpDataEpoch();
+          }
+        });
+      }
+    };
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
   }, []);
 
   useEffect(() => {

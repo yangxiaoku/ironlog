@@ -1097,7 +1097,7 @@ test("JSON API Gzip 压缩、Cache-Control 保留及内存动作目录复合筛�
 });
 
 test("Apple 健康同步状态接口实时返回进行中会话与最近记录，同日相近力量训练自动关联且不误配远时段记录", async () => {
-  const { db, owner, issue, call, store } = fixture();
+  const { db, owner, other, issue, call, store } = fixture();
   try {
     const { token } = await issue();
     const initialStatus = await (await call(`${apple}/status`, owner.token)).json() as any;
@@ -1197,11 +1197,36 @@ test("Apple 健康同步状态接口实时返回进行中会话与最近记录�
 
     const agendaRes = await call(`${apple}/agenda?from=${dayNear}&through=${dayFar}`, owner.token);
     assert.equal(agendaRes.status, 200);
-    const items = (await agendaRes.json()) as Array<{ date: string; manualWorkoutId: string | null }>;
+    const items = (await agendaRes.json()) as Array<{ id: string; date: string; manualWorkoutId: string | null }>;
     const nearItem = items.find((i) => i.date === dayNear);
     const farItem = items.find((i) => i.date === dayFar);
     assert.equal(nearItem?.manualWorkoutId, "manual_post_lift");
     assert.equal(farItem?.manualWorkoutId, null);
+
+    // 4. Delete an Apple workout (owner succeeds, other user gets 404) & clear stuck active session
+    assert.ok(farItem?.id);
+    const otherDelRes = await call(`${apple}/workouts/${encodeURIComponent(farItem!.id)}`, other.token, "DELETE");
+    assert.equal(otherDelRes.status, 404);
+    const delRes = await call(`${apple}/workouts/${encodeURIComponent(farItem!.id)}`, owner.token, "DELETE");
+    assert.equal(delRes.status, 200);
+    const afterDelItems = (await (await call(`${apple}/agenda?from=${dayNear}&through=${dayFar}`, owner.token)).json()) as Array<{ id: string }>;
+    assert.ok(!afterDelItems.some((i) => i.id === farItem!.id));
+
+    // Start a dangling session and clear it via DELETE /active-session
+    const stuckStart = await call(`${apple}/events`, token, "POST", {
+      schemaVersion: 1,
+      event: "start",
+      activityType: "stairClimbing",
+      environment: "indoor",
+      occurredAt: new Date(Date.now() - 5 * 60_000).toISOString(),
+    });
+    assert.equal(stuckStart.status, 200);
+    const beforeClear = await (await call(`${apple}/status`, owner.token)).json() as any;
+    assert.equal(beforeClear.activeSession?.title, "踏步机");
+    const clearRes = await call(`${apple}/active-session`, owner.token, "DELETE");
+    assert.equal(clearRes.status, 200);
+    const afterClear = await (await call(`${apple}/status`, owner.token)).json() as any;
+    assert.equal(afterClear.activeSession, null);
   } finally {
     db.close();
   }

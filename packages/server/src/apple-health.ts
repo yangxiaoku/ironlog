@@ -262,6 +262,10 @@ export class AppleHealth {
   private readonly stmtGetWorkoutById: Stmt;
   private readonly stmtInsertWorkout: Stmt;
   private readonly stmtUpdateWorkoutData: Stmt;
+  private readonly stmtDeleteWorkout: Stmt;
+  private readonly stmtClearWorkoutReceipts: Stmt;
+  private readonly stmtUnlinkEventWorkout: Stmt;
+  private readonly stmtClearUserActiveEvents: Stmt;
   private readonly stmtInsertReceipt: Stmt;
 
   constructor(private db: Db) {
@@ -310,6 +314,12 @@ export class AppleHealth {
     this.stmtGetWorkoutById = db.prepare("SELECT data FROM apple_health_workouts WHERE user_id=? AND id=?");
     this.stmtInsertWorkout = db.prepare("INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)");
     this.stmtUpdateWorkoutData = db.prepare("UPDATE apple_health_workouts SET data=? WHERE id=?");
+    this.stmtDeleteWorkout = db.prepare("DELETE FROM apple_health_workouts WHERE user_id=? AND id=?");
+    this.stmtClearWorkoutReceipts = db.prepare("DELETE FROM apple_health_receipts WHERE user_id=? AND workout_id=?");
+    this.stmtUnlinkEventWorkout = db.prepare("UPDATE apple_health_events SET workout_id=NULL WHERE workout_id=?");
+    this.stmtClearUserActiveEvents = db.prepare(`UPDATE apple_health_events SET ended_at=?, workout_id=NULL
+      WHERE device_id IN (SELECT id FROM apple_health_devices WHERE user_id=?)
+        AND (ended_at IS NULL OR started_at > ended_at)`);
     this.stmtInsertReceipt = db.prepare("INSERT INTO apple_health_receipts VALUES (?, ?, ?, ?)");
   }
 
@@ -481,6 +491,22 @@ export class AppleHealth {
       this.stmtUpdateWorkoutData.run(JSON.stringify({ ...data, annotation }), id);
       return { ok: true };
     }).immediate();
+  }
+
+  deleteWorkout(userId: string, id: string) {
+    return this.db.transaction(() => {
+      const row = this.stmtGetWorkoutById.get(userId, id) as { data: string } | undefined;
+      if (!row) throw new DomainError("找不到对应的 Apple 训练", 404);
+      this.stmtClearWorkoutReceipts.run(userId, id);
+      this.stmtUnlinkEventWorkout.run(id);
+      this.stmtDeleteWorkout.run(userId, id);
+      return { ok: true as const };
+    }).immediate();
+  }
+
+  clearActiveSessions(userId: string) {
+    const info = this.stmtClearUserActiveEvents.run(new Date().toISOString(), userId) as { changes: number };
+    return { ok: true as const, cleared: info.changes };
   }
 
   ingest(device: Device, workout: AppleWorkoutInput, key?: string) {

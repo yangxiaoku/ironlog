@@ -16,6 +16,7 @@ export interface MeResponse {
 
 export interface AuthState {
   booted: boolean;
+  offlineBoot: boolean;
   userId: string;
   username: string;
   demo: boolean;
@@ -35,6 +36,40 @@ export interface AuthState {
 }
 
 const browserSession = { token: "", accountId: "" };
+const LAST_ACCOUNT_KEY = "ironlog-web-last-account";
+
+function readCachedAccountMeta(): MeResponse | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LAST_ACCOUNT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MeResponse | null;
+    if (!parsed || typeof parsed.userId !== "string" || !parsed.userId.trim()) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedAccountMeta(account: MeResponse | null): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    if (!account?.userId) {
+      localStorage.removeItem(LAST_ACCOUNT_KEY);
+      return;
+    }
+    localStorage.setItem(
+      LAST_ACCOUNT_KEY,
+      JSON.stringify({
+        userId: account.userId,
+        username: account.username ?? "",
+        appleHealthConnected: Boolean(account.appleHealthConnected),
+        isNewUser: Boolean(account.isNewUser),
+        aiReady: Boolean(account.aiReady),
+      }),
+    );
+  } catch {}
+}
 
 function initialAuthMode(): AuthMode {
   if (typeof localStorage === "undefined") return "register";
@@ -43,6 +78,7 @@ function initialAuthMode(): AuthMode {
 
 export const useAuthStore = create<AuthState>((set, get) => ({
   booted: false,
+  offlineBoot: false,
   userId: "",
   username: "",
   demo: false,
@@ -66,30 +102,42 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       isNewUser: Boolean(account.isNewUser),
       aiReady: Boolean(account.aiReady),
     });
+    if (!get().demo && account.userId) {
+      writeCachedAccountMeta(account);
+    }
     useUiStore.getState().refreshPendingCount(account.userId ?? "");
   },
 
   async bootstrap() {
     try {
       const account = await apiFetch<MeResponse>("/api/me", browserSession);
-      set({ demo: false, demoToken: "" });
+      set({ demo: false, demoToken: "", offlineBoot: false });
       get().applyAccountMeta(account);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
+        writeCachedAccountMeta(null);
         let loggedDemo = false;
         if (typeof location !== "undefined" && ["localhost", "127.0.0.1"].includes(location.hostname)) {
           try {
             const { token } = await apiFetch<{ token?: string }>("/auth/web-demo", browserSession);
             if (token) {
               const account = await apiFetch<MeResponse>("/api/me", { ...browserSession, token });
-              set({ demo: true, demoToken: token });
+              set({ demo: true, demoToken: token, offlineBoot: false });
               get().applyAccountMeta(account);
               loggedDemo = true;
             }
           } catch { /* Show the sign-in screen when there is no demo session. */ }
         }
         if (!loggedDemo) {
+          set({ offlineBoot: false });
           resetLocalWorkoutPreferences();
+        }
+      } else {
+        // Offline / network timeout cold start: preserve last signed-in user so local drafts & offline queue remain accessible.
+        const cached = readCachedAccountMeta();
+        if (cached?.userId) {
+          set({ demo: false, demoToken: "", offlineBoot: true });
+          get().applyAccountMeta(cached);
         }
       }
     } finally {
@@ -137,12 +185,14 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearUser() {
+    writeCachedAccountMeta(null);
     invalidateQueryCache();
     resetLocalWorkoutPreferences();
     useUiStore.getState().closeModalSilent();
     set({
       demo: false,
       demoToken: "",
+      offlineBoot: false,
       userId: "",
       username: "",
       appleHealthConnected: false,

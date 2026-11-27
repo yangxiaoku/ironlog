@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { triggerHaptic } from "../lib/haptics-audio";
-import { clearQueue, getOfflineStorage, readQueue } from "../lib/offline-queue";
+import { clearFailedMutations, getOfflineStorage, readQueue } from "../lib/offline-queue";
 import { prefetchWorkspace } from "../lib/prefetch";
 import { openCommandPalette } from "../lib/record-openers";
 import {
@@ -270,11 +270,16 @@ export function AppShell({ children }: { children: ReactNode }) {
                     openConfirm({
                       title: `${blocked.length} 条离线记录冲突或被拒绝`,
                       message: `错误详情：${firstMsg}。可保留并在服务端手动补录后清理这些冲突项。`,
-                      confirmLabel: "清空冲突条目",
+                      confirmLabel: "仅清空冲突条目",
                       onConfirm: () => {
-                        clearQueue(getOfflineStorage(), userId);
+                        const removed = clearFailedMutations(getOfflineStorage(), userId);
+                        const remaining = readQueue(getOfflineStorage(), userId).length;
                         refreshPendingCount(userId);
-                        notify("已清理冲突的离线记录");
+                        notify(
+                          remaining > 0
+                            ? `已清理 ${removed} 条冲突记录，保留 ${remaining} 条正常待同步记录`
+                            : "已清理冲突的离线记录",
+                        );
                       },
                     });
                   });

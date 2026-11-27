@@ -133,6 +133,8 @@ function formatSyncTime(iso: string | null | undefined): string {
 export function AppleSyncStatusCard() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
+  const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
   const [status, setStatus] = useState<AppleSyncStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -150,6 +152,21 @@ export function AppleSyncStatusCard() {
       setLoading(false);
       setRefreshing(false);
     }
+  };
+
+  const handleClearActiveSession = () => {
+    if (!status?.activeSession) return;
+    openConfirm({
+      title: "取消进行中的手表会话",
+      message: `确定要清除「${status.activeSession.title}」的进行中状态吗？如果手表实际已结束或误触开启，清除后不会影响已有训练记录。`,
+      confirmLabel: "取消会话",
+      onConfirm: async () => {
+        await apiFetch("/api/integrations/apple-health/active-session", { method: "DELETE" });
+        setStatus((prev) => (prev ? { ...prev, activeSession: null } : prev));
+        bumpDataEpoch();
+        notify("已清除进行中的 Apple Watch 会话");
+      },
+    });
   };
 
   useEffect(() => {
@@ -192,17 +209,31 @@ export function AppleSyncStatusCard() {
             "服务端同步状态"
           )}
         </strong>
-        <button
-          type="button"
-          className="quiet"
-          disabled={refreshing}
-          onClick={() => {
-            triggerHaptic("light");
-            void load(true);
-          }}
-        >
-          <Icon name="refresh" size={13} /> {refreshing ? "检查中…" : "刷新"}
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {activeSession ? (
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => {
+                triggerHaptic("light");
+                handleClearActiveSession();
+              }}
+            >
+              取消会话
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="quiet"
+            disabled={refreshing}
+            onClick={() => {
+              triggerHaptic("light");
+              void load(true);
+            }}
+          >
+            <Icon name="refresh" size={13} /> {refreshing ? "检查中…" : "刷新"}
+          </button>
+        </div>
       </div>
 
       {activeSession ? (
@@ -521,8 +552,21 @@ export function AppleWorkoutDetailsModal({
   back?: boolean;
   onOpenWorkout?: (workoutId: string) => void;
 }) {
+  const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const closeTopModal = useUiStore((s) => s.closeTopModal);
+  const openConfirm = useUiStore((s) => s.openConfirm);
+  const notify = useUiStore((s) => s.notify);
+
+  const [annotation, setAnnotation] = useState<AppleWorkoutAnnotation | undefined>(item.annotation);
+  const [editingNote, setEditingNote] = useState(false);
+  const [feelingDraft, setFeelingDraft] = useState<"easy" | "balanced" | "fatigued" | null>(
+    item.annotation?.feeling ?? null,
+  );
+  const [distanceDraft, setDistanceDraft] = useState(item.annotation?.distanceKm ?? "");
+  const [notesDraft, setNotesDraft] = useState(item.annotation?.notes ?? "");
+  const [savingNote, setSavingNote] = useState(false);
+
   const startDate = item.startedAt ? new Date(item.startedAt) : null;
-  const annotation = item.annotation;
   const endDate = item.endedAt ? new Date(item.endedAt) : null;
   const hasTimeWindow = Boolean(
     startDate && !Number.isNaN(startDate.getTime()) && endDate && !Number.isNaN(endDate.getTime()),
@@ -536,6 +580,50 @@ export function AppleWorkoutDetailsModal({
     ["训练距离", item.distanceMeters == null ? "—" : `${fmt(item.distanceMeters / 1000, 2)} km`],
     ["平均心率", item.heartRate?.avgBpm == null ? "—" : `${fmt(item.heartRate.avgBpm, 0)} bpm`],
   ];
+
+  const handleSaveAnnotation = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (savingNote) return;
+    setSavingNote(true);
+    try {
+      const payload = {
+        sessionId: annotation?.sessionId || `apple_${item.id}`,
+        notes: notesDraft.trim(),
+        feeling: feelingDraft,
+        distanceKm: distanceDraft.trim(),
+        lapSeconds: annotation?.lapSeconds ?? [],
+      };
+      await apiFetch(`/api/integrations/apple-health/workouts/${encodeURIComponent(item.id)}/annotation`, {
+        method: "PUT",
+        body: payload,
+      });
+      setAnnotation({ ...payload, updatedAt: new Date().toISOString() });
+      setEditingNote(false);
+      triggerHaptic("success");
+      bumpDataEpoch();
+      notify("训练备注与体感已保存");
+    } catch (err) {
+      notify((err as Error)?.message || "保存备注失败");
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
+  const handleDeleteAppleWorkout = () => {
+    openConfirm({
+      title: "删除 Apple 训练记录",
+      message: `确定要删除 ${item.date} 的「${item.title}」吗？此操作仅删除铁记内的同步档案，不会删除 iPhone 健康 App 里的原始记录。`,
+      confirmLabel: "删除记录",
+      onConfirm: async () => {
+        await apiFetch(`/api/integrations/apple-health/workouts/${encodeURIComponent(item.id)}`, {
+          method: "DELETE",
+        });
+        bumpDataEpoch();
+        closeTopModal();
+        notify("已删除 Apple 训练记录");
+      },
+    });
+  };
 
   return (
     <div className="dialog-form apple-workout">
@@ -565,9 +653,63 @@ export function AppleWorkoutDetailsModal({
           </div>
         ))}
       </div>
-      {annotation && (annotation.notes || annotation.feeling || annotation.distanceKm || annotation.lapSeconds.length > 0) ? (
+      {editingNote ? (
+        <form className="report-notes" onSubmit={(e) => void handleSaveAnnotation(e)} style={{ display: "grid", gap: 10 }}>
+          <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>本次体感</legend>
+            <div className="feeling-choices">
+              {(["easy", "balanced", "fatigued"] as const).map((k) => (
+                <label key={k}>
+                  <input
+                    type="radio"
+                    name="apple-feeling"
+                    checked={feelingDraft === k}
+                    onChange={() => {
+                      triggerHaptic("light");
+                      setFeelingDraft(k);
+                    }}
+                  />
+                  <span>{FEELINGS[k]}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          <label className="field">
+            <span>手记距离 / 坡度配速（选填，如 5.2 或 坡度12 速度4.5）</span>
+            <input
+              maxLength={80}
+              value={distanceDraft}
+              onChange={(e) => setDistanceDraft(e.target.value)}
+              placeholder="例如：5.2"
+            />
+          </label>
+          <label className="field">
+            <span>训练备注（选填）</span>
+            <textarea
+              rows={3}
+              maxLength={4000}
+              value={notesDraft}
+              onChange={(e) => setNotesDraft(e.target.value)}
+              placeholder="例如：心率稳定在 145 左右，跑完很轻松"
+            />
+          </label>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button type="button" className="quiet" onClick={() => setEditingNote(false)}>
+              取消
+            </button>
+            <button type="submit" className="primary-button" disabled={savingNote}>
+              {savingNote ? "保存中…" : "保存备注"}
+            </button>
+          </div>
+        </form>
+      ) : annotation && (annotation.notes || annotation.feeling || annotation.distanceKm || annotation.lapSeconds.length > 0) ? (
         <section className="report-notes">
-          <h3>训练记录</h3>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <h3 style={{ margin: 0 }}>训练记录</h3>
+            <button type="button" className="quiet" onClick={() => setEditingNote(true)}>
+              编辑备注
+            </button>
+          </div>
           {annotation.notes ? <p>{annotation.notes}</p> : null}
           {annotation.feeling ? <p>体感 · {FEELINGS[annotation.feeling]}</p> : null}
           {annotation.distanceKm ? <p>手记距离 · {annotation.distanceKm} km</p> : null}
@@ -577,14 +719,30 @@ export function AppleWorkoutDetailsModal({
             </ol>
           ) : null}
         </section>
-      ) : null}
-      {item.manualWorkoutId && onOpenWorkout ? (
-        <footer>
+      ) : (
+        <button
+          type="button"
+          className="secondary-button"
+          style={{ justifySelf: "start" }}
+          onClick={() => setEditingNote(true)}
+        >
+          <Icon name="plus" size={14} /> 写体感与备注
+        </button>
+      )}
+      <footer className="dialog-foot has-remove">
+        <button type="button" className="danger" onClick={handleDeleteAppleWorkout}>
+          删除此条记录
+        </button>
+        {item.manualWorkoutId && onOpenWorkout ? (
           <button type="button" className="secondary-button" onClick={() => onOpenWorkout(item.manualWorkoutId!)}>
             {back ? "返回训练复盘" : "查看关联训练"}
           </button>
-        </footer>
-      ) : null}
+        ) : (
+          <button type="button" className="secondary-button" onClick={closeTopModal}>
+            关闭
+          </button>
+        )}
+      </footer>
     </div>
   );
 }

@@ -13,7 +13,7 @@ import type { EquipmentKey, ProfileGoals, RecordEnvelope, WeightData } from "../
 import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
-import { WORKOUT_PREFS_EVENT, readWorkoutPreferences, writeWorkoutPreference } from "../lib/workout-helpers";
+import { PROFILE_VERSION_EVENT, WORKOUT_PREFS_EVENT, readWorkoutPreferences, writeWorkoutPreference } from "../lib/workout-helpers";
 
 const analyticsSections = [
   ["load", "负荷恢复"],
@@ -240,6 +240,7 @@ export function AnalyticsView() {
   const appleHealthConnected = useAuthStore((s) => s.appleHealthConnected);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
 
   const [period, setPeriod] = useState<AnalyticsPeriod>(30);
@@ -253,6 +254,7 @@ export function AnalyticsView() {
   const [dailyExpanded, setDailyExpanded] = useState(false);
   const [acwrActiveIdx, setAcwrActiveIdx] = useState<number | null>(null);
   const [busyAction, setBusyAction] = useState("");
+  const [targetGoalMode, setTargetGoalMode] = useState<"cut" | "maintain" | "bulk">("cut");
   const [nutritionChartMetric, setNutritionChartMetric] = useState<"calories" | "protein" | "waterMl">("calories");
   const [deloadMode, setDeloadMode] = useState(() => readWorkoutPreferences().deloadMode);
 
@@ -415,50 +417,76 @@ export function AnalyticsView() {
     }
   };
 
-  const handleApplyAppleTargets = async () => {
+  const computeTargetCalories = (
+    met: NonNullable<NonNullable<typeof body>["metabolic"]>,
+    mode: "cut" | "maintain" | "bulk",
+  ) => {
+    if (mode === "maintain") return Math.round((met.sedentaryTdeeKcal + met.trainingTdeeKcal) / 2);
+    if (mode === "bulk") return Math.round(met.trainingTdeeKcal + 250);
+    return met.recompCutTargetKcal;
+  };
+
+  const handleApplyAppleTargets = (mode: "cut" | "maintain" | "bulk" = targetGoalMode) => {
     const met = body?.metabolic;
     if (!met || !body || busyAction) return;
-    setBusyAction("applyTargets");
-    try {
-      const profRes = await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile");
-      const profile = profRes.profile;
-      const calories = met.recompCutTargetKcal;
-      const protein = met.proteinTargetG;
-      const fat = Math.max(40, Math.round((body.weightKg ?? 75) * 0.8));
-      const carbs = Math.max(50, Math.round((calories - protein * 4 - fat * 9) / 4));
-      const targetWeight = body.recomposition?.milestones?.[0]?.targetWeightKg ?? profile.targetWeight ?? null;
-      const nextEnergyProfile = profile.energyProfile
-        ? {
-            ...profile.energyProfile,
-            heightCm: body.heightCm ?? profile.energyProfile.heightCm,
-            weightKg: body.weightKg ?? profile.energyProfile.weightKg,
-            weightDate: body.measuredAt?.weightDate ?? profile.energyProfile.weightDate,
-          }
-        : null;
+    const calories = computeTargetCalories(met, mode);
+    const protein = met.proteinTargetG;
+    const fat = Math.max(40, Math.round((body.weightKg ?? 75) * 0.8));
+    const carbs = Math.max(50, Math.round((calories - protein * 4 - fat * 9) / 4));
+    const modeLabel = mode === "cut" ? "减脂缺口" : mode === "bulk" ? "增肌盈余" : "维持体重";
 
-      await apiFetch("/api/web/profile", {
-        method: "PUT",
-        body: {
-          calories,
-          protein,
-          carbs,
-          fat,
-          targetWeight,
-          daysPerWeek: profile.daysPerWeek,
-          restSeconds: profile.restSeconds,
-          equipment: (profile.equipment ?? []) as EquipmentKey[],
-          energyProfile: nextEnergyProfile,
-          version: profRes.version,
-          opId: crypto.randomUUID(),
-        },
-      });
-      bumpDataEpoch();
-      notify(`已同步目标：热量 ${calories} kcal · 蛋白 ${protein} g · 碳水 ${carbs} g · 脂肪 ${fat} g`);
-    } catch (err) {
-      notify((err as Error)?.message || "同步饮食目标失败");
-    } finally {
-      setBusyAction("");
-    }
+    openConfirm({
+      title: `确认同步饮食目标（${modeLabel}）`,
+      message: `将更新每日饮食目标为：热量 ${calories} kcal · 蛋白 ${protein} g · 碳水 ${carbs} g · 脂肪 ${fat} g（保留你已设定的目标体重不被覆盖）。确认应用吗？`,
+      confirmLabel: "确认同步",
+      onConfirm: async () => {
+        setBusyAction("applyTargets");
+        try {
+          const profRes = await apiFetch<{ version: number; profile: ProfileGoals }>("/api/web/profile");
+          const profile = profRes.profile;
+          const targetWeight =
+            profile.targetWeight != null
+              ? profile.targetWeight
+              : mode === "cut"
+                ? (body.recomposition?.milestones?.[0]?.targetWeightKg ?? null)
+                : null;
+          const nextEnergyProfile = profile.energyProfile
+            ? {
+                ...profile.energyProfile,
+                heightCm: body.heightCm ?? profile.energyProfile.heightCm,
+                weightKg: body.weightKg ?? profile.energyProfile.weightKg,
+                weightDate: body.measuredAt?.weightDate ?? profile.energyProfile.weightDate,
+              }
+            : null;
+
+          const saved = await apiFetch<{ version?: number }>("/api/web/profile", {
+            method: "PUT",
+            body: {
+              calories,
+              protein,
+              carbs,
+              fat,
+              targetWeight,
+              daysPerWeek: profile.daysPerWeek,
+              restSeconds: profile.restSeconds,
+              equipment: (profile.equipment ?? []) as EquipmentKey[],
+              energyProfile: nextEnergyProfile,
+              version: profRes.version,
+              opId: crypto.randomUUID(),
+            },
+          });
+          if (typeof saved?.version === "number" && typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: saved.version }));
+          }
+          bumpDataEpoch();
+          notify(`已同步${modeLabel}目标：热量 ${calories} kcal · 蛋白 ${protein} g · 碳水 ${carbs} g · 脂肪 ${fat} g`);
+        } catch (err) {
+          notify((err as Error)?.message || "同步饮食目标失败");
+        } finally {
+          setBusyAction("");
+        }
+      },
+    });
   };
 
   const handleExportCsv = () => {
@@ -2231,9 +2259,11 @@ export function AnalyticsView() {
                           </strong>
                         </div>
                         <div>
-                          <span>建议减脂热量</span>
+                          <span>
+                            {targetGoalMode === "cut" ? "建议减脂热量" : targetGoalMode === "bulk" ? "建议增肌热量" : "建议维持热量"}
+                          </span>
                           <strong>
-                            ~{fmt(body.metabolic.recompCutTargetKcal, 0)} <small>kcal</small>
+                            ~{fmt(computeTargetCalories(body.metabolic, targetGoalMode), 0)} <small>kcal</small>
                           </strong>
                         </div>
                         <div>
@@ -2243,11 +2273,29 @@ export function AnalyticsView() {
                           </strong>
                         </div>
                       </div>
+                      <div className="segments" role="group" aria-label="同步目标模式" style={{ marginTop: 8, marginBottom: 8 }}>
+                        {(
+                          [
+                            ["cut", "减脂"],
+                            ["maintain", "维持"],
+                            ["bulk", "增肌"],
+                          ] as const
+                        ).map(([mode, lbl]) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            aria-pressed={targetGoalMode === mode}
+                            onClick={() => setTargetGoalMode(mode)}
+                          >
+                            {lbl}
+                          </button>
+                        ))}
+                      </div>
                       <button
                         type="button"
                         className="secondary-button apple-apply-btn"
                         disabled={busyAction === "applyTargets"}
-                        onClick={() => void handleApplyAppleTargets()}
+                        onClick={() => handleApplyAppleTargets(targetGoalMode)}
                       >
                         <Icon name="check" size={14} /> 同步热量与蛋白到饮食目标
                       </button>

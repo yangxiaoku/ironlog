@@ -381,10 +381,13 @@ export function openWeightEditor({
   });
 }
 
-export function openMeasurementModal(existing: MeasurementEntry | null = null): void {
+export function openMeasurementModal(
+  existing: MeasurementEntry | null = null,
+  history: MeasurementEntry[] = [],
+): void {
   useUiStore.getState().openModal({
     title: existing ? `编辑 ${shortDate(existing.date)} 围度` : "记录身体围度",
-    content: <MeasurementModal existing={existing} />,
+    content: <MeasurementModal existing={existing} history={history} />,
   });
 }
 

@@ -65,7 +65,7 @@ export interface DayScheduleDetail {
     }>;
   } | null;
   weekForecast?: { conflicts?: string[] } | null;
-  override?: unknown;
+  override?: { version?: number } | null;
 }
 
 function computeWorkoutSummary(data: WorkoutData, catalogueMap: Map<string, CatalogueExercise>) {
@@ -252,9 +252,14 @@ export function DayDossier({
 
   const handleSetRest = async () => {
     try {
+      let baseVersion = typeof daySched?.override?.version === "number" ? daySched.override.version : null;
+      if (baseVersion === null) {
+        const fresh = await apiFetch<DayScheduleDetail>(`/api/web/schedule/${encodeURIComponent(date)}`).catch(() => null);
+        baseVersion = typeof fresh?.override?.version === "number" ? fresh.override.version : 0;
+      }
       await apiFetch(`/api/web/schedule/${encodeURIComponent(date)}`, {
         method: "PUT",
-        body: { mode: "rest", title: "休息日", notes: "", exercises: [], baseVersion: 0 },
+        body: { mode: "rest", title: "休息日", notes: "", exercises: [], baseVersion },
       });
       bumpDataEpoch();
       notify(`${shortDate(date)} 已设为休息日`);

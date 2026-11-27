@@ -76,6 +76,7 @@ export function WeightView() {
   const latestRecord = records[0];
   const latest = latestRecord?.data;
   const todayRecord = records.find((r) => r.id === `weight_${todayKey}`);
+  const todayMeasurement = useMemo(() => measurements.find((m) => m.date === todayKey) ?? null, [measurements, todayKey]);
   const weightGoal = goals?.targetWeight ?? null;
   const heightCm = goals?.energyProfile?.heightCm ?? null;
 
@@ -145,8 +146,8 @@ export function WeightView() {
               : "记录腰围、胸围、臂围、大腿围与臀围（cm）"}
           </p>
         </div>
-        <button type="button" className="secondary-button" onClick={() => openMeasurementModal(null)}>
-          <Icon name="plus" size={15} /> 记录围度
+        <button type="button" className="secondary-button" onClick={() => openMeasurementModal(todayMeasurement, measurements)}>
+          <Icon name="plus" size={15} /> {todayMeasurement ? "更新今日围度" : "记录围度"}
         </button>
       </header>
 
@@ -220,7 +221,7 @@ export function WeightView() {
                   key={m.date}
                   type="button"
                   className="record-line measure-line"
-                  onClick={() => openMeasurementModal(m)}
+                  onClick={() => openMeasurementModal(m, measurements)}
                 >
                   <time dateTime={m.date}>{shortDate(m.date)}</time>
                   <span>
@@ -255,8 +256,8 @@ export function WeightView() {
         view="weight"
         controls={
           <div className="heading-actions">
-            <button type="button" className="secondary-button" onClick={() => openMeasurementModal(null)}>
-              <Icon name="plus" size={16} /> 记围度
+            <button type="button" className="secondary-button" onClick={() => openMeasurementModal(todayMeasurement, measurements)}>
+              <Icon name="plus" size={16} /> {todayMeasurement ? "更新今日围度" : "记围度"}
             </button>
             <button
               type="button"

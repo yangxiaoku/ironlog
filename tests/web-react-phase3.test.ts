@@ -26,7 +26,7 @@ import {
 } from "../packages/web/src/lib/shortcut-gen.ts";
 import { useAuthStore } from "../packages/web/src/store/useAuthStore.ts";
 import { useUiStore } from "../packages/web/src/store/useUiStore.ts";
-import { enqueueMutation, readQueue } from "../packages/web/src/lib/offline-queue.ts";
+import { clearFailedMutations, enqueueMutation, flushQueue, readQueue } from "../packages/web/src/lib/offline-queue.ts";
 import { getAppleCardioPreset } from "../packages/web/src/lib/apple-fitness.ts";
 import {
   clearCardioSession,
@@ -1061,4 +1061,76 @@ test("退出失败保留登录状态，成功回执后才清理", async () => {
     globalThis.fetch = originalFetch;
     useAuthStore.setState(previousAuth);
   }
+});
+
+test("Batch 1 P0 fixes: clearFailedMutations preserves healthy items, offline cold-start preserves session, and UI guards exist", async () => {
+  const storeMap = new Map<string, string>();
+  const mockStorage: Storage = {
+    get length() { return storeMap.size; },
+    clear: () => storeMap.clear(),
+    getItem: (k: string) => storeMap.get(k) ?? null,
+    key: (i: number) => [...storeMap.keys()][i] ?? null,
+    removeItem: (k: string) => { storeMap.delete(k); },
+    setItem: (k: string, v: string) => { storeMap.set(k, v); },
+  };
+  const uid = "batch1-user";
+  enqueueMutation(mockStorage, uid, { opId: "op-bad", path: "/api/records", body: { id: "1" }, label: "冲突项" });
+  enqueueMutation(mockStorage, uid, { opId: "op-good", path: "/api/records", body: { id: "2" }, label: "正常项" });
+  await flushQueue(mockStorage, uid, async (_path, opts) => {
+    const id = (opts.body as { id?: string })?.id;
+    if (id === "1") throw Object.assign(new Error("版本冲突"), { status: 409 });
+    throw new TypeError("offline");
+  });
+  const before = readQueue(mockStorage, uid);
+  assert.equal(before.length, 2);
+  assert.ok(before.find((i) => i.opId === "op-bad")?.failure);
+  assert.ok(!before.find((i) => i.opId === "op-good")?.failure);
+
+  const removed = clearFailedMutations(mockStorage, uid);
+  assert.equal(removed, 1);
+  const after = readQueue(mockStorage, uid);
+  assert.deepEqual(after.map((i) => i.opId), ["op-good"]);
+
+  // Offline cold-start preserves cached session instead of kicking user to AuthScreen
+  const oldStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const originalFetch = globalThis.fetch;
+  const previousAuth = useAuthStore.getState();
+  Object.defineProperty(globalThis, "localStorage", { configurable: true, writable: true, value: mockStorage });
+  try {
+    useAuthStore.setState({ demo: false, userId: "", username: "", booted: false, offlineBoot: false });
+    useAuthStore.getState().applyAccountMeta({ userId: "offline-u1", username: "gymrat", appleHealthConnected: true });
+    useAuthStore.setState({ userId: "", username: "", booted: false, offlineBoot: false });
+    globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+    await useAuthStore.getState().bootstrap();
+    assert.equal(useAuthStore.getState().userId, "offline-u1");
+    assert.equal(useAuthStore.getState().offlineBoot, true);
+    assert.equal(useAuthStore.getState().booted, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    useAuthStore.setState(previousAuth);
+    if (oldStorage) Object.defineProperty(globalThis, "localStorage", oldStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  }
+
+  // Contract checks for remaining Batch 1 fixes
+  const weightView = readFileSync(resolve(process.cwd(), "packages/web/src/views/WeightView.tsx"), "utf8");
+  const measureModal = readFileSync(resolve(process.cwd(), "packages/web/src/components/weight/MeasurementModal.tsx"), "utf8");
+  const dayDossier = readFileSync(resolve(process.cwd(), "packages/web/src/components/calendar/DayDossier.tsx"), "utf8");
+  const overviewView = readFileSync(resolve(process.cwd(), "packages/web/src/views/OverviewView.tsx"), "utf8");
+  const analyticsView = readFileSync(resolve(process.cwd(), "packages/web/src/views/AnalyticsView.tsx"), "utf8");
+  const appleModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/apple/AppleHealthModals.tsx"), "utf8");
+  const appShell = readFileSync(resolve(process.cwd(), "packages/web/src/components/AppShell.tsx"), "utf8");
+
+  assert.match(weightView, /todayMeasurement/);
+  assert.match(measureModal, /handleDateChange/);
+  assert.match(measureModal, /已自动载入/);
+  assert.doesNotMatch(dayDossier, /baseVersion:\s*0\s*\}/);
+  assert.match(dayDossier, /override\?\.version/);
+  assert.match(appShell, /clearFailedMutations/);
+  assert.match(overviewView, /latestAppleToday/);
+  assert.match(analyticsView, /targetGoalMode/);
+  assert.match(analyticsView, /确认同步饮食目标/);
+  assert.match(appleModals, /\/api\/integrations\/apple-health\/active-session/);
+  assert.match(appleModals, /删除此条记录/);
+  assert.match(appleModals, /写体感与备注/);
 });

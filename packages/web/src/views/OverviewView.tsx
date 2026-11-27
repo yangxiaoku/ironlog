@@ -52,6 +52,7 @@ export function OverviewView() {
 
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
   const navigate = useUiStore((s) => s.navigate);
 
@@ -245,6 +246,11 @@ export function OverviewView() {
     const todayRecent = stats.recent.find((r) => r.date === todayKey);
     if (todayRecent) {
       openWorkoutReport({ workoutId: todayRecent.id, goals: stats.goals });
+      return;
+    }
+    const latestAppleToday = appleAgenda.at(-1);
+    if (latestAppleToday) {
+      openAppleWorkoutDetailsModal({ item: latestAppleToday });
       return;
     }
     openWorkoutEditor({ goals: stats.goals });
@@ -488,16 +494,37 @@ export function OverviewView() {
             <strong>Apple Watch 训练进行中 · {appleStatus.activeSession.title}</strong>
             <small>已进行约 {appleStatus.activeSession.elapsedMinutes} 分钟</small>
           </span>
-          <button
-            type="button"
-            className="quiet"
-            onClick={() => {
-              bumpDataEpoch();
-              notify("已刷新同步状态");
-            }}
-          >
-            <Icon name="refresh" size={13} /> 刷新
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => {
+                openConfirm({
+                  title: "取消进行中的手表会话",
+                  message: `确定要清除「${appleStatus.activeSession!.title}」的进行中状态吗？`,
+                  confirmLabel: "取消会话",
+                  onConfirm: async () => {
+                    await apiFetch("/api/integrations/apple-health/active-session", { method: "DELETE" });
+                    setAppleStatus((prev) => (prev ? { ...prev, activeSession: null } : prev));
+                    bumpDataEpoch();
+                    notify("已清除进行中的 Apple Watch 会话");
+                  },
+                });
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => {
+                bumpDataEpoch();
+                notify("已刷新同步状态");
+              }}
+            >
+              <Icon name="refresh" size={13} /> 刷新
+            </button>
+          </div>
         </div>
       ) : null}
 

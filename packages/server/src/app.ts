@@ -680,6 +680,10 @@ export function createApp(
   app.put(`${apple}/workouts/:id/annotation`, async (c) =>
     c.json(health.saveWorkoutAnnotation(c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")),
       appleWorkoutAnnotationInput.parse(await c.req.json()))));
+  app.delete(`${apple}/workouts/:id`, (c) =>
+    c.json(health.deleteWorkout(c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")))));
+  app.delete(`${apple}/active-session`, (c) =>
+    c.json(health.clearActiveSessions(c.get("userId"))));
   app.post(`${apple}/session-start`, async (c) =>
     c.json(health.recordWebSessionStart(c.get("userId"), appleWebSessionStartInput.parse(await c.req.json()))));
   app.get(`${healthExport}/config`, (c) =>

@@ -66,6 +66,20 @@ export function clearQueue(storage: QueueStorage | null | undefined, userId: str
   } catch {}
 }
 
+export function clearFailedMutations(storage: QueueStorage | null | undefined, userId: string): number {
+  const key = queueStorageKey(userId);
+  if (!storage || !key) return 0;
+  try {
+    const current = loadQueue(storage, userId);
+    const kept = current.filter((item) => !item.failure);
+    const removed = current.length - kept.length;
+    if (removed > 0) writeQueue(storage, userId, kept);
+    return removed;
+  } catch {
+    return 0;
+  }
+}
+
 export function enqueueMutation(
   storage: QueueStorage | null | undefined,
   userId: string,
