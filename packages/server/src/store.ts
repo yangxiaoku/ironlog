@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   appleWorkoutAnnotationSchema,
   entityKindSchema,
@@ -190,6 +190,7 @@ export class Store {
   private readonly stmtExportPlanVersions: Stmt;
   private readonly stmtExportExerciseNotes: Stmt;
   private readonly stmtExportMeasurements: Stmt;
+  private readonly stmtExportProgressPhotos: Stmt;
   private readonly stmtExportAppleDaily: Stmt;
   private readonly stmtExportAppleWorkouts: Stmt;
 
@@ -237,6 +238,10 @@ export class Store {
               thigh_cm AS thighCm, hip_cm AS hipCm, notes, updated_at AS updatedAt
        FROM body_measurements WHERE user_id=? ORDER BY date DESC`,
     );
+    this.stmtExportProgressPhotos = db.prepare(
+      `SELECT id, date, pose, mime, image_data AS imageData, note, created_at AS createdAt
+       FROM progress_photos WHERE user_id=? ORDER BY date DESC, created_at DESC`,
+    );
     this.stmtExportAppleDaily = db.prepare("SELECT date, updated_at AS updatedAt, data FROM apple_health_daily WHERE user_id=? ORDER BY date DESC");
     this.stmtExportAppleWorkouts = db.prepare(
       "SELECT id, identity_key AS identityKey, received_at AS receivedAt, ended_at AS endedAt, data FROM apple_health_workouts WHERE user_id=? ORDER BY ended_at DESC, id",
@@ -253,6 +258,11 @@ export class Store {
     kind: EntityKind,
     includeDeleted = false,
   ): StoredRecord[] {
+    const stmt = includeDeleted ? this.stmtListAll : this.stmtListActive;
+    // Never read or write listCache inside an active SQLite transaction so rolled-back rows can never leak.
+    if (this.db.inTransaction) {
+      return (stmt.all(userId, kind) as Row[]).map(decode);
+    }
     const { seq } = this.stmtLatestSeq.get(userId) as { seq: number };
     const key = `${userId}\0${kind}\0${includeDeleted ? 1 : 0}`;
     const cached = this.listCache.get(key);
@@ -261,7 +271,6 @@ export class Store {
       this.listCache.set(key, cached);
       return cached.records.slice();
     }
-    const stmt = includeDeleted ? this.stmtListAll : this.stmtListActive;
     const records = (stmt.all(userId, kind) as Row[]).map(decode);
     if (this.listCache.size >= 128) this.listCache.delete(this.listCache.keys().next().value!);
     this.listCache.set(key, { seq, records });
@@ -385,6 +394,7 @@ export class Store {
     id: string,
     data: unknown,
     deleted: boolean,
+    allowArchivedExercises = false,
   ) {
     if (kind === "exercise" && serverCatalogueMap.has(id))
       throw new DomainError("自定义动作 ID 与内置动作重复");
@@ -395,11 +405,11 @@ export class Store {
     }
     if (deleted) return;
     if (kind === "plan" || kind === "template") {
-      this.validatePlan(data as Plan, this.catalogueMap(userId));
+      this.validatePlan(data as Plan, this.catalogueMap(userId, allowArchivedExercises));
     } else if (kind === "scheduledDay" && (data as ScheduledDay).mode === "workout") {
-      this.validatePlan({ exercises: (data as ScheduledDay).exercises }, this.catalogueMap(userId));
+      this.validatePlan({ exercises: (data as ScheduledDay).exercises }, this.catalogueMap(userId, allowArchivedExercises));
     } else if (kind === "workout") {
-      const catalogue = this.catalogueMap(userId);
+      const catalogue = this.catalogueMap(userId, allowArchivedExercises);
       if (
         (data as Workout).exercises.some(
           (item) => !catalogue.has(item.exerciseId) && !item.snapshot,
@@ -408,7 +418,7 @@ export class Store {
         throw new DomainError("训练包含未知动作");
     } else if (
       kind === "favorite" &&
-      !this.catalogueMap(userId).has((data as { exerciseId: string }).exerciseId)
+      !this.catalogueMap(userId, allowArchivedExercises).has((data as { exerciseId: string }).exerciseId)
     ) {
       throw new DomainError("收藏动作不存在");
     }
@@ -515,15 +525,40 @@ export class Store {
     })();
   }
 
-  createDraft(userId: string, plan: Plan) {
-    return this.mutate(userId, {
-      opId: randomUUID(),
-      id: randomUUID(),
-      kind: "plan",
-      baseVersion: 0,
-      deleted: false,
-      data: plan,
-    });
+  createDraft(userId: string, plan: Plan, opId?: string) {
+    return this.db.transaction(() => {
+      const cleanOpId = opId?.trim() || undefined;
+      if (cleanOpId) {
+        const opKey = `draft:${cleanOpId}`;
+        const parsedPlan = planSchema.parse(plan);
+        const fingerprint = JSON.stringify(parsedPlan);
+        const existingOp = this.operation(userId, opKey);
+        if (existingOp) {
+          if (existingOp.request !== fingerprint) {
+            throw new DomainError("操作 ID 已用于其他计划草稿", 409);
+          }
+          return JSON.parse(existingOp.result) as MutationResult;
+        }
+        const res = this.mutate(userId, {
+          opId: randomUUID(),
+          id: randomUUID(),
+          kind: "plan",
+          baseVersion: 0,
+          deleted: false,
+          data: parsedPlan,
+        });
+        this.stmtInsertOp.run(userId, opKey, fingerprint, JSON.stringify(res));
+        return res;
+      }
+      return this.mutate(userId, {
+        opId: randomUUID(),
+        id: randomUUID(),
+        kind: "plan",
+        baseVersion: 0,
+        deleted: false,
+        data: plan,
+      });
+    }).immediate();
   }
 
   export(userId: string) {
@@ -549,6 +584,15 @@ export class Store {
       notes: string;
       updatedAt: string;
     }[];
+    const progressPhotos = this.stmtExportProgressPhotos.all(userId) as {
+      id: string;
+      date: string;
+      pose: "front" | "side" | "back" | "free";
+      mime: string;
+      imageData: string;
+      note: string;
+      createdAt: string;
+    }[];
     const appleDailyRows = this.stmtExportAppleDaily.all(userId) as {
       date: string;
       updatedAt: string;
@@ -556,13 +600,21 @@ export class Store {
     }[];
     const appleHealthDaily = appleDailyRows.map((row) => {
       const parsed = JSON.parse(row.data) as Record<string, unknown>;
-      const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations, ...rest } = parsed;
+      const { syncedSleepObservations, syncedWeightValue, syncedBodyFatValue, ...rest } = parsed;
       const observations = Array.isArray(syncedSleepObservations) ? syncedSleepObservations.flatMap((sample) => {
         const parsed = sleepObservationsSchema.element.safeParse(sample);
         return parsed.success ? [parsed.data] : [];
       }) : [];
+      const appleBodySync =
+        typeof syncedWeightValue === "number" || typeof syncedBodyFatValue === "number"
+          ? {
+              ...(typeof syncedWeightValue === "number" ? { weightKg: syncedWeightValue } : {}),
+              ...(typeof syncedBodyFatValue === "number" ? { bodyFatPct: syncedBodyFatValue } : {}),
+            }
+          : undefined;
       return {
         ...rest, date: row.date, updatedAt: row.updatedAt,
+        ...(appleBodySync ? { appleBodySync } : {}),
         ...(observations.length ? { sleepObservations: observations } : {}),
       };
     });
@@ -591,6 +643,7 @@ export class Store {
       activePlan: this.planSchedule(userId),
       exerciseNotes,
       bodyMeasurements,
+      progressPhotos,
       appleHealthDaily,
       appleHealthWorkouts,
     };
@@ -599,10 +652,11 @@ export class Store {
   restoreBackup(
     userId: string,
     rawPayload: unknown,
-    options: { mode?: "preview" | "commit"; strategy?: "merge" | "replace" } = {},
+    options: { mode?: "preview" | "commit"; strategy?: "merge" | "replace"; opId?: string } = {},
   ) {
     const mode = options.mode ?? "preview";
     const strategy = options.strategy ?? "merge";
+    const opId = options.opId?.trim() || undefined;
     let parsed: unknown = rawPayload;
     if (typeof rawPayload === "string") {
       try {
@@ -637,6 +691,8 @@ export class Store {
       : null;
     const rawNotes = Array.isArray(parsedObj.exerciseNotes) ? (parsedObj.exerciseNotes as Record<string, unknown>[]) : [];
     const rawMeasurements = Array.isArray(parsedObj.bodyMeasurements) ? (parsedObj.bodyMeasurements as Record<string, unknown>[]) : [];
+    const hasProgressPhotosArray = Array.isArray(parsedObj.progressPhotos);
+    const rawProgressPhotos = hasProgressPhotosArray ? (parsedObj.progressPhotos as Record<string, unknown>[]) : [];
     const rawAppleDaily = Array.isArray(parsedObj.appleHealthDaily) ? (parsedObj.appleHealthDaily as Record<string, unknown>[]) : [];
     const rawAppleWorkouts = Array.isArray(parsedObj.appleHealthWorkouts) ? (parsedObj.appleHealthWorkouts as Record<string, unknown>[]) : [];
 
@@ -658,13 +714,155 @@ export class Store {
       if (!entry && strictPlanRestore) throw new DomainError("备份中有无效的计划历史，无法覆盖恢复", 400);
       return entry ? [entry] : [];
     }) : [];
-    const dailyHealthRows = rawAppleDaily.flatMap((item) => {
-      if (typeof item?.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(item.date)) return [];
-      const { date, updatedAt, sleepObservations, syncedSleepObservations: _s,
-        syncedWeightValue: _w, syncedBodyFatValue: _f, ...metrics } = item;
+
+    const isValidYmd = (v: unknown): v is string => {
+      if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+      const ms = Date.parse(`${v}T00:00:00Z`);
+      return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === v;
+    };
+
+    // Pre-validate ALL auxiliary categories before preview or commit (#53) so invalid rows are never silently skipped after deletion
+    const validPlanVersions: Array<{ id: string; version: number; data: Plan; createdAt: string }> = [];
+    rawPlanVersions.forEach((pv, idx) => {
+      if (!pv || typeof pv !== "object") {
+        if (strategy === "replace") throw new DomainError(`备份中第 ${idx + 1} 条计划版本无效，无法覆盖恢复`, 400);
+        return;
+      }
+      const pid = typeof pv.id === "string" ? pv.id.trim() : "";
+      const pver = typeof pv.version === "number" && Number.isSafeInteger(pv.version) && pv.version >= 1 ? pv.version : NaN;
+      const pcreated = typeof pv.created_at === "string"
+        ? pv.created_at
+        : typeof pv.createdAt === "string" ? pv.createdAt : now;
+      const parsedPlan = planSchema.safeParse(pv.data);
+      if (!pid || !Number.isFinite(pver) || !parsedPlan.success) {
+        if (strategy === "replace") throw new DomainError(`备份中第 ${idx + 1} 条计划版本无效，无法覆盖恢复`, 400);
+        return;
+      }
+      validPlanVersions.push({ id: pid, version: pver, data: parsedPlan.data, createdAt: pcreated });
+    });
+
+    const validNotes: Array<{ exerciseId: string; note: string; updatedAt: string | null }> = [];
+    rawNotes.forEach((noteItem, idx) => {
+      const exId = typeof noteItem?.exerciseId === "string" ? noteItem.exerciseId.trim() : "";
+      const note = typeof noteItem?.note === "string" ? noteItem.note : "";
+      if (!exId || !note) {
+        if (strategy === "replace") throw new DomainError(`备份中第 ${idx + 1} 条动作备忘无效，无法覆盖恢复`, 400);
+        return;
+      }
+      validNotes.push({ exerciseId: exId, note, updatedAt: backupInstant(noteItem?.updatedAt) });
+    });
+
+    const numInRangeOrNull = (v: unknown, min: number, max: number): { ok: boolean; value: number | null } => {
+      if (v === null || v === undefined) return { ok: true, value: null };
+      if (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max) return { ok: true, value: v };
+      return { ok: false, value: null };
+    };
+    const validMeasurements: Array<{
+      date: string;
+      waistCm: number | null;
+      chestCm: number | null;
+      armCm: number | null;
+      thighCm: number | null;
+      hipCm: number | null;
+      notes: string;
+      updatedAt: string | null;
+    }> = [];
+    rawMeasurements.forEach((m, idx) => {
+      const date = isValidYmd(m?.date) ? m.date : "";
+      const waist = numInRangeOrNull(m?.waistCm, 30, 250);
+      const chest = numInRangeOrNull(m?.chestCm, 40, 250);
+      const arm = numInRangeOrNull(m?.armCm, 15, 100);
+      const thigh = numInRangeOrNull(m?.thighCm, 25, 150);
+      const hip = numInRangeOrNull(m?.hipCm, 40, 250);
+      const hasAny = [waist.value, chest.value, arm.value, thigh.value, hip.value].some((v) => v != null);
+      if (!date || !waist.ok || !chest.ok || !arm.ok || !thigh.ok || !hip.ok || !hasAny) {
+        if (strategy === "replace") {
+          throw new DomainError(`备份中第 ${idx + 1} 条身体围度无效（日期或数值异常），已中止覆盖恢复`, 400);
+        }
+        return;
+      }
+      validMeasurements.push({
+        date,
+        waistCm: waist.value,
+        chestCm: chest.value,
+        armCm: arm.value,
+        thighCm: thigh.value,
+        hipCm: hip.value,
+        notes: typeof m.notes === "string" ? m.notes : "",
+        updatedAt: backupInstant(m.updatedAt),
+      });
+    });
+
+    const VALID_POSES = new Set(["front", "side", "back", "free"]);
+    const VALID_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
+    const validProgressPhotos: Array<{
+      id: string;
+      date: string;
+      pose: "front" | "side" | "back" | "free";
+      mime: string;
+      imageData: string;
+      note: string;
+      createdAt: string;
+    }> = [];
+    rawProgressPhotos.forEach((p, idx) => {
+      const pid = typeof p?.id === "string" ? p.id.trim() : "";
+      const date = isValidYmd(p?.date) ? p.date : "";
+      const pose = typeof p?.pose === "string" && VALID_POSES.has(p.pose) ? (p.pose as "front" | "side" | "back" | "free") : null;
+      const mime = typeof p?.mime === "string" && VALID_MIMES.has(p.mime) ? p.mime : null;
+      const imageData =
+        typeof p?.imageData === "string" &&
+        p.imageData.length >= 32 &&
+        p.imageData.length <= 1_000_000 &&
+        /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(p.imageData)
+          ? p.imageData
+          : null;
+      if (!pid || !date || !pose || !mime || !imageData) {
+        if (strategy === "replace") {
+          throw new DomainError(`备份中第 ${idx + 1} 张体态照片无效，已中止覆盖恢复`, 400);
+        }
+        return;
+      }
+      validProgressPhotos.push({
+        id: pid,
+        date,
+        pose,
+        mime,
+        imageData,
+        note: typeof p.note === "string" ? p.note.slice(0, 200) : "",
+        createdAt: backupInstant(p.createdAt) ?? now,
+      });
+    });
+
+    const dailyHealthRows = rawAppleDaily.flatMap((item, idx) => {
+      if (!isValidYmd(item?.date)) {
+        if (strategy === "replace") throw new DomainError(`备份中第 ${idx + 1} 条 Apple 健康日常记录日期无效，无法覆盖恢复`, 400);
+        return [];
+      }
+      const { date, updatedAt, sleepObservations, syncedSleepObservations: _s, appleBodySync, ...rawMetrics } = item;
+      const metrics: Record<string, unknown> = { ...rawMetrics };
+      if (appleBodySync && typeof appleBodySync === "object") {
+        const bs = appleBodySync as Record<string, unknown>;
+        if (typeof bs.weightKg === "number" && Number.isFinite(bs.weightKg) && metrics.syncedWeightValue == null) {
+          metrics.syncedWeightValue = bs.weightKg;
+        }
+        if (typeof bs.bodyFatPct === "number" && Number.isFinite(bs.bodyFatPct) && metrics.syncedBodyFatValue == null) {
+          metrics.syncedBodyFatValue = bs.bodyFatPct;
+        }
+      }
       const observations = sleepObservationsSchema.safeParse(sleepObservations ?? []);
       if (!observations.success) throw new DomainError(`备份中 ${date} 的睡眠样本格式无效`, 400);
       return [{ date, updatedAt: backupInstant(updatedAt), metrics, observations: observations.data }];
+    });
+
+    const validAppleWorkouts: Record<string, unknown>[] = [];
+    rawAppleWorkouts.forEach((w, idx) => {
+      const endedAt = backupInstant(w?.endedAt);
+      const startedAt = backupInstant(w?.startedAt);
+      if (!w || typeof w !== "object" || !endedAt || !startedAt || startedAt >= endedAt || typeof w.activityType !== "string" || !w.activityType.trim()) {
+        if (strategy === "replace") throw new DomainError(`备份中第 ${idx + 1} 条 Apple 训练记录无效，无法覆盖恢复`, 400);
+        return;
+      }
+      validAppleWorkouts.push(w);
     });
 
     // Sort records so custom exercises are validated/restored first, then plans/templates, then workouts/others
@@ -699,7 +897,7 @@ export class Store {
 
     const validRecords: PreparedRecord[] = [];
     const seenRecords = new Set<string>();
-    const previewCustomOverlay = new Map<string, Exercise>();
+    const previewHistoricalCustomOverlay = new Map<string, Exercise>();
 
     for (const item of sortedRecords) {
       const kindRes = entityKindSchema.safeParse(item?.kind);
@@ -723,13 +921,18 @@ export class Store {
         throw new DomainError(`备份中记录 ${kind}:${id} 数据结构无效`, 400);
       }
       let data: unknown = parsedData.success ? parsedData.data : item.data;
-      if (kind === "exercise" && !deleted && data && typeof data === "object") {
-        const ex: Exercise = { ...(data as Exercise), custom: true, source: undefined };
-        data = ex;
-        if (serverCatalogueMap.has(id)) {
-          throw new DomainError(`自定义动作 ID (${id}) 与内置动作冲突`, 400);
+      if (kind === "exercise" && data && typeof data === "object") {
+        if (!deleted) {
+          const ex: Exercise = { ...(data as Exercise), custom: true, source: undefined };
+          data = ex;
+          if (serverCatalogueMap.has(id)) {
+            throw new DomainError(`自定义动作 ID (${id}) 与内置动作冲突`, 400);
+          }
+          previewHistoricalCustomOverlay.set(id, ex);
+        } else if (parsedData.success) {
+          // Include archived/deleted custom exercises when validating historical plans during restore (#16)
+          previewHistoricalCustomOverlay.set(id, { ...(parsedData.data as Exercise), custom: true, source: undefined });
         }
-        previewCustomOverlay.set(id, ex);
       }
 
       try {
@@ -739,8 +942,8 @@ export class Store {
       }
 
       if (!deleted && mode === "preview") {
-        const baseCat = strategy === "replace" ? serverCatalogueMap : this.catalogueMap(userId);
-        const previewCat = new LayeredExerciseMap(baseCat, previewCustomOverlay);
+        const baseCat = strategy === "replace" ? serverCatalogueMap : this.catalogueMap(userId, true);
+        const previewCat = new LayeredExerciseMap(baseCat, previewHistoricalCustomOverlay);
         if (kind === "plan" || kind === "template") {
           this.validatePlan(data as Plan, previewCat);
         } else if (kind === "scheduledDay" && (data as ScheduledDay).mode === "workout") {
@@ -758,10 +961,11 @@ export class Store {
       plans: validRecords.filter((r) => r.kind === "plan" && !r.deleted).length,
       templates: validRecords.filter((r) => r.kind === "template" && !r.deleted).length,
       customExercises: validRecords.filter((r) => r.kind === "exercise" && !r.deleted).length,
-      measurements: rawMeasurements.length,
-      exerciseNotes: rawNotes.length,
+      measurements: validMeasurements.length,
+      progressPhotos: validProgressPhotos.length,
+      exerciseNotes: validNotes.length,
       appleDaily: dailyHealthRows.length,
-      appleWorkouts: rawAppleWorkouts.length,
+      appleWorkouts: validAppleWorkouts.length,
       totalRecords: validRecords.length,
     };
 
@@ -784,12 +988,35 @@ export class Store {
       };
     }
 
-    // Commit inside atomic SQLite transaction
-    let importedCount = 0;
-    let updatedCount = 0;
-    let skippedCount = 0;
+    const restoreOpKey = opId ? `restore:${opId}` : null;
+    const restoreFingerprint = restoreOpKey
+      ? createHash("sha256").update(JSON.stringify({ strategy, parsedObj })).digest("hex")
+      : null;
 
-    this.db.transaction(() => {
+    // Commit inside atomic SQLite transaction
+    return this.db.transaction(() => {
+      if (restoreOpKey && restoreFingerprint) {
+        const savedOp = this.operation(userId, restoreOpKey);
+        if (savedOp) {
+          if (savedOp.request !== restoreFingerprint) {
+            throw new DomainError("恢复操作 ID 已用于不同的备份内容", 409);
+          }
+          return JSON.parse(savedOp.result) as {
+            mode: "commit";
+            strategy: "merge" | "replace";
+            exportedAt: string | null;
+            counts: typeof counts;
+            imported: number;
+            updated: number;
+            skipped: number;
+          };
+        }
+      }
+
+      let importedCount = 0;
+      let updatedCount = 0;
+      let skippedCount = 0;
+
       const writeRestored = (record: StoredRecord) => {
         const args = [userId, record.kind, record.id, record.version, Number(record.deleted), JSON.stringify(record.data), record.updatedAt];
         this.stmtUpsertRecord.run(...args);
@@ -812,16 +1039,23 @@ export class Store {
         this.db.prepare("DELETE FROM apple_health_workouts WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM apple_health_daily WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM body_measurements WHERE user_id = ?").run(userId);
+        if (hasProgressPhotosArray) {
+          this.db.prepare("DELETE FROM progress_photos WHERE user_id = ?").run(userId);
+        }
         this.db.prepare("DELETE FROM exercise_notes WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM plan_activations WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM active_plans WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM plan_versions WHERE user_id = ?").run(userId);
-        this.db.prepare("DELETE FROM operations WHERE user_id = ?").run(userId);
+        // Preserve non-record idempotency receipts (water, photo, restore) so replayed ops after restore do not double-apply (#15, #55)
+        this.db.prepare(
+          "DELETE FROM operations WHERE user_id = ? AND op_id NOT LIKE 'water:%' AND op_id NOT LIKE 'photo:%' AND op_id NOT LIKE 'restore:%'",
+        ).run(userId);
         this.db.prepare("DELETE FROM changes WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM records WHERE user_id = ?").run(userId);
         this.listCache.clear();
       }
 
+      const restoredPlanVersionMap = new Map<string, number>();
       for (const rec of validRecords) {
         const key = backupRecordKey(rec);
         const existing = strategy === "merge" ? this.get(userId, rec.kind, rec.id) : null;
@@ -831,10 +1065,13 @@ export class Store {
         }
         const previous = priorRecords.get(key) ?? existing;
         priorRecords.delete(key);
-        this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted);
+        this.validate(userId, rec.kind, rec.id, rec.data, rec.deleted, true);
         const version = strategy === "replace"
           ? Math.max(previous?.version ?? 0, rec.version) + 1
           : Math.max((previous?.version ?? 0) + 1, rec.version);
+        if (rec.kind === "plan" && !rec.deleted) {
+          restoredPlanVersionMap.set(`${rec.id}:${rec.version}`, version);
+        }
         writeRestored({ ...rec, version });
         if (previous) updatedCount++;
         else importedCount++;
@@ -849,33 +1086,32 @@ export class Store {
       }
 
       // Restore planVersions
-      for (const pv of rawPlanVersions) {
-        if (!pv || typeof pv !== "object") continue;
-        const pid = typeof pv.id === "string" ? pv.id : "";
-        const pver = typeof pv.version === "number" && pv.version >= 1 ? Math.floor(pv.version) : 1;
-        const pcreated = typeof pv.created_at === "string"
-          ? pv.created_at
-          : typeof pv.createdAt === "string" ? pv.createdAt : now;
-        const parsedPlan = planSchema.safeParse(pv.data);
-        if (pid && parsedPlan.success) {
-          this.stmtInsertPlanVersion.run(userId, pid, pver, JSON.stringify(parsedPlan.data), pcreated);
+      for (const pv of validPlanVersions) {
+        this.stmtInsertPlanVersion.run(userId, pv.id, pv.version, JSON.stringify(pv.data), pv.createdAt);
+        const mappedVer = restoredPlanVersionMap.get(`${pv.id}:${pv.version}`);
+        if (mappedVer && mappedVer !== pv.version) {
+          this.stmtInsertPlanVersion.run(userId, pv.id, mappedVer, JSON.stringify(pv.data), pv.createdAt);
         }
       }
 
-      // Restore activePlan if present
+      // Restore activePlan if present (preserve exact backup history versions; sync-back reconciles bumped record version #17)
       if (activePlan && (strictPlanRestore || !this.activePlan(userId))) {
-        const { id, version, data, updatedAt, startedAt } = activePlan;
-        this.stmtInsertPlanVersion.run(userId, id, version, JSON.stringify(data), updatedAt);
+        const { id, version: backupVer, data, updatedAt, startedAt } = activePlan;
+        const alignedVersion = restoredPlanVersionMap.get(`${id}:${backupVer}`) ?? backupVer;
+        this.stmtInsertPlanVersion.run(userId, id, backupVer, JSON.stringify(data), updatedAt);
+        if (alignedVersion !== backupVer) {
+          this.stmtInsertPlanVersion.run(userId, id, alignedVersion, JSON.stringify(data), updatedAt);
+        }
         const last = planHistory.at(-1);
-        const history = last?.id === id && last.version === version && last.updatedAt === updatedAt
+        const history = last?.id === id && last.version === backupVer && last.updatedAt === updatedAt
           ? planHistory.slice(0, -1) : planHistory;
         const finalRev = Math.max(revision ?? 1, history.length + 1, this.planRevisionFloor(userId) + 1);
         history.forEach((entry, index) => {
           this.stmtInsertPlanVersion.run(userId, entry.id, entry.version, JSON.stringify(entry.data), entry.updatedAt);
           this.stmtInsertPlanActivation.run(userId, entry.id, entry.version, index + 1, entry.updatedAt, entry.startedAt ?? entry.updatedAt);
         });
-        this.stmtUpsertActivePlan.run(userId, id, version, finalRev, updatedAt, startedAt ?? updatedAt);
-        this.stmtInsertPlanActivation.run(userId, id, version, finalRev, updatedAt, startedAt ?? updatedAt);
+        this.stmtUpsertActivePlan.run(userId, id, backupVer, finalRev, updatedAt, startedAt ?? updatedAt);
+        this.stmtInsertPlanActivation.run(userId, id, backupVer, finalRev, updatedAt, startedAt ?? updatedAt);
       }
 
       // Restore exerciseNotes
@@ -884,11 +1120,8 @@ export class Store {
          ON CONFLICT(user_id, exercise_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at
          WHERE ? AND (julianday(exercise_notes.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(exercise_notes.updated_at))`,
       );
-      for (const noteItem of rawNotes) {
-        const exId = typeof noteItem?.exerciseId === "string" ? noteItem.exerciseId.trim() : "";
-        const note = typeof noteItem?.note === "string" ? noteItem.note : "";
-        const upAt = backupInstant(noteItem?.updatedAt);
-        if (exId && note) stmtUpsertNote.run(userId, exId, note, upAt ?? now, Number(upAt != null));
+      for (const noteItem of validNotes) {
+        stmtUpsertNote.run(userId, noteItem.exerciseId, noteItem.note, noteItem.updatedAt ?? now, Number(noteItem.updatedAt != null));
       }
 
       // Restore bodyMeasurements
@@ -899,23 +1132,35 @@ export class Store {
            thigh_cm = excluded.thigh_cm, hip_cm = excluded.hip_cm, notes = excluded.notes, updated_at = excluded.updated_at
          WHERE ? AND (julianday(body_measurements.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(body_measurements.updated_at))`,
       );
-      const numOrNull = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-      for (const m of rawMeasurements) {
-        const date = typeof m?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(m.date) ? m.date : "";
-        if (!date) continue;
-        const upAt = backupInstant(m.updatedAt);
+      for (const m of validMeasurements) {
         stmtUpsertMeas.run(
           userId,
-          date,
-          numOrNull(m.waistCm),
-          numOrNull(m.chestCm),
-          numOrNull(m.armCm),
-          numOrNull(m.thighCm),
-          numOrNull(m.hipCm),
-          typeof m.notes === "string" ? m.notes : "",
-          upAt ?? now,
-          Number(upAt != null),
+          m.date,
+          m.waistCm,
+          m.chestCm,
+          m.armCm,
+          m.thighCm,
+          m.hipCm,
+          m.notes,
+          m.updatedAt ?? now,
+          Number(m.updatedAt != null),
         );
+      }
+
+      // Restore progressPhotos (#18)
+      const stmtPhotoIdInUse = this.db.prepare("SELECT user_id FROM progress_photos WHERE id = ?");
+      const stmtInsertPhoto = this.db.prepare(
+        `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, note, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const stmtPhotoCount = this.db.prepare("SELECT COUNT(*) AS cnt FROM progress_photos WHERE user_id = ?");
+      for (const photo of validProgressPhotos) {
+        const ownerRow = stmtPhotoIdInUse.get(photo.id) as { user_id: string } | undefined;
+        if (ownerRow && ownerRow.user_id === userId) continue;
+        const currentCount = (stmtPhotoCount.get(userId) as { cnt: number }).cnt;
+        if (currentCount >= 60) break;
+        const targetId = ownerRow ? `photo_${randomUUID()}` : photo.id;
+        stmtInsertPhoto.run(targetId, userId, photo.date, photo.pose, photo.mime, photo.imageData, photo.note, photo.createdAt);
       }
 
       // Restore appleHealthDaily
@@ -956,17 +1201,15 @@ export class Store {
       const stmtAppleIdInUse = this.db.prepare("SELECT 1 FROM apple_health_workouts WHERE id = ?");
       const stmtInsertApple = this.db.prepare("INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)");
       const stmtUpdateApple = this.db.prepare("UPDATE apple_health_workouts SET ended_at = ?, received_at = ?, data = ? WHERE user_id = ? AND id = ?");
-      for (const w of rawAppleWorkouts) {
-        if (!w || typeof w !== "object") continue;
+      for (const w of validAppleWorkouts) {
         const inputId = typeof w.id === "string" ? w.id.trim() : "";
-        const endedAt = backupInstant(w.endedAt);
-        const startedAt = backupInstant(w.startedAt);
-        if (!endedAt || !startedAt || startedAt >= endedAt || typeof w.activityType !== "string" || !w.activityType.trim()) continue;
+        const endedAt = backupInstant(w.endedAt)!;
+        const startedAt = backupInstant(w.startedAt)!;
         const receivedAt = backupInstant(w.receivedAt);
         const externalId = w.externalWorkoutId ?? w.externalId;
         const identity = {
           externalWorkoutId: typeof externalId === "string" && externalId.trim() ? externalId.trim() : null,
-          activityType: w.activityType,
+          activityType: w.activityType as string,
           startedAt,
           endedAt,
         };
@@ -1020,16 +1263,19 @@ export class Store {
       }
 
       this.listCache.clear();
+      const commitResult = {
+        mode: "commit" as const,
+        strategy,
+        exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
+        counts,
+        imported: importedCount,
+        updated: updatedCount,
+        skipped: skippedCount,
+      };
+      if (restoreOpKey && restoreFingerprint) {
+        this.stmtInsertOp.run(userId, restoreOpKey, restoreFingerprint, JSON.stringify(commitResult));
+      }
+      return commitResult;
     }).immediate();
-
-    return {
-      mode: "commit" as const,
-      strategy,
-      exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
-      counts,
-      imported: importedCount,
-      updated: updatedCount,
-      skipped: skippedCount,
-    };
   }
 }

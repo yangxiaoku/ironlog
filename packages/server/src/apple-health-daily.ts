@@ -89,6 +89,8 @@ export interface DailyHealthSnapshot {
   syncedSleepObservations?: SleepObservation[];
   stepsSampledAt?: string;
   stepsHourly?: Record<string, number>;
+  stepsHourlySampledAt?: Record<string, string>;
+  deviceSyncedAt?: string;
 }
 
 const CUMULATIVE_KEYS: Array<keyof DailyHealthSnapshot> = [
@@ -735,6 +737,8 @@ function isStrictlyOlderSample(incomingAt: string | undefined, existingAt: strin
 const INTERNAL_DAILY_META_KEYS = new Set<string>([
   "stepsSampledAt",
   "stepsHourly",
+  "stepsHourlySampledAt",
+  "deviceSyncedAt",
   "weightMeasuredAt",
   "bodyFatMeasuredAt",
   "syncedWeightValue",
@@ -813,13 +817,18 @@ function maybeSyncWeightRecord(params: {
   const bodyFatChanged = nextBodyFat !== (existingData.bodyFat ?? null);
 
   if (!weightChanged && !bodyFatChanged) {
-    return { syncedWeight: false, syncedBodyFat: false };
+    // Even when the value didn't change (e.g. 09:00 72kg then 11:00 72kg), still report watermark advancement (#20)
+    // so a late-arriving older sample (e.g. 10:00 74kg) cannot overwrite the newer reading!
+    return {
+      syncedWeight: canUpdateWeight && validWeight !== undefined,
+      syncedBodyFat: canUpdateBodyFat && validBodyFat !== undefined,
+    };
   }
 
   store.mutate(userId, {
     kind: "weight",
     id,
-    opId: `ahw_${targetDate.replace(/-/g, "")}_${Date.now()}`,
+    opId: `ahw_${targetDate.replace(/-/g, "")}_${randomUUID().slice(0, 12)}`,
     baseVersion: existing!.version,
     deleted: false,
     data: {
@@ -1025,16 +1034,30 @@ export function upsertDailyHealth(
     const next: DailyHealthSnapshot = replaceDay || !existing
       ? { date: forDate, updatedAt: nowIso, source }
       : { ...existing, date: forDate, updatedAt: nowIso, source };
+    if (source !== "manual") {
+      next.deviceSyncedAt = nowIso;
+    }
 
     let effectivePatch = patch;
-    if (!replaceDay && existing && patch.syncedSleepObservations?.length) {
-      const mergedObs = mergeSleepObservationLists(existing.syncedSleepObservations, patch.syncedSleepObservations);
+    const hasAuthoritativeSleepSamples = Boolean(patch.syncedSleepObservations?.length);
+    if (hasAuthoritativeSleepSamples) {
+      const mergedObs = !replaceDay && existing
+        ? mergeSleepObservationLists(existing.syncedSleepObservations, patch.syncedSleepObservations!)
+        : patch.syncedSleepObservations!;
       const mergedSummary = summarizeSleep(mergedObs);
       effectivePatch = {
         ...patch,
         ...mergedSummary,
         syncedSleepObservations: mergedObs,
       };
+      // #57: Authoritative deduplicated sleep observations override any stale inflated scalar sleepMinutes (e.g. 900 -> 300)
+      delete next.sleepMinutes;
+      delete next.sleepCoreMinutes;
+      delete next.sleepDeepMinutes;
+      delete next.sleepRemMinutes;
+      delete next.sleepAwakeMinutes;
+      delete next.sleepInBedMinutes;
+      delete next.sleepEfficiencyPct;
     }
 
     const skipStaleWeight =
@@ -1100,17 +1123,25 @@ export function upsertDailyHealth(
         if (effectivePatch.stepsHourly && Object.keys(effectivePatch.stepsHourly).length > 0) {
           if (replaceDay) {
             next.stepsHourly = { ...effectivePatch.stepsHourly };
+            next.stepsHourlySampledAt = Object.fromEntries(
+              Object.keys(effectivePatch.stepsHourly).map((hr) => [hr, effectivePatch.stepsSampledAt!]),
+            );
             next.steps = Math.round(Object.values(next.stepsHourly).reduce((sum, n) => sum + n, 0));
             next.stepsSampledAt = effectivePatch.stepsSampledAt;
           } else {
+            // #56: Track per-hour watermarks independently so out-of-order arrivals are strictly commutative
             const mergedHourly: Record<string, number> = { ...(existing?.stepsHourly ?? {}) };
+            const mergedHourlyAt: Record<string, string> = { ...(existing?.stepsHourlySampledAt ?? {}) };
             for (const [hr, hrVal] of Object.entries(effectivePatch.stepsHourly)) {
-              if (!existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt || mergedHourly[hr] === undefined) {
+              const prevHrAt = mergedHourlyAt[hr] ?? (mergedHourly[hr] !== undefined ? existing?.stepsSampledAt : undefined);
+              if (!prevHrAt || effectivePatch.stepsSampledAt >= prevHrAt) {
                 mergedHourly[hr] = hrVal;
+                mergedHourlyAt[hr] = effectivePatch.stepsSampledAt;
               }
             }
             const hourlySum = Math.round(Object.values(mergedHourly).reduce((sum, n) => sum + n, 0));
             next.stepsHourly = mergedHourly;
+            next.stepsHourlySampledAt = mergedHourlyAt;
             next.steps = hourlySum;
             next.stepsSampledAt =
               !existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt
@@ -1120,10 +1151,23 @@ export function upsertDailyHealth(
         } else if (replaceDay || !existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt) {
           next.steps = value;
           next.stepsSampledAt = effectivePatch.stepsSampledAt;
-          if (replaceDay) delete next.stepsHourly;
+          if (replaceDay) {
+            delete next.stepsHourly;
+            delete next.stepsHourlySampledAt;
+          }
         }
       } else if (k === "steps" && !replaceDay && existing?.stepsSampledAt) {
         continue;
+      } else if (
+        hasAuthoritativeSleepSamples &&
+        (k === "sleepMinutes" ||
+          k === "sleepCoreMinutes" ||
+          k === "sleepDeepMinutes" ||
+          k === "sleepRemMinutes" ||
+          k === "sleepAwakeMinutes" ||
+          k === "sleepInBedMinutes")
+      ) {
+        (next as unknown as Record<string, unknown>)[k] = value;
       } else if (!replaceDay && existing && CUMULATIVE_KEYS.includes(k as keyof DailyHealthSnapshot) && typeof value === "number") {
         const prev = existing[k as keyof DailyHealthSnapshot];
         (next as unknown as Record<string, unknown>)[k] = typeof prev === "number" ? Math.max(prev, value) : value;
@@ -1224,6 +1268,7 @@ export function upsertDailyHealth(
 }
 
 export function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthSnapshot {
+  const timed = timedSleepProfile(snapshot);
   const {
     weightMeasuredAt: _wm,
     bodyFatMeasuredAt: _bm,
@@ -1237,8 +1282,21 @@ export function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthS
     syncedSleepObservations: _s,
     stepsSampledAt: _steps,
     stepsHourly: _sh,
+    stepsHourlySampledAt: _sha,
+    deviceSyncedAt: _dsa,
     ...rest
   } = snapshot;
+  if (timed) {
+    rest.sleepMinutes = timed.minutes;
+    if (timed.stages) {
+      if (timed.stages.core != null) rest.sleepCoreMinutes = timed.stages.core;
+      else delete rest.sleepCoreMinutes;
+      if (timed.stages.deep != null) rest.sleepDeepMinutes = timed.stages.deep;
+      else delete rest.sleepDeepMinutes;
+      if (timed.stages.rem != null) rest.sleepRemMinutes = timed.stages.rem;
+      else delete rest.sleepRemMinutes;
+    }
+  }
   return rest;
 }
 

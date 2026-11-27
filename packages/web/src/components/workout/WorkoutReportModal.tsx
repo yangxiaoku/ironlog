@@ -6,6 +6,7 @@ import { duration, fmt, shortDate, today } from "../../lib/date";
 import {
   FEELINGS,
   MUSCLES,
+  safeUuid,
   SET_TYPES,
   type ExerciseMode,
   type ProfileGoals,
@@ -350,6 +351,7 @@ export function WorkoutReportModal({
           Math.round(pool.reduce((s, x) => s + (x.reps || 8), 0) / Math.max(1, pool.length)),
         );
         const maxSec = Math.max(...pool.map((s) => s.seconds || 0), mode === "timed" ? 30 : 0);
+        const rowUnit = row.weightUnit === "lb" ? "lb" : row.weightUnit === "kg" ? "kg" : undefined;
         return {
           exerciseId: row.exerciseId,
           sets: Math.max(1, Math.min(100, pool.length)),
@@ -360,21 +362,22 @@ export function WorkoutReportModal({
           restSeconds: row.restSeconds ?? 90,
           targetRir: 2,
           progression: "double",
-          increment: 2.5,
+          increment: rowUnit === "lb" ? 5 : 2.5,
           backupExerciseId: null,
           supersetGroup: row.supersetGroup ?? null,
+          ...(rowUnit ? { weightUnit: rowUnit } : {}),
         };
       });
       if (!plannedExercises.length) {
         notify("本场没有动作可存为模板");
         return;
       }
-      const tplId = `tpl_${crypto.randomUUID().slice(0, 12)}`;
+      const tplId = `tpl_${safeUuid().slice(0, 12)}`;
       const tplName = full.data.title || "自定义训练模板";
       await apiFetch("/api/records", {
         method: "POST",
         body: {
-          opId: crypto.randomUUID(),
+          opId: safeUuid(),
           id: tplId,
           kind: "template",
           baseVersion: 0,

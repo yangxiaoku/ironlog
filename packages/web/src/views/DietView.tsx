@@ -5,7 +5,7 @@ import { DotMeter, ThinMeter } from "../components/Meters";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { apiFetch } from "../lib/api";
 import { fmt, shortDate, today } from "../lib/date";
-import { copyDietBatch } from "../lib/diet-copy";
+import { copyDietBatch, DietCopyMismatchError } from "../lib/diet-copy";
 import {
   MEALS,
   safeUuid,
@@ -196,6 +196,7 @@ export function DietView() {
     foods: Array<Pick<MealTemplateFood, "name" | "calories" | "protein" | "carbs" | "fat"> & { meal?: MealKey }>,
     targetMeal?: MealKey,
     label?: string,
+    mode: "auto" | "retry-pending" | "replace-with-new" = "auto",
   ) => {
     if (copyInFlight.current) return;
     const targetDate = date;
@@ -203,7 +204,7 @@ export function DietView() {
     setCopying(true);
     try {
       const count = await copyDietBatch({
-        userId, intent, date: targetDate, meal: targetMeal, foods,
+        userId, intent, date: targetDate, meal: targetMeal, foods, mode, detectSourceChange: true,
         send: (body) => apiFetch("/api/sync", { method: "POST", body, accountId: userId }),
       });
       if (!count) return;
@@ -211,6 +212,17 @@ export function DietView() {
       bumpDataEpoch();
       notify(label || `已添加 ${count} 项饮食至 ${shortDate(targetDate)}`);
     } catch (err) {
+      if (err instanceof DietCopyMismatchError) {
+        openConfirm({
+          title: "模板内容已更新",
+          message: `上次复制（${err.pendingSummary.names || `${err.pendingSummary.count} 项`} · ${err.pendingSummary.calories} kcal）尚未收到确认回执，但当前内容已变更为（${err.newSummary.names || `${err.newSummary.count} 项`} · ${err.newSummary.calories} kcal）。确认放弃旧批次并按最新内容复制吗？`,
+          confirmLabel: "按最新内容复制",
+          onConfirm: async () => {
+            await copyFoodsToDate(intent, foods, targetMeal, label, "replace-with-new");
+          },
+        });
+        return;
+      }
       notify((err as Error)?.message || "复制饮食失败");
     } finally {
       copyInFlight.current = false;

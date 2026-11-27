@@ -41,7 +41,7 @@ import {
 import { Auth } from "./auth.js";
 import { AiService, type AiConfig } from "./ai.js";
 import { serverCatalogue } from "./catalogue.js";
-import { AppleHealth, appleEventInput, appleWebSessionStartInput, appleWorkoutInput } from "./apple-health.js";
+import { AnnotationConflictError, AppleHealth, appleEventInput, appleWebSessionStartInput, appleWorkoutInput } from "./apple-health.js";
 import { isEnabledHealthFlag, listDailyHealth, upsertDailyHealth } from "./apple-health-daily.js";
 import { readHealthDataExport } from "./health-data-export.js";
 import { catalogueETag, catalogueLookup, catalogueQuery, CloudCatalogue, exerciseFrame } from "./cloud-catalogue.js";
@@ -65,6 +65,7 @@ import {
   saveWebScheduleDay,
   scheduleDayPutInput,
   scheduleRangeQuery,
+  ScheduleConflictError,
   scheduleShiftInput,
   shiftWebScheduleDay,
   syncPlanRoutineInput,
@@ -229,6 +230,10 @@ export function createApp(
     }
     if (error instanceof MeasurementConflictError)
       return c.json({ error: error.message, current: error.current }, 409);
+    if (error instanceof AnnotationConflictError)
+      return c.json({ error: error.message, current: error.current }, 409);
+    if (error instanceof ScheduleConflictError)
+      return c.json({ error: error.message, conflictTarget: error.conflictTarget, fromVersion: error.fromVersion }, 409);
     if (error instanceof DomainError)
       return c.json({ error: error.message }, error.status);
     if (error instanceof SyntaxError)
@@ -589,8 +594,11 @@ export function createApp(
   app.put("/api/web/schedule/:date", async (c) =>
     c.json(saveWebScheduleDay(store, c.get("userId"), z.iso.date().parse(c.req.param("date")),
       scheduleDayPutInput.parse(await c.req.json()))));
-  app.delete("/api/web/schedule/:date", (c) =>
-    c.json(clearWebScheduleDay(store, c.get("userId"), z.iso.date().parse(c.req.param("date")), c.req.query("opId"))));
+  app.delete("/api/web/schedule/:date", (c) => {
+    const rawVer = c.req.query("baseVersion") ?? c.req.query("expectedVersion");
+    const expectedVersion = rawVer != null && rawVer !== "" ? z.coerce.number().int().min(0).parse(rawVer) : undefined;
+    return c.json(clearWebScheduleDay(store, c.get("userId"), z.iso.date().parse(c.req.param("date")), c.req.query("opId"), expectedVersion));
+  });
   app.post("/api/web/schedule/shift", async (c) =>
     c.json(shiftWebScheduleDay(store, c.get("userId"), scheduleShiftInput.parse(await c.req.json()))));
   app.get("/api/web/preferences", (c) => c.json(webPreferences(db, c.get("userId"))));
@@ -1036,12 +1044,16 @@ export function createApp(
   app.get("/api/plans/active", (c) =>
     c.json(store.planSchedule(c.get("userId"))),
   );
-  app.post("/api/plans/drafts", async (c) =>
-    c.json(
-      store.createDraft(c.get("userId"), planSchema.parse(await c.req.json())),
+  app.post("/api/plans/drafts", async (c) => {
+    const raw = (await c.req.json()) as Record<string, unknown>;
+    const rawOpId = typeof raw?.opId === "string" ? raw.opId : typeof raw?.operationId === "string" ? raw.operationId : undefined;
+    const opId = rawOpId ? z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).parse(rawOpId) : undefined;
+    const { opId: _o1, operationId: _o2, ...planBody } = raw && typeof raw === "object" ? raw : {};
+    return c.json(
+      store.createDraft(c.get("userId"), planSchema.parse(planBody), opId),
       201,
-    ),
-  );
+    );
+  });
   app.get("/api/plans/history", (c) => {
     const rows = stmtPlanHistory.all(c.get("userId")) as { data: string }[];
     return c.json(rows.map((row) => ({ ...row, data: JSON.parse(row.data) })));
@@ -1186,10 +1198,12 @@ export function createApp(
       backup: z.unknown(),
       mode: z.enum(["preview", "commit"]).default("preview"),
       strategy: z.enum(["merge", "replace"]).default("merge"),
+      opId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
     }).parse(await c.req.json());
     return c.json(store.restoreBackup(c.get("userId"), input.backup, {
       mode: input.mode,
       strategy: input.strategy,
+      opId: input.opId,
     }));
   });
   app.post("/api/web/password", async (c) => {

@@ -150,6 +150,12 @@ export function openDatabase(path: string): Database.Database {
       last_used_at TEXT
     );
     CREATE INDEX IF NOT EXISTS web_passkeys_user ON web_passkeys(user_id, created_at DESC);
+    CREATE TABLE IF NOT EXISTS apple_health_deleted (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      identity_key TEXT NOT NULL,
+      deleted_at TEXT NOT NULL,
+      PRIMARY KEY(user_id, identity_key)
+    );
     PRAGMA user_version = 7;
   `);
   const ensureColumn = (table: string, col: string, def: string) => {
@@ -160,6 +166,7 @@ export function openDatabase(path: string): Database.Database {
   };
   ensureColumn("active_plans", "cycle_started_at", "TEXT");
   ensureColumn("plan_activations", "cycle_started_at", "TEXT");
+  ensureColumn("apple_health_events", "launch_group_id", "TEXT");
   db.exec(`
     UPDATE active_plans SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;
     UPDATE plan_activations SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;

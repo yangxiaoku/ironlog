@@ -63,7 +63,7 @@ export interface UiState {
   toggleTheme: () => void;
   setOnline: (online: boolean) => void;
   refreshPendingCount: (userId: string) => void;
-  syncOfflineQueue: (userId: string, opts?: { silent?: boolean }) => Promise<void>;
+  syncOfflineQueue: (userId: string, opts?: { silent?: boolean; attempt?: number }) => Promise<void>;
   bumpDataEpoch: () => void;
   notify: (message: string, action?: ToastAction | null) => void;
   dismissToast: (id?: number) => void;
@@ -95,6 +95,17 @@ export function applyThemeToDom(theme: ThemeMode): void {
 let modalCounter = 0;
 let toastCounter = 0;
 let toastTimer: number | undefined;
+const flushingAccounts = new Set<string>();
+const retryTimersByAccount = new Map<string, number>();
+const OFFLINE_RETRY_DELAYS_MS = [1500, 4000, 10000] as const;
+
+function clearRetryTimer(userId: string): void {
+  const existing = retryTimersByAccount.get(userId);
+  if (existing !== undefined && typeof window !== "undefined") {
+    window.clearTimeout(existing);
+  }
+  retryTimersByAccount.delete(userId);
+}
 
 const initialTheme = getInitialTheme();
 applyThemeToDom(initialTheme);
@@ -172,8 +183,8 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ pendingSyncCount: readQueue(getOfflineStorage(), userId).length });
   },
 
-  async syncOfflineQueue(userId, { silent = false } = {}) {
-    if (!userId || get().flushingQueue || (typeof navigator !== "undefined" && !navigator.onLine)) return;
+  async syncOfflineQueue(userId, { silent = false, attempt = 0 } = {}) {
+    if (!userId || flushingAccounts.has(userId) || (typeof navigator !== "undefined" && !navigator.onLine)) return;
     const { demoToken } = useAuthStore.getState();
     const isCurrentAccount = () => {
       const current = useAuthStore.getState();
@@ -182,7 +193,9 @@ export const useUiStore = create<UiState>((set, get) => ({
     if (!isCurrentAccount()) return;
     const storage = getOfflineStorage();
     if (!storage) return;
+    clearRetryTimer(userId);
     const before = readQueue(storage, userId);
+    flushingAccounts.add(userId);
     set({ flushingQueue: true });
     try {
       const res = await flushQueue(storage, userId, (path, opts) => {
@@ -192,6 +205,23 @@ export const useUiStore = create<UiState>((set, get) => ({
       if (!isCurrentAccount()) return;
       get().refreshPendingCount(userId);
       if (res.synced > 0) get().bumpDataEpoch();
+      const unblockedRemaining = Math.max(0, res.remaining - res.blocked.length);
+      // #69: Bounded backoff auto-retry on transient 5xx/429/408 errors, isolated per account
+      if (
+        res.transientFailure &&
+        unblockedRemaining > 0 &&
+        attempt < OFFLINE_RETRY_DELAYS_MS.length &&
+        typeof window !== "undefined"
+      ) {
+        const delayMs = OFFLINE_RETRY_DELAYS_MS[attempt]!;
+        const timerId = window.setTimeout(() => {
+          retryTimersByAccount.delete(userId);
+          if (!isCurrentAccount()) return;
+          if (typeof navigator !== "undefined" && !navigator.onLine) return;
+          void get().syncOfflineQueue(userId, { silent: true, attempt: attempt + 1 });
+        }, delayMs);
+        retryTimersByAccount.set(userId, timerId);
+      }
       if (res.storageError) {
         if (!silent || before.length > 0) get().notify("浏览器暂时无法读取或更新离线记录");
       } else if (res.blocked.length > 0 && (!silent || res.blocked.length > before.filter((item) => item.failure).length)) {
@@ -210,10 +240,25 @@ export const useUiStore = create<UiState>((set, get) => ({
       } else if (!silent && res.authRequired) {
         get().notify("登录已过期，请重新登录后同步离线记录");
       } else if (!silent && res.remaining > 0) {
-        get().notify("服务器暂时无法接收，稍后可重试同步");
+        get().notify(`服务器暂时无法接收（剩 ${res.remaining} 条待同步），将自动重试`);
       }
     } finally {
-      set({ flushingQueue: false });
+      flushingAccounts.delete(userId);
+      set({ flushingQueue: flushingAccounts.size > 0 });
+      // #70: If user switched to another account while this flush was in flight, re-check the active account's queue!
+      const active = useAuthStore.getState();
+      if (
+        active.userId &&
+        active.userId !== userId &&
+        !active.offlineBoot &&
+        !flushingAccounts.has(active.userId) &&
+        (typeof navigator === "undefined" || navigator.onLine)
+      ) {
+        const activePending = readQueue(getOfflineStorage(), active.userId).filter((item) => !item.failure).length;
+        if (activePending > 0) {
+          void get().syncOfflineQueue(active.userId, { silent: true });
+        }
+      }
     }
   },
 

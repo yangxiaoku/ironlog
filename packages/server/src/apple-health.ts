@@ -3,7 +3,7 @@ import { latestAppleWorkoutAnnotation, type AppleWorkoutAnnotation, type AppleWo
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import { parseFlexibleInstant, parseTolerantNumber } from "./apple-health-daily.js";
-import { appleWorkoutIdentity } from "./apple-workout-identity.js";
+import { appleWorkoutIdentity, canonicalAppleActivityType } from "./apple-workout-identity.js";
 export { parseFlexibleInstant };
 import type { Db } from "./db.js";
 import { DomainError } from "./store.js";
@@ -235,6 +235,15 @@ const APPLE_TELEMETRY_KEYS = [
   "heartRateBpm", "restingHeartRateBpm", "hrvMs", "vo2Max", "bloodOxygenPct", "respiratoryRate",
 ] as const;
 
+export class AnnotationConflictError extends DomainError {
+  constructor(
+    message: string,
+    public readonly current: AppleWorkoutAnnotation | null,
+  ) {
+    super(message, 409);
+  }
+}
+
 export class AppleHealth {
   private uploadMinute = 0;
   private readonly uploads = new Map<string, number>();
@@ -263,9 +272,13 @@ export class AppleHealth {
   private readonly stmtInsertWorkout: Stmt;
   private readonly stmtUpdateWorkoutData: Stmt;
   private readonly stmtDeleteWorkout: Stmt;
+  private readonly stmtInsertDeletedIdentity: Stmt;
+  private readonly stmtIsDeletedIdentity: Stmt;
   private readonly stmtClearWorkoutReceipts: Stmt;
   private readonly stmtUnlinkEventWorkout: Stmt;
   private readonly stmtClearUserActiveEvents: Stmt;
+  private readonly stmtCloseLaunchGroupEvents: Stmt;
+  private readonly stmtGetLatestDeviceEvent: Stmt;
   private readonly stmtInsertReceipt: Stmt;
 
   constructor(private db: Db) {
@@ -281,7 +294,7 @@ export class AppleHealth {
     this.stmtHasWorkout = db.prepare("SELECT 1 FROM apple_health_workouts WHERE user_id=? LIMIT 1");
     this.stmtListDailyData = db.prepare("SELECT data FROM apple_health_daily WHERE user_id=? ORDER BY date DESC LIMIT 60");
     this.stmtLatestDaily = db.prepare(`SELECT date, updated_at AS updatedAt, data
-      FROM apple_health_daily WHERE user_id=? ORDER BY updated_at DESC, date DESC LIMIT 1`);
+      FROM apple_health_daily WHERE user_id=? ORDER BY updated_at DESC, date DESC LIMIT 60`);
     this.stmtRecentWorkouts = db.prepare(`SELECT id, data, received_at AS receivedAt FROM apple_health_workouts
       WHERE user_id=? ORDER BY ended_at DESC, id LIMIT 30`);
     this.stmtLatestWorkout = db.prepare(`SELECT id, ended_at AS endedAt, received_at AS receivedAt, data
@@ -299,22 +312,37 @@ export class AppleHealth {
       FROM apple_health_events
       WHERE device_id=? AND (ended_at IS NULL OR started_at > ended_at)
       ORDER BY started_at DESC LIMIT 1`);
+    this.stmtGetLatestDeviceEvent = db.prepare(`SELECT started_at AS startedAt, ended_at AS endedAt
+      FROM apple_health_events
+      WHERE device_id=? AND (ended_at IS NULL OR started_at > ended_at OR workout_id IS NOT NULL)
+      ORDER BY started_at DESC LIMIT 1`);
     this.stmtGetEventFull = db.prepare(`SELECT started_at AS startedAt, started_environment AS environment,
-        ended_at AS endedAt, workout_id AS workoutId FROM apple_health_events WHERE device_id=? AND activity_type=?`);
+        ended_at AS endedAt, workout_id AS workoutId, launch_group_id AS launchGroupId
+        FROM apple_health_events WHERE device_id=? AND activity_type=?`);
     this.stmtCloseEventNull = db.prepare("UPDATE apple_health_events SET ended_at=?, workout_id=NULL WHERE device_id=? AND activity_type=?");
     this.stmtCloseDanglingEvents = db.prepare(`UPDATE apple_health_events SET ended_at=?, workout_id=NULL
           WHERE device_id=? AND activity_type<>? AND (ended_at IS NULL OR started_at > ended_at) AND started_at <= ?`);
-    this.stmtUpsertEventStart = db.prepare(`INSERT INTO apple_health_events VALUES (?, ?, ?, ?, NULL, NULL)
+    this.stmtUpsertEventStart = db.prepare(`INSERT INTO apple_health_events (device_id, activity_type, started_at, started_environment, ended_at, workout_id, launch_group_id)
+            VALUES (?, ?, ?, ?, NULL, NULL, ?)
             ON CONFLICT(device_id, activity_type) DO UPDATE SET
               started_at=excluded.started_at, started_environment=excluded.started_environment,
-              ended_at=NULL, workout_id=NULL`);
+              ended_at=NULL, workout_id=NULL, launch_group_id=excluded.launch_group_id`);
     this.stmtCloseEventWithWorkout = db.prepare("UPDATE apple_health_events SET ended_at=?, workout_id=? WHERE device_id=? AND activity_type=?");
+    this.stmtCloseLaunchGroupEvents = db.prepare(
+      "UPDATE apple_health_events SET ended_at=?, workout_id=? WHERE launch_group_id=? AND activity_type=? AND (ended_at IS NULL OR started_at > ended_at)",
+    );
     this.stmtGetReceipt = db.prepare("SELECT digest, workout_id AS workoutId FROM apple_health_receipts WHERE user_id=? AND request_key=?");
     this.stmtGetWorkoutByIdentity = db.prepare("SELECT id, data FROM apple_health_workouts WHERE user_id=? AND identity_key=?");
-    this.stmtGetWorkoutById = db.prepare("SELECT data FROM apple_health_workouts WHERE user_id=? AND id=?");
+    this.stmtGetWorkoutById = db.prepare("SELECT identity_key AS identityKey, data FROM apple_health_workouts WHERE user_id=? AND id=?");
     this.stmtInsertWorkout = db.prepare("INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)");
     this.stmtUpdateWorkoutData = db.prepare("UPDATE apple_health_workouts SET data=? WHERE id=?");
     this.stmtDeleteWorkout = db.prepare("DELETE FROM apple_health_workouts WHERE user_id=? AND id=?");
+    this.stmtInsertDeletedIdentity = db.prepare(
+      "INSERT OR REPLACE INTO apple_health_deleted (user_id, identity_key, deleted_at) VALUES (?, ?, ?)",
+    );
+    this.stmtIsDeletedIdentity = db.prepare(
+      "SELECT deleted_at AS deletedAt FROM apple_health_deleted WHERE user_id=? AND identity_key=?",
+    );
     this.stmtClearWorkoutReceipts = db.prepare("DELETE FROM apple_health_receipts WHERE user_id=? AND workout_id=?");
     this.stmtUnlinkEventWorkout = db.prepare("UPDATE apple_health_events SET workout_id=NULL WHERE workout_id=?");
     this.stmtClearUserActiveEvents = db.prepare(`UPDATE apple_health_events SET ended_at=?, workout_id=NULL
@@ -446,11 +474,12 @@ export class AppleHealth {
       } catch {}
     }
 
-    const dailyRow = this.stmtLatestDaily.get(userId) as {
+    // Only consider rows that actually received an Apple device/shortcut sync, never purely manual water entries (#75)
+    const dailyRows = this.stmtLatestDaily.all(userId) as Array<{
       date: string;
       updatedAt: string;
       data: string;
-    } | undefined;
+    }>;
     let lastDaily: {
       date: string;
       updatedAt: string;
@@ -459,18 +488,39 @@ export class AppleHealth {
       activeEnergyKcal: number | null;
       restingHeartRateBpm: number | null;
     } | null = null;
-    if (dailyRow) {
+    let bestDeviceSyncAt = "";
+    for (const dailyRow of dailyRows) {
       try {
         const parsed = JSON.parse(dailyRow.data) as Record<string, unknown>;
-        const num = (k: string) => (typeof parsed[k] === "number" && Number.isFinite(parsed[k] as number) ? (parsed[k] as number) : null);
-        lastDaily = {
-          date: dailyRow.date,
-          updatedAt: dailyRow.updatedAt,
-          steps: num("steps"),
-          sleepMinutes: num("sleepMinutes"),
-          activeEnergyKcal: num("activeEnergyKcal"),
-          restingHeartRateBpm: num("restingHeartRateBpm"),
-        };
+        const explicitDeviceAt = typeof parsed.deviceSyncedAt === "string" ? parsed.deviceSyncedAt : null;
+        const legacyDeviceSync =
+          !explicitDeviceAt &&
+          parsed.source !== "manual" &&
+          Object.keys(parsed).some((k) =>
+            ![
+              "date",
+              "updatedAt",
+              "source",
+              "waterMl",
+              "waterSource",
+              "waterUpdatedAt",
+              "waterAppleSyncedMl",
+            ].includes(k),
+          );
+        const effectiveSyncedAt = explicitDeviceAt ?? (legacyDeviceSync ? dailyRow.updatedAt : null);
+        if (!effectiveSyncedAt) continue;
+        if (!lastDaily || effectiveSyncedAt > bestDeviceSyncAt || (effectiveSyncedAt === bestDeviceSyncAt && dailyRow.date > lastDaily.date)) {
+          bestDeviceSyncAt = effectiveSyncedAt;
+          const num = (k: string) => (typeof parsed[k] === "number" && Number.isFinite(parsed[k] as number) ? (parsed[k] as number) : null);
+          lastDaily = {
+            date: dailyRow.date,
+            updatedAt: effectiveSyncedAt,
+            steps: num("steps"),
+            sleepMinutes: num("sleepMinutes"),
+            activeEnergyKcal: num("activeEnergyKcal"),
+            restingHeartRateBpm: num("restingHeartRateBpm"),
+          };
+        }
       } catch {}
     }
 
@@ -479,24 +529,129 @@ export class AppleHealth {
 
   saveWorkoutAnnotation(userId: string, id: string, input: AppleWorkoutAnnotationInput) {
     return this.db.transaction(() => {
-      const row = this.stmtGetWorkoutById.get(userId, id) as { data: string } | undefined;
+      const row = this.stmtGetWorkoutById.get(userId, id) as { identityKey: string; data: string } | undefined;
       if (!row) throw new DomainError("找不到对应的 Apple 训练", 404);
       const data = JSON.parse(row.data) as AppleWorkoutData;
-      if (data.annotation) {
-        const { updatedAt: _updatedAt, ...saved } = data.annotation;
-        if (saved.sessionId !== input.sessionId) throw new DomainError("这条 Apple 训练已有另一场计时的备注", 409);
-        if (JSON.stringify(saved) === JSON.stringify(input)) return { ok: true };
+      const existing = data.annotation;
+      const existingIsCardioSession = Boolean(
+        existing &&
+          (existing.source === "cardio_session" ||
+            (existing.source !== "manual" && existing.sessionId && !existing.sessionId.startsWith("apple_"))),
+      );
+      const incomingIsManual =
+        input.source === "manual" ||
+        (!input.sessionId && input.source !== "cardio_session") ||
+        Boolean(input.sessionId?.startsWith("apple_"));
+      const incomingSource: "manual" | "cardio_session" = incomingIsManual ? "manual" : "cardio_session";
+
+      // #73: Only reject when TWO DIFFERENT confirmed cardio sessions try to claim the same Apple workout.
+      // Manual detail edits never block a confirmed web cardio session from attaching its laps & feeling!
+      if (
+        existing &&
+        existingIsCardioSession &&
+        incomingSource === "cardio_session" &&
+        input.sessionId &&
+        existing.sessionId !== input.sessionId
+      ) {
+        throw new DomainError("这条 Apple 训练已有另一场计时的备注", 409);
       }
-      const annotation: AppleWorkoutAnnotation = { ...input, updatedAt: new Date().toISOString() };
-      this.stmtUpdateWorkoutData.run(JSON.stringify({ ...data, annotation }), id);
-      return { ok: true };
+
+      // #72: Multi-device optimistic concurrency & non-overlapping dirty-field merge
+      if (input.expectedUpdatedAt !== undefined && (existing?.updatedAt ?? null) !== input.expectedUpdatedAt) {
+        let canMerge = Boolean(existing && input.base);
+        if (canMerge && existing && input.base) {
+          let checked = false;
+          if (input.notes !== undefined) {
+            checked = true;
+            if (input.base.notes === undefined || existing.notes !== input.base.notes) canMerge = false;
+          }
+          if (canMerge && input.feeling !== undefined) {
+            checked = true;
+            if (input.base.feeling === undefined || existing.feeling !== input.base.feeling) canMerge = false;
+          }
+          if (canMerge && input.distanceKm !== undefined) {
+            checked = true;
+            if (input.base.distanceKm === undefined || existing.distanceKm !== input.base.distanceKm) canMerge = false;
+          }
+          if (canMerge && input.lapSeconds !== undefined) {
+            checked = true;
+            if (
+              input.base.lapSeconds === undefined ||
+              JSON.stringify(existing.lapSeconds) !== JSON.stringify(input.base.lapSeconds)
+            ) {
+              canMerge = false;
+            }
+          }
+          if (!checked) canMerge = false;
+        }
+        if (!canMerge) {
+          throw new AnnotationConflictError(
+            "该条训练备注已在其他设备更新，请刷新核对后再保存",
+            existing ?? null,
+          );
+        }
+      }
+
+      let nextAnnotation: AppleWorkoutAnnotation;
+      if (existing && !existingIsCardioSession && incomingSource === "cardio_session") {
+        // Confirmed web cardio session attaching onto a workout that already had a manual note (#73):
+        // preserve manual note/distance unless cardio session provides its own, and attach laps & sessionId!
+        const mergedNotes = input.notes?.trim()
+          ? existing.notes.trim() && existing.notes.trim() !== input.notes.trim()
+            ? `${existing.notes.trim()}\n${input.notes.trim()}`
+            : input.notes.trim()
+          : existing.notes;
+        nextAnnotation = {
+          sessionId: input.sessionId!,
+          source: "cardio_session",
+          notes: mergedNotes,
+          feeling: input.feeling ?? existing.feeling ?? null,
+          distanceKm: input.distanceKm?.trim() ? input.distanceKm.trim() : existing.distanceKm,
+          lapSeconds: input.lapSeconds?.length ? input.lapSeconds : existing.lapSeconds,
+          updatedAt: new Date().toISOString(),
+        };
+      } else {
+        const mergedSessionId =
+          incomingSource === "cardio_session"
+            ? input.sessionId!
+            : existing?.sessionId || input.sessionId || `manual_${id}`;
+        const mergedSource: "manual" | "cardio_session" =
+          existingIsCardioSession || incomingSource === "cardio_session" ? "cardio_session" : "manual";
+        const includeSource = mergedSource === "manual" || input.source !== undefined || existing?.source !== undefined;
+        const candidate: Omit<AppleWorkoutAnnotation, "updatedAt"> = {
+          sessionId: mergedSessionId,
+          ...(includeSource ? { source: mergedSource } : {}),
+          notes: input.notes !== undefined ? input.notes : (existing?.notes ?? ""),
+          feeling: input.feeling !== undefined ? input.feeling : (existing?.feeling ?? null),
+          distanceKm: input.distanceKm !== undefined ? input.distanceKm : (existing?.distanceKm ?? ""),
+          lapSeconds: input.lapSeconds !== undefined ? input.lapSeconds : (existing?.lapSeconds ?? []),
+        };
+        if (existing) {
+          const { updatedAt: _u, ...savedCore } = existing;
+          if (
+            savedCore.sessionId === candidate.sessionId &&
+            (savedCore.source ?? (existingIsCardioSession ? "cardio_session" : "manual")) === mergedSource &&
+            savedCore.notes === candidate.notes &&
+            savedCore.feeling === candidate.feeling &&
+            savedCore.distanceKm === candidate.distanceKm &&
+            JSON.stringify(savedCore.lapSeconds) === JSON.stringify(candidate.lapSeconds)
+          ) {
+            return { ok: true, annotation: existing };
+          }
+        }
+        nextAnnotation = { ...candidate, updatedAt: new Date().toISOString() };
+      }
+
+      this.stmtUpdateWorkoutData.run(JSON.stringify({ ...data, annotation: nextAnnotation }), id);
+      return { ok: true, annotation: nextAnnotation };
     }).immediate();
   }
 
   deleteWorkout(userId: string, id: string) {
     return this.db.transaction(() => {
-      const row = this.stmtGetWorkoutById.get(userId, id) as { data: string } | undefined;
+      const row = this.stmtGetWorkoutById.get(userId, id) as { identityKey: string; data: string } | undefined;
       if (!row) throw new DomainError("找不到对应的 Apple 训练", 404);
+      this.stmtInsertDeletedIdentity.run(userId, row.identityKey, new Date().toISOString());
       this.stmtClearWorkoutReceipts.run(userId, id);
       this.stmtUnlinkEventWorkout.run(id);
       this.stmtDeleteWorkout.run(userId, id);
@@ -610,6 +765,7 @@ export class AppleHealth {
     }
     return this.db.transaction(() => {
       const devices = this.stmtActiveDeviceIds.all(userId, nowIso) as { id: string }[];
+      const launchGroupId = randomUUID();
       let recorded = 0;
       for (const dev of devices) {
         if (input.onlyIfIdle) {
@@ -624,7 +780,7 @@ export class AppleHealth {
           }
         }
         this.stmtCloseDanglingEvents.run(startedIso, dev.id, type, startedIso);
-        this.stmtUpsertEventStart.run(dev.id, type, startedIso, input.environment);
+        this.stmtUpsertEventStart.run(dev.id, type, startedIso, input.environment, launchGroupId);
         recorded += 1;
       }
       return { ok: true as const, recorded };
@@ -636,13 +792,22 @@ export class AppleHealth {
     const type = event.activityType.toLowerCase();
     return this.db.transaction(() => {
       const row = this.stmtGetEventFull.get(device.id, type) as {
-        startedAt: string; environment: AppleWorkoutInput["environment"]; endedAt: string | null; workoutId: string | null;
+        startedAt: string;
+        environment: AppleWorkoutInput["environment"];
+        endedAt: string | null;
+        workoutId: string | null;
+        launchGroupId: string | null;
       } | undefined;
       if (event.event === "start") {
+        // #22: Reject late-arriving older start events so they never reactivate a ghost workout behind a newer session.
+        const latestAny = this.stmtGetLatestDeviceEvent.get(device.id) as { startedAt: string; endedAt: string | null } | undefined;
+        if (latestAny && event.occurredAt < latestAny.startedAt) {
+          return { ingestStatus: "ignored" as const, reason: "stale_start" as const };
+        }
         // Auto-close any dangling unended start event of a different activity on the same device.
         this.stmtCloseDanglingEvents.run(event.occurredAt, device.id, type, event.occurredAt);
         if (!row || (event.occurredAt > row.startedAt && (!row.endedAt || event.occurredAt > row.endedAt)))
-          this.stmtUpsertEventStart.run(device.id, type, event.occurredAt, event.environment);
+          this.stmtUpsertEventStart.run(device.id, type, event.occurredAt, event.environment, null);
         return { ingestStatus: "started" as const };
       }
       if (row && row.endedAt === event.occurredAt && row.startedAt <= row.endedAt)
@@ -686,8 +851,15 @@ export class AppleHealth {
         activeEnergyKcal: safeActiveEnergyKcal, energyKind: safeActiveEnergyKcal != null ? event.energyKind : undefined,
         distanceMeters: event.distanceMeters, heartRate: event.heartRate,
       });
-      const result = this.save(device.userId, `event:${device.id}:${type}:${row.startedAt}`, workout);
+      // #23: Multi-device end reports from one shared web launch collapse into one workout identity.
+      const eventIdentity = row.launchGroupId
+        ? `web-event:${row.launchGroupId}:${canonicalAppleActivityType(type)}:${row.startedAt}`
+        : `event:${device.id}:${type}:${row.startedAt}`;
+      const result = this.save(device.userId, eventIdentity, workout);
       this.stmtCloseEventWithWorkout.run(event.occurredAt, result.workoutId, device.id, type);
+      if (row.launchGroupId) {
+        this.stmtCloseLaunchGroupEvents.run(event.occurredAt, result.workoutId, row.launchGroupId, type);
+      }
       return result;
     }).immediate();
   }
@@ -707,12 +879,22 @@ export class AppleHealth {
         return { ingestStatus: "duplicate" as const, workoutId: receipt.workoutId };
       }
     }
+    // #24: Respect explicit user deletion tombstone for this identity so re-uploading does not resurrect deleted workouts.
+    const deletedTombstone = this.stmtIsDeletedIdentity.get(userId, identity) as { deletedAt: string } | undefined;
+    if (deletedTombstone) {
+      return { ingestStatus: "duplicate" as const, workoutId: null, deleted: true as const };
+    }
     const existing = this.stmtGetWorkoutByIdentity.get(userId, identity) as { id: string; data: string } | undefined;
     const previous = existing ? JSON.parse(existing.data) as AppleWorkoutData : null;
     if (previous) {
-      if (previous.startedAt !== workout.startedAt || previous.endedAt !== workout.endedAt ||
-          previous.activityType.toLowerCase() !== workout.activityType.toLowerCase())
+      // #25: Canonicalize activityType aliases (e.g. traditional_strength_training vs traditionalStrengthTraining)
+      if (
+        previous.startedAt !== workout.startedAt ||
+        previous.endedAt !== workout.endedAt ||
+        canonicalAppleActivityType(previous.activityType) !== canonicalAppleActivityType(workout.activityType)
+      ) {
         throw new DomainError("训练标识已用于另一条记录", 409);
+      }
     }
     const workoutId = existing?.id ?? randomUUID();
     let updated = false;

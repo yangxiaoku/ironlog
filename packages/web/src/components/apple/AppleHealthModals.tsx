@@ -581,26 +581,73 @@ export function AppleWorkoutDetailsModal({
   const handleSaveAnnotation = async (e: React.FormEvent) => {
     e.preventDefault();
     if (savingNote) return;
+    const trimmedNotes = notesDraft.trim();
+    const trimmedDist = distanceDraft.trim();
+    const prevNotes = annotation?.notes ?? "";
+    const prevFeeling = annotation?.feeling ?? null;
+    const prevDist = annotation?.distanceKm ?? "";
+
+    // #72 & #73: Submit ONLY dirty fields with optimistic version check & source="manual"
+    // so manual detail edits never overwrite another device's fields or block web cardio session attachment.
+    const body: Record<string, unknown> = {
+      source: "manual",
+      expectedUpdatedAt: annotation?.updatedAt ?? null,
+    };
+    const base: Record<string, unknown> = {};
+    let dirty = 0;
+    if (trimmedNotes !== prevNotes) {
+      body.notes = trimmedNotes;
+      base.notes = prevNotes;
+      dirty++;
+    }
+    if (feelingDraft !== prevFeeling) {
+      body.feeling = feelingDraft;
+      base.feeling = prevFeeling;
+      dirty++;
+    }
+    if (trimmedDist !== prevDist) {
+      body.distanceKm = trimmedDist;
+      base.distanceKm = prevDist;
+      dirty++;
+    }
+    if (dirty === 0) {
+      setEditingNote(false);
+      return;
+    }
+    body.base = base;
+
     setSavingNote(true);
     try {
-      const payload = {
-        sessionId: annotation?.sessionId || `apple_${item.id}`,
-        notes: notesDraft.trim(),
-        feeling: feelingDraft,
-        distanceKm: distanceDraft.trim(),
-        lapSeconds: annotation?.lapSeconds ?? [],
-      };
-      await apiFetch(`/api/integrations/apple-health/workouts/${encodeURIComponent(item.id)}/annotation`, {
-        method: "PUT",
-        body: payload,
-      });
-      setAnnotation({ ...payload, updatedAt: new Date().toISOString() });
+      const res = await apiFetch<{ ok: boolean; annotation?: AppleWorkoutAnnotation }>(
+        `/api/integrations/apple-health/workouts/${encodeURIComponent(item.id)}/annotation`,
+        {
+          method: "PUT",
+          body,
+        },
+      );
+      if (res.annotation) {
+        setAnnotation(res.annotation);
+        setNotesDraft(res.annotation.notes ?? "");
+        setFeelingDraft(res.annotation.feeling ?? null);
+        setDistanceDraft(res.annotation.distanceKm ?? "");
+      }
       setEditingNote(false);
       triggerHaptic("success");
       bumpDataEpoch();
       notify("训练备注与体感已保存");
     } catch (err) {
-      notify((err as Error)?.message || "保存备注失败");
+      const apiErr = err as Error & { status?: number; payload?: { current?: AppleWorkoutAnnotation | null } };
+      if (apiErr.status === 409 && apiErr.payload?.current) {
+        const cur = apiErr.payload.current;
+        setAnnotation(cur);
+        // Keep user's edited draft values intact while updating untouched fields from latest server copy
+        if (trimmedNotes === prevNotes) setNotesDraft(cur.notes ?? "");
+        if (feelingDraft === prevFeeling) setFeelingDraft(cur.feeling ?? null);
+        if (trimmedDist === prevDist) setDistanceDraft(cur.distanceKm ?? "");
+        notify("该备注已在其他设备更新，已刷新基准版本，请核对后再次保存");
+      } else {
+        notify(apiErr?.message || "保存备注失败");
+      }
     } finally {
       setSavingNote(false);
     }

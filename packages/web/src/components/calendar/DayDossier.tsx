@@ -270,7 +270,9 @@ export function DayDossier({
 
   const handleClearSched = async () => {
     try {
-      await apiFetch(`/api/web/schedule/${encodeURIComponent(date)}`, { method: "DELETE" });
+      const ver = typeof daySched?.override?.version === "number" ? daySched.override.version : undefined;
+      const qs = ver !== undefined ? `?baseVersion=${encodeURIComponent(String(ver))}` : "";
+      await apiFetch(`/api/web/schedule/${encodeURIComponent(date)}${qs}`, { method: "DELETE" });
       bumpDataEpoch();
       notify(`${shortDate(date)} 已恢复默认顺排`);
     } catch (err) {

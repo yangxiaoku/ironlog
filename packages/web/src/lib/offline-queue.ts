@@ -13,6 +13,7 @@ export interface FlushResult {
   remaining: number;
   stoppedOffline: boolean;
   authRequired: boolean;
+  transientFailure?: boolean;
   blocked: OfflineMutation[];
   storageError: boolean;
 }
@@ -135,7 +136,9 @@ export async function flushQueue(
         if (isNetworkError(err)) return result({ stoppedOffline: true });
         const status = Number((err as { status?: unknown }).status ?? 0);
         if (status === 401) return result({ authRequired: true });
-        if (status === 408 || status === 425 || status === 429 || status >= 500) return result();
+        if (status === 408 || status === 425 || status === 429 || status >= 500) {
+          return result({ transientFailure: true });
+        }
         failure = { status, message: String((err as { message?: unknown }).message ?? "同步未完成") };
       }
       queue = loadQueue(storage, userId);

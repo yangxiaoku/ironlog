@@ -147,14 +147,19 @@ export function LiveWorkoutBar() {
     if (!userId) return;
     let disposed = false;
     let checking = false;
+    let lastCheckedAt = 0;
     const check = async (force = false) => {
       const session = readCardioSession(userId);
-      if (checking || document.visibilityState !== "visible" || !session?.appleSyncRequestedAt ||
-        (!force && Date.now() - Date.parse(session.appleSyncRequestedAt) > 90_000)) return;
+      if (checking || document.visibilityState !== "visible" || !session?.appleSyncRequestedAt) return;
+      const waitedMs = Date.now() - Date.parse(session.appleSyncRequestedAt);
+      // #74: Continue checking at a slower interval (20s) even after 90s while the tab stays visible,
+      // so late-arriving Apple Health uploads still attach automatically without needing a tab switch.
+      if (!force && waitedMs > 90_000 && Date.now() - lastCheckedAt < 20_000) return;
       checking = true;
+      lastCheckedAt = Date.now();
       try {
         const from = localDate(Date.parse(session.startedAt));
-        const through = localDate(Date.parse(session.appleSyncRequestedAt));
+        const through = localDate(Math.max(Date.now(), Date.parse(session.appleSyncRequestedAt)));
         const rows = await apiFetch<Array<Parameters<typeof matchesCardioAppleWorkout>[1] & { id: string }>>(
           `/api/integrations/apple-health/agenda?from=${from}&through=${through}`,
           { accountId: userId },
@@ -163,7 +168,7 @@ export function LiveWorkoutBar() {
         const matched = rows.filter((row) => matchesCardioAppleWorkout(session, row));
         if (disposed || current?.id !== session.id || current.appleSyncRequestedAt !== session.appleSyncRequestedAt ||
           matched.length !== 1) return;
-        const annotation = buildCardioAppleAnnotation(current);
+        const annotation = { ...buildCardioAppleAnnotation(current), source: "cardio_session" as const };
         const { ok } = await apiFetch<{ ok: boolean }>(
           `/api/integrations/apple-health/workouts/${encodeURIComponent(matched[0]!.id)}/annotation`,
           { method: "PUT", body: annotation, accountId: userId, skipMutateHook: true },
@@ -171,12 +176,14 @@ export function LiveWorkoutBar() {
         if (!ok) return;
         const saved = readCardioSession(userId);
         if (disposed || saved?.id !== session.id || saved.appleSyncRequestedAt !== session.appleSyncRequestedAt ||
-          JSON.stringify(buildCardioAppleAnnotation(saved)) !== JSON.stringify(annotation)) return;
+          JSON.stringify(buildCardioAppleAnnotation(saved)) !== JSON.stringify(buildCardioAppleAnnotation(current))) return;
         clearCardioSession(userId);
         bumpDataEpoch();
         notify(`已收到「${session.label}」的 Apple 训练`);
-      } catch {
-        // Keep the paused session available when the device or server has not responded.
+      } catch (err) {
+        if ((err as { status?: number })?.status === 409) {
+          notify((err as Error)?.message || "该 Apple 训练已被另一场计时备注占用");
+        }
       } finally {
         checking = false;
       }

@@ -312,12 +312,13 @@ test("1.4 getWebToday exposes planned muscleScores & rotation scheduleMode and q
   assert.equal(planRes.status, 200);
   store.applyPlan(owner.userId, "plan_rot_1", 1, 0, false);
 
-  const todayInfo = getWebToday(store, owner.userId, "2026-11-27");
+  const today = new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
+  const todayInfo = getWebToday(store, owner.userId, today);
   assert.ok(todayInfo.planned);
   assert.equal(todayInfo.planned.scheduleMode, "rotation");
   assert.ok((todayInfo.planned.muscleScores?.chest ?? 0) > 0);
 
-  const putRest = await call("/api/web/schedule/2026-11-27", {
+  const putRest = await call(`/api/web/schedule/${today}`, {
     method: "PUT",
     body: {
       baseVersion: 0,
@@ -331,7 +332,7 @@ test("1.4 getWebToday exposes planned muscleScores & rotation scheduleMode and q
     },
   });
   assert.equal(putRest.status, 200);
-  const afterRest = getWebToday(store, owner.userId, "2026-11-27");
+  const afterRest = getWebToday(store, owner.userId, today);
   assert.equal(afterRest.restToday, true);
   assert.equal(afterRest.planned, null);
 });

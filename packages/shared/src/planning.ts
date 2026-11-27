@@ -537,9 +537,10 @@ export function projectScheduleRange(params: {
   through: string;
   todayDate: string;
   workouts: readonly Workout[];
-  appleActivities: readonly { date: string; title: string; manualWorkoutId: string | null; plan: { routineId: string; name: string } | null }[];
+  appleActivities: readonly { date: string; title: string; manualWorkoutId: string | null; plan: { planId?: string; routineId: string; name: string } | null }[];
+  completionHistory?: readonly { date: string; startedAt?: string; endedAt?: string | null; status: string; planId?: string | null; routineId?: string | null }[];
   scheduledDays: ReadonlyMap<string, ScheduledDay>;
-  activePlan: { id: string; version: number; updatedAt?: string; data: Plan } | null;
+  activePlan: { id: string; version: number; updatedAt?: string; startedAt?: string; data: Plan } | null;
   catalogue: readonly Exercise[] | ReadonlyMap<string, Exercise>;
   daysPerWeek?: number;
 }): ProjectedScheduleDay[] {
@@ -559,18 +560,51 @@ export function projectScheduleRange(params: {
     appleByDate.set(item.date, list);
   }
 
-  // Determine rotation pointer up to today
+  // Determine rotation pointer up to today using cycle anchor (`startedAt ?? updatedAt`, #65)
+  // and deduplicated completionHistory including Apple Watch plan completions (#64)
   const plan = params.activePlan?.data ?? null;
   const planId = params.activePlan?.id ?? null;
-  const planStart = plan && params.activePlan?.updatedAt ? localDate(Date.parse(params.activePlan.updatedAt)) : null;
+  const cycleAnchorIso = params.activePlan?.startedAt ?? params.activePlan?.updatedAt;
+  const planStart = plan && cycleAnchorIso ? localDate(Date.parse(cycleAnchorIso)) : null;
   const planEnd = plan && planStart ? addDaysIso(planStart, plan.weeks * 7 - 1) : null;
   let rotationIndex = 0;
   if (plan && plan.schedule === "rotation" && plan.routines.length) {
     const routineIds = new Set(plan.routines.map((r) => r.id));
-    let lastPlanWorkout: Workout | undefined;
-    for (const w of params.workouts) {
-      if (w.status !== "completed" || w.date > params.todayDate || w.planId !== planId || !w.routineId || !routineIds.has(w.routineId)) continue;
-      if (!lastPlanWorkout || compareWorkouts(lastPlanWorkout, w) < 0) lastPlanWorkout = w;
+    type CompletionItem = { date: string; startedAt?: string; endedAt?: string | null; status: string; planId?: string | null; routineId?: string | null };
+    const completionPool: CompletionItem[] = params.completionHistory
+      ? [...params.completionHistory]
+      : [
+          ...params.workouts,
+          ...params.appleActivities
+            .filter((item) => !item.manualWorkoutId && item.plan && (!item.plan.planId || item.plan.planId === planId))
+            .map((item) => ({
+              date: item.date,
+              startedAt: `${item.date}T12:00:00Z`,
+              endedAt: `${item.date}T12:30:00Z`,
+              status: "completed" as const,
+              planId: item.plan!.planId ?? planId,
+              routineId: item.plan!.routineId,
+            })),
+        ];
+    const cmpCompletion = (a: CompletionItem, b: CompletionItem) => {
+      if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+      const tA = Date.parse(a.endedAt ?? a.startedAt ?? `${a.date}T00:00:00Z`) || 0;
+      const tB = Date.parse(b.endedAt ?? b.startedAt ?? `${b.date}T00:00:00Z`) || 0;
+      return tA - tB;
+    };
+    let lastPlanWorkout: CompletionItem | undefined;
+    for (const w of completionPool) {
+      if (
+        w.status !== "completed" ||
+        w.date > params.todayDate ||
+        (planStart && w.date < planStart) ||
+        w.planId !== planId ||
+        !w.routineId ||
+        !routineIds.has(w.routineId)
+      ) {
+        continue;
+      }
+      if (!lastPlanWorkout || cmpCompletion(lastPlanWorkout, w) < 0) lastPlanWorkout = w;
     }
     const prevIdx = lastPlanWorkout ? plan.routines.findIndex((r) => r.id === lastPlanWorkout.routineId) : -1;
     rotationIndex = prevIdx >= 0 ? (prevIdx + 1) % plan.routines.length : 0;
@@ -597,12 +631,12 @@ export function projectScheduleRange(params: {
       for (let offset = 0; offset < 7; offset++) {
         const day = addDaysIso(mon, offset);
         const manualDone = (completedByDate.get(day)?.length ?? 0) > 0;
-        const appleDone = (appleByDate.get(day)?.length ?? 0) > 0;
+        const applePlanDone = (appleByDate.get(day) ?? []).some((item) => item.plan != null);
         const override = params.scheduledDays.get(day);
-        if (manualDone || appleDone || override?.mode === "workout") existingThisWeek++;
+        if (manualDone || applePlanDone || override?.mode === "workout") existingThisWeek++;
       }
       const candidates = weekFuture.filter((day) => {
-        if ((completedByDate.get(day)?.length ?? 0) > 0 || (appleByDate.get(day)?.length ?? 0) > 0) return false;
+        if ((completedByDate.get(day)?.length ?? 0) > 0 || (appleByDate.get(day) ?? []).some((item) => item.plan != null)) return false;
         const ov = params.scheduledDays.get(day);
         return !ov;
       });
@@ -616,10 +650,27 @@ export function projectScheduleRange(params: {
     const appleDone = appleByDate.get(date) ?? [];
     const totalDone = done.length + appleDone.length;
     const override = params.scheduledDays.get(date);
+    const hasLinkedApplePlan = appleDone.some((item) => item.plan != null);
+    const onlyUnlinkedApple = done.length === 0 && appleDone.length > 0 && !hasLinkedApplePlan;
+    const hasPendingScheduledOverride = override?.mode === "workout" && onlyUnlinkedApple;
+    const hasPendingTodayPlan =
+      !override &&
+      date === params.todayDate &&
+      onlyUnlinkedApple &&
+      Boolean(
+        plan &&
+          planId &&
+          (!planStart || date >= planStart) &&
+          (!planEnd || date <= planEnd) &&
+          ((plan.schedule === "weekdays" && plan.weekdays.includes(isoWeekday(date))) ||
+            (plan.schedule === "rotation" && rotationSlots.has(date))),
+      );
     if (
       date <= params.todayDate &&
       totalDone > 0 &&
-      !(override?.mode === "rest" && done.length === 0 && appleDone.every((item) => !item.plan))
+      !(override?.mode === "rest" && onlyUnlinkedApple) &&
+      !hasPendingScheduledOverride &&
+      !hasPendingTodayPlan
     ) {
       const lead = done[0]?.title ?? appleDone[0]?.plan?.name ?? appleDone[0]?.title ?? "已完成训练";
       return {
@@ -675,7 +726,7 @@ export function projectScheduleRange(params: {
         estimatedMinutes: routine.exercises.length ? estimateRoutineMinutes(routine) : 45,
         muscles: routineMuscles(routine, byId),
         routine: routine.exercises.length ? routine : null,
-        workoutsCount: 0,
+        workoutsCount: totalDone,
       };
     }
 
@@ -701,7 +752,7 @@ export function projectScheduleRange(params: {
               estimatedMinutes: estimateRoutineMinutes(routine),
               muscles: routineMuscles(routine, byId),
               routine,
-              workoutsCount: 0,
+              workoutsCount: totalDone,
             };
           }
           return {
@@ -717,7 +768,7 @@ export function projectScheduleRange(params: {
             estimatedMinutes: 0,
             muscles: [],
             routine: null,
-            workoutsCount: 0,
+            workoutsCount: totalDone,
           };
         }
 
@@ -737,7 +788,7 @@ export function projectScheduleRange(params: {
             estimatedMinutes: estimateRoutineMinutes(routine),
             muscles: routineMuscles(routine, byId),
             routine,
-            workoutsCount: 0,
+            workoutsCount: totalDone,
           };
         }
       }

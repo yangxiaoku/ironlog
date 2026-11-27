@@ -1,7 +1,10 @@
+import { createHash, randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { planSchema, workoutSchema } from "@ironlog/shared";
+
+const pendingDraftOpIds = new Map<string, string>();
 
 const baseUrl = process.env.IRONLOG_URL ?? "http://127.0.0.1:8080";
 const token = process.env.IRONLOG_TOKEN;
@@ -57,11 +60,27 @@ server.registerTool(
 server.registerTool(
   "create_plan_draft",
   {
-    description: "创建可在手机预览的计划草稿，source 使用 agent",
-    inputSchema: { plan: planSchema },
+    description: "创建可在手机预览的计划草稿，source 使用 agent；重试时可复用 operationId 防止重复创建",
+    inputSchema: {
+      plan: planSchema,
+      operationId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
+    },
   },
-  ({ plan }) =>
-    request("/api/plans/drafts", "POST", { ...plan, source: "agent" }),
+  async ({ plan, operationId }) => {
+    const payload = { ...plan, source: "agent" as const };
+    if (operationId) {
+      return request("/api/plans/drafts", "POST", { ...payload, opId: operationId });
+    }
+    const fingerprint = createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+    let opId = pendingDraftOpIds.get(fingerprint);
+    if (!opId) {
+      opId = `mcp_draft_${randomUUID()}`;
+      pendingDraftOpIds.set(fingerprint, opId);
+    }
+    const res = await request("/api/plans/drafts", "POST", { ...payload, opId });
+    pendingDraftOpIds.delete(fingerprint);
+    return res;
+  },
 );
 server.registerTool(
   "revise_plan_draft",

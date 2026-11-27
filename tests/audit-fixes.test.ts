@@ -501,7 +501,7 @@ test("#04 Apple 力量训练在手动休息日保留为独立活动，不误补�
     });
     store.applyPlan(user.userId, "plan_wd", shiftPlanRes.record!.version, activeBeforeShift.revision, false);
 
-    shiftWebScheduleDay(store, user.userId, { fromDate: shiftDay1, toDate: shiftDay2 });
+    shiftWebScheduleDay(store, user.userId, { fromDate: shiftDay1, toDate: shiftDay2, overwrite: true });
 
     const insertAppleStrength = (id: string, extId: string, day: string) => {
       db.prepare(

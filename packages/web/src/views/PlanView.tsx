@@ -312,7 +312,37 @@ export function PlanView() {
       bumpDataEpoch();
       notify(`已将 ${shortDate(fromDate)} 训练顺延至 ${shortDate(toDate)}`);
     } catch (err) {
-      notify((err as Error)?.message || "顺延失败");
+      const apiErr = err as Error & {
+        status?: number;
+        payload?: {
+          conflictTarget?: { date: string; title: string; notes: string; version: number };
+          fromVersion?: number;
+        };
+      };
+      if (apiErr.status === 409 && apiErr.payload?.conflictTarget) {
+        const target = apiErr.payload.conflictTarget;
+        openConfirm({
+          title: "目标日期已有训练安排",
+          message: `${shortDate(toDate)} 已有「${target.title}」${target.notes ? `（备注：${target.notes}）` : ""}。确认覆盖目标日期的原有排期吗？`,
+          confirmLabel: "确认覆盖",
+          onConfirm: async () => {
+            await apiFetch("/api/web/schedule/shift", {
+              method: "POST",
+              body: {
+                fromDate,
+                toDate,
+                overwrite: true,
+                expectedFromVersion: apiErr.payload?.fromVersion,
+                expectedToVersion: target.version,
+              },
+            });
+            bumpDataEpoch();
+            notify(`已将 ${shortDate(fromDate)} 训练顺延并覆盖至 ${shortDate(toDate)}`);
+          },
+        });
+        return;
+      }
+      notify(apiErr?.message || "顺延失败");
     }
   };
 

@@ -421,6 +421,7 @@ export function getWebSchedule(store: Store, userId: string, query: z.infer<type
     todayDate,
     workouts: ctx.workouts,
     appleActivities: ctx.appleProjected.entries.map(publicAppleActivity),
+    completionHistory: ctx.appleProjected.completionHistory,
     scheduledDays: ctx.scheduledDays,
     activePlan: ctx.activePlan,
     catalogue: ctx.catalogue,
@@ -474,6 +475,7 @@ export function getWebScheduleDay(store: Store, userId: string, date: string) {
     todayDate,
     workouts: ctx.workouts,
     appleActivities: ctx.appleProjected.entries.map(publicAppleActivity),
+    completionHistory: ctx.appleProjected.completionHistory,
     scheduledDays: ctx.scheduledDays,
     activePlan: ctx.activePlan,
     catalogue: ctx.catalogue,
@@ -581,7 +583,13 @@ export function saveWebScheduleDay(store: Store, userId: string, date: string, i
   }).immediate();
 }
 
-export function clearWebScheduleDay(store: Store, userId: string, date: string, opId?: string) {
+export function clearWebScheduleDay(
+  store: Store,
+  userId: string,
+  date: string,
+  opId?: string,
+  expectedVersion?: number,
+) {
   return store.db.transaction(() => {
     const recordId = "schedule_" + date;
     if (opId) {
@@ -596,6 +604,9 @@ export function clearWebScheduleDay(store: Store, userId: string, date: string, 
       }
     }
     const existing = store.get(userId, "scheduledDay", recordId);
+    if (expectedVersion !== undefined && existing && !existing.deleted && existing.version !== expectedVersion) {
+      throw new DomainError("该日期排期已被其他设备修改，请刷新确认后再清除", 409);
+    }
     if (existing && !existing.deleted) {
       const result = store.mutate(userId, {
         opId: opId ?? randomUUID(),
@@ -611,9 +622,28 @@ export function clearWebScheduleDay(store: Store, userId: string, date: string, 
   }).immediate();
 }
 
+export class ScheduleConflictError extends DomainError {
+  constructor(
+    message: string,
+    public readonly conflictTarget: {
+      date: string;
+      status: string;
+      title: string;
+      notes: string;
+      version: number;
+    },
+    public readonly fromVersion: number,
+  ) {
+    super(message, 409);
+  }
+}
+
 export const scheduleShiftInput = z.object({
   fromDate: z.iso.date(),
   toDate: z.iso.date(),
+  overwrite: z.boolean().optional().default(false),
+  expectedFromVersion: z.number().int().min(0).optional(),
+  expectedToVersion: z.number().int().min(0).optional(),
 });
 
 export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer<typeof scheduleShiftInput>) {
@@ -623,12 +653,45 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
     if (!source.day.routine || (source.day.status !== "scheduled" && source.day.status !== "projected")) {
       throw new DomainError("这一天还没有可顺延的排期训练");
     }
+    const fromOverride = store.get(userId, "scheduledDay", "schedule_" + input.fromDate);
     const targetOverride = store.get(userId, "scheduledDay", "schedule_" + input.toDate);
+    const curFromVersion = fromOverride?.version ?? 0;
+    const curToVersion = targetOverride?.version ?? 0;
+    if (input.expectedFromVersion !== undefined && curFromVersion !== input.expectedFromVersion) {
+      throw new DomainError("原日期排期已变更，请刷新后重试", 409);
+    }
+    if (input.expectedToVersion !== undefined && curToVersion !== input.expectedToVersion) {
+      throw new DomainError("目标日期排期已变更，请刷新后重试", 409);
+    }
+
+    const targetDetail = getWebScheduleDay(store, userId, input.toDate);
+    const targetHasManualWorkout = Boolean(
+      targetOverride && !targetOverride.deleted && (targetOverride.data as ScheduledDay).mode === "workout",
+    );
+    const targetOccupied =
+      targetHasManualWorkout ||
+      targetDetail.day.status === "scheduled" ||
+      targetDetail.day.status === "projected" ||
+      targetDetail.day.status === "completed";
+    if (targetOccupied && !input.overwrite) {
+      throw new ScheduleConflictError(
+        `目标日期 ${input.toDate} 已有安排「${targetDetail.day.title || "训练"}」，请另选日期或确认覆盖`,
+        {
+          date: input.toDate,
+          status: targetDetail.day.status,
+          title: targetDetail.day.title || "训练",
+          notes: targetDetail.day.notes || "",
+          version: curToVersion,
+        },
+        curFromVersion,
+      );
+    }
+
     const targetResult = store.mutate(userId, {
       opId: randomUUID(),
       id: "schedule_" + input.toDate,
       kind: "scheduledDay",
-      baseVersion: targetOverride?.version ?? 0,
+      baseVersion: curToVersion,
       deleted: false,
       data: scheduledDaySchema.parse({
         date: input.toDate,
@@ -643,12 +706,11 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
     });
     if (targetResult.status === "conflict") throw new DomainError("目标日期排期已变更，请重试", 409);
 
-    const fromOverride = store.get(userId, "scheduledDay", "schedule_" + input.fromDate);
     const fromResult = store.mutate(userId, {
       opId: randomUUID(),
       id: "schedule_" + input.fromDate,
       kind: "scheduledDay",
-      baseVersion: fromOverride?.version ?? 0,
+      baseVersion: curFromVersion,
       deleted: false,
       data: scheduledDaySchema.parse({
         date: input.fromDate,
@@ -688,6 +750,7 @@ export function matchActivePlanRoutine(
 export const syncPlanRoutineInput = z.object({
   workoutId: z.string().min(1).max(100),
   expectedRevision: z.number().int().min(0).optional(),
+  forceOverwritePlanVersion: z.boolean().optional(),
 });
 
 export function syncWorkoutRoutineToActivePlan(
@@ -725,6 +788,19 @@ export function syncWorkoutRoutineToActivePlan(
     }
     if (oldPlanRoutine && active && input.expectedRevision !== undefined && active.revision !== input.expectedRevision) {
       throw new DomainError("当前计划已变化，请刷新后重试", 409);
+    }
+    if (
+      oldPlanRoutine &&
+      active &&
+      workout.planId === active.id &&
+      workout.planVersion != null &&
+      workout.planVersion !== active.version &&
+      !input.forceOverwritePlanVersion
+    ) {
+      throw new DomainError(
+        `本场训练基于计划 v${workout.planVersion}，但当前生效计划已更新至 v${active.version}，为避免覆盖新版计划请先确认或另存为模板`,
+        409,
+      );
     }
     const oldRoutine = oldPlanRoutine ?? oldTemplate!;
     if (!workout.exercises.length) throw new DomainError("本场训练没有动作，无法同步回计划", 400);
@@ -802,11 +878,20 @@ export function syncWorkoutRoutineToActivePlan(
       const nextRoutines = active.data.routines.map((r, i) =>
         i === routineIdx ? { ...r, exercises: nextExercises } : r,
       );
+      // #17: After overwrite backup restore, plan record version is bumped above active.version while data matches.
+      // Reconcile baseVersion with planRec.version ONLY when planRec.data still equals active.data.
+      const planRec = store.get(userId, "plan", active.id);
+      const targetBaseVersion =
+        planRec &&
+        !planRec.deleted &&
+        (planRec.version === active.version || JSON.stringify(planRec.data) === JSON.stringify(active.data))
+          ? planRec.version
+          : active.version;
       const saved = store.mutate(userId, {
         opId: randomUUID(),
         id: active.id,
         kind: "plan",
-        baseVersion: active.version,
+        baseVersion: targetBaseVersion,
         deleted: false,
         data: { ...active.data, routines: nextRoutines },
       });

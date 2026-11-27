@@ -11,6 +11,7 @@ import {
   type Workout,
 } from "@ironlog/shared";
 import { listDailyHealth, summarizeDailyHealth } from "./apple-health-daily.js";
+import { projectAppleTraining, publicAppleActivity } from "./apple-training-agenda.js";
 import type { Store } from "./store.js";
 
 function readProfile(store: Store, userId: string) {
@@ -58,6 +59,11 @@ export function getStats(store: Store, userId: string, date = localDate()) {
     }
     if (workout.date === date) todayWorkouts.push({ ...record, metrics });
   }
+  const completedEntries = workouts.map((record) => ({ id: record.id, workout: record.data as Workout }));
+  const appleActivities = projectAppleTraining(store, userId, date, catalogue, completedEntries)
+    .entries.filter((row) => row.date === date)
+    .map(publicAppleActivity);
+  const addedAppleActivities = appleActivities.filter((item) => !item.manualWorkoutId).length;
   return {
     date,
     profile,
@@ -68,6 +74,13 @@ export function getStats(store: Store, userId: string, date = localDate()) {
       store.list(userId, "weight").map((record) => record.data as Weight).filter((weight) => weight.date <= date),
     ),
     workouts: todayWorkouts,
+    appleActivities,
+    trainingSummary: {
+      manualWorkouts: todayWorkouts.length,
+      appleActivities: appleActivities.length,
+      addedAppleActivities,
+      totalActivities: todayWorkouts.length + addedAppleActivities,
+    },
     series,
   };
 }

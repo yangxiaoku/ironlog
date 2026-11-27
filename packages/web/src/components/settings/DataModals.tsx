@@ -3,7 +3,7 @@ import { BACKUP_JSON_LIMIT_LABEL, BACKUP_JSON_MAX_BYTES, BACKUP_REQUEST_TIMEOUT_
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { fmt } from "../../lib/date";
-import type { PlanData } from "../../lib/domain";
+import { safeUuid, type PlanData } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
@@ -247,6 +247,7 @@ interface BackupPreviewRes {
     diets?: number;
     weights?: number;
     measurements?: number;
+    progressPhotos?: number;
     plans?: number;
     templates?: number;
     appleDaily?: number;
@@ -265,7 +266,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
   const [strategy, setStrategy] = useState<"merge" | "replace">("merge");
   const strategyRef = useRef(strategy);
   const previewRequest = useRef(0);
-  const [validated, setValidated] = useState<{ backup: unknown; preview: BackupPreviewRes } | null>(null);
+  const [validated, setValidated] = useState<{ backup: unknown; preview: BackupPreviewRes; opId: string } | null>(null);
   const [armedReplace, setArmedReplace] = useState(false);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
@@ -296,7 +297,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
         timeout: BACKUP_REQUEST_TIMEOUT_MS,
         body: { backup: parsed, mode: "preview", strategy: nextStrategy },
       });
-      if (request === previewRequest.current) setValidated({ backup: parsed, preview: res });
+      if (request === previewRequest.current) setValidated({ backup: parsed, preview: res, opId: safeUuid() });
     } catch (err) {
       if (request === previewRequest.current) setError((err as Error)?.message || "预览恢复失败");
     } finally {
@@ -316,7 +317,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       const res = await apiFetch<{ imported: number; updated: number }>("/api/web/restore-backup", {
         method: "POST",
         timeout: BACKUP_REQUEST_TIMEOUT_MS,
-        body: { backup: validated.backup, mode: "commit", strategy },
+        body: { backup: validated.backup, mode: "commit", strategy, opId: validated.opId },
       });
       bumpDataEpoch();
       closeAllModals();
@@ -428,6 +429,7 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
           </div>
           <p className="muted csv-custom-note">
             将新增 <b>{d.toImport ?? 0}</b> 项 · 更新 <b>{d.toUpdate ?? 0}</b> 项 · 保留现有 <b>{d.unchanged ?? 0}</b> 项
+            {c.progressPhotos ? ` · 体态照片 ${c.progressPhotos} 张` : ""}
             {c.appleDaily || c.appleWorkouts ? ` · 含 Apple 健康 ${c.appleDaily ?? 0} 天 / ${c.appleWorkouts ?? 0} 场训练` : ""}
           </p>
         </div>

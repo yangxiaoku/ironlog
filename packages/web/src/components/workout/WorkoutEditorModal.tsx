@@ -477,11 +477,30 @@ export function WorkoutEditorModal({
   const savingRef = useRef(false);
   const [error, setError] = useState("");
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
-  const [manualDurationMin, setManualDurationMin] = useState<string>(() =>
-    isHistoricalEdit ? String(Math.max(1, Math.round(elapsedAt(initialSnapshot.timing, Date.now()) / 60))) : "",
+  const [staleDraftConflict, setStaleDraftConflict] = useState<{ localVersion: number; cloudVersion: number } | null>(
+    () =>
+      restoredFromDraftRef.current &&
+      record &&
+      typeof initialSnapshot.baseVersion === "number" &&
+      initialSnapshot.baseVersion < record.version
+        ? { localVersion: initialSnapshot.baseVersion, cloudVersion: record.version }
+        : null,
   );
+  const effectiveBaseVersionRef = useRef<number>(
+    restoredFromDraftRef.current && typeof initialSnapshot.baseVersion === "number"
+      ? initialSnapshot.baseVersion
+      : (record?.version ?? 0),
+  );
+  const pendingSaveOpRef = useRef<{ sig: string; body: Record<string, unknown> } | null>(null);
+  const unitOriginRef = useRef<Map<string, { unit: WeightUnit; weight: number }>>(new Map());
+  const [durationEdited, setDurationEdited] = useState(false);
+  const [manualDurationMin, setManualDurationMin] = useState<string>(() => {
+    if (!isHistoricalEdit || record?.data.durationUnknown) return "";
+    const secs = elapsedAt(initialSnapshot.timing, Date.now());
+    return secs > 0 ? String(Math.max(1, Math.round(secs / 60))) : "";
+  });
   const [undoDeletedSet, setUndoDeletedSet] = useState<{
-    exIdx: number;
+    exerciseRowId: string;
     setIdx: number;
     set: WorkoutSet;
     exName: string;
@@ -714,7 +733,7 @@ export function WorkoutEditorModal({
           timing,
           rest,
           workoutId,
-          baseVersion: savedRecordRef.current?.version ?? record?.version ?? initialSnapshot.baseVersion ?? 0,
+          baseVersion: effectiveBaseVersionRef.current,
           ...sessionMetaRef.current,
         }),
       );
@@ -1517,7 +1536,11 @@ export function WorkoutEditorModal({
     const pausedRaw = pauseAt(timing, nowMs);
     const parsedManualMin = manualDurationMin.trim() === "" ? null : Number(manualDurationMin);
     const hasManualDuration =
-      parsedManualMin != null && Number.isFinite(parsedManualMin) && parsedManualMin > 0 && parsedManualMin <= 720;
+      durationEdited &&
+      parsedManualMin != null &&
+      Number.isFinite(parsedManualMin) &&
+      parsedManualMin > 0 &&
+      parsedManualMin <= 720;
     const rawElapsed = hasManualDuration ? Math.round(parsedManualMin * 60) : Number(pausedRaw.elapsedSeconds);
     const pausedTiming: WorkoutTiming = {
       elapsedSeconds: Number.isFinite(rawElapsed) ? Math.max(0, Math.round(rawElapsed)) : 0,
@@ -1526,17 +1549,22 @@ export function WorkoutEditorModal({
 
     let endedAt: string | null = null;
     if (targetStatus === "completed") {
-      const candidateEndedAt = hasManualDuration
-        ? new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString()
-        : curRec?.data.endedAt && cleanDate === curRec.data.date
-          ? curRec.data.endedAt
-          : cleanDate === todayStr
-            ? new Date(Math.max(startMs, nowMs)).toISOString()
-            : new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString();
-      const parsedEndMs = Date.parse(candidateEndedAt);
-      endedAt = new Date(
-        Math.max(startMs, Number.isFinite(parsedEndMs) ? parsedEndMs : nowMs),
-      ).toISOString();
+      if (!hasManualDuration && isHistoricalEdit && curRec && cleanDate === curRec.data.date) {
+        // Preserve original endedAt verbatim (including null or exact seconds) when user didn't touch duration (#26)
+        endedAt = curRec.data.endedAt ?? null;
+      } else {
+        const candidateEndedAt = hasManualDuration
+          ? new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString()
+          : curRec?.data.endedAt && cleanDate === curRec.data.date
+            ? curRec.data.endedAt
+            : cleanDate === todayStr
+              ? new Date(Math.max(startMs, nowMs)).toISOString()
+              : new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString();
+        const parsedEndMs = Date.parse(candidateEndedAt);
+        endedAt = new Date(
+          Math.max(startMs, Number.isFinite(parsedEndMs) ? parsedEndMs : nowMs),
+        ).toISOString();
+      }
     }
 
     const resting = targetStatus === "active" && rest?.pausedLeftMs == null && (rest?.end ?? 0) > nowMs;
@@ -1634,19 +1662,44 @@ export function WorkoutEditorModal({
       targetSnapshot: sanitizeTargetSnapshot(curRec?.data.targetSnapshot ?? curMeta.targetSnapshot),
       adjustments: Array.isArray(rawAdjustments) ? rawAdjustments.slice(0, 100) : [],
       exercises: sanitizedExercises,
-      ...(isHistoricalEdit && !hadTiming ? {} : { timing: pausedTiming }),
+      ...(isHistoricalEdit && !hadTiming && !hasManualDuration ? {} : { timing: pausedTiming }),
       restEndsAt: resting && rest && Number.isFinite(rest.end) ? Math.round(rest.end) : null,
       restStartedAt: resting && rest && Number.isFinite(rest.start) ? Math.max(0, Math.round(rest.start)) : null,
     };
+
+    const formSig = JSON.stringify({
+      targetStatus,
+      id: isValidRecordId(workoutId) ? workoutId : "",
+      baseVersion: effectiveBaseVersionRef.current,
+      title: cleanTitle,
+      date: cleanDate,
+      notes: workoutData.notes,
+      feeling: workoutData.feeling,
+      durationEdited,
+      manualDurationMin,
+      exercises: sanitizedExercises,
+    });
+    if (pendingSaveOpRef.current && pendingSaveOpRef.current.sig === formSig) {
+      const cachedBody = pendingSaveOpRef.current.body as {
+        opId: string;
+        id: string;
+        kind: "workout";
+        baseVersion: number;
+        deleted: boolean;
+        data: WorkoutData;
+      };
+      return { cleanTitle, workoutData: cachedBody.data, body: cachedBody };
+    }
 
     const body = {
       opId: newId(),
       id: isValidRecordId(workoutId) ? workoutId : newId(),
       kind: "workout" as const,
-      baseVersion: curRec?.version ?? 0,
+      baseVersion: effectiveBaseVersionRef.current,
       deleted: false,
       data: workoutData,
     };
+    pendingSaveOpRef.current = { sig: formSig, body };
 
     return { cleanTitle, workoutData, body };
   };
@@ -1671,6 +1724,9 @@ export function WorkoutEditorModal({
       data: workoutData,
     };
     savedRecordRef.current = saved;
+    effectiveBaseVersionRef.current = saved.version;
+    pendingSaveOpRef.current = null;
+    setStaleDraftConflict(null);
     setSavedRecord(saved);
     bumpDataEpoch();
     return saved;
@@ -1720,6 +1776,9 @@ export function WorkoutEditorModal({
         data: payloadPack.workoutData,
       };
       savedRecordRef.current = saved;
+      effectiveBaseVersionRef.current = saved.version;
+      pendingSaveOpRef.current = null;
+      setStaleDraftConflict(null);
       setSavedRecord(saved);
       if (targetStatus === "completed" && syncSourceOnFinish && canSyncSource) {
         try {
@@ -1884,17 +1943,23 @@ export function WorkoutEditorModal({
         if (prevUnit === nextUnit) return ex;
         const convertedSets = ex.sets.map((s) => {
           if (!(s.weight > 0)) return s;
+          const originKey = `${ex.id}:${s.id}`;
+          const origin = unitOriginRef.current.get(originKey);
+          if (!origin) {
+            unitOriginRef.current.set(originKey, { unit: prevUnit, weight: s.weight });
+          } else if (origin.unit === nextUnit) {
+            // Exact lossless round-trip restoration (e.g. 61.23 kg -> lb -> 61.23 kg, #28)
+            return { ...s, weight: origin.weight };
+          }
           const weightKg = weightToKg(s.weight, prevUnit);
-          const rawNext = kgToUnit(weightKg, nextUnit);
-          const step = nextUnit === "lb" ? 2.5 : 0.5;
-          const rounded = Math.round(rawNext / step) * step;
-          return { ...s, weight: round2(rounded) };
+          const exactNext = round2(kgToUnit(weightKg, nextUnit));
+          return { ...s, weight: exactNext };
         });
         return { ...ex, weightUnit: nextUnit, sets: convertedSets };
       }),
     );
     triggerHaptic("light");
-    notify(`已切换为 ${nextUnit}（统计自动统一折算 kg）`);
+    notify(`已切换为 ${nextUnit}（保留原始精度，统计统一折算 kg）`);
   };
 
   const sourceSyncDiff = useMemo(
@@ -1915,6 +1980,57 @@ export function WorkoutEditorModal({
     <div
       className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""} layout-${workoutLayout}`}
     >
+      {staleDraftConflict && record ? (
+        <div
+          className="form-error"
+          role="alert"
+          style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10, padding: "10px 12px" }}
+        >
+          <div>
+            <strong>检测到本机草稿（v{staleDraftConflict.localVersion}）落后于云端最新记录（v{staleDraftConflict.cloudVersion}）</strong>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              本机已完成 {exercises.reduce((n, ex) => n + ex.sets.filter((s) => s.completed).length, 0)} 组 · 云端已完成{" "}
+              {record.data.exercises.reduce((n, ex) => n + ex.sets.filter((s) => s.completed).length, 0)} 组。直接保存将被拦截，请先选择采用哪一份进度。
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className="primary-button"
+              style={{ minHeight: 30, padding: "4px 12px", fontSize: 12 }}
+              onClick={() => {
+                setTitle(record.data.title);
+                setDate(record.data.date);
+                setNotes(record.data.notes ?? "");
+                setFeeling(record.data.feeling ?? null);
+                setExercises(record.data.exercises);
+                if (record.data.timing) setTiming(record.data.timing);
+                effectiveBaseVersionRef.current = record.version;
+                pendingSaveOpRef.current = null;
+                setStaleDraftConflict(null);
+                setError("");
+                notify("已载入云端最新训练进度");
+              }}
+            >
+              载入云端最新进度
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              style={{ minHeight: 30, padding: "4px 12px", fontSize: 12 }}
+              onClick={() => {
+                effectiveBaseVersionRef.current = record.version;
+                pendingSaveOpRef.current = null;
+                setStaleDraftConflict(null);
+                setError("");
+                notify("已确认保留本机草稿，保存时将更新云端记录");
+              }}
+            >
+              保留本机草稿并覆盖云端
+            </button>
+          </div>
+        </div>
+      ) : null}
       {!isHistoricalEdit ? (
         <header className="workout-topbar">
           <div className="workout-topbar-row">
@@ -2702,7 +2818,10 @@ export function WorkoutEditorModal({
                   min={1}
                   max={720}
                   value={manualDurationMin}
-                  onChange={(e) => setManualDurationMin(e.target.value)}
+                  onChange={(e) => {
+                    setDurationEdited(true);
+                    setManualDurationMin(e.target.value);
+                  }}
                   placeholder={
                     date < todayStr
                       ? `留空则按计时（建议填约 ${Math.max(10, totalSets * 3)} 分钟）`
@@ -2898,7 +3017,10 @@ export function WorkoutEditorModal({
                   min={1}
                   max={720}
                   value={manualDurationMin}
-                  onChange={(e) => setManualDurationMin(e.target.value)}
+                  onChange={(e) => {
+                    setDurationEdited(true);
+                    setManualDurationMin(e.target.value);
+                  }}
                   placeholder="例如：55"
                 />
               </label>
@@ -3573,7 +3695,10 @@ export function WorkoutEditorModal({
                           className="danger"
                           onClick={() => {
                             const hasWork = row.sets.some((s) => s.completed || s.weight > 0);
-                            const removeNow = () => setExercises((prev) => prev.filter((_, i) => i !== exIdx));
+                            const removeNow = () => {
+                              setExercises((prev) => prev.filter((_, i) => i !== exIdx));
+                              setUndoDeletedSet((cur) => (cur?.exerciseRowId === row.id ? null : cur));
+                            };
                             if (!hasWork) {
                               removeNow();
                               return;
@@ -3879,7 +4004,7 @@ export function WorkoutEditorModal({
                                 ),
                               );
                               if (deletedSet.completed || deletedSet.weight > 0) {
-                                setUndoDeletedSet({ exIdx, setIdx, set: deletedSet, exName });
+                                setUndoDeletedSet({ exerciseRowId: row.id, setIdx, set: deletedSet, exName });
                                 if (undoSetTimerRef.current !== null) window.clearTimeout(undoSetTimerRef.current);
                                 undoSetTimerRef.current = window.setTimeout(() => {
                                   undoSetTimerRef.current = null;
@@ -4094,7 +4219,7 @@ export function WorkoutEditorModal({
                     );
                   })}
 
-                  {undoDeletedSet && undoDeletedSet.exIdx === exIdx ? (
+                  {undoDeletedSet && undoDeletedSet.exerciseRowId === row.id ? (
                     <div className="set-undo-bar" role="status">
                       <span>已删除「{undoDeletedSet.exName}」第 {undoDeletedSet.setIdx + 1} 组</span>
                       <button
@@ -4108,8 +4233,8 @@ export function WorkoutEditorModal({
                             undoSetTimerRef.current = null;
                           }
                           setExercises((prev) =>
-                            prev.map((ex, i) => {
-                              if (i !== restore.exIdx) return ex;
+                            prev.map((ex) => {
+                              if (ex.id !== restore.exerciseRowId) return ex;
                               const next = [...ex.sets];
                               const pos = Math.min(restore.setIdx, next.length);
                               next.splice(pos, 0, restore.set);

@@ -55,7 +55,8 @@ export default defineConfig({
         navigateFallback: "/app/index.html",
         runtimeCaching: [
           {
-            urlPattern: /^\/app\/.*\.(?:png|jpg|jpeg|webp|svg|woff2)$/i,
+            urlPattern: ({ url, sameOrigin }) =>
+              sameOrigin && /^\/app\/.*\.(?:png|jpg|jpeg|webp|svg|woff2)$/i.test(url.pathname),
             handler: "CacheFirst",
             options: {
               cacheName: "ironlog-static-media",
@@ -67,7 +68,8 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /^\/media\/exercises\//i,
+            urlPattern: ({ url, sameOrigin }) =>
+              sameOrigin && /^\/media\/exercises\//i.test(url.pathname),
             handler: "CacheFirst",
             options: {
               cacheName: "ironlog-exercise-media",
