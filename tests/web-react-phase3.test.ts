@@ -27,6 +27,7 @@ import {
 import { useAuthStore } from "../packages/web/src/store/useAuthStore.ts";
 import { useUiStore } from "../packages/web/src/store/useUiStore.ts";
 import { clearFailedMutations, enqueueMutation, flushQueue, readQueue } from "../packages/web/src/lib/offline-queue.ts";
+import { resolveSupersetTransition } from "../packages/web/src/lib/workout-helpers.ts";
 import { getAppleCardioPreset } from "../packages/web/src/lib/apple-fitness.ts";
 import {
   clearCardioSession,
@@ -1133,4 +1134,58 @@ test("Batch 1 P0 fixes: clearFailedMutations preserves healthy items, offline co
   assert.match(appleModals, /\/api\/integrations\/apple-health\/active-session/);
   assert.match(appleModals, /删除此条记录/);
   assert.match(appleModals, /写体感与备注/);
+});
+
+test("Batch 2 P1 upgrades: superset auto-alternation defers rest until round completes, and live workout ergonomics are wired", () => {
+  const mkSets = (completedFlags: boolean[]) => completedFlags.map((completed) => ({ completed }));
+  const ssExercises = [
+    { supersetGroup: "A", sets: mkSets([false, false]) },
+    { supersetGroup: "A", sets: mkSets([false, false]) },
+    { supersetGroup: null, sets: mkSets([false]) },
+  ];
+
+  // A1 done -> jump to B1 without starting rest
+  const t1 = resolveSupersetTransition(ssExercises, 0, 0);
+  assert.deepEqual(t1, { inSuperset: true, shouldStartRest: false, nextExerciseIdx: 1, reason: "next_partner" });
+
+  // After A1 is complete, completing B1 finishes round 1 -> start rest & loop back to A (idx 0)
+  ssExercises[0]!.sets[0]!.completed = true;
+  const t2 = resolveSupersetTransition(ssExercises, 1, 0);
+  assert.deepEqual(t2, { inSuperset: true, shouldStartRest: true, nextExerciseIdx: 0, reason: "round_complete_loop" });
+
+  // Round 2: A2 done -> jump to B2 without rest
+  ssExercises[1]!.sets[0]!.completed = true;
+  const t3 = resolveSupersetTransition(ssExercises, 0, 1);
+  assert.deepEqual(t3, { inSuperset: true, shouldStartRest: false, nextExerciseIdx: 1, reason: "next_partner" });
+
+  // B2 done -> entire superset complete -> start rest
+  ssExercises[0]!.sets[1]!.completed = true;
+  const t4 = resolveSupersetTransition(ssExercises, 1, 1);
+  assert.deepEqual(t4, { inSuperset: true, shouldStartRest: true, nextExerciseIdx: null, reason: "superset_complete" });
+
+  // Non-superset exercise -> normal rest behavior
+  const tSingle = resolveSupersetTransition(ssExercises, 2, 0);
+  assert.deepEqual(tSingle, { inSuperset: false, shouldStartRest: true, nextExerciseIdx: null, reason: "single" });
+
+  // Contract checks for Batch 2 files
+  const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
+  const picker = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/ExercisePickerModal.tsx"), "utf8");
+  const liveBar = readFileSync(resolve(process.cwd(), "packages/web/src/components/LiveWorkoutBar.tsx"), "utf8");
+  const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
+  const workoutView = readFileSync(resolve(process.cwd(), "packages/web/src/views/WorkoutView.tsx"), "utf8");
+  const css = readFileSync(resolve(process.cwd(), "packages/web/src/styles/ironlog.css"), "utf8");
+
+  assert.match(editor, /resolveSupersetTransition/);
+  assert.match(editor, /manualDurationMin/);
+  assert.match(editor, /一键补勾剩余/);
+  assert.match(editor, /swapToBackupExercise/);
+  assert.match(editor, /set-undo-bar/);
+  assert.match(picker, /multiple/);
+  assert.match(picker, /handleLoadMore/);
+  assert.match(picker, /openCustomExerciseModal/);
+  assert.match(liveBar, /handleTogglePauseRest/);
+  assert.match(liveBar, /handleSkipRest/);
+  assert.match(planModals, /backupExerciseId/);
+  assert.match(workoutView, /丢弃未保存训练草稿/);
+  assert.match(css, /\.live-workout-bar-stack\s*\{[^}]*position:\s*sticky;/);
 });

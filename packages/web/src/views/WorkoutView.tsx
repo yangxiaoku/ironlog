@@ -35,6 +35,7 @@ export function WorkoutView() {
   const userId = useAuthStore((s) => s.userId);
   const dataEpoch = useUiStore((s) => s.dataEpoch);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
   const cached = peekQuery<WorkoutViewSnap>("view:workout", userId)?.data;
 
@@ -205,11 +206,18 @@ export function WorkoutView() {
                 type="button"
                 className="quiet"
                 onClick={() => {
-                  try {
-                    localStorage.removeItem(localDraft.key);
-                  } catch {}
-                  bumpDataEpoch();
-                  notify("已丢弃未保存训练草稿");
+                  openConfirm({
+                    title: "丢弃未保存训练草稿",
+                    message: "确定要丢弃本机未保存的训练草稿吗？此操作不可撤销。",
+                    confirmLabel: "丢弃草稿",
+                    onConfirm: () => {
+                      try {
+                        localStorage.removeItem(localDraft.key);
+                      } catch {}
+                      bumpDataEpoch();
+                      notify("已丢弃未保存训练草稿");
+                    },
+                  });
                 }}
               >
                 丢弃

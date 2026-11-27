@@ -1261,6 +1261,8 @@ export function RoutinePreviewModal({
         restSeconds: row.restSeconds,
         supersetGroup: row.supersetGroup ?? null,
         snapshot: row.snapshot,
+        backupExerciseId: row.backup?.id ?? null,
+        backupExerciseName: row.backup?.name ?? null,
         sets: Array.from({ length: scaled.sets }, () => ({
           id: safeUuid(),
           type: "normal" as const,

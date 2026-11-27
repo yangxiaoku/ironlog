@@ -121,6 +121,8 @@ export interface WorkoutExercise {
   supersetGroup?: string | null;
   restSeconds: number;
   snapshot?: ExerciseSnapshot | null;
+  backupExerciseId?: string | null;
+  backupExerciseName?: string | null;
   sets: WorkoutSet[];
 }
 

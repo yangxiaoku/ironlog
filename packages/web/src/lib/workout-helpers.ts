@@ -887,3 +887,83 @@ export function applyDeloadToTarget(
   const snapped = Math.max(floorWeight, Math.round(rawWeight / step) * step);
   return { sets: scaledSets, weight: round2(snapped) };
 }
+
+export interface SupersetTransitionResult {
+  inSuperset: boolean;
+  shouldStartRest: boolean;
+  nextExerciseIdx: number | null;
+  reason: "next_partner" | "round_complete_loop" | "superset_complete" | "single";
+}
+
+/**
+ * Resolves live superset alternation and deferred rest timing when a set is marked complete.
+ * Rest is deferred until the last partner in the current round finishes; then loops back to the first incomplete partner.
+ */
+export function resolveSupersetTransition(
+  exercises: ReadonlyArray<{
+    supersetGroup?: string | null;
+    sets: ReadonlyArray<{ completed: boolean }>;
+  }>,
+  exIdx: number,
+  setIdx: number,
+): SupersetTransitionResult {
+  const current = exercises[exIdx];
+  const group = current?.supersetGroup?.trim();
+  if (!current || !group) {
+    return { inSuperset: false, shouldStartRest: true, nextExerciseIdx: null, reason: "single" };
+  }
+  const memberIndices: number[] = [];
+  for (let i = 0; i < exercises.length; i++) {
+    if (exercises[i]?.supersetGroup?.trim() === group) memberIndices.push(i);
+  }
+  if (memberIndices.length < 2) {
+    return { inSuperset: false, shouldStartRest: true, nextExerciseIdx: null, reason: "single" };
+  }
+
+  const stats = memberIndices.map((idx) => {
+    const sets = exercises[idx]!.sets;
+    let done = 0;
+    let hasIncomplete = false;
+    for (let j = 0; j < sets.length; j++) {
+      const completed = idx === exIdx && j === setIdx ? true : Boolean(sets[j]?.completed);
+      if (completed) done += 1;
+      else hasIncomplete = true;
+    }
+    return { idx, done, hasIncomplete };
+  });
+
+  const curPos = memberIndices.indexOf(exIdx);
+  const curDone = stats[curPos]!.done;
+
+  // Check partners after current exercise in the same round that still have fewer completed sets than current.
+  for (let step = 1; step < memberIndices.length; step++) {
+    const pos = (curPos + step) % memberIndices.length;
+    const candidate = stats[pos]!;
+    if (candidate.hasIncomplete && candidate.done < curDone) {
+      return {
+        inSuperset: true,
+        shouldStartRest: false,
+        nextExerciseIdx: candidate.idx,
+        reason: "next_partner",
+      };
+    }
+  }
+
+  // Round finished: start rest and loop back to the first partner in the group that still has incomplete sets.
+  const nextRoundPartner = stats.find((s) => s.hasIncomplete);
+  if (nextRoundPartner) {
+    return {
+      inSuperset: true,
+      shouldStartRest: true,
+      nextExerciseIdx: nextRoundPartner.idx,
+      reason: "round_complete_loop",
+    };
+  }
+
+  return {
+    inSuperset: true,
+    shouldStartRest: true,
+    nextExerciseIdx: null,
+    reason: "superset_complete",
+  };
+}

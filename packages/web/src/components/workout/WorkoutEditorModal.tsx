@@ -51,6 +51,7 @@ import {
   plateBreakdown,
   plateDeltaLabel,
   readWorkoutPreferences,
+  resolveSupersetTransition,
   REST_SOUND_PRESETS,
   REST_STEP_PRESETS,
   round2,
@@ -372,6 +373,16 @@ export function WorkoutEditorModal({
   const savingRef = useRef(false);
   const [error, setError] = useState("");
   const [swipeOffsetX, setSwipeOffsetX] = useState(0);
+  const [manualDurationMin, setManualDurationMin] = useState<string>(() =>
+    isHistoricalEdit ? String(Math.max(1, Math.round(elapsedAt(initialSnapshot.timing, Date.now()) / 60))) : "",
+  );
+  const [undoDeletedSet, setUndoDeletedSet] = useState<{
+    exIdx: number;
+    setIdx: number;
+    set: WorkoutSet;
+    exName: string;
+  } | null>(null);
+  const undoSetTimerRef = useRef<number | null>(null);
 
   const soundOnRef = useRef(soundOn);
   soundOnRef.current = soundOn;
@@ -395,6 +406,9 @@ export function WorkoutEditorModal({
     return () => {
       if (autoAdvanceTimerRef.current !== null) {
         window.clearTimeout(autoAdvanceTimerRef.current);
+      }
+      if (undoSetTimerRef.current !== null) {
+        window.clearTimeout(undoSetTimerRef.current);
       }
     };
   }, []);
@@ -724,6 +738,93 @@ export function WorkoutEditorModal({
     return { totalSets: total, doneSets: done, liveVolume: summary.volume };
   }, [exercises, date, title, sessionStart]);
 
+  const appendExercises = (pickedList: CatalogueExercise[]) => {
+    if (!pickedList.length) return;
+    const addedRows: Array<{ rowId: string; ex: CatalogueExercise; isTimedEx: boolean; needsRef: boolean }> = [];
+    const buildInitialSets = (isTimedEx: boolean, refList?: ExerciseReferenceEntry["sets"]) => {
+      const validList = refList?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
+      const targetCount = Math.max(3, validList.length);
+      return Array.from({ length: Math.min(6, targetCount) }, (_, idx) => {
+        const ref = validList[idx] ?? validList.at(-1);
+        if (ref && autoPrefillLast) {
+          return defaultSet(
+            isTimedEx ? 0 : ref.weight ?? 0,
+            isTimedEx ? 0 : ref.reps || 8,
+            isTimedEx ? ref.seconds || 30 : 0,
+          );
+        }
+        return defaultSet(0, isTimedEx ? 0 : 8, isTimedEx ? 30 : 0);
+      });
+    };
+
+    const newExercises: WorkoutExercise[] = pickedList.map((ex) => {
+      const rowId = newId();
+      const isTimedEx = ex.mode === "timed";
+      const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
+      addedRows.push({ rowId, ex, isTimedEx, needsRef: Boolean(autoPrefillLast && !cachedRef) });
+      return {
+        id: rowId,
+        exerciseId: ex.id,
+        supersetGroup: null,
+        restSeconds: goals?.restSeconds ?? 90,
+        snapshot: {
+          name: ex.name,
+          muscle: ex.muscle,
+          equipment: ex.equipment,
+          mode: ex.mode,
+          volumeMultiplier: ex.volumeMultiplier ?? 1,
+        },
+        sets: buildInitialSets(isTimedEx, cachedRef),
+      };
+    });
+
+    setExercises((prev) => {
+      setActiveExIdx(prev.length);
+      return [...prev, ...newExercises];
+    });
+    if (pickedList.length > 1) {
+      notify(`已连续加入 ${pickedList.length} 个训练动作`);
+    }
+
+    const toFetch = addedRows.filter((r) => r.needsRef);
+    if (toFetch.length) {
+      const activeId = savedRecordRef.current?.id ?? record?.id;
+      void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-references", {
+        method: "POST",
+        body: {
+          date,
+          startedAt: sessionStart,
+          ...(activeId ? { workoutId: activeId } : {}),
+          exercises: toFetch.map((r) => ({ id: r.ex.id, mode: r.ex.mode ?? "reps" })),
+        },
+      })
+        .then((list) => {
+          const byId = new Map(list.map((entry) => [entry.id, entry.sets]));
+          setRefsByExId((prev) => {
+            const next = new Map(prev);
+            for (const [id, sets] of byId.entries()) {
+              if (sets?.length) next.set(id, sets);
+            }
+            return next;
+          });
+          setExercises((prev) =>
+            prev.map((row) => {
+              const meta = toFetch.find((r) => r.rowId === row.id);
+              if (!meta) return row;
+              const foundSets = byId.get(meta.ex.id);
+              if (!foundSets?.length) return row;
+              const untouched = row.sets.every(
+                (s) => !s.completed && s.weight === 0 && (meta.isTimedEx ? s.seconds === 30 : s.reps === 8),
+              );
+              if (!untouched) return row;
+              return { ...row, sets: buildInitialSets(meta.isTimedEx, foundSets) };
+            }),
+          );
+        })
+        .catch(() => {});
+    }
+  };
+
   const openAddExercisePicker = () => {
     triggerHaptic("light");
     openModal({
@@ -733,79 +834,128 @@ export function WorkoutEditorModal({
       content: (
         <ExercisePickerModal
           title="添加训练动作"
-          onSelect={(ex: CatalogueExercise) => {
-            const rowId = newId();
-            const isTimedEx = ex.mode === "timed";
-            const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
-            const buildInitialSets = (refList?: ExerciseReferenceEntry["sets"]) => {
-              const validList = refList?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
-              const targetCount = Math.max(3, validList.length);
-              return Array.from({ length: Math.min(6, targetCount) }, (_, idx) => {
-                const ref = validList[idx] ?? validList.at(-1);
-                if (ref && autoPrefillLast) {
-                  return defaultSet(
-                    isTimedEx ? 0 : ref.weight ?? 0,
-                    isTimedEx ? 0 : ref.reps || 8,
-                    isTimedEx ? ref.seconds || 30 : 0,
-                  );
-                }
-                return defaultSet(0, isTimedEx ? 0 : 8, isTimedEx ? 30 : 0);
-              });
-            };
-            const newEx: WorkoutExercise = {
-              id: rowId,
-              exerciseId: ex.id,
-              supersetGroup: null,
-              restSeconds: goals?.restSeconds ?? 90,
-              snapshot: {
-                name: ex.name,
-                muscle: ex.muscle,
-                equipment: ex.equipment,
-                mode: ex.mode,
-                volumeMultiplier: ex.volumeMultiplier ?? 1,
-              },
-              sets: buildInitialSets(cachedRef),
-            };
-            setExercises((prev) => {
-              setActiveExIdx(prev.length);
-              return [...prev, newEx];
-            });
-            if (autoPrefillLast && !cachedRef) {
-              const activeId = savedRecordRef.current?.id ?? record?.id;
-              void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-references", {
-                method: "POST",
-                body: {
-                  date,
-                  startedAt: sessionStart,
-                  ...(activeId ? { workoutId: activeId } : {}),
-                  exercises: [{ id: ex.id, mode: ex.mode ?? "reps" }],
-                },
-              })
-                .then((list) => {
-                  const found = list.find((entry) => entry.id === ex.id);
-                  if (!found?.sets?.length) return;
-                  setRefsByExId((prev) => {
-                    const next = new Map(prev);
-                    next.set(ex.id, found.sets);
-                    return next;
-                  });
-                  setExercises((prev) =>
-                    prev.map((row) => {
-                      if (row.id !== rowId) return row;
-                      const untouched = row.sets.every(
-                        (s) => !s.completed && s.weight === 0 && (isTimedEx ? s.seconds === 30 : s.reps === 8),
-                      );
-                      if (!untouched) return row;
-                      return { ...row, sets: buildInitialSets(found.sets) };
-                    }),
-                  );
-                })
-                .catch(() => {});
-            }
-          }}
+          multiple
+          onSelect={(ex: CatalogueExercise) => appendExercises([ex])}
+          onSelectMany={(list: CatalogueExercise[]) => appendExercises(list)}
         />
       ),
     });
+  };
+
+  const applySwapExercise = (rowIdx: number, ex: CatalogueExercise, opts?: { fromBackup?: boolean }) => {
+    const prevRow = exercises[rowIdx];
+    const prevMode = prevRow?.snapshot?.mode ?? "reps";
+    const nextIsTimed = ex.mode === "timed";
+    const modeChanged = prevMode !== ex.mode;
+    const rowId = prevRow?.id ?? "";
+    const cachedRef = autoPrefillLast ? refsByExId.get(ex.id) : undefined;
+    const validCached = cachedRef?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
+
+    setExercises((prev) =>
+      prev.map((row, i) => {
+        if (i !== rowIdx) return row;
+        const nextSets = row.sets.map((s, sIdx) => {
+          if (s.completed) return s;
+          const ref = validCached[sIdx] ?? validCached.at(-1);
+          if (ref && autoPrefillLast) {
+            return {
+              ...s,
+              weight: nextIsTimed ? 0 : ref.weight ?? 0,
+              reps: nextIsTimed ? 0 : ref.reps || 8,
+              seconds: nextIsTimed ? ref.seconds || 30 : 0,
+            };
+          }
+          if (modeChanged) {
+            return {
+              ...s,
+              weight: nextIsTimed ? 0 : prevMode === "timed" ? 0 : s.weight,
+              reps: nextIsTimed ? 0 : s.reps || 8,
+              seconds: nextIsTimed ? s.seconds || 30 : 0,
+            };
+          }
+          return s;
+        });
+        return {
+          ...row,
+          exerciseId: ex.id,
+          ...(opts?.fromBackup
+            ? {
+                backupExerciseId: row.exerciseId,
+                backupExerciseName: row.snapshot?.name ?? row.exerciseId,
+              }
+            : {}),
+          snapshot: {
+            name: ex.name,
+            muscle: ex.muscle,
+            equipment: ex.equipment,
+            mode: ex.mode,
+            volumeMultiplier: ex.volumeMultiplier ?? 1,
+          },
+          sets: nextSets,
+        };
+      }),
+    );
+
+    if (autoPrefillLast && !validCached.length && rowId) {
+      const activeId = savedRecordRef.current?.id ?? record?.id;
+      void apiFetch<ExerciseReferenceEntry[]>("/api/web/exercise-references", {
+        method: "POST",
+        body: {
+          date,
+          startedAt: sessionStart,
+          ...(activeId ? { workoutId: activeId } : {}),
+          exercises: [{ id: ex.id, mode: ex.mode ?? "reps" }],
+        },
+      })
+        .then((list) => {
+          const found = list.find((entry) => entry.id === ex.id);
+          const valid = found?.sets?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
+          if (!valid.length) return;
+          setRefsByExId((prev) => {
+            const next = new Map(prev);
+            next.set(ex.id, found!.sets);
+            return next;
+          });
+          setExercises((prev) =>
+            prev.map((row) => {
+              if (row.id !== rowId || row.exerciseId !== ex.id) return row;
+              return {
+                ...row,
+                sets: row.sets.map((s, sIdx) => {
+                  if (s.completed) return s;
+                  const ref = valid[sIdx] ?? valid.at(-1);
+                  if (!ref) return s;
+                  return {
+                    ...s,
+                    weight: nextIsTimed ? 0 : ref.weight ?? 0,
+                    reps: nextIsTimed ? 0 : ref.reps || 8,
+                    seconds: nextIsTimed ? ref.seconds || 30 : 0,
+                  };
+                }),
+              };
+            }),
+          );
+        })
+        .catch(() => {});
+    }
+
+    notify(opts?.fromBackup ? `已切换至备选动作「${ex.name}」` : `已替换为「${ex.name}」`);
+  };
+
+  const swapToBackupExercise = async (rowIdx: number) => {
+    const row = exercises[rowIdx];
+    if (!row?.backupExerciseId) return;
+    triggerHaptic("light");
+    try {
+      const res = await apiFetch<{ exercise: CatalogueExercise }>(
+        `/api/catalogue/exercises/${encodeURIComponent(row.backupExerciseId)}`,
+      );
+      if (res?.exercise) {
+        applySwapExercise(rowIdx, res.exercise, { fromBackup: true });
+      }
+    } catch {
+      notify("读取备选动作失败，请改用「替换动作」");
+    }
   };
 
   const openSwapExercisePicker = (rowIdx: number) => {
@@ -817,26 +967,7 @@ export function WorkoutEditorModal({
       content: (
         <ExercisePickerModal
           title="替换训练动作"
-          onSelect={(ex: CatalogueExercise) => {
-            setExercises((prev) =>
-              prev.map((row, i) =>
-                i === rowIdx
-                  ? {
-                      ...row,
-                      exerciseId: ex.id,
-                      snapshot: {
-                        name: ex.name,
-                        muscle: ex.muscle,
-                        equipment: ex.equipment,
-                        mode: ex.mode,
-                        volumeMultiplier: ex.volumeMultiplier ?? 1,
-                      },
-                    }
-                  : row,
-              ),
-            );
-            notify(`已替换为「${ex.name}」`);
-          }}
+          onSelect={(ex: CatalogueExercise) => applySwapExercise(rowIdx, ex)}
         />
       ),
     });
@@ -901,7 +1032,11 @@ export function WorkoutEditorModal({
       autoAdvanceTimerRef.current = null;
     }
 
-    if (nextCompleted && !isHistoricalEdit && autoStartRestTimer) {
+    const ssTransition = nextCompleted
+      ? resolveSupersetTransition(exercises, exIdx, setIdx)
+      : { inSuperset: false, shouldStartRest: false, nextExerciseIdx: null, reason: "single" as const };
+
+    if (nextCompleted && !isHistoricalEdit && autoStartRestTimer && ssTransition.shouldStartRest) {
       const nextSet = row.sets[setIdx + 1];
       const { seconds } = resolveSetRestSeconds({
         setType: targetSet.type,
@@ -921,6 +1056,33 @@ export function WorkoutEditorModal({
       completed: nextCompleted,
       ...(nextCompleted ? { completedAt: new Date().toISOString() } : { completedAt: undefined }),
     }));
+
+    if (
+      nextCompleted &&
+      !isHistoricalEdit &&
+      autoAdvanceExercise &&
+      ssTransition.inSuperset &&
+      ssTransition.nextExerciseIdx !== null
+    ) {
+      const targetIdx = ssTransition.nextExerciseIdx;
+      const targetEx = exercises[targetIdx]!;
+      const targetId = targetEx.id;
+      autoAdvanceTimerRef.current = window.setTimeout(() => {
+        autoAdvanceTimerRef.current = null;
+        setActiveExIdx(targetIdx);
+        if (viewMode === "single") {
+          workoutScrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+        } else {
+          cardRefs.current[targetId]?.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+        notify(
+          ssTransition.reason === "next_partner"
+            ? `超级组 ${row.supersetGroup}：免休切换至「${targetEx.snapshot?.name ?? "搭档动作"}」`
+            : `超级组 ${row.supersetGroup} 本轮完成 · 休息后回到「${targetEx.snapshot?.name ?? "首项动作"}」`,
+        );
+      }, 280);
+      return;
+    }
 
     if (
       nextCompleted &&
@@ -991,7 +1153,10 @@ export function WorkoutEditorModal({
     const startMs = Date.parse(cleanStartedAt);
 
     const pausedRaw = pauseAt(timing, nowMs);
-    const rawElapsed = Number(pausedRaw.elapsedSeconds);
+    const parsedManualMin = manualDurationMin.trim() === "" ? null : Number(manualDurationMin);
+    const hasManualDuration =
+      parsedManualMin != null && Number.isFinite(parsedManualMin) && parsedManualMin > 0 && parsedManualMin <= 720;
+    const rawElapsed = hasManualDuration ? Math.round(parsedManualMin * 60) : Number(pausedRaw.elapsedSeconds);
     const pausedTiming: WorkoutTiming = {
       elapsedSeconds: Number.isFinite(rawElapsed) ? Math.max(0, Math.round(rawElapsed)) : 0,
       runningSince: normalizeIsoTimestamp(pausedRaw.runningSince, null as unknown as string) ?? null,
@@ -999,8 +1164,9 @@ export function WorkoutEditorModal({
 
     let endedAt: string | null = null;
     if (targetStatus === "completed") {
-      const candidateEndedAt =
-        curRec?.data.endedAt && cleanDate === curRec.data.date
+      const candidateEndedAt = hasManualDuration
+        ? new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString()
+        : curRec?.data.endedAt && cleanDate === curRec.data.date
           ? curRec.data.endedAt
           : cleanDate === todayStr
             ? new Date(Math.max(startMs, nowMs)).toISOString()
@@ -1083,7 +1249,11 @@ export function WorkoutEditorModal({
       startedAt: cleanStartedAt,
       endedAt,
       status: targetStatus,
-      ...(typeof curRec?.data.durationUnknown === "boolean" ? { durationUnknown: curRec.data.durationUnknown } : {}),
+      ...(hasManualDuration
+        ? { durationUnknown: false }
+        : typeof curRec?.data.durationUnknown === "boolean"
+          ? { durationUnknown: curRec.data.durationUnknown }
+          : {}),
       notes: notes.trim().slice(0, 4000),
       feeling: feeling && VALID_FEELINGS.has(feeling) ? feeling : null,
       source: normalizeWorkoutSource(curRec?.data.source ?? curMeta.source),
@@ -1635,8 +1805,16 @@ export function WorkoutEditorModal({
                   type="button"
                   className="quiet"
                   onClick={() => {
-                    clearDraft();
-                    closeAllModals();
+                    openConfirm({
+                      title: "放弃未保存训练草稿",
+                      message: `确定要放弃「${title || "本次训练"}」的未保存草稿吗？已录入的组数将被清空。`,
+                      confirmLabel: "放弃草稿",
+                      onConfirm: () => {
+                        clearDraft();
+                        closeAllModals();
+                        notify("已放弃未保存草稿");
+                      },
+                    });
                   }}
                 >
                   放弃未保存草稿
@@ -1686,9 +1864,39 @@ export function WorkoutEditorModal({
                   一键勾选全部组并结束
                 </button>
               </div>
+            ) : doneSets > 0 && doneSets < totalSets ? (
+              <div className="finish-zero-tip">
+                <p>
+                  还有 <b>{totalSets - doneSets}</b> 组未勾选完成；可直接仅保存已勾选的 {doneSets} 组，或一键补勾全部剩余组。
+                </p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={saving}
+                  onClick={() => void submitWorkout("completed", { completeAllPending: true })}
+                >
+                  一键补勾剩余 {totalSets - doneSets} 组并结束
+                </button>
+              </div>
             ) : null}
 
             <div className="finish-panel">
+              <label className="field">
+                <span>训练时长（分钟 · 可按实际微调，补录历史必填更准）</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={720}
+                  value={manualDurationMin}
+                  onChange={(e) => setManualDurationMin(e.target.value)}
+                  placeholder={
+                    date < todayStr
+                      ? `留空则按计时（建议填约 ${Math.max(10, totalSets * 3)} 分钟）`
+                      : `当前计时约 ${Math.max(1, Math.round(elapsedSeconds / 60))} 分钟`
+                  }
+                />
+              </label>
               <fieldset>
                 <legend>本次训练体感</legend>
                 <div className="feeling-choices">
@@ -1840,6 +2048,18 @@ export function WorkoutEditorModal({
                   min="1902-01-01"
                   max={todayStr}
                   onChange={(e) => setDate(e.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>训练时长（分钟）</span>
+                <input
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  max={720}
+                  value={manualDurationMin}
+                  onChange={(e) => setManualDurationMin(e.target.value)}
+                  placeholder="例如：55"
                 />
               </label>
             </div>
@@ -2259,6 +2479,15 @@ export function WorkoutEditorModal({
                           >
                             下移
                           </button>
+                          {row.backupExerciseId ? (
+                            <button
+                              type="button"
+                              className="quiet"
+                              onClick={() => void swapToBackupExercise(exIdx)}
+                            >
+                              切备选：{row.backupExerciseName || "备选动作"}
+                            </button>
+                          ) : null}
                           <button type="button" className="quiet" onClick={() => openSwapExercisePicker(exIdx)}>
                             替换动作
                           </button>
@@ -2266,7 +2495,20 @@ export function WorkoutEditorModal({
                         <button
                           type="button"
                           className="danger"
-                          onClick={() => setExercises((prev) => prev.filter((_, i) => i !== exIdx))}
+                          onClick={() => {
+                            const hasWork = row.sets.some((s) => s.completed || s.weight > 0);
+                            const removeNow = () => setExercises((prev) => prev.filter((_, i) => i !== exIdx));
+                            if (!hasWork) {
+                              removeNow();
+                              return;
+                            }
+                            openConfirm({
+                              title: "移除训练动作",
+                              message: `确定移除「${snap?.name ?? row.exerciseId}」及其已记录的组数吗？`,
+                              confirmLabel: "移除动作",
+                              onConfirm: removeNow,
+                            });
+                          }}
                         >
                           移除动作
                         </button>
@@ -2489,13 +2731,23 @@ export function WorkoutEditorModal({
                             className="quiet icon-button set-del-btn"
                             aria-label="删除此组"
                             disabled={row.sets.length <= 1}
-                            onClick={() =>
+                            onClick={() => {
+                              const deletedSet = s;
+                              const exName = snap?.name ?? row.exerciseId;
                               setExercises((prev) =>
                                 prev.map((ex, i) =>
                                   i === exIdx ? { ...ex, sets: ex.sets.filter((_, j) => j !== setIdx) } : ex,
                                 ),
-                              )
-                            }
+                              );
+                              if (deletedSet.completed || deletedSet.weight > 0) {
+                                setUndoDeletedSet({ exIdx, setIdx, set: deletedSet, exName });
+                                if (undoSetTimerRef.current !== null) window.clearTimeout(undoSetTimerRef.current);
+                                undoSetTimerRef.current = window.setTimeout(() => {
+                                  undoSetTimerRef.current = null;
+                                  setUndoDeletedSet(null);
+                                }, 6000);
+                              }
+                            }}
                           >
                             <Icon name="close" size={14} />
                           </button>
@@ -2536,6 +2788,38 @@ export function WorkoutEditorModal({
                       </div>
                     );
                   })}
+
+                  {undoDeletedSet && undoDeletedSet.exIdx === exIdx ? (
+                    <div className="set-undo-bar" role="status">
+                      <span>已删除「{undoDeletedSet.exName}」第 {undoDeletedSet.setIdx + 1} 组</span>
+                      <button
+                        type="button"
+                        className="secondary-button"
+                        style={{ minHeight: 28, padding: "2px 10px", fontSize: 12 }}
+                        onClick={() => {
+                          const restore = undoDeletedSet;
+                          if (undoSetTimerRef.current !== null) {
+                            window.clearTimeout(undoSetTimerRef.current);
+                            undoSetTimerRef.current = null;
+                          }
+                          setExercises((prev) =>
+                            prev.map((ex, i) => {
+                              if (i !== restore.exIdx) return ex;
+                              const next = [...ex.sets];
+                              const pos = Math.min(restore.setIdx, next.length);
+                              next.splice(pos, 0, restore.set);
+                              return { ...ex, sets: next };
+                            }),
+                          );
+                          setUndoDeletedSet(null);
+                          triggerHaptic("light");
+                          notify("已撤销删除该组");
+                        }}
+                      >
+                        撤销
+                      </button>
+                    </div>
+                  ) : null}
 
                   <div className="sets-card-foot">
                     <button

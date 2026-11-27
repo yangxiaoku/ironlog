@@ -21,7 +21,9 @@ import {
   elapsedAt,
   formatClock,
   normalizeRestTimer,
+  pauseRestTimer,
   restProgress,
+  resumeRestTimer,
   shiftRestTimer,
   triggerHaptic,
   type RestTimerState,
@@ -269,11 +271,8 @@ export function LiveWorkoutBar() {
     }
   };
 
-  const handleExtendRest = () => {
-    if (!draft?.rest) return;
-    triggerHaptic("light");
-    audio.unlock();
-    const nextRest = shiftRestTimer(draft.rest, prefs.restAdjustStep);
+  const persistRestUpdate = (nextRest: RestTimerState | null) => {
+    if (!draft) return;
     try {
       const raw = localStorage.getItem(draft.key);
       if (raw) {
@@ -284,6 +283,30 @@ export function LiveWorkoutBar() {
     } catch {}
     setDraft((prev) => (prev ? { ...prev, rest: nextRest } : prev));
     setNowMs(Date.now());
+  };
+
+  const handleExtendRest = () => {
+    if (!draft?.rest) return;
+    triggerHaptic("light");
+    audio.unlock();
+    persistRestUpdate(shiftRestTimer(draft.rest, prefs.restAdjustStep));
+  };
+
+  const handleTogglePauseRest = () => {
+    if (!draft?.rest) return;
+    triggerHaptic("light");
+    const nextRest =
+      draft.rest.pausedLeftMs != null
+        ? resumeRestTimer(draft.rest, Date.now())
+        : pauseRestTimer(draft.rest, Date.now());
+    persistRestUpdate(nextRest);
+  };
+
+  const handleSkipRest = () => {
+    if (!draft?.rest) return;
+    triggerHaptic("light");
+    persistRestUpdate(null);
+    notify("已跳过组间休息");
   };
 
   const handleDiscard = () => {
@@ -395,8 +418,16 @@ export function LiveWorkoutBar() {
             <div className="live-workout-bar-rest">
               <span className="live-rest-pill">
                 <Icon name="rest" size={13} />
-                休息 {formatClock(restInfo.seconds)}
+                {restInfo.paused ? "已暂停" : "休息"} {formatClock(restInfo.seconds)}
               </span>
+              <button
+                type="button"
+                className="live-rest-plus"
+                title={restInfo.paused ? "继续休息倒计时" : "暂停休息倒计时"}
+                onClick={handleTogglePauseRest}
+              >
+                {restInfo.paused ? "继续" : "暂停"}
+              </button>
               <button
                 type="button"
                 className="live-rest-plus"
@@ -404,6 +435,14 @@ export function LiveWorkoutBar() {
                 onClick={handleExtendRest}
               >
                 +{prefs.restAdjustStep}s
+              </button>
+              <button
+                type="button"
+                className="live-rest-plus"
+                title="跳过本次组间休息"
+                onClick={handleSkipRest}
+              >
+                跳过
               </button>
             </div>
           ) : null}
