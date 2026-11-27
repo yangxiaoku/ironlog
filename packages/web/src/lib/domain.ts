@@ -529,6 +529,7 @@ export interface ExerciseReferenceSet {
 
 export interface ExerciseReferenceEntry {
   id: string;
+  date?: string;
   sets: Array<ExerciseReferenceSet | null>;
 }
 

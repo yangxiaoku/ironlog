@@ -13,7 +13,7 @@ import {
   buildCoachQuickAdvice,
   type CoachQuickScenario,
 } from "../../lib/coach-quick";
-import { fmt, today } from "../../lib/date";
+import { fmt, shortDate, today } from "../../lib/date";
 import {
   EQUIPMENT,
   FEELINGS,
@@ -84,10 +84,12 @@ import {
 } from "../../lib/workout-helpers";
 import {
   checkSetBeatsPrBaseline,
-  compareSetAgainstReference,
+  describeSetOverloadCue,
+  diffWorkoutAgainstSourceRoutine,
   duplicateSetInList,
   insertDropSetAfter,
   insertRestPauseSetAfter,
+  summarizeExerciseBenchmarks,
   type LiveExercisePrBaseline,
 } from "../../lib/workout-set-ops";
 import { isBackfillWorkoutDate, resolveAutoAdvanceDelayMs } from "../../lib/routine-launch";
@@ -265,6 +267,7 @@ export function WorkoutEditorModal({
 
   const todayStr = today();
   const initialDraftKey = userId ? workoutDraftKey(userId, record?.id) : "";
+  const restoredFromDraftRef = useRef(false);
 
   const initialSnapshot = useMemo<WorkoutDraftSnapshot>(() => {
     const baseData = record?.data;
@@ -274,6 +277,7 @@ export function WorkoutEditorModal({
         if (raw) {
           const parsed = JSON.parse(raw) as Partial<WorkoutDraftSnapshot>;
           if (Array.isArray(parsed.exercises)) {
+            restoredFromDraftRef.current = true;
             return {
               title: parsed.title ?? baseData?.title ?? "自由训练",
               date: parsed.date ?? baseData?.date ?? todayStr,
@@ -436,11 +440,14 @@ export function WorkoutEditorModal({
   const [editingSetNoteId, setEditingSetNoteId] = useState<string | null>(null);
   const [openSetMenuId, setOpenSetMenuId] = useState<string | null>(null);
   const [finishPanelOpen, setFinishPanelOpen] = useState(isHistoricalEdit);
+  const [syncSourceOnFinish, setSyncSourceOnFinish] = useState(false);
   const [openSettingsIds, setOpenSettingsIds] = useState<Set<string>>(() => new Set());
   const [refsByExId, setRefsByExId] = useState<Map<string, ExerciseReferenceEntry["sets"]>>(() => new Map());
+  const [refDatesByExId, setRefDatesByExId] = useState<Map<string, string>>(() => new Map());
   const [prsByExId, setPrsByExId] = useState<Map<string, LiveExercisePrBaseline>>(() => new Map());
   const [mediaByExId, setMediaByExId] = useState<Map<string, string>>(() => new Map());
-  const [showBestRefIds, setShowBestRefIds] = useState<Set<string>>(() => new Set());
+  const touchedExIdsRef = useRef<Set<string>>(new Set());
+  const autoPrefilledExIdsRef = useRef<Set<string>>(new Set());
   const [historyModalEx, setHistoryModalEx] = useState<{
     id: string;
     name: string;
@@ -873,7 +880,54 @@ export function WorkoutEditorModal({
     })
       .then((list) => {
         if (!active) return;
-        setRefsByExId(new Map(list.map((entry) => [entry.id, entry.sets])));
+        const nextRefs = new Map(list.map((entry) => [entry.id, entry.sets]));
+        const nextDates = new Map<string, string>();
+        for (const entry of list) {
+          if (entry.date) nextDates.set(entry.id, entry.date);
+        }
+        setRefsByExId(nextRefs);
+        setRefDatesByExId(nextDates);
+
+        // Auto-prefill working sets with last session's exact per-set weight & reps on fresh open
+        if (!isHistoricalEdit && !record && !restoredFromDraftRef.current && autoPrefillLast && !prefs.deloadMode) {
+          setExercises((prev) => {
+            let changed = false;
+            const next = prev.map((row) => {
+              if (autoPrefilledExIdsRef.current.has(row.id) || touchedExIdsRef.current.has(row.id)) {
+                return row;
+              }
+              if (row.sets.some((s) => s.completed)) return row;
+              const refList = nextRefs.get(row.exerciseId);
+              const validList = refList?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
+              if (!validList.length) return row;
+              autoPrefilledExIdsRef.current.add(row.id);
+              const rowIsTimed = row.snapshot?.mode === "timed";
+              let workIdx = 0;
+              const nextSets = row.sets.map((s) => {
+                if (s.type === "warmup") return s;
+                const ref = validList[workIdx] ?? validList.at(-1);
+                workIdx++;
+                if (!ref) return s;
+                if (rowIsTimed) {
+                  if (ref.seconds > 0 && ref.seconds !== s.seconds) {
+                    changed = true;
+                    return { ...s, seconds: ref.seconds };
+                  }
+                  return s;
+                }
+                const nextW = ref.weight;
+                const nextR = ref.reps || s.reps;
+                if (nextW !== s.weight || nextR !== s.reps) {
+                  changed = true;
+                  return { ...s, weight: nextW, reps: nextR };
+                }
+                return s;
+              });
+              return { ...row, sets: nextSets };
+            });
+            return changed ? next : prev;
+          });
+        }
       })
       .catch(() => {});
 
@@ -1246,11 +1300,11 @@ export function WorkoutEditorModal({
 
   const updateSet = (exIdx: number, setIdx: number, updater: (cur: WorkoutSet) => WorkoutSet) => {
     setExercises((prev) =>
-      prev.map((row, i) =>
-        i === exIdx
-          ? { ...row, sets: row.sets.map((s, j) => (j === setIdx ? updater(s) : s)) }
-          : row,
-      ),
+      prev.map((row, i) => {
+        if (i !== exIdx) return row;
+        touchedExIdsRef.current.add(row.id);
+        return { ...row, sets: row.sets.map((s, j) => (j === setIdx ? updater(s) : s)) };
+      }),
     );
   };
 
@@ -1262,6 +1316,7 @@ export function WorkoutEditorModal({
     setExercises((prev) =>
       prev.map((row, i) => {
         if (i !== exIdx) return row;
+        touchedExIdsRef.current.add(row.id);
         const cur = row.sets[setIdx];
         if (!cur) return row;
         const patch = typeof patchOrFn === "function" ? patchOrFn(cur) : patchOrFn;
@@ -1657,11 +1712,30 @@ export function WorkoutEditorModal({
       };
       savedRecordRef.current = saved;
       setSavedRecord(saved);
+      if (targetStatus === "completed" && syncSourceOnFinish && canSyncSource) {
+        try {
+          const syncRes = await apiFetch<{ syncedKind?: "plan" | "template"; syncedRoutineName?: string }>(
+            "/api/web/plans/sync-routine",
+            {
+              method: "POST",
+              body: { workoutId: saved.id },
+            },
+          );
+          bumpDataEpoch();
+          notify(
+            `训练已保存，并已同步改动至${syncRes.syncedKind === "template" ? "模板" : "计划"}「${syncRes.syncedRoutineName || title}」`,
+          );
+        } catch (syncErr) {
+          notify(`训练已保存，但同步回原${syncTargetLabel}失败：${(syncErr as Error)?.message || "请稍后在复盘页重试"}`);
+        }
+      }
       if (targetStatus === "completed" && onCompleted) {
         onCompleted(saved);
       } else {
         closeAllModals();
-        notify(targetStatus === "active" ? "训练草稿已保存至云端" : "训练已保存");
+        if (!(targetStatus === "completed" && syncSourceOnFinish && canSyncSource)) {
+          notify(targetStatus === "active" ? "训练草稿已保存至云端" : "训练已保存");
+        }
       }
     } catch (err) {
       if (isNetworkError(err) && userId) {
@@ -1813,6 +1887,17 @@ export function WorkoutEditorModal({
     triggerHaptic("light");
     notify(`已切换为 ${nextUnit}（统计自动统一折算 kg）`);
   };
+
+  const sourceSyncDiff = useMemo(
+    () => diffWorkoutAgainstSourceRoutine(exercises, sessionMetaRef.current.targetSnapshot),
+    [exercises],
+  );
+  const syncTargetLabel = sessionMetaRef.current.planId ? "计划训练日" : "训练模板";
+  const canSyncSource = Boolean(
+    !isHistoricalEdit &&
+      (sessionMetaRef.current.planId || sessionMetaRef.current.routineId) &&
+      sourceSyncDiff.hasChanges,
+  );
 
   const coachTargetRow = coachExIdx != null ? exercises[coachExIdx] ?? null : null;
   const coachAdvice = coachTargetRow ? buildCoachQuickAdvice(coachScenario, coachTargetRow, weightStepKg) : null;
@@ -2646,6 +2731,26 @@ export function WorkoutEditorModal({
                 />
               </label>
 
+              {canSyncSource ? (
+                <div className="finish-sync-card">
+                  <label className="toggle-row finish-sync-toggle">
+                    <span>
+                      <strong>同步改动回原{syncTargetLabel}</strong>
+                      <small className="muted">检测到变动：{sourceSyncDiff.summary}</small>
+                    </span>
+                    <input
+                      className="switch"
+                      type="checkbox"
+                      checked={syncSourceOnFinish}
+                      onChange={(e) => {
+                        triggerHaptic("light");
+                        setSyncSourceOnFinish(e.target.checked);
+                      }}
+                    />
+                  </label>
+                </div>
+              ) : null}
+
               {date === today() ? (
                 onIos ? (
                   <a
@@ -2965,35 +3070,25 @@ export function WorkoutEditorModal({
               const nextIncompleteSetIdx = row.sets.findIndex((s) => !s.completed);
               const settingsExpanded = openSettingsIds.has(row.id);
               const refSets = refsByExId.get(row.exerciseId) ?? [];
+              const refDate = refDatesByExId.get(row.exerciseId) ?? "";
               const validRefs = refSets.filter((r): r is NonNullable<typeof r> => Boolean(r));
-              const refText = validRefs
-                .slice(0, 4)
-                .map((r) => (isTimed ? `${r.seconds}s` : isAssisted ? `辅助${r.weight}×${r.reps}` : `${r.weight}×${r.reps}`))
-                .join(", ");
               const mediaUrl = mediaByExId.get(row.exerciseId) || "";
               const prBaseline = prsByExId.get(row.exerciseId) ?? null;
-              const showingPrRef = showBestRefIds.has(row.id) && Boolean(prBaseline);
-              const prText = prBaseline
-                ? isTimed
-                  ? prBaseline.hold != null
-                    ? `最长保持 ${prBaseline.hold}s`
-                    : ""
-                  : isAssisted
-                    ? prBaseline.assistance != null
-                      ? `最小辅助 ${fmt(prBaseline.assistance)} kg`
-                      : ""
-                    : [
-                        prBaseline.weight != null ? `最大负重 ${fmt(prBaseline.weight)} kg` : "",
-                        prBaseline.oneRepMax != null ? `估算 1RM ${fmt(prBaseline.oneRepMax, 1)} kg` : "",
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")
-                : "";
+              const benchmark = summarizeExerciseBenchmarks(
+                validRefs,
+                prBaseline,
+                mode,
+                row.weightUnit,
+                snap?.volumeMultiplier ?? 1,
+              );
+              const exVolGain =
+                benchmark.lastTotalVolumeKg > 0 && exVolume > benchmark.lastTotalVolumeKg
+                  ? Math.round(exVolume - benchmark.lastTotalVolumeKg)
+                  : 0;
 
               const prevBestE1rm = !isTimed && !isAssisted
                 ? Math.max(0, ...validRefs.map((r) => estimated1RM(r.weight, r.reps)))
                 : 0;
-              const prevTopWeight = !isTimed && !isAssisted ? Math.max(0, ...validRefs.map((r) => r.weight)) : 0;
               const todayBestE1rm = !isTimed && !isAssisted
                 ? Math.max(
                     0,
@@ -3138,6 +3233,11 @@ export function WorkoutEditorModal({
                   <div className="ex-quick-bar">
                     <span className="ex-quick-stat">
                       容量 <strong>{fmt(exVolume, 0)} kg</strong>
+                      {exVolGain > 0 ? (
+                        <em className="ex-vol-gain" title="单动作累计容量已超过上次整场容量">
+                          +{fmt(exVolGain, 0)}
+                        </em>
+                      ) : null}
                     </span>
                     {isHistoricalEdit ? (
                       <span className="ex-quick-stat">休息 {row.restSeconds ?? 90}s</span>
@@ -3237,115 +3337,115 @@ export function WorkoutEditorModal({
                     )}
                   </div>
 
-                {refText || prText ? (
-                  <div className="ex-context-stack">
-                    <div className="ex-last-row">
-                      {prText && refText ? (
-                        <button
-                          type="button"
-                          className="ex-ref-toggle-btn"
-                          title="点击切换查看上次记录 / 历史最佳 (PR)"
-                          onClick={() => {
-                            triggerHaptic("light");
-                            setShowBestRefIds((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(row.id)) next.delete(row.id);
-                              else next.add(row.id);
-                              return next;
-                            });
-                          }}
-                        >
-                          {showingPrRef ? `🏆 历史最佳：${prText}` : `上次：${refText}`}
-                          <small className="ex-ref-switch-hint">
-                            {showingPrRef ? " · 看上次" : " · 看 PR"}
-                          </small>
-                        </button>
-                      ) : (
-                        <span>{refText ? `上次：${refText}` : `🏆 历史最佳：${prText}`}</span>
-                      )}
-                      {!isTimed && refText ? (
-                        <div className="ex-last-actions">
-                          <button
-                            type="button"
-                            className="ex-apply-ref"
-                            onClick={() => {
-                              triggerHaptic("light");
-                              let updatedCount = 0;
-                              setExercises((prev) =>
-                                prev.map((ex, i) => {
-                                  if (i !== exIdx) return ex;
-                                  let workIdx = 0;
-                                  return {
-                                    ...ex,
-                                    sets: ex.sets.map((s) => {
-                                      if (s.type === "warmup") return s;
-                                      const ref = validRefs[workIdx] ?? validRefs.at(-1);
-                                      workIdx++;
-                                      if (!ref || s.completed) return s;
-                                      updatedCount++;
-                                      return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
-                                    }),
-                                  };
-                                }),
-                              );
-                              notify(updatedCount > 0 ? "已填入上次工作组重量与次数" : "没有可填入的未完成工作组");
-                            }}
-                          >
-                            沿用上次
-                          </button>
-                          <button
-                            type="button"
-                            className="ex-apply-prog"
-                            onClick={() => {
-                              triggerHaptic("light");
-                              let updatedCount = 0;
-                              setExercises((prev) =>
-                                prev.map((ex, i) => {
-                                  if (i !== exIdx) return ex;
-                                  let workIdx = 0;
-                                  return {
-                                    ...ex,
-                                    sets: ex.sets.map((s) => {
-                                      if (s.type === "warmup") return s;
-                                      const ref = validRefs[workIdx] ?? validRefs.at(-1);
-                                      workIdx++;
-                                      if (!ref || s.completed) return s;
-                                      updatedCount++;
-                                      if (isAssisted) {
-                                        return ref.weight > 0
-                                          ? {
-                                              ...s,
-                                              weight: Math.max(0, round2(ref.weight - weightStepKg)),
-                                              reps: ref.reps || s.reps,
-                                            }
-                                          : { ...s, reps: (ref.reps || s.reps) + 1 };
-                                      }
-                                      return ref.weight > 0
-                                        ? {
-                                            ...s,
-                                            weight: round2(ref.weight + weightStepKg),
-                                            reps: ref.reps || s.reps,
-                                          }
-                                        : { ...s, reps: (ref.reps || s.reps) + 1 };
-                                    }),
-                                  };
-                                }),
-                              );
-                              notify(updatedCount > 0 ? "已按渐进目标预填未完成工作组" : "没有可预填的未完成工作组");
-                            }}
-                          >
-                            渐进填入
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    {prevBestE1rm > 0 ? (
-                      <div>
-                        <span className={`ex-prog-pill${e1rmGain > 0 ? " is-pr" : ""}`}>
-                          {e1rmGain > 0
-                            ? `已突破上次 E1RM +${fmt(e1rmGain, 1)} kg`
-                            : `渐进参考：${prevTopWeight > 0 ? `${fmt(round2(prevTopWeight + weightStepKg))} kg 或 +1 次` : "+1 次"}（目标 E1RM ${fmt(prevBestE1rm, 1)} kg）`}
+                {benchmark.hasAny ? (
+                  <div className="ex-benchmark-box">
+                    <div className="ex-benchmark-strip" aria-label="动作重量与历史基准">
+                      <div className="ex-benchmark-card is-primary">
+                        <span>
+                          {benchmark.lastTopLabel}
+                          {refDate ? <small> · {shortDate(refDate)}</small> : null}
                         </span>
+                        <strong>{benchmark.lastTopValue}</strong>
+                      </div>
+                      <div className="ex-benchmark-card">
+                        <span>{benchmark.bestWeightLabel}</span>
+                        <strong>{benchmark.bestWeightValue}</strong>
+                      </div>
+                      <div className="ex-benchmark-card">
+                        <span>{benchmark.thirdLabel}</span>
+                        <strong>{benchmark.thirdValue}</strong>
+                      </div>
+                    </div>
+
+                    {benchmark.lastSummary || e1rmGain > 0 ? (
+                      <div className="ex-benchmark-foot">
+                        {benchmark.lastSummary ? (
+                          <span className="ex-benchmark-sets" title="上次训练工作组记录">
+                            上次各组：{benchmark.lastSummary}
+                          </span>
+                        ) : null}
+                        <div className="ex-benchmark-actions">
+                          {e1rmGain > 0 ? (
+                            <span className="ex-prog-pill is-pr">
+                              ↗ E1RM +{fmt(e1rmGain, 1)} kg
+                            </span>
+                          ) : null}
+                          {!isTimed && validRefs.length > 0 ? (
+                            <>
+                              <button
+                                type="button"
+                                className="ex-apply-ref"
+                                onClick={() => {
+                                  triggerHaptic("light");
+                                  let updatedCount = 0;
+                                  setExercises((prev) =>
+                                    prev.map((ex, i) => {
+                                      if (i !== exIdx) return ex;
+                                      let workIdx = 0;
+                                      return {
+                                        ...ex,
+                                        sets: ex.sets.map((s) => {
+                                          if (s.type === "warmup") return s;
+                                          const ref = validRefs[workIdx] ?? validRefs.at(-1);
+                                          workIdx++;
+                                          if (!ref || s.completed) return s;
+                                          updatedCount++;
+                                          return { ...s, weight: ref.weight, reps: ref.reps || s.reps };
+                                        }),
+                                      };
+                                    }),
+                                  );
+                                  notify(updatedCount > 0 ? "已按上次工作组填入重量与次数" : "没有可填入的未完成工作组");
+                                }}
+                              >
+                                沿用上次
+                              </button>
+                              <button
+                                type="button"
+                                className="ex-apply-prog"
+                                onClick={() => {
+                                  triggerHaptic("light");
+                                  let updatedCount = 0;
+                                  setExercises((prev) =>
+                                    prev.map((ex, i) => {
+                                      if (i !== exIdx) return ex;
+                                      let workIdx = 0;
+                                      return {
+                                        ...ex,
+                                        sets: ex.sets.map((s) => {
+                                          if (s.type === "warmup") return s;
+                                          const ref = validRefs[workIdx] ?? validRefs.at(-1);
+                                          workIdx++;
+                                          if (!ref || s.completed) return s;
+                                          updatedCount++;
+                                          if (isAssisted) {
+                                            return ref.weight > 0
+                                              ? {
+                                                  ...s,
+                                                  weight: Math.max(0, round2(ref.weight - weightStepKg)),
+                                                  reps: ref.reps || s.reps,
+                                                }
+                                              : { ...s, reps: (ref.reps || s.reps) + 1 };
+                                          }
+                                          return ref.weight > 0
+                                            ? {
+                                                ...s,
+                                                weight: round2(ref.weight + weightStepKg),
+                                                reps: ref.reps || s.reps,
+                                              }
+                                            : { ...s, reps: (ref.reps || s.reps) + 1 };
+                                        }),
+                                      };
+                                    }),
+                                  );
+                                  notify(updatedCount > 0 ? `已按渐进 +${weightStepKg}${exUnit} 预填未完成工作组` : "没有可预填的未完成工作组");
+                                }}
+                              >
+                                渐进 +{exWeightStep}
+                              </button>
+                            </>
+                          ) : null}
+                        </div>
                       </div>
                     ) : null}
                   </div>
@@ -3506,8 +3606,7 @@ export function WorkoutEditorModal({
                         ? plateBreakdown(s.weight, barWeight, enabledPlates, platePairs)
                         : null;
                     const typeInfo = SET_TYPES[s.type];
-                    const cmpDir = compareSetAgainstReference(s, setRef, mode);
-                    const prHit = checkSetBeatsPrBaseline(s, mode, row.weightUnit, prBaseline);
+                    const overloadCue = describeSetOverloadCue(s, setRef, mode, row.weightUnit, prBaseline);
                     const isSetMenuOpen = openSetMenuId === s.id;
                     const showSetRefChip = Boolean(
                       !isHistoricalEdit &&
@@ -3523,8 +3622,7 @@ export function WorkoutEditorModal({
                       showSetRefChip ||
                       Boolean(s.note) ||
                       editingSetNoteId === s.id ||
-                      Boolean(cmpDir) ||
-                      Boolean(prHit) ||
+                      Boolean(overloadCue) ||
                       s.restAfterSeconds != null;
 
                     return (
@@ -3915,25 +4013,14 @@ export function WorkoutEditorModal({
                                 {deltaHint ? <span className="set-plate-delta">{deltaHint}</span> : null}
                               </div>
                             ) : null}
-                            {showSetRefChip || cmpDir || prHit || s.restAfterSeconds != null || s.note || editingSetNoteId === s.id ? (
+                            {showSetRefChip || overloadCue || s.restAfterSeconds != null || s.note || editingSetNoteId === s.id ? (
                               <div className="set-inline-top">
-                                {prHit ? (
-                                  <span className="set-pr-badge" title="超越历史最佳纪录">
-                                    🏆 PR
-                                  </span>
-                                ) : null}
-                                {cmpDir ? (
+                                {overloadCue ? (
                                   <span
-                                    className={`set-cmp-arrow is-${cmpDir}`}
-                                    title={
-                                      cmpDir === "up"
-                                        ? "较上次同组进步"
-                                        : cmpDir === "down"
-                                          ? "较上次同组略低"
-                                          : "与上次同组持平"
-                                    }
+                                    className={`set-overload-badge is-${overloadCue.tone}`}
+                                    title={overloadCue.detail}
                                   >
-                                    {cmpDir === "up" ? "↑ 超上次" : cmpDir === "down" ? "↓ 略低" : "= 持平"}
+                                    {overloadCue.badge}
                                   </span>
                                 ) : null}
                                 {s.restAfterSeconds != null ? (

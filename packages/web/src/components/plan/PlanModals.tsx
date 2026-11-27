@@ -1183,6 +1183,13 @@ interface RoutinePreviewResponse {
       label?: string;
       detail?: string;
     } | null;
+    lastTop?: {
+      date?: string | null;
+      weight: number;
+      reps: number;
+      seconds: number;
+      setsCount?: number;
+    } | null;
     backup?: { id: string; name: string } | null;
     autoWarmup?: boolean;
     weightUnit?: "kg" | "lb";
@@ -1438,8 +1445,20 @@ export function RoutinePreviewModal({
                   {scaled.sets} 组 <i>·</i> {valText}
                 </span>
               </div>
-              {row.progression || row.pr ? (
+              {row.lastTop || row.progression || row.pr ? (
                 <div className="preview-signals">
+                  {row.lastTop ? (
+                    <span className="sig-pill preview-last-pill">
+                      上次{" "}
+                      {row.snapshot.mode === "timed"
+                        ? `${fmt(row.lastTop.seconds)}s`
+                        : row.snapshot.mode === "assisted"
+                          ? `辅助 ${fmt(row.lastTop.weight)} kg × ${fmt(row.lastTop.reps)}`
+                          : row.lastTop.weight > 0
+                            ? `${fmt(row.lastTop.weight)} ${row.weightUnit ?? "kg"} × ${fmt(row.lastTop.reps)}`
+                            : `徒手 × ${fmt(row.lastTop.reps)}`}
+                    </span>
+                  ) : null}
                   {row.progression ? (
                     <span
                       className={`sig-pill${isProg ? " is-up" : isDeload ? " is-warn" : ""}`}

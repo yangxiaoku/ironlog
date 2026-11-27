@@ -187,14 +187,28 @@ export function getWebExerciseReferences(store: Store, userId: string, query: z.
     const exercise = baseMap.get(id);
     if (exercise) catalogue.set(id, mode ? { ...exercise, mode } : exercise);
   }
-  const matches = previousExerciseRows(store.list(userId, "workout"), query.workoutId ?? "", {
+  const workoutRecords = store.list(userId, "workout");
+  const matches = previousExerciseRows(workoutRecords, query.workoutId ?? "", {
     date: query.date, startedAt: query.startedAt, exercises: [],
   }, catalogue, targetIds);
+  const dateByRow = new WeakMap<object, string>();
+  for (const rec of workoutRecords) {
+    if (rec.deleted) continue;
+    const w = rec.data as Workout;
+    for (const exRow of w.exercises) {
+      dateByRow.set(exRow, w.date);
+    }
+  }
   return query.exercises.flatMap(({ id, mode }) => {
     const row = matches.get(id);
     if (!row || (mode && row.snapshot && row.snapshot.mode !== mode)) return [];
-    return [{ id, sets: row.sets.map((set) => isValidWorkSet(set, mode ?? row.snapshot?.mode)
-      ? { weight: set.weight, reps: set.reps, seconds: set.seconds } : null) }];
+    const matchedDate = dateByRow.get(row);
+    return [{
+      id,
+      ...(matchedDate ? { date: matchedDate } : {}),
+      sets: row.sets.map((set) => isValidWorkSet(set, mode ?? row.snapshot?.mode)
+        ? { weight: set.weight, reps: set.reps, seconds: set.seconds } : null),
+    }];
   });
 }
 
@@ -260,7 +274,20 @@ export function getWebRoutine(store: Store, userId: string, query: z.infer<typeo
   if (routine.exercises.some((row) => !byId.has(row.exerciseId))) {
     throw new DomainError("训练计划包含已移除的动作，请更新计划", 409);
   }
-  const workouts = store.list(userId, "workout").map(({ data }) => data as Workout);
+  const workoutRecords = store.list(userId, "workout");
+  const workouts = workoutRecords.map(({ data }) => data as Workout);
+  const targetIds = new Set(routine.exercises.map((item) => item.exerciseId));
+  const prevMatches = previousExerciseRows(workoutRecords, "", {
+    date: targetDate,
+    startedAt: `${targetDate}T23:59:59.999Z`,
+    exercises: [],
+  }, byId, targetIds);
+  const dateByRow = new WeakMap<object, string>();
+  for (const rec of workoutRecords) {
+    if (rec.deleted) continue;
+    const w = rec.data as Workout;
+    for (const exRow of w.exercises) dateByRow.set(exRow, w.date);
+  }
   const telemetry = resolveRoutineWithTelemetry({
     routine,
     planId,
@@ -273,6 +300,32 @@ export function getWebRoutine(store: Store, userId: string, query: z.infer<typeo
     const exercise = entry.exercise!;
     const { name, muscle, equipment, mode, volumeMultiplier } = exercise;
     const backup = entry.item.backupExerciseId ? byId.get(entry.item.backupExerciseId) : undefined;
+    const prevRow = prevMatches.get(entry.item.exerciseId);
+    const prevValidSets = prevRow
+      ? prevRow.sets.filter((s) => isValidWorkSet(s, mode))
+      : [];
+    const lastTop = prevValidSets.length
+      ? (() => {
+          const top = prevValidSets.reduce((best, cur) => {
+            if (mode === "timed") return cur.seconds > best.seconds ? cur : best;
+            if (mode === "assisted") {
+              if (cur.weight < best.weight) return cur;
+              if (cur.weight === best.weight && cur.reps > best.reps) return cur;
+              return best;
+            }
+            if (cur.weight > best.weight) return cur;
+            if (cur.weight === best.weight && cur.reps > best.reps) return cur;
+            return best;
+          });
+          return {
+            date: prevRow ? dateByRow.get(prevRow) ?? null : null,
+            weight: top.weight,
+            reps: top.reps,
+            seconds: top.seconds,
+            setsCount: prevValidSets.length,
+          };
+        })()
+      : null;
     return {
       exerciseId: entry.item.exerciseId,
       targetIndex,
@@ -287,6 +340,7 @@ export function getWebRoutine(store: Store, userId: string, query: z.infer<typeo
       seconds: entry.seconds,
       progression: entry.progression,
       baseline: entry.baseline,
+      lastTop,
       pr: entry.pr,
       backup: backup ? {
         id: backup.id,
@@ -589,14 +643,24 @@ export function syncWorkoutRoutineToActivePlan(
     if (workout.status !== "completed") throw new DomainError("仅已完成的训练可同步回计划", 409);
 
     const active = store.activePlan(userId);
-    if (!active) throw new DomainError("当前没有正在执行的训练计划", 404);
-    if (input.expectedRevision !== undefined && active.revision !== input.expectedRevision) {
+    const oldPlanRoutine = active ? matchActivePlanRoutine(active, workout) : null;
+    const routineIdx = active && oldPlanRoutine ? active.data.routines.findIndex((r) => r.id === oldPlanRoutine.id) : -1;
+
+    const templateRec =
+      !oldPlanRoutine && workout.routineId
+        ? store.get(userId, "template", workout.routineId)
+        : null;
+    const oldTemplate =
+      templateRec && !templateRec.deleted ? (templateRec.data as Routine) : null;
+
+    if (!oldPlanRoutine && !oldTemplate) {
+      if (!active && !workout.routineId) throw new DomainError("当前没有正在执行的训练计划", 404);
+      throw new DomainError("本场训练未关联或匹配到当前计划中的训练日或训练模板", 404);
+    }
+    if (oldPlanRoutine && active && input.expectedRevision !== undefined && active.revision !== input.expectedRevision) {
       throw new DomainError("当前计划已变化，请刷新后重试", 409);
     }
-
-    const oldRoutine = matchActivePlanRoutine(active, workout);
-    const routineIdx = oldRoutine ? active.data.routines.findIndex((r) => r.id === oldRoutine.id) : -1;
-    if (!oldRoutine || routineIdx < 0) throw new DomainError("本场训练未关联或匹配到当前计划中的训练日", 404);
+    const oldRoutine = oldPlanRoutine ?? oldTemplate!;
     if (!workout.exercises.length) throw new DomainError("本场训练没有动作，无法同步回计划", 400);
 
     const cat = store.catalogueMap(userId);
@@ -646,28 +710,50 @@ export function syncWorkoutRoutineToActivePlan(
           ? oldMatch.backupExerciseId
           : null,
         supersetGroup: row.supersetGroup?.trim() ? row.supersetGroup.trim().slice(0, 16) : null,
+        ...(row.weightUnit ? { weightUnit: row.weightUnit } : oldMatch?.weightUnit ? { weightUnit: oldMatch.weightUnit } : {}),
+        ...(oldMatch?.autoWarmup ? { autoWarmup: true } : {}),
       });
     });
 
-    const nextRoutines = active.data.routines.map((r, i) =>
-      i === routineIdx ? { ...r, exercises: nextExercises } : r,
-    );
-    const saved = store.mutate(userId, {
-      opId: randomUUID(),
-      id: active.id,
-      kind: "plan",
-      baseVersion: active.version,
-      deleted: false,
-      data: { ...active.data, routines: nextRoutines },
-    });
-    if (saved.status === "conflict" || !saved.record) {
-      throw new DomainError("当前计划已变化，请刷新后重试", 409);
+    if (oldPlanRoutine && active && routineIdx >= 0) {
+      const nextRoutines = active.data.routines.map((r, i) =>
+        i === routineIdx ? { ...r, exercises: nextExercises } : r,
+      );
+      const saved = store.mutate(userId, {
+        opId: randomUUID(),
+        id: active.id,
+        kind: "plan",
+        baseVersion: active.version,
+        deleted: false,
+        data: { ...active.data, routines: nextRoutines },
+      });
+      if (saved.status === "conflict" || !saved.record) {
+        throw new DomainError("当前计划已变化，请刷新后重试", 409);
+      }
+      const activePlan = store.applyPlan(userId, active.id, saved.record.version, active.revision, false);
+      return {
+        syncedKind: "plan" as const,
+        syncedRoutineName: oldPlanRoutine.name,
+        exercisesCount: nextExercises.length,
+        activePlan,
+      };
     }
-    const activePlan = store.applyPlan(userId, active.id, saved.record.version, active.revision, false);
+
+    const savedTpl = store.mutate(userId, {
+      opId: randomUUID(),
+      id: templateRec!.id,
+      kind: "template",
+      baseVersion: templateRec!.version,
+      deleted: false,
+      data: { ...oldTemplate!, exercises: nextExercises },
+    });
+    if (savedTpl.status === "conflict" || !savedTpl.record) {
+      throw new DomainError("该训练模板已在其他设备更新，请刷新后重试", 409);
+    }
     return {
-      syncedRoutineName: oldRoutine.name,
+      syncedKind: "template" as const,
+      syncedRoutineName: oldTemplate!.name,
       exercisesCount: nextExercises.length,
-      activePlan,
     };
   }).immediate();
 }

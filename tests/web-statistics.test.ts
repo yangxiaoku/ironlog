@@ -197,7 +197,7 @@ test("上次组数参考使用真实历史，排除未来、进行中、热身�
     const body = { date, startedAt: date + "T12:00:00Z", exercises: [{ id: "bench-press", mode: "reps" }] };
     const method = "POST";
     assert.deepEqual(await (await call(route, { method, body })).json(), [
-      { id: "bench-press", sets: [null, { weight: 52.5, reps: 8, seconds: 0 }, null] },
+      { id: "bench-press", date, sets: [null, { weight: 52.5, reps: 8, seconds: 0 }, null] },
     ]);
     assert.deepEqual(await (await call(route, { method, body: { ...body, exercises: [{ id: "bench-press", mode: "assisted" }] } })).json(), []);
     assert.deepEqual(await (await call(route, { method, body, token: other.token })).json(), []);
