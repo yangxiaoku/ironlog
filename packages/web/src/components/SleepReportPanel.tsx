@@ -24,7 +24,7 @@ function daySummary(day: SleepReportDay) {
 
 function exportSleepReport(report: SleepReport) {
   const rows = report.series.map(({ date, minutes, source, window, stages }) => [
-    date, minutes, source === "intervals" ? "去重时段" : source === "summary" ? "同步汇总" : "",
+    date, minutes, source === "intervals" ? "去重时段" : source === "mixed" ? "时段+时长汇总" : source === "summary" ? "同步汇总" : "",
     window?.startAt, window?.endAt, stages?.core, stages?.deep, stages?.rem,
   ].map((value) => value ?? "").join(","));
   downloadClientFile(
@@ -178,15 +178,35 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
                 <div><dt>主睡眠区间</dt>
                   <dd>{day.window ? `${clockLabel(day.window.startAt)} – ${clockLabel(day.window.endAt)}` : "暂无可靠起止时间"}</dd>
                 </div>
-                {day.source ? <div><dt>时长来源</dt><dd>{day.source === "intervals" ? "去重后的睡眠时段" : "已同步的睡眠汇总"}</dd></div> : null}
+                {day.source ? (
+                  <div>
+                    <dt>时长来源</dt>
+                    <dd>
+                      {day.source === "intervals"
+                        ? "去重后的睡眠时段"
+                        : day.source === "mixed"
+                          ? "时段去重 + 无时间戳分期合并"
+                          : "已同步的睡眠汇总"}
+                    </dd>
+                  </div>
+                ) : null}
               </dl>
               {day.stages ? (
                 <>
                   <p>设备估算分期</p>
                   <dl className="sleep-stage-list">
-                    <div><dt>核心</dt><dd>{formatSleepMinutes(day.stages.core)}</dd></div>
-                    <div><dt>深睡</dt><dd>{formatSleepMinutes(day.stages.deep)}</dd></div>
-                    <div><dt>REM</dt><dd>{formatSleepMinutes(day.stages.rem)}</dd></div>
+                    <div>
+                      <dt>核心{day.untimedStages?.includes("core") ? " (仅时长)" : ""}</dt>
+                      <dd>{formatSleepMinutes(day.stages.core)}</dd>
+                    </div>
+                    <div>
+                      <dt>深睡{day.untimedStages?.includes("deep") ? " (仅时长)" : ""}</dt>
+                      <dd>{formatSleepMinutes(day.stages.deep)}</dd>
+                    </div>
+                    <div>
+                      <dt>REM{day.untimedStages?.includes("rem") ? " (仅时长)" : ""}</dt>
+                      <dd>{formatSleepMinutes(day.stages.rem)}</dd>
+                    </div>
                   </dl>
                 </>
               ) : null}

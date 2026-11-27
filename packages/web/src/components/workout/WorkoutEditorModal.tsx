@@ -444,6 +444,7 @@ export function WorkoutEditorModal({
   const [openSettingsIds, setOpenSettingsIds] = useState<Set<string>>(() => new Set());
   const [refsByExId, setRefsByExId] = useState<Map<string, ExerciseReferenceEntry["sets"]>>(() => new Map());
   const [refDatesByExId, setRefDatesByExId] = useState<Map<string, string>>(() => new Map());
+  const [refUnitsByExId, setRefUnitsByExId] = useState<Map<string, WeightUnit>>(() => new Map());
   const [prsByExId, setPrsByExId] = useState<Map<string, LiveExercisePrBaseline>>(() => new Map());
   const [mediaByExId, setMediaByExId] = useState<Map<string, string>>(() => new Map());
   const touchedExIdsRef = useRef<Set<string>>(new Set());
@@ -882,11 +883,14 @@ export function WorkoutEditorModal({
         if (!active) return;
         const nextRefs = new Map(list.map((entry) => [entry.id, entry.sets]));
         const nextDates = new Map<string, string>();
+        const nextUnits = new Map<string, WeightUnit>();
         for (const entry of list) {
           if (entry.date) nextDates.set(entry.id, entry.date);
+          if (entry.weightUnit) nextUnits.set(entry.id, entry.weightUnit);
         }
         setRefsByExId(nextRefs);
         setRefDatesByExId(nextDates);
+        setRefUnitsByExId(nextUnits);
 
         // Auto-prefill working sets with last session's exact per-set weight & reps on fresh open
         if (!isHistoricalEdit && !record && !restoredFromDraftRef.current && autoPrefillLast && !prefs.deloadMode) {
@@ -902,6 +906,8 @@ export function WorkoutEditorModal({
               if (!validList.length) return row;
               autoPrefilledExIdsRef.current.add(row.id);
               const rowIsTimed = row.snapshot?.mode === "timed";
+              const rowUnit: WeightUnit = row.weightUnit ?? "kg";
+              const refUnit: WeightUnit = nextUnits.get(row.exerciseId) ?? "kg";
               let workIdx = 0;
               const nextSets = row.sets.map((s) => {
                 if (s.type === "warmup") return s;
@@ -915,7 +921,10 @@ export function WorkoutEditorModal({
                   }
                   return s;
                 }
-                const nextW = ref.weight;
+                const nextW =
+                  ref.weight > 0 && refUnit !== rowUnit
+                    ? round2(kgToUnit(weightToKg(ref.weight, refUnit), rowUnit))
+                    : ref.weight;
                 const nextR = ref.reps || s.reps;
                 if (nextW !== s.weight || nextR !== s.reps) {
                   changed = true;
@@ -3071,7 +3080,14 @@ export function WorkoutEditorModal({
               const settingsExpanded = openSettingsIds.has(row.id);
               const refSets = refsByExId.get(row.exerciseId) ?? [];
               const refDate = refDatesByExId.get(row.exerciseId) ?? "";
-              const validRefs = refSets.filter((r): r is NonNullable<typeof r> => Boolean(r));
+              const refUnit: WeightUnit = refUnitsByExId.get(row.exerciseId) ?? "kg";
+              const validRefs = refSets
+                .filter((r): r is NonNullable<typeof r> => Boolean(r))
+                .map((r) =>
+                  !isTimed && r.weight > 0 && refUnit !== exUnit
+                    ? { ...r, weight: round2(kgToUnit(weightToKg(r.weight, refUnit), exUnit)) }
+                    : r,
+                );
               const mediaUrl = mediaByExId.get(row.exerciseId) || "";
               const prBaseline = prsByExId.get(row.exerciseId) ?? null;
               const benchmark = summarizeExerciseBenchmarks(

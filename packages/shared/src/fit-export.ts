@@ -48,44 +48,82 @@ export interface FitExportWorkoutInput {
   startedAt?: string | null;
   endedAt?: string | null;
   durationSeconds?: number | null;
+  durationUnknown?: boolean;
+  activeCaloriesKcal?: number | null;
+  totalWorkJoules?: number | null;
   exercises?: Workout["exercises"];
   totalSets?: number;
   totalVolumeKg?: number;
 }
 
+export function resolveFitDurationSeconds(input: FitExportWorkoutInput): number | null {
+  if (input.durationUnknown) return null;
+  if (typeof input.durationSeconds === "number" && Number.isFinite(input.durationSeconds) && input.durationSeconds > 0) {
+    return Math.round(input.durationSeconds);
+  }
+  if (input.startedAt && input.endedAt) {
+    const startMs = Date.parse(input.startedAt);
+    const endMs = Date.parse(input.endedAt);
+    if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+      return Math.round((endMs - startMs) / 1000);
+    }
+  }
+  return null;
+}
+
+function pushFixedString(out: number[], text: string, byteLen: number) {
+  const bytes = new TextEncoder().encode(text);
+  for (let i = 0; i < byteLen; i++) {
+    out.push(i < byteLen - 1 && i < bytes.length ? bytes[i]! : 0);
+  }
+}
+
+// Fixed 16-byte developer application UUID for Ironlog FIT Developer Data fields
+const IRONLOG_DEV_APP_ID = [
+  0x49, 0x52, 0x4f, 0x4e, 0x4c, 0x4f, 0x47, 0x2d,
+  0x46, 0x49, 0x54, 0x2d, 0x30, 0x30, 0x30, 0x31,
+];
+
 /**
  * Encodes a completed Ironlog strength training workout into a valid binary Garmin `.fit` file
- * (14-byte header with ".FIT" signature + File ID + Activity + Session + Event records + CRC-16).
+ * (14-byte header with ".FIT" signature + File ID + optional Developer Data + Activity + Session + Event + CRC-16).
+ * Refuses to fabricate duration, calorie, or work measurements when missing.
  */
 export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
+  const durationSec = resolveFitDurationSeconds(input);
+  if (durationSec === null) {
+    throw new Error("训练缺少有效时长，无法生成符合实际记录的 .fit 文件；请先补充训练时长或改用 CSV/JSON 导出");
+  }
   const startIso = input.startedAt ?? `${input.date}T12:00:00Z`;
   const startTs = toFitTimestamp(startIso);
-  let durationSec = Math.max(
-    60,
-    Math.round(
-      input.durationSeconds ??
-        (input.endedAt ? Math.max(60, (Date.parse(input.endedAt) - Date.parse(startIso)) / 1000) : 2700),
-    ),
-  );
-  if (!Number.isFinite(durationSec)) durationSec = 2700;
   const endTs = startTs + durationSec;
 
-  let totalSets = input.totalSets ?? 0;
   let totalVolumeKg = input.totalVolumeKg ?? 0;
   if (input.exercises?.length) {
-    totalSets = 0;
     totalVolumeKg = 0;
     for (const ex of input.exercises) {
+      const mult = ex.snapshot?.volumeMultiplier ?? 1;
       for (const s of ex.sets) {
         if (!s.completed || s.type === "warmup") continue;
-        totalSets++;
         if (s.weight > 0 && s.reps > 0) {
-          totalVolumeKg += weightToKg(s.weight, ex.weightUnit) * s.reps;
+          totalVolumeKg += weightToKg(s.weight, ex.weightUnit) * s.reps * mult;
         }
       }
     }
   }
-  const estCalories = Math.max(20, Math.min(5000, Math.round(durationSec * 0.085 + totalSets * 4)));
+  const measuredCalories =
+    typeof input.activeCaloriesKcal === "number" &&
+    Number.isFinite(input.activeCaloriesKcal) &&
+    input.activeCaloriesKcal > 0
+      ? Math.min(65535, Math.round(input.activeCaloriesKcal))
+      : null;
+  const measuredWorkJoules =
+    typeof input.totalWorkJoules === "number" &&
+    Number.isFinite(input.totalWorkJoules) &&
+    input.totalWorkJoules > 0
+      ? Math.round(input.totalWorkJoules)
+      : null;
+  const hasVolumeDevField = Number.isFinite(totalVolumeKg) && totalVolumeKg > 0;
 
   const records: number[] = [];
 
@@ -106,6 +144,37 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   pushU16(records, 1); // product=1 (Ironlog)
   pushU32(records, startTs);
 
+  if (hasVolumeDevField) {
+    // Developer Data ID (global msg 207) using local msg 4
+    records.push(
+      0x44, 0x00, 0x00,
+      207, 0x00, // global msg 207 (developer_data_id)
+      0x02,
+      1, 16, 0x0d, // field 1: application_id (byte[16])
+      2, 1, 0x02,  // field 2: developer_data_index (uint8)
+    );
+    records.push(0x04, ...IRONLOG_DEV_APP_ID, 0);
+
+    // Field Description (global msg 206) for total_volume_kg (scaled ×10, units "kg") on Session (18)
+    records.push(
+      0x45, 0x00, 0x00,
+      206, 0x00, // global msg 206 (field_description)
+      0x07,
+      0, 1, 0x02,  // field 0: developer_data_index (uint8)
+      1, 1, 0x02,  // field 1: field_definition_number (uint8)
+      2, 1, 0x02,  // field 2: fit_base_type_id (uint8: 6 = uint32)
+      3, 16, 0x07, // field 3: field_name (string[16])
+      6, 1, 0x02,  // field 6: scale (uint8 = 10)
+      8, 4, 0x07,  // field 8: units (string[4])
+      14, 2, 0x84, // field 14: native_mesg_num (uint16 = 18 session)
+    );
+    records.push(0x05, 0, 0, 6);
+    pushFixedString(records, "total_volume_kg", 16);
+    records.push(10);
+    pushFixedString(records, "kg", 4);
+    pushU16(records, 18);
+  }
+
   // 2) Local 1 -> Global 21 (event): timestamp(253 u32), event(0 enum=0 timer), event_type(1 enum=0 start / 4 stop_all)
   records.push(
     0x41, 0x00, 0x00,
@@ -125,21 +194,34 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   records.push(0, 4);
 
   // 3) Local 2 -> Global 18 (session):
-  // timestamp(253 u32), start_time(2 u32), total_elapsed_time(7 u32 ms), total_timer_time(8 u32 ms),
-  // sport(5 enum=10 training), sub_sport(6 enum=20 strength_training), total_calories(11 u16), total_work(48 u32 J)
+  // Standard fields: timestamp(253), start_time(2), total_elapsed_time(7), total_timer_time(8), sport(5), sub_sport(6)
+  // Plus ONLY genuinely measured total_calories(11) / total_work(48) if supplied,
+  // plus FIT 2.0 developer field 0 (total_volume_kg) when totalVolumeKg > 0.
+  const sessionStdFields: Array<[number, number, number]> = [
+    [253, 4, 0x86],
+    [2, 4, 0x86],
+    [7, 4, 0x86],
+    [8, 4, 0x86],
+    [5, 1, 0x00],
+    [6, 1, 0x00],
+  ];
+  if (measuredCalories !== null) sessionStdFields.push([11, 2, 0x84]);
+  if (measuredWorkJoules !== null) sessionStdFields.push([48, 4, 0x86]);
+
   records.push(
-    0x42, 0x00, 0x00,
+    hasVolumeDevField ? 0x62 : 0x42, // definition header for local msg 2 (+0x20 dev data flag)
+    0x00,
+    0x00,
     18, 0x00, // global msg 18 (session)
-    0x08,
-    253, 4, 0x86,
-    2, 4, 0x86,
-    7, 4, 0x86,
-    8, 4, 0x86,
-    5, 1, 0x00,
-    6, 1, 0x00,
-    11, 2, 0x84,
-    48, 4, 0x86,
+    sessionStdFields.length,
+    ...sessionStdFields.flat(),
   );
+  if (hasVolumeDevField) {
+    records.push(
+      1, // 1 developer field
+      0, 4, 0, // field_def_num=0, size=4 bytes (uint32), developer_data_index=0
+    );
+  }
   records.push(0x02);
   pushU32(records, endTs);
   pushU32(records, startTs);
@@ -147,8 +229,9 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   pushU32(records, durationSec * 1000);
   records.push(10); // sport: training
   records.push(20); // sub_sport: strength_training
-  pushU16(records, estCalories);
-  pushU32(records, Math.round(totalVolumeKg * 10)); // work metric proxy
+  if (measuredCalories !== null) pushU16(records, measuredCalories);
+  if (measuredWorkJoules !== null) pushU32(records, measuredWorkJoules);
+  if (hasVolumeDevField) pushU32(records, Math.round(totalVolumeKg * 10));
 
   // 4) Local 3 -> Global 34 (activity): timestamp(253 u32), total_timer_time(0 u32 ms), num_sessions(1 u16=1), type(2 enum=0 manual)
   records.push(

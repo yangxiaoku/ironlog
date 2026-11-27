@@ -1,7 +1,7 @@
 import type { ComponentType } from "react";
 import { today } from "./date";
 import { cachedApiFetch } from "./query-cache";
-import type { ViewId, WorkspaceId } from "./routes";
+import { isValidView, type ViewId, type WorkspaceId } from "./routes";
 
 export const viewLoaders: Record<ViewId, () => Promise<{ default: ComponentType<any> }>> = {
   overview: () => import("../views/OverviewView").then((m) => ({ default: m.OverviewView })),
@@ -19,7 +19,7 @@ export const viewLoaders: Record<ViewId, () => Promise<{ default: ComponentType<
 const prefetchedChunks = new Set<string>();
 
 export function prefetchViewChunk(view: ViewId | WorkspaceId): void {
-  const key = (view in viewLoaders ? view : "overview") as ViewId;
+  const key: ViewId = isValidView(view) && Object.hasOwn(viewLoaders, view) ? view : "overview";
   const loader = viewLoaders[key];
   if (prefetchedChunks.has(key)) return;
   prefetchedChunks.add(key);

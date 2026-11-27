@@ -8,6 +8,7 @@ import { fmt, shortDate, today } from "../lib/date";
 import { copyDietBatch } from "../lib/diet-copy";
 import {
   MEALS,
+  safeUuid,
   shiftDateStr,
   type DietData,
   type MealKey,
@@ -66,6 +67,13 @@ export function DietView() {
   const [waterMl, setWaterMl] = useState(0);
   const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl(userId));
   const [busyWater, setBusyWater] = useState(false);
+  const [pendingWaterOp, setPendingWaterOp] = useState<{
+    opId: string;
+    date: string;
+    deltaMl?: number;
+    setMl?: number;
+    label: string;
+  } | null>(null);
   const [customWaterOpen, setCustomWaterOpen] = useState(false);
   const [customWaterVal, setCustomWaterVal] = useState("");
   const [markingDone, setMarkingDone] = useState(false);
@@ -127,6 +135,7 @@ export function DietView() {
       lastHydrationKeyRef.current = hydrationKey;
       setDietDone(false);
       setWaterMl(0);
+      setPendingWaterOp(null);
     }
     void Promise.all([
       cachedApiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId }).catch(() => null),
@@ -207,26 +216,54 @@ export function DietView() {
     }
   };
 
-  const updateWater = async (deltaMl?: number, setMl?: number) => {
+  const sendWaterRequest = async (req: { opId: string; date: string; deltaMl?: number; setMl?: number; label: string }) => {
     if (busyWater) return;
-    const reqDate = date;
     setBusyWater(true);
     triggerHaptic("light");
     try {
       const res = await apiFetch<{ waterMl: number }>("/api/web/water", {
         method: "POST",
-        body: setMl != null ? { date: reqDate, setMl } : { date: reqDate, deltaMl: deltaMl ?? 250 },
+        body: req.setMl != null
+          ? { date: req.date, setMl: req.setMl, opId: req.opId }
+          : { date: req.date, deltaMl: req.deltaMl ?? 250, opId: req.opId },
       });
-      if (dateRef.current === reqDate) {
+      setPendingWaterOp(null);
+      if (dateRef.current === req.date) {
         setWaterMl(res.waterMl);
       }
-      const dayLabel = reqDate === todayStr ? "今日饮水" : `${shortDate(reqDate)} 饮水`;
-      notify(setMl === 0 ? `已重置${dayLabel}记录` : `${dayLabel} ${fmt(res.waterMl, 0)} ml`);
+      const dayLabel = req.date === todayStr ? "今日饮水" : `${shortDate(req.date)} 饮水`;
+      notify(req.setMl === 0 ? `已重置${dayLabel}记录` : `${dayLabel} ${fmt(res.waterMl, 0)} ml`);
     } catch (err) {
-      notify((err as Error)?.message || "更新饮水失败");
+      setPendingWaterOp(req);
+      notify((err as Error)?.message || "饮水保存尚未确认，可点击下方重试原操作");
     } finally {
       setBusyWater(false);
     }
+  };
+
+  const updateWater = async (deltaMl?: number, setMl?: number) => {
+    const reqDate = date;
+    const samePending =
+      pendingWaterOp &&
+      pendingWaterOp.date === reqDate &&
+      (setMl != null ? pendingWaterOp.setMl === setMl : pendingWaterOp.setMl == null && pendingWaterOp.deltaMl === (deltaMl ?? 250));
+    const label =
+      setMl === 0
+        ? "清零饮水"
+        : setMl != null
+          ? `设为 ${setMl}ml`
+          : (deltaMl ?? 250) > 0
+            ? `+${deltaMl ?? 250}ml`
+            : `${deltaMl}ml`;
+    const op = samePending
+      ? pendingWaterOp
+      : {
+          opId: safeUuid(),
+          date: reqDate,
+          ...(setMl != null ? { setMl } : { deltaMl: deltaMl ?? 250 }),
+          label,
+        };
+    await sendWaterRequest(op);
   };
 
   const handleMarkDone = async () => {
@@ -236,7 +273,7 @@ export function DietView() {
     try {
       await apiFetch("/api/web/nutrition-day", {
         method: "PUT",
-        body: { date: reqDate, opId: crypto.randomUUID() },
+        body: { date: reqDate, opId: safeUuid() },
       });
       triggerHaptic("success");
       if (dateRef.current === reqDate) {
@@ -485,6 +522,19 @@ export function DietView() {
               </button>
             </div>
             <ThinMeter ratio={waterMl / waterGoal} label="每日饮水完成度" />
+            {pendingWaterOp && pendingWaterOp.date === date ? (
+              <div className="form-error" role="status" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+                <span>上次「{pendingWaterOp.label}」未收到确认回执</span>
+                <span style={{ display: "flex", gap: 6 }}>
+                  <button type="button" className="micro-chip" disabled={busyWater} onClick={() => void sendWaterRequest(pendingWaterOp)}>
+                    重试原操作
+                  </button>
+                  <button type="button" className="quiet" disabled={busyWater} onClick={() => setPendingWaterOp(null)}>
+                    取消
+                  </button>
+                </span>
+              </div>
+            ) : null}
             <div className="hydration-actions">
               <button type="button" className="micro-chip" disabled={busyWater} onClick={() => void updateWater(250)}>
                 +250ml
@@ -714,7 +764,7 @@ export function DietView() {
                               await apiFetch("/api/records", {
                                 method: "POST",
                                 body: {
-                                  opId: crypto.randomUUID(),
+                                  opId: safeUuid(),
                                   id: tpl.id,
                                   kind: "mealTemplate",
                                   baseVersion: tpl.version,

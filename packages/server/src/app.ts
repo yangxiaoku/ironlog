@@ -48,9 +48,10 @@ import { catalogueETag, catalogueLookup, catalogueQuery, CloudCatalogue, exercis
 import { DomainError, Store } from "./store.js";
 import { getStats, getTrainingContext } from "./stats.js";
 import { getWebStatistics, isoWeekKey, saveWebPreferences, shiftDay, webPreferences, webPreferencesInput, webStatsQuery } from "./web-statistics.js";
-import { deliverWebhookEvent } from "./webhook.js";
+import { deliverWebhookEvent, validateWebhookTarget, type WebhookPolicy } from "./webhook.js";
 import { getWebAnalytics, webAnalyticsQuery } from "./web-analytics.js";
 import { getWebBadges } from "./web-badges.js";
+import { acceptsGzip } from "./web-assets.js";
 import {
   clearWebScheduleDay,
   getWebExercisePrs,
@@ -102,6 +103,7 @@ import type { Db } from "./db.js";
 
 export interface AppConfig {
   allowDevLogin?: boolean;
+  allowPrivateWebhooks?: boolean;
   trustProxy?: boolean;
   ai?: AiConfig;
   healthDataExportWebhookUrl?: string;
@@ -168,6 +170,9 @@ export function createApp(
 ) {
   const store = new Store(db);
   const trustProxy = config.trustProxy ?? (process.env.TRUST_PROXY === "true");
+  const webhookPolicy: WebhookPolicy = {
+    allowPrivateNetwork: config.allowPrivateWebhooks ?? (process.env.ALLOW_PRIVATE_WEBHOOKS === "true"),
+  };
   const auth = new Auth(db);
   const browser = new WebAuth(db);
   const ai = new AiService(store, config.ai ?? {}, transport);
@@ -364,7 +369,6 @@ export function createApp(
   });
   app.use("/api/*", async (c, next) => {
     await next();
-    if (!/\bgzip\b/i.test(c.req.header("Accept-Encoding") ?? "")) return;
     const res = c.res;
     if (
       (res.status !== 200 && res.status !== 201) ||
@@ -378,12 +382,16 @@ export function createApp(
       c.res = new Response(buf, { status: res.status, statusText: res.statusText, headers: res.headers });
       return;
     }
-    const compressed = new Uint8Array(gzipSync(buf, { level: 6 }));
     const headers = new Headers(res.headers);
-    headers.delete("Content-Length");
-    headers.set("Content-Encoding", "gzip");
     const vary = headers.get("Vary");
     if (!vary || !/\baccept-encoding\b/i.test(vary)) headers.append("Vary", "Accept-Encoding");
+    if (!acceptsGzip(c.req.header("Accept-Encoding"))) {
+      c.res = new Response(buf, { status: res.status, statusText: res.statusText, headers });
+      return;
+    }
+    const compressed = new Uint8Array(gzipSync(buf, { level: 6 }));
+    headers.delete("Content-Length");
+    headers.set("Content-Encoding", "gzip");
     c.res = new Response(compressed, { status: res.status, statusText: res.statusText, headers });
   });
   app.get("/api/catalogue/version", (c) => {
@@ -813,7 +821,14 @@ export function createApp(
 
   // 3.3 Webhook config & test delivery
   app.put("/api/web/profile/webhook", async (c) => {
-    const webhookConfig = webhookConfigSchema.parse(await c.req.json());
+    const parsed = webhookConfigSchema.parse(await c.req.json());
+    if (parsed.enabled || parsed.url.trim()) {
+      const check = validateWebhookTarget(parsed, webhookPolicy);
+      if (!check.ok) throw new DomainError(check.reason, 400);
+    }
+    const webhookConfig = webhookPolicy.allowPrivateNetwork
+      ? parsed
+      : { ...parsed, allowPrivateNetwork: false };
     const userId = c.get("userId");
     return c.json(db.transaction(() => {
       const existing = store.get(userId, "profile", "settings");
@@ -840,7 +855,7 @@ export function createApp(
     const outcome = await deliverWebhookEvent(cfg, "webhook.test", {
       message: "来自 铁记 Ironlog 的测试推送",
       userId,
-    });
+    }, transport, webhookPolicy);
     return c.json(outcome, outcome.delivered ? 200 : 400);
   });
 
@@ -925,11 +940,11 @@ export function createApp(
       .parse(c.req.query());
     if (query.builtin === "1") {
       c.header("ETag", catalogueETag);
+      c.header("Vary", "Accept-Encoding");
       if (c.req.header("If-None-Match") === catalogueETag) return c.body(null, 304);
       const payload = getBuiltinCataloguePayload();
       c.header("Content-Type", "application/json; charset=UTF-8");
-      c.header("Vary", "Accept-Encoding");
-      if (/\bgzip\b/i.test(c.req.header("Accept-Encoding") ?? "")) {
+      if (acceptsGzip(c.req.header("Accept-Encoding"))) {
         c.header("Content-Encoding", "gzip");
         return c.body(payload.gzip);
       }
@@ -980,7 +995,7 @@ export function createApp(
           completedSets: m.completedSets,
           volumeKg: m.volume,
           feeling: w.feeling ?? null,
-        }).catch(() => {});
+        }, transport, webhookPolicy).catch(() => {});
       }
     }
     return c.json(result, result.status === "conflict" ? 409 : 200);

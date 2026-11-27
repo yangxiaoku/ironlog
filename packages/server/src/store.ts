@@ -59,8 +59,16 @@ function backupPlanEntry(value: unknown, fallbackDate: string, strict: boolean) 
   const version = row.version;
   const validVersion = typeof version === "number" && Number.isSafeInteger(version) && version >= 1 && version < Number.MAX_SAFE_INTEGER;
   const updatedAt = backupInstant(row.updatedAt);
+  const startedAt = backupInstant(row.startedAt);
   if (!id.success || !data.success || (strict && (!validVersion || !updatedAt))) return null;
-  return { id: id.data, version: validVersion ? version : 1, data: data.data, updatedAt: updatedAt ?? fallbackDate };
+  const resolvedUpdated = updatedAt ?? fallbackDate;
+  return {
+    id: id.data,
+    version: validVersion ? version : 1,
+    data: data.data,
+    updatedAt: resolvedUpdated,
+    startedAt: startedAt ?? resolvedUpdated,
+  };
 }
 
 function newerBackupRecord(incomingAt: string | null, existingAt: string) {
@@ -203,7 +211,7 @@ export class Store {
     this.stmtActivePlan = db.prepare("SELECT * FROM active_plans WHERE user_id = ?");
     this.stmtPlanVersion = db.prepare("SELECT data FROM plan_versions WHERE user_id = ? AND id = ? AND version = ?");
     this.stmtPlanActivations = db.prepare(
-      `SELECT a.plan_id AS id, a.version, a.updated_at AS updatedAt, v.data
+      `SELECT a.plan_id AS id, a.version, a.updated_at AS updatedAt, COALESCE(a.cycle_started_at, a.updated_at) AS startedAt, v.data
        FROM plan_activations a JOIN plan_versions v
          ON v.user_id=a.user_id AND v.id=a.plan_id AND v.version=a.version
        WHERE a.user_id=? ORDER BY a.revision`,
@@ -215,10 +223,12 @@ export class Store {
     );
     this.stmtInsertPlanVersion = db.prepare("INSERT OR IGNORE INTO plan_versions VALUES (?,?,?,?,?)");
     this.stmtUpsertActivePlan = db.prepare(
-      `INSERT INTO active_plans VALUES (?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
-        plan_id=excluded.plan_id, version=excluded.version, revision=excluded.revision, updated_at=excluded.updated_at`,
+      `INSERT INTO active_plans (user_id, plan_id, version, revision, updated_at, cycle_started_at) VALUES (?,?,?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET
+        plan_id=excluded.plan_id, version=excluded.version, revision=excluded.revision, updated_at=excluded.updated_at, cycle_started_at=excluded.cycle_started_at`,
     );
-    this.stmtInsertPlanActivation = db.prepare("INSERT INTO plan_activations VALUES (?,?,?,?,?)");
+    this.stmtInsertPlanActivation = db.prepare(
+      "INSERT INTO plan_activations (user_id, plan_id, version, revision, updated_at, cycle_started_at) VALUES (?,?,?,?,?,?)",
+    );
     this.stmtExportRecords = db.prepare("SELECT * FROM records WHERE user_id=?");
     this.stmtExportPlanVersions = db.prepare("SELECT id,version,data,created_at FROM plan_versions WHERE user_id=?");
     this.stmtExportExerciseNotes = db.prepare("SELECT exercise_id AS exerciseId, note, updated_at AS updatedAt FROM exercise_notes WHERE user_id=? AND note <> '' ORDER BY exercise_id");
@@ -434,6 +444,7 @@ export class Store {
           version: number;
           revision: number;
           updated_at: string;
+          cycle_started_at?: string | null;
         }
       | undefined;
     if (!row) return null;
@@ -443,6 +454,7 @@ export class Store {
       version: row.version,
       revision: row.revision,
       updatedAt: row.updated_at,
+      startedAt: row.cycle_started_at ?? row.updated_at,
       data: JSON.parse(snapshot.data) as Plan,
     };
   }
@@ -450,7 +462,13 @@ export class Store {
   planSchedule(userId: string) {
     const active = this.activePlan(userId);
     if (!active) return null;
-    const rows = this.stmtPlanActivations.all(userId) as { id: string; version: number; updatedAt: string; data: string }[];
+    const rows = this.stmtPlanActivations.all(userId) as {
+      id: string;
+      version: number;
+      updatedAt: string;
+      startedAt: string;
+      data: string;
+    }[];
     return { ...active, history: rows.map((row) => ({ ...row, data: JSON.parse(row.data) as Plan })) };
   }
 
@@ -464,6 +482,7 @@ export class Store {
     version: number,
     expectedRevision: number,
     historical = false,
+    preserveCycle = false,
   ) {
     return this.db.transaction(() => {
       const active = this.activePlan(userId);
@@ -484,10 +503,14 @@ export class Store {
       }
       this.validatePlan(data, this.catalogueMap(userId));
       const now = new Date().toISOString();
+      const cycleStartedAt =
+        preserveCycle && active && active.id === id
+          ? (active.startedAt ?? active.updatedAt)
+          : null;
       const revision = Math.max(expectedRevision, this.planRevisionFloor(userId)) + 1;
       this.stmtInsertPlanVersion.run(userId, id, version, JSON.stringify(data), now);
-      this.stmtUpsertActivePlan.run(userId, id, version, revision, now);
-      this.stmtInsertPlanActivation.run(userId, id, version, revision, now);
+      this.stmtUpsertActivePlan.run(userId, id, version, revision, now, cycleStartedAt);
+      this.stmtInsertPlanActivation.run(userId, id, version, revision, now, cycleStartedAt);
       return this.planSchedule(userId);
     })();
   }
@@ -841,7 +864,7 @@ export class Store {
 
       // Restore activePlan if present
       if (activePlan && (strictPlanRestore || !this.activePlan(userId))) {
-        const { id, version, data, updatedAt } = activePlan;
+        const { id, version, data, updatedAt, startedAt } = activePlan;
         this.stmtInsertPlanVersion.run(userId, id, version, JSON.stringify(data), updatedAt);
         const last = planHistory.at(-1);
         const history = last?.id === id && last.version === version && last.updatedAt === updatedAt
@@ -849,10 +872,10 @@ export class Store {
         const finalRev = Math.max(revision ?? 1, history.length + 1, this.planRevisionFloor(userId) + 1);
         history.forEach((entry, index) => {
           this.stmtInsertPlanVersion.run(userId, entry.id, entry.version, JSON.stringify(entry.data), entry.updatedAt);
-          this.stmtInsertPlanActivation.run(userId, entry.id, entry.version, index + 1, entry.updatedAt);
+          this.stmtInsertPlanActivation.run(userId, entry.id, entry.version, index + 1, entry.updatedAt, entry.startedAt ?? entry.updatedAt);
         });
-        this.stmtUpsertActivePlan.run(userId, id, version, finalRev, updatedAt);
-        this.stmtInsertPlanActivation.run(userId, id, version, finalRev, updatedAt);
+        this.stmtUpsertActivePlan.run(userId, id, version, finalRev, updatedAt, startedAt ?? updatedAt);
+        this.stmtInsertPlanActivation.run(userId, id, version, finalRev, updatedAt, startedAt ?? updatedAt);
       }
 
       // Restore exerciseNotes

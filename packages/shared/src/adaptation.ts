@@ -4,6 +4,7 @@ import type {
   WorkoutAdaptation,
   WorkoutAdjustment,
 } from "./index.js";
+import { kgToUnit, weightToKg } from "./logic.js";
 
 export function exerciseSnapshot(
   exercise: Pick<
@@ -31,6 +32,8 @@ export function unfinishedSets(row: Workout["exercises"][number]) {
       seconds: set.seconds ?? 0,
       completed: false,
       rir: set.rir ?? null,
+      ...(set.restAfterSeconds !== undefined ? { restAfterSeconds: set.restAfterSeconds } : {}),
+      ...(set.note !== undefined && set.note !== "" ? { note: set.note } : {}),
     }));
 }
 
@@ -56,9 +59,13 @@ export function validateWorkoutAdjustment(
   const snapshotChanged =
     before.snapshot !== undefined &&
     snapshotKeys.some((key) => row.snapshot?.[key] !== before.snapshot?.[key]);
+  const unitChanged =
+    before.weightUnit !== undefined &&
+    (row.weightUnit ?? "kg") !== before.weightUnit;
   if (
     row.exerciseId !== before.exerciseId ||
     snapshotChanged ||
+    unitChanged ||
     row.restSeconds !== before.restSeconds ||
     JSON.stringify(unfinishedSets(row)) !==
       JSON.stringify(unfinishedSets({ ...row, sets: before.openSets }))
@@ -124,19 +131,29 @@ export function applyWorkoutAdaptation(
       catalogue,
     );
     const completed = row.sets.filter((set) => set.completed);
-    const open = unfinishedSets(row);
+    const open = row.sets.filter((set) => !set.completed);
     const base = open[open.length - 1]!;
+    const targetUnit = row.weightUnit ?? "kg";
+    const resolvedPatchWeight =
+      change.patch.weight !== undefined
+        ? change.patch.weightUnit && change.patch.weightUnit !== targetUnit
+          ? kgToUnit(weightToKg(change.patch.weight, change.patch.weightUnit), targetUnit)
+          : change.patch.weight
+        : undefined;
     const sets = Array.from({ length: remaining }, (_, index) => {
       const original = open[index];
-      const set = original ?? {
-        ...base,
-        id: createId(),
-        type: "normal" as const,
-        rir: null,
-      };
+      const set = original ?? (() => {
+        const { note: _dropNote, completedAt: _dropDoneAt, ...restBase } = base;
+        return {
+          ...restBase,
+          id: createId(),
+          type: "normal" as const,
+          rir: null,
+        };
+      })();
       return {
         ...set,
-        weight: change.patch.weight ?? set.weight,
+        weight: resolvedPatchWeight ?? set.weight,
         reps: exercise.mode === "timed" ? 0 : (change.patch.reps ?? set.reps),
         seconds:
           exercise.mode === "timed" ? (change.patch.seconds ?? set.seconds) : 0,
@@ -151,6 +168,7 @@ export function applyWorkoutAdaptation(
           id: createId(),
           exerciseId: exercise.id,
           ...(row.supersetGroup ? { supersetGroup: row.supersetGroup } : {}),
+          ...(row.weightUnit ? { weightUnit: row.weightUnit } : {}),
           snapshot: exerciseSnapshot(exercise),
           restSeconds: change.patch.restSeconds ?? row.restSeconds,
           sets,

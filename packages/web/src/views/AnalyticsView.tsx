@@ -276,6 +276,7 @@ export function AnalyticsView() {
   const [reportCategory, setReportCategory] = useState<ReportCategory>("all");
   const [appleBodyChart, setAppleBodyChart] = useState<BodyChartKey>("weightKg");
   const [appleRecoveryChart, setAppleRecoveryChart] = useState<RecoveryChartKey>("restingHeartRateBpm");
+  const [cardioPaceSport, setCardioPaceSport] = useState<"run" | "cycle" | "walk">("run");
   const [appleWorkoutFilter, setAppleWorkoutFilter] = useState<"all" | "device">("all");
   const [workoutsExpanded, setWorkoutsExpanded] = useState(false);
   const [dailyExpanded, setDailyExpanded] = useState(false);
@@ -1597,14 +1598,53 @@ export function AnalyticsView() {
                   <div className="who-cardio-bar" role="progressbar" aria-valuenow={appleWorkouts.whoCardio.completionPct} aria-valuemin={0} aria-valuemax={100}>
                     <i style={{ width: `${appleWorkouts.whoCardio.completionPct}%` }} />
                   </div>
-                  {appleWorkouts.paceTrend && appleWorkouts.paceTrend.length >= 2 ? (
-                    <SimpleTrendChart
-                      points={appleWorkouts.paceTrend.map((p) => ({ date: p.date, value: p.paceMinPerKm }))}
-                      label="平均配速"
-                      unit="min/km"
-                      digits={2}
-                    />
-                  ) : null}
+                  {(() => {
+                    const bySport = appleWorkouts.paceTrendsBySport ?? {
+                      run: (appleWorkouts.paceTrend ?? []).filter((p) => p.sportCategory === "run" || /run|跑步/i.test(p.title)),
+                      cycle: (appleWorkouts.paceTrend ?? []).filter((p) => p.sportCategory === "cycle" || /cycl|骑行/i.test(p.title)),
+                      walk: (appleWorkouts.paceTrend ?? []).filter((p) => p.sportCategory === "walk" || /walk|步行|徒步/i.test(p.title)),
+                    };
+                    const availableSports = (["run", "cycle", "walk"] as const).filter((k) => bySport[k].length >= 2);
+                    if (!availableSports.length) return null;
+                    const activeSport = availableSports.includes(cardioPaceSport) ? cardioPaceSport : availableSports[0]!;
+                    const sportRows = bySport[activeSport];
+                    const isCycle = activeSport === "cycle";
+                    const chartLabel = isCycle ? "骑行均速" : activeSport === "walk" ? "步行配速" : "跑步配速";
+                    const chartUnit = isCycle ? "km/h" : "min/km";
+                    const sportPoints = sportRows.map((p) => ({
+                      date: p.date,
+                      value: isCycle
+                        ? (p.speedKmh ?? Math.round((p.distanceKm / Math.max(1 / 60, p.durationMinutes / 60)) * 100) / 100)
+                        : p.paceMinPerKm,
+                    }));
+                    return (
+                      <div style={{ marginTop: 10 }}>
+                        {availableSports.length > 1 ? (
+                          <div className="apple-chart-subbar" style={{ marginTop: 4 }}>
+                            <span>分项目走势</span>
+                            <div className="segments">
+                              {availableSports.map((sp) => (
+                                <button
+                                  key={sp}
+                                  type="button"
+                                  aria-pressed={activeSport === sp}
+                                  onClick={() => setCardioPaceSport(sp)}
+                                >
+                                  {sp === "run" ? "跑步 (min/km)" : sp === "cycle" ? "骑行 (km/h)" : "步行 (min/km)"}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        ) : null}
+                        <SimpleTrendChart
+                          points={sportPoints}
+                          label={chartLabel}
+                          unit={chartUnit}
+                          digits={isCycle ? 1 : 2}
+                        />
+                      </div>
+                    );
+                  })()}
                 </section>
               ) : null}
           </>

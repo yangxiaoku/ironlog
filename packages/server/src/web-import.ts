@@ -17,6 +17,7 @@ import { DomainError, type Store } from "./store.js";
 export const csvImportInput = z.object({
   csv: z.string().min(1, "请上传或粘贴 CSV 内容").max(2_000_000, "CSV 文件过大（上限 2 MB）"),
   skipDuplicates: z.boolean().default(true),
+  includeSuspectedDuplicates: z.boolean().default(false),
 });
 
 export type ImportFormat = "ironlog" | "hevy" | "strong" | "fitnotes";
@@ -462,6 +463,8 @@ function resolveExerciseName(rawName: string, lookup: CatalogueLookup): Exercise
 
 interface NormalizedRow {
   sessionKey: string;
+  sourceSessionId: string | null;
+  hasReliableStartTime: boolean;
   title: string;
   date: string;
   startedAt: string;
@@ -477,6 +480,12 @@ interface NormalizedRow {
   rir: number | null;
   completed: boolean;
   notes: string;
+}
+
+function hasExplicitClockTime(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  return /(?:T|\s)\d{1,2}:\d{2}/.test(trimmed) || /\b\d{1,2}:\d{2}(?::\d{2})?\b/.test(trimmed);
 }
 
 function parseSetType(raw: string | undefined): Workout["exercises"][number]["sets"][number]["type"] {
@@ -542,6 +551,8 @@ function buildNormalizedRows(
       const startRaw = col(row, "开始时间", "start_time").trim();
       const parsedStart = startRaw ? parseDateAndIso(startRaw) : null;
       const startedAt = parsedStart?.iso ?? parsedDate.iso;
+      const hasReliableStartTime = hasExplicitClockTime(startRaw || dateStr);
+      const sourceSessionId = col(row, "训练id", "workout_id", "session_id").trim() || null;
       const title = col(row, "训练标题").trim() || "导入训练";
       const mins = Number(col(row, "时长(分钟)")) || 0;
       const feelingRaw = col(row, "体感").trim().toLowerCase();
@@ -549,7 +560,9 @@ function buildNormalizedRows(
       const supersetGroup = col(row, "超级组").trim().slice(0, 16) || null;
       const setNo = Number(col(row, "组号")) || 0;
       const exKey = `${exName}||${supersetGroup ?? ""}`;
-      const baseKey = `${parsedDate.date}||${startRaw || dateStr.trim()}||${title}`;
+      const baseKey = sourceSessionId
+        ? `${parsedDate.date}||sid:${sourceSessionId}`
+        : `${parsedDate.date}||${startRaw || dateStr.trim()}||${title}`;
       let tracker = ironlogSessions.get(baseKey);
       if (!tracker) {
         tracker = {
@@ -564,7 +577,7 @@ function buildNormalizedRows(
       } else {
         const restartedSameEx = setNo === 1 && tracker.lastSetNo >= 1 && (tracker.lastExKey === exKey || tracker.seenExKeys.has(exKey));
         const metaChanged = tracker.mins !== mins || tracker.feelingRaw !== feelingRaw;
-        if (!startRaw && (restartedSameEx || metaChanged)) {
+        if (!sourceSessionId && !startRaw && (restartedSameEx || metaChanged)) {
           tracker.seq++;
           tracker.seenExKeys = new Set([exKey]);
           tracker.mins = mins;
@@ -577,6 +590,8 @@ function buildNormalizedRows(
       }
       rows.push({
         sessionKey: `${baseKey}||#${tracker.seq}`,
+        sourceSessionId,
+        hasReliableStartTime,
         title,
         date: parsedDate.date,
         startedAt,
@@ -612,6 +627,8 @@ function buildNormalizedRows(
       const ssRaw = col(row, "superset_id").trim();
       rows.push({
         sessionKey: `${parsedStart.date}||${col(row, "start_time")}||${title}`,
+        sourceSessionId: null,
+        hasReliableStartTime: hasExplicitClockTime(col(row, "start_time")),
         title,
         date: parsedStart.date,
         startedAt: parsedStart.iso,
@@ -646,6 +663,8 @@ function buildNormalizedRows(
       const setOrder = col(row, "set order", "set type");
       rows.push({
         sessionKey: `${parsedDate.date}||${dateRaw}||${title}`,
+        sourceSessionId: null,
+        hasReliableStartTime: hasExplicitClockTime(dateRaw),
         title,
         date: parsedDate.date,
         startedAt: parsedDate.iso,
@@ -679,6 +698,8 @@ function buildNormalizedRows(
       : rawKg > 0 ? rawKg : lbsToKg(rawLbs);
     rows.push({
       sessionKey: parsedDate.date,
+      sourceSessionId: null,
+      hasReliableStartTime: false,
       title: "",
       date: parsedDate.date,
       startedAt: parsedDate.iso,
@@ -703,11 +724,13 @@ function buildNormalizedRows(
   return { rows, warnings };
 }
 
+type DuplicateStatus = "none" | "exact" | "suspected";
+
 interface PreparedImport {
   format: ImportFormat;
   formatLabel: string;
   customExercisesToCreate: Exercise[];
-  workoutsToCreate: Array<{ id: string; data: Workout; duplicate: boolean }>;
+  workoutsToCreate: Array<{ id: string; data: Workout; duplicate: boolean; duplicateStatus: DuplicateStatus }>;
   matchedCount: number;
   warnings: string[];
 }
@@ -775,19 +798,35 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
     return customEx;
   };
 
-  // Existing workouts index for duplicate detection
+  // Existing workouts index for duplicate detection (source session ID + date + reliable start timestamp)
   const existingWorkouts = store
     .list(userId, "workout")
-    .map((r) => r.data as Workout)
-    .filter((w) => w.status === "completed");
-  const existingTitleKeys = new Set(
-    existingWorkouts.map((w) => `${w.date}||${w.title.trim().toLowerCase()}`),
-  );
-  const existingExSignatures = new Set(
-    existingWorkouts.map((w) => `${w.date}||${w.exercises.map((e) => e.exerciseId).sort().join(",")}`),
-  );
+    .filter((r) => (r.data as Workout).status === "completed")
+    .map((r) => {
+      const w = r.data as Workout;
+      const sidMatch = /:sid:([^\s:]+)$/.exec(w.rawPrompt ?? "");
+      const startMs = Date.parse(w.startedAt);
+      const hasClock = Number.isFinite(startMs);
+      return {
+        id: r.id,
+        rawSourceId: sidMatch?.[1] ?? null,
+        date: w.date,
+        startMs: hasClock ? startMs : null,
+        titleKey: `${w.date}||${w.title.trim().toLowerCase()}`,
+        sigKey: `${w.date}||${w.exercises.map((e) => e.exerciseId).sort().join(",")}`,
+      };
+    });
+  const existingSourceIds = new Set<string>();
+  const existingByDate = new Map<string, typeof existingWorkouts>();
+  for (const ew of existingWorkouts) {
+    existingSourceIds.add(ew.id);
+    if (ew.rawSourceId) existingSourceIds.add(ew.rawSourceId);
+    const list = existingByDate.get(ew.date) ?? [];
+    list.push(ew);
+    existingByDate.set(ew.date, list);
+  }
 
-  const workoutsToCreate: Array<{ id: string; data: Workout; duplicate: boolean }> = [];
+  const workoutsToCreate: Array<{ id: string; data: Workout; duplicate: boolean; duplicateStatus: DuplicateStatus }> = [];
 
   for (const sRows of sessionGroups.values()) {
     const first = sRows[0]!;
@@ -861,7 +900,7 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
       notes,
       feeling: first.feeling,
       source: "manual",
-      rawPrompt: `csv_import:${format}`,
+      rawPrompt: `csv_import:${format}${first.sourceSessionId ? `:sid:${first.sourceSessionId}` : ""}`,
       planId: null,
       planVersion: null,
       routineId: null,
@@ -873,12 +912,30 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
 
     const titleKey = `${workoutData.date}||${workoutData.title.trim().toLowerCase()}`;
     const sigKey = `${workoutData.date}||${workoutData.exercises.map((e) => e.exerciseId).sort().join(",")}`;
-    const duplicate = existingTitleKeys.has(titleKey) || existingExSignatures.has(sigKey);
+    const sameDayExisting = existingByDate.get(workoutData.date) ?? [];
+    const sameContentRows = sameDayExisting.filter((ew) => ew.titleKey === titleKey || ew.sigKey === sigKey);
+
+    let duplicateStatus: DuplicateStatus = "none";
+    if (first.sourceSessionId && existingSourceIds.has(first.sourceSessionId)) {
+      duplicateStatus = "exact";
+    } else if (sameContentRows.length > 0) {
+      if (first.hasReliableStartTime && Number.isFinite(startMs)) {
+        const matchedWithinWindow = sameContentRows.some(
+          (ew) => ew.startMs !== null && Math.abs(startMs - ew.startMs) <= 15 * 60_000,
+        );
+        if (matchedWithinWindow) {
+          duplicateStatus = "exact";
+        }
+      } else {
+        duplicateStatus = "suspected";
+      }
+    }
 
     workoutsToCreate.push({
       id: `imp_wo_${randomUUID()}`,
       data: workoutData,
-      duplicate,
+      duplicate: duplicateStatus === "exact",
+      duplicateStatus,
     });
   }
 
@@ -892,24 +949,40 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
   };
 }
 
+function shouldImportPreparedWorkout(
+  w: PreparedImport["workoutsToCreate"][number],
+  input: Pick<z.infer<typeof csvImportInput>, "skipDuplicates" | "includeSuspectedDuplicates">,
+): boolean {
+  if (!input.skipDuplicates) return true;
+  if (w.duplicateStatus === "exact") return false;
+  if (w.duplicateStatus === "suspected" && !input.includeSuspectedDuplicates) return false;
+  return true;
+}
+
 export function previewWorkoutCsvImport(
   store: Store,
   userId: string,
   input: z.infer<typeof csvImportInput>,
 ) {
   const prepared = prepareImport(store, userId, input.csv);
-  const selected = prepared.workoutsToCreate.filter((w) => !input.skipDuplicates || !w.duplicate);
-  const duplicateWorkouts = prepared.workoutsToCreate.filter((w) => w.duplicate).length;
+  const selected = prepared.workoutsToCreate.filter((w) => shouldImportPreparedWorkout(w, input));
+  const duplicateWorkouts = prepared.workoutsToCreate.filter((w) => w.duplicateStatus === "exact").length;
+  const suspected = prepared.workoutsToCreate.filter((w) => w.duplicateStatus === "suspected");
   const totalSets = selected.reduce(
     (sum, w) => sum + w.data.exercises.reduce((es, ex) => es + ex.sets.length, 0),
     0,
   );
+  const warnings = [...prepared.warnings];
+  if (suspected.length > 0) {
+    warnings.push(`检测到 ${suspected.length} 场缺少开始时间的同日类似训练（疑似重复），可按需勾选「导入疑似重复」。`);
+  }
   return {
     format: prepared.format,
     formatLabel: prepared.formatLabel,
     totalWorkouts: prepared.workoutsToCreate.length,
     importableWorkouts: selected.length,
     duplicateWorkouts,
+    suspectedDuplicateWorkouts: suspected.length,
     totalSets,
     matchedExercises: prepared.matchedCount,
     customExercisesToCreate: prepared.customExercisesToCreate.map((e) => e.name),
@@ -919,7 +992,13 @@ export function previewWorkoutCsvImport(
       exercises: w.data.exercises.map((e) => e.snapshot?.name ?? e.exerciseId),
       sets: w.data.exercises.reduce((s, e) => s + e.sets.length, 0),
     })),
-    warnings: prepared.warnings,
+    suspectedWorkouts: suspected.slice(0, 10).map((w) => ({
+      date: w.data.date,
+      title: w.data.title,
+      exercises: w.data.exercises.map((e) => e.snapshot?.name ?? e.exerciseId),
+      sets: w.data.exercises.reduce((s, e) => s + e.sets.length, 0),
+    })),
+    warnings,
   };
 }
 
@@ -929,8 +1008,9 @@ export function commitWorkoutCsvImport(
   input: z.infer<typeof csvImportInput>,
 ) {
   const prepared = prepareImport(store, userId, input.csv);
-  const toImport = prepared.workoutsToCreate.filter((w) => !input.skipDuplicates || !w.duplicate);
-  const duplicateWorkouts = prepared.workoutsToCreate.filter((w) => w.duplicate).length;
+  const toImport = prepared.workoutsToCreate.filter((w) => shouldImportPreparedWorkout(w, input));
+  const duplicateWorkouts = prepared.workoutsToCreate.filter((w) => w.duplicateStatus === "exact").length;
+  const suspectedWorkouts = prepared.workoutsToCreate.filter((w) => w.duplicateStatus === "suspected").length;
 
   let importedWorkouts = 0;
   let importedSets = 0;
@@ -972,6 +1052,7 @@ export function commitWorkoutCsvImport(
     formatLabel: prepared.formatLabel,
     importedWorkouts,
     skippedDuplicates: input.skipDuplicates ? duplicateWorkouts : 0,
+    skippedSuspectedDuplicates: input.skipDuplicates && !input.includeSuspectedDuplicates ? suspectedWorkouts : 0,
     createdCustomExercises,
     importedSets,
     warnings: prepared.warnings,

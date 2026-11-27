@@ -3,6 +3,7 @@ import { apiFetch } from "../../lib/api";
 import { fmt, guessMeal, today } from "../../lib/date";
 import {
   MEALS,
+  safeUuid,
   shiftDateStr,
   type DietData,
   type MealKey,
@@ -113,6 +114,7 @@ export function DietEditorModal({
   const [gramsInput, setGramsInput] = useState<string>("");
   const [savingQuickFood, setSavingQuickFood] = useState(false);
   const quickFoodSeqRef = useRef(0);
+  const pendingSubmitRef = useRef<{ fingerprint: string; opId: string; id: string } | null>(null);
 
   useEffect(() => {
     setQuickFoods(readLocalQuickFoods(userId));
@@ -247,27 +249,38 @@ export function DietEditorModal({
     setSaving(true);
     setError("");
 
+    const baseVersion = record?.version ?? 0;
+    const data = {
+      date,
+      meal,
+      name: cleanName,
+      calories: Math.max(0, Number(calories) || 0),
+      protein: Math.max(0, Number(protein) || 0),
+      carbs: Math.max(0, Number(carbs) || 0),
+      fat: Math.max(0, Number(fat) || 0),
+      source: record?.data.source ?? "manual",
+      rawPrompt: record?.data.rawPrompt ?? "",
+    };
+    const fingerprint = JSON.stringify({ baseVersion, data });
+    if (pendingSubmitRef.current?.fingerprint !== fingerprint) {
+      pendingSubmitRef.current = {
+        fingerprint,
+        opId: safeUuid(),
+        id: record?.id ?? safeUuid(),
+      };
+    }
     const payload = {
-      opId: crypto.randomUUID(),
-      id: record?.id ?? crypto.randomUUID(),
+      opId: pendingSubmitRef.current.opId,
+      id: pendingSubmitRef.current.id,
       kind: "diet" as const,
-      baseVersion: record?.version ?? 0,
+      baseVersion,
       deleted: false,
-      data: {
-        date,
-        meal,
-        name: cleanName,
-        calories: Math.max(0, Number(calories) || 0),
-        protein: Math.max(0, Number(protein) || 0),
-        carbs: Math.max(0, Number(carbs) || 0),
-        fat: Math.max(0, Number(fat) || 0),
-        source: record?.data.source ?? "manual",
-        rawPrompt: record?.data.rawPrompt ?? "",
-      },
+      data,
     };
 
     try {
       await apiFetch("/api/records", { method: "POST", body: payload });
+      pendingSubmitRef.current = null;
       triggerHaptic("success");
       bumpDataEpoch();
       if (keepOpen && !record) {
@@ -295,6 +308,7 @@ export function DietEditorModal({
           setError("浏览器无法暂存离线记录。请保留此页面，联网后重新保存");
           return;
         }
+        pendingSubmitRef.current = null;
         refreshPendingCount(userId);
         if (keepOpen && !record) {
           setName("");
@@ -331,7 +345,7 @@ export function DietEditorModal({
         await apiFetch("/api/records", {
           method: "POST",
           body: {
-            opId: crypto.randomUUID(),
+            opId: safeUuid(),
             id: record.id,
             kind: "diet",
             baseVersion: record.version,

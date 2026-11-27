@@ -1,5 +1,5 @@
 import type { Exercise, Plan, Routine, ScheduledDay, Workout } from "./index.js";
-import { compareWorkouts, estimatedOneRepMax, isValidWorkSet, localDate, nextTarget, weightToKg } from "./logic.js";
+import { compareWorkouts, estimatedOneRepMax, isValidWorkSet, kgToUnit, localDate, nextTarget, weightToKg } from "./logic.js";
 
 export type PrMetric = "weight" | "oneRepMax" | "hold" | "assistance";
 
@@ -116,7 +116,8 @@ export function exercisePrBaselines(
         if (mode === "timed") {
           if (set.seconds > bestHold) bestHold = set.seconds;
         } else if (mode === "assisted") {
-          if (set.weight < bestAssist) bestAssist = set.weight;
+          const assistKg = weightToKg(set.weight, row.weightUnit);
+          if (assistKg < bestAssist) bestAssist = assistKg;
         } else if (set.weight > 0 && set.reps > 0) {
           const wKg = weightToKg(set.weight, row.weightUnit);
           if (wKg > maxW) maxW = wKg;
@@ -277,14 +278,15 @@ export function progressionRuleLabel(item: Routine["exercises"][number], mode: E
   if (mode === "timed") return `计时目标 ${item.seconds} 秒 · 休 ${item.restSeconds}s`;
   const range = item.repsMin === item.repsMax ? `${item.repsMin} 次` : `${item.repsMin}–${item.repsMax} 次`;
   if (item.progression === "manual") return `固定负荷 ${range}`;
+  const unit = item.weightUnit ?? "kg";
   const sign = mode === "assisted" ? "-" : "+";
   if (item.progression === "triple") {
     const setsMax = Math.max(item.sets, item.setsMax ?? item.sets + 2);
-    return `三重渐进 ${item.sets}–${setsMax} 组 × ${range} · ${sign}${item.increment}kg`;
+    return `三重渐进 ${item.sets}–${setsMax} 组 × ${range} · ${sign}${item.increment}${unit}`;
   }
-  if (item.progression === "greyskull") return `Greyskull AMRAP ${range}+ · 达标 ${sign}${item.increment}kg / 翻倍×2 / 失利-10%`;
-  if (item.progression === "linear") return `线性渐进 ${range} · 达标 ${sign}${item.increment}kg`;
-  return `双重渐进 ${range} · RIR≥${item.targetRir} · ${sign}${item.increment}kg`;
+  if (item.progression === "greyskull") return `Greyskull AMRAP ${range}+ · 达标 ${sign}${item.increment}${unit} / 翻倍×2 / 失利-10%`;
+  if (item.progression === "linear") return `线性渐进 ${range} · 达标 ${sign}${item.increment}${unit}`;
+  return `双重渐进 ${range} · RIR≥${item.targetRir} · ${sign}${item.increment}${unit}`;
 }
 
 /**
@@ -299,6 +301,7 @@ export function evaluateExerciseProgression(
   prescribedChanged = false,
 ): ExerciseProgressionReport {
   const assisted = mode === "assisted";
+  const targetUnit = item.weightUnit ?? "kg";
   const computed = prescribedChanged
     ? nextTarget(item, undefined, mode)
     : previousRow
@@ -307,8 +310,13 @@ export function evaluateExerciseProgression(
 
   const ruleLabel = progressionRuleLabel(item, mode);
   const completedPrev = previousRow?.sets.filter((set) => isValidWorkSet(set, mode)) ?? [];
+  const prevUnit = previousRow?.weightUnit ?? "kg";
   const prevTopWeight = completedPrev.length
-    ? (assisted ? Math.min : Math.max)(...completedPrev.map((set) => set.weight))
+    ? (assisted ? Math.min : Math.max)(
+        ...completedPrev.map((set) =>
+          prevUnit === targetUnit ? set.weight : kgToUnit(weightToKg(set.weight, prevUnit), targetUnit),
+        ),
+      )
     : computed.weight;
 
   // Detect consecutive misses or recent fatigued streak on progression exercises
@@ -336,12 +344,12 @@ export function evaluateExerciseProgression(
   const forecast = item.progression === "manual" || mode === "timed"
     ? `当前按 ${item.sets} 组 × ${mode === "timed" ? `${item.seconds} 秒` : `${item.repsMin}–${item.repsMax} 次`} 稳定推进`
     : item.progression === "triple"
-      ? `满 ${computed.sets ?? item.sets} 组 × ${item.repsMax} 次后${(computed.sets ?? item.sets) < setsMax ? `加至 ${(computed.sets ?? item.sets) + 1} 组` : `升至 ${nextMilestoneWeight} kg 并回落 ${item.sets} 组`}`
+      ? `满 ${computed.sets ?? item.sets} 组 × ${item.repsMax} 次后${(computed.sets ?? item.sets) < setsMax ? `加至 ${(computed.sets ?? item.sets) + 1} 组` : `升至 ${nextMilestoneWeight} ${targetUnit} 并回落 ${item.sets} 组`}`
       : item.progression === "greyskull"
-        ? `末组全力冲刺（AMRAP）：满 ${item.repsMin} 次升至 ${nextMilestoneWeight} kg，满 ${item.repsMin * 2} 次双倍加重`
+        ? `末组全力冲刺（AMRAP）：满 ${item.repsMin} 次升至 ${nextMilestoneWeight} ${targetUnit}，满 ${item.repsMin * 2} 次双倍加重`
         : item.progression === "linear"
-          ? `下次满 ${item.sets} 组达 ${item.repsMin} 次且 RIR≥${item.targetRir}，将推至 ${nextMilestoneWeight} kg`
-          : `满 ${item.sets} 组达 ${item.repsMax} 次且 RIR≥${item.targetRir}，将升至 ${nextMilestoneWeight} kg`;
+          ? `下次满 ${item.sets} 组达 ${item.repsMin} 次且 RIR≥${item.targetRir}，将推至 ${nextMilestoneWeight} ${targetUnit}`
+          : `满 ${item.sets} 组达 ${item.repsMax} 次且 RIR≥${item.targetRir}，将升至 ${nextMilestoneWeight} ${targetUnit}`;
 
   if (computed.deloaded) {
     return {
@@ -351,7 +359,7 @@ export function evaluateExerciseProgression(
       ruleLabel,
       status: "plateau_deload",
       statusLabel: "AMRAP 失利 · 自动减载 -10%",
-      reason: `上次未完成 ${item.sets} 组 × ${item.repsMin} 次，按 Greyskull 规则自动减载 10% 至 ${computed.weight} kg 重建势能`,
+      reason: `上次未完成 ${item.sets} 组 × ${item.repsMin} 次，按 Greyskull 规则自动减载 10% 至 ${computed.weight} ${targetUnit} 重建势能`,
       forecast,
       deloadWeight: computed.weight,
       backupExerciseId: item.backupExerciseId,
@@ -370,7 +378,7 @@ export function evaluateExerciseProgression(
         increased: computed.increased,
         ruleLabel,
         status: "progress_weight",
-        statusLabel: assisted ? `AMRAP 爆发 -${round2(item.increment * 2)} kg` : `AMRAP 爆发 +${round2(item.increment * 2)} kg`,
+        statusLabel: assisted ? `AMRAP 爆发 -${round2(item.increment * 2)} ${targetUnit}` : `AMRAP 爆发 +${round2(item.increment * 2)} ${targetUnit}`,
         reason: `上次末组 AMRAP 达成 ≥${item.repsMin * 2} 次（双倍达标），本次直接翻倍递增`,
         forecast,
         deloadWeight: null,
@@ -383,10 +391,10 @@ export function evaluateExerciseProgression(
       increased: computed.increased,
       ruleLabel,
       status: "progress_weight",
-      statusLabel: assisted ? `减辅助 -${item.increment} kg` : `渐进加重 +${item.increment} kg`,
+      statusLabel: assisted ? `减辅助 -${item.increment} ${targetUnit}` : `渐进加重 +${item.increment} ${targetUnit}`,
       reason: item.progression === "greyskull"
-        ? `上次完成 ${item.sets} 组 × ${item.repsMin}+ 次（${prevTopWeight} kg），按 Greyskull 规则推进重量`
-        : `上次达成 ${item.sets} 组 × ${item.progression === "linear" ? item.repsMin : item.repsMax} 次（${prevTopWeight} kg），本次自动推进重量`,
+        ? `上次完成 ${item.sets} 组 × ${item.repsMin}+ 次（${prevTopWeight} ${targetUnit}），按 Greyskull 规则推进重量`
+        : `上次达成 ${item.sets} 组 × ${item.progression === "linear" ? item.repsMin : item.repsMax} 次（${prevTopWeight} ${targetUnit}），本次自动推进重量`,
       forecast,
       deloadWeight: null,
       backupExerciseId: item.backupExerciseId,
@@ -401,7 +409,7 @@ export function evaluateExerciseProgression(
       ruleLabel,
       status: "progress_sets",
       statusLabel: `三重渐进 · 加至 ${computed.sets} 组`,
-      reason: `上次已做满 ${item.repsMax} 次，本轮维持 ${computed.weight} kg 并追加至 ${computed.sets}/${setsMax} 组 × ${item.repsMin} 次`,
+      reason: `上次已做满 ${item.repsMax} 次，本轮维持 ${computed.weight} ${targetUnit} 并追加至 ${computed.sets}/${setsMax} 组 × ${item.repsMin} 次`,
       forecast,
       deloadWeight: null,
       backupExerciseId: item.backupExerciseId,
@@ -417,8 +425,8 @@ export function evaluateExerciseProgression(
       status: "plateau_deload",
       statusLabel: consecutiveMisses > 0 ? `连续 ${consecutiveMisses}/${deloadMissThreshold} 次未达标 · 建议减载` : "平台期 · 建议减载",
       reason: consecutiveMisses > 0
-        ? `连续 ${consecutiveMisses}/${deloadMissThreshold} 次未达成最低 ${item.repsMin} 次，可先减载至 ${deloadWeight ?? computed.weight} kg 重建势能`
-        : `近期连续体感疲惫，可减载至 ${deloadWeight ?? computed.weight} kg 调整状态`,
+        ? `连续 ${consecutiveMisses}/${deloadMissThreshold} 次未达成最低 ${item.repsMin} 次，可先减载至 ${deloadWeight ?? computed.weight} ${targetUnit} 重建势能`
+        : `近期连续体感疲惫，可减载至 ${deloadWeight ?? computed.weight} ${targetUnit} 调整状态`,
       forecast,
       deloadWeight,
       backupExerciseId: item.backupExerciseId,
@@ -433,7 +441,7 @@ export function evaluateExerciseProgression(
       ruleLabel,
       status: "progress_reps",
       statusLabel: `冲次数 ${computed.reps}/${item.repsMax}`,
-      reason: `重量保持 ${computed.weight} kg，目标次数从上次基础上推进至 ${computed.reps} 次`,
+      reason: `重量保持 ${computed.weight} ${targetUnit}，目标次数从上次基础上推进至 ${computed.reps} 次`,
       forecast,
       deloadWeight: null,
       backupExerciseId: item.backupExerciseId,
@@ -454,8 +462,8 @@ export function evaluateExerciseProgression(
             ? "固定负荷"
             : "巩固冲击上限",
       reason: previousRow
-        ? `沿用 ${computed.weight} kg，完成全组 ${item.progression === "linear" || item.progression === "greyskull" ? item.repsMin : item.repsMax} 次（RIR≥${item.targetRir}）即可触发下轮渐进`
-        : `参考历史同动作表现预设为 ${computed.weight} kg`,
+        ? `沿用 ${computed.weight} ${targetUnit}，完成全组 ${item.progression === "linear" || item.progression === "greyskull" ? item.repsMin : item.repsMax} 次（RIR≥${item.targetRir}）即可触发下轮渐进`
+        : `参考历史同动作表现预设为 ${computed.weight} ${targetUnit}`,
       forecast,
       deloadWeight: null,
       backupExerciseId: item.backupExerciseId,
@@ -467,7 +475,7 @@ export function evaluateExerciseProgression(
     ruleLabel,
     status: "baseline",
     statusLabel: "初始目标",
-    reason: computed.weight > 0 ? `按计划初始负重 ${computed.weight} kg 开始建立记录` : "首次训练按自身状态设定起始重量",
+    reason: computed.weight > 0 ? `按计划初始负重 ${computed.weight} ${targetUnit} 开始建立记录` : "首次训练按自身状态设定起始重量",
     forecast,
     deloadWeight: null,
     backupExerciseId: item.backupExerciseId,
@@ -607,7 +615,12 @@ export function projectScheduleRange(params: {
     const done = completedByDate.get(date) ?? [];
     const appleDone = appleByDate.get(date) ?? [];
     const totalDone = done.length + appleDone.length;
-    if (date <= params.todayDate && totalDone > 0) {
+    const override = params.scheduledDays.get(date);
+    if (
+      date <= params.todayDate &&
+      totalDone > 0 &&
+      !(override?.mode === "rest" && done.length === 0 && appleDone.every((item) => !item.plan))
+    ) {
       const lead = done[0]?.title ?? appleDone[0]?.plan?.name ?? appleDone[0]?.title ?? "已完成训练";
       return {
         date,
@@ -626,7 +639,6 @@ export function projectScheduleRange(params: {
       };
     }
 
-    const override = params.scheduledDays.get(date);
     if (override) {
       if (override.mode === "rest") {
         return {
@@ -642,7 +654,7 @@ export function projectScheduleRange(params: {
           estimatedMinutes: 0,
           muscles: [],
           routine: null,
-          workoutsCount: 0,
+          workoutsCount: totalDone,
         };
       }
       const routine: Routine = {
@@ -862,8 +874,9 @@ export function resolveRoutineWithTelemetry(params: {
 
     const progression = evaluateExerciseProgression(item, previousRow, historicalRow, recentSameExercise, mode, prescribedChanged);
     const baseline = baselines.get(baselineKey(item.exerciseId, mode));
+    const targetWeightKg = mode === "timed" ? 0 : weightToKg(progression.weight, item.weightUnit);
     const pr = prOpportunityForTarget(
-      { weight: progression.weight, reps: mode === "timed" ? 0 : progression.reps, seconds: item.seconds },
+      { weight: targetWeightKg, reps: mode === "timed" ? 0 : progression.reps, seconds: item.seconds },
       mode,
       baseline,
     );

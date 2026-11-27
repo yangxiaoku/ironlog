@@ -5,31 +5,36 @@ import { shiftDay } from "./web-statistics.js";
 const REFERENCE_MINUTES = 7 * 60;
 const DAY_MINUTES = 24 * 60;
 
-function validMinutes(value: number | undefined) {
+function validMinutes(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= DAY_MINUTES ? Math.round(value) : null;
 }
 
 function buildDay(date: string, entry?: DailyHealthSnapshot): SleepReportDay {
-  const missing = { date, minutes: null, source: null, window: null, stages: null };
+  const missing: SleepReportDay = { date, minutes: null, source: null, window: null, stages: null };
   if (!entry) return missing;
 
   const timed = timedSleepProfile(entry);
   const minutes = validMinutes(timed?.minutes ?? entry.sleepMinutes);
   if (!minutes) return missing;
 
-  const stages = timed ? timed.stages : {
-    core: validMinutes(entry.sleepCoreMinutes),
-    deep: validMinutes(entry.sleepDeepMinutes),
-    rem: validMinutes(entry.sleepRemMinutes),
-  };
+  const untimedStages = timed?.untimedStages ?? [];
+  const isMixed = Boolean(timed && untimedStages.length > 0);
+  const stages = timed
+    ? timed.stages
+    : {
+        core: validMinutes(entry.sleepCoreMinutes),
+        deep: validMinutes(entry.sleepDeepMinutes),
+        rem: validMinutes(entry.sleepRemMinutes),
+      };
   const hasStages = stages && Object.values(stages).some((value) => value != null);
   const stageTotal = Object.values(stages ?? {}).reduce<number>((sum, value) => sum + (value ?? 0), 0);
   return {
     date,
     minutes,
-    source: timed ? "intervals" : "summary",
+    source: isMixed ? "mixed" : timed ? "intervals" : "summary",
     window: timed?.window ?? null,
     stages: hasStages && stageTotal <= minutes + 1 ? stages : null,
+    ...(untimedStages.length > 0 ? { untimedStages } : {}),
   };
 }
 

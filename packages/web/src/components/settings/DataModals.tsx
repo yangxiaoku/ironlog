@@ -38,10 +38,12 @@ interface CsvPreviewRes {
   totalWorkouts: number;
   importableWorkouts: number;
   duplicateWorkouts: number;
+  suspectedDuplicateWorkouts?: number;
   totalSets: number;
   customExercisesToCreate?: string[];
   warnings?: string[];
   sampleWorkouts?: Array<{ date: string; title: string; exercises: string[]; sets: number }>;
+  suspectedWorkouts?: Array<{ date: string; title: string; exercises: string[]; sets: number }>;
 }
 
 export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
@@ -52,12 +54,13 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
   const [fileName, setFileName] = useState("");
   const [csvText, setCsvText] = useState("");
   const [skipDuplicates, setSkipDuplicates] = useState(true);
+  const [includeSuspected, setIncludeSuspected] = useState(false);
   const [preview, setPreview] = useState<CsvPreviewRes | null>(null);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
 
-  const runPreview = async (rawCsv: string, skip: boolean) => {
+  const runPreview = async (rawCsv: string, skip: boolean, includeSusp = includeSuspected) => {
     const csv = rawCsv.trim();
     setError("");
     if (!csv) {
@@ -68,7 +71,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
     try {
       const res = await apiFetch<CsvPreviewRes>("/api/web/import-csv/preview", {
         method: "POST",
-        body: { csv, skipDuplicates: skip },
+        body: { csv, skipDuplicates: skip, includeSuspectedDuplicates: includeSusp },
       });
       setPreview(res);
     } catch (err) {
@@ -87,7 +90,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
     try {
       const res = await apiFetch<{ formatLabel: string; importedWorkouts: number; importedSets: number }>(
         "/api/web/import-csv/commit",
-        { method: "POST", body: { csv, skipDuplicates } },
+        { method: "POST", body: { csv, skipDuplicates, includeSuspectedDuplicates: includeSuspected } },
       );
       bumpDataEpoch();
       closeAllModals();
@@ -142,7 +145,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
 
       <div className="csv-import-options">
         <label className="switch-chip">
-          <span>跳过同日同名重复训练</span>
+          <span>跳过明确重复场次</span>
           <input
             className="switch"
             type="checkbox"
@@ -150,11 +153,26 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
             onChange={(e) => {
               const checked = e.target.checked;
               setSkipDuplicates(checked);
-              if (csvText.trim()) void runPreview(csvText, checked);
+              if (csvText.trim()) void runPreview(csvText, checked, includeSuspected);
             }}
           />
         </label>
-        <button type="button" className="secondary-button" disabled={previewing} onClick={() => void runPreview(csvText, skipDuplicates)}>
+        {skipDuplicates && (preview?.suspectedDuplicateWorkouts ?? 0) > 0 ? (
+          <label className="switch-chip">
+            <span>导入疑似重复 ({preview?.suspectedDuplicateWorkouts})</span>
+            <input
+              className="switch"
+              type="checkbox"
+              checked={includeSuspected}
+              onChange={(e) => {
+                const checked = e.target.checked;
+                setIncludeSuspected(checked);
+                if (csvText.trim()) void runPreview(csvText, skipDuplicates, checked);
+              }}
+            />
+          </label>
+        ) : null}
+        <button type="button" className="secondary-button" disabled={previewing} onClick={() => void runPreview(csvText, skipDuplicates, includeSuspected)}>
           {previewing ? "解析中…" : "解析预览"}
         </button>
       </div>
@@ -172,9 +190,14 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
           <div className="csv-preview-stats">
             <div><span>解析场次</span><strong>{preview.totalWorkouts} <small>场</small></strong></div>
             <div><span>将导入</span><strong>{preview.importableWorkouts} <small>场</small></strong></div>
-            <div><span>重复跳过</span><strong>{preview.duplicateWorkouts} <small>场</small></strong></div>
+            <div><span>重复跳过</span><strong>{preview.duplicateWorkouts + (skipDuplicates && !includeSuspected ? (preview.suspectedDuplicateWorkouts ?? 0) : 0)} <small>场</small></strong></div>
             <div><span>有效组数</span><strong>{preview.totalSets} <small>组</small></strong></div>
           </div>
+          {preview.suspectedWorkouts?.length ? (
+            <p className="muted csv-warn-note">
+              检测到 {preview.suspectedWorkouts.length} 场缺少精确开始时间且同日动作/标题相同的疑似重复场次：{preview.suspectedWorkouts.slice(0, 3).map((w) => `${w.date} ${w.title}`).join("、")}。可通过上方开关决定是否导入。
+            </p>
+          ) : null}
           {preview.customExercisesToCreate?.length ? (
             <p className="muted csv-custom-note">
               将自动创建自定义动作：<b>{preview.customExercisesToCreate.join("、")}</b>

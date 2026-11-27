@@ -106,6 +106,10 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     .map((row) => row.data as Weight)
     .filter((w) => w.date <= through && w.weight > 0)
     .sort((a, b) => a.date.localeCompare(b.date));
+  const appleWeightsAsc = healthSnapshots
+    .filter((s) => s.date <= through && typeof s.weightKg === "number" && s.weightKg > 0)
+    .map((s) => ({ date: s.date, weight: s.weightKg as number }))
+    .sort((a, b) => a.date.localeCompare(b.date));
 
   const latestWeightRecord = allWeights.at(-1);
   const energyProfile = profile.energyProfile;
@@ -115,6 +119,32 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const userWeightKg = latestWeightRecord?.weight ?? profileWeightKg ?? appleDailySummary.bodyReport.weightKg ?? null;
   const loadWeightKg = userWeightKg ?? 75;
   let loadUsesReferenceWeight = false;
+
+  // Per-workout historical weight lookup: always pick latest weight on/before workout.date so future weigh-ins never rewrite past loads
+  const resolveWeightOnDate = (targetDate: string): { weightKg: number; isReference: boolean } => {
+    let bestWeight: { date: string; weight: number } | null = null;
+    for (let i = allWeights.length - 1; i >= 0; i--) {
+      if (allWeights[i]!.date <= targetDate) {
+        bestWeight = allWeights[i]!;
+        break;
+      }
+    }
+    if (bestWeight) return { weightKg: bestWeight.weight, isReference: false };
+
+    let bestApple: { date: string; weight: number } | null = null;
+    for (let i = appleWeightsAsc.length - 1; i >= 0; i--) {
+      if (appleWeightsAsc[i]!.date <= targetDate) {
+        bestApple = appleWeightsAsc[i]!;
+        break;
+      }
+    }
+    if (bestApple) return { weightKg: bestApple.weight, isReference: false };
+
+    if (energyProfile && energyProfile.weightKg > 0 && (!energyProfile.weightDate || energyProfile.weightDate <= targetDate)) {
+      return { weightKg: energyProfile.weightKg, isReference: false };
+    }
+    return { weightKg: 75, isReference: true };
+  };
 
   // Build continuous daily loads map for ACWR & Monotony
   const dailyLoadsMap = new Map<string, number>();
@@ -225,6 +255,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     let workoutLoad = 0;
     let workoutWorkSets = 0;
     let workoutTonnageKg = 0;
+    const { weightKg: workoutBodyWeightKg, isReference: workoutWeightIsRef } = resolveWeightOnDate(workout.date);
     const workoutExMap = new Map<string, { name: string; muscle: string; best1RM: number; workSets: number; volume: number }>();
     allTrainingDates.add(workout.date);
     const durSec = workoutDurationSeconds(workout) ?? 0;
@@ -323,9 +354,9 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
         if (exercise && exercise.mode === "reps" && set.weight > 0 && set.reps > 0) {
           const setWeightKg = weightToKg(set.weight, item.weightUnit);
           const weightedBw = isWeightedBodyweight(item.exerciseId, exercise.name);
-          if (weightedBw) loadUsesReferenceWeight ||= userWeightKg == null;
+          if (weightedBw) loadUsesReferenceWeight ||= workoutWeightIsRef;
           const effectiveWeight = weightedBw
-            ? round1(loadWeightKg + setWeightKg)
+            ? round1(workoutBodyWeightKg + setWeightKg)
             : setWeightKg;
           const setVolume = effectiveWeight * set.reps * exercise.volumeMultiplier;
           const hasValidRir = set.rir != null && Number.isFinite(set.rir) && set.rir >= 0 && set.rir <= 4;
@@ -407,14 +438,15 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
             recent.sets.push({ reps: set.reps, weight: effectiveWeight });
           }
         } else if (exercise?.mode === "assisted" && set.reps > 0) {
-          loadUsesReferenceWeight ||= userWeightKg == null;
-          const effectiveLoad = Math.max(15, loadWeightKg - Math.min(loadWeightKg - 15, set.weight));
+          loadUsesReferenceWeight ||= workoutWeightIsRef;
+          const assistKg = weightToKg(set.weight, item.weightUnit);
+          const effectiveLoad = Math.max(15, workoutBodyWeightKg - Math.min(workoutBodyWeightKg - 15, assistKg));
           workoutLoad += Math.round(effectiveLoad * set.reps * exercise.volumeMultiplier);
         } else if (exercise?.mode === "timed") {
           workoutLoad += Math.max(30, Math.round((set.seconds || 30) * 1.8));
         } else if (set.reps > 0) {
-          loadUsesReferenceWeight ||= userWeightKg == null;
-          const bwLoad = Math.round(loadWeightKg * 0.6 * Math.min(set.reps, 40) * (exercise?.volumeMultiplier ?? 1));
+          loadUsesReferenceWeight ||= workoutWeightIsRef;
+          const bwLoad = Math.round(workoutBodyWeightKg * 0.6 * Math.min(set.reps, 40) * (exercise?.volumeMultiplier ?? 1));
           workoutLoad += Math.max(15, bwLoad);
         }
       }
@@ -656,10 +688,17 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     .map((w) => ({ date: w.date, weight: w.weight }));
   const weightRateReport = evaluateWeightChangeRate(recentWeights);
 
+  // Unify training days across Ironlog completed workouts AND completed Apple Health activities
+  const appleActivities = projectAppleTraining(store, userId, through, catalogue, workouts).entries;
+  const unifiedTrainingDates = new Set<string>(allTrainingDates);
+  for (const act of appleActivities) {
+    if (act.date <= through) unifiedTrainingDates.add(act.date);
+  }
+
   const dailyMacrosArray = Array.from(dailyMacrosMap.entries()).map(([date, m]) => ({
     date,
     ...m,
-    isTrainingDay: allTrainingDates.has(date),
+    isTrainingDay: unifiedTrainingDates.has(date),
   }));
   const tdeeStart = shiftDay(through, 1 - Math.min(displayPeriod, 28));
   const tdeeWeights = recentWeights.filter(({ date }) => date >= tdeeStart);
@@ -700,7 +739,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       carbs: round1(m?.carbs ?? 0),
       fat: round1(m?.fat ?? 0),
       mealsCount: dailyMeals.get(d)?.length ?? 0,
-      isTrainingDay: allTrainingDates.has(d),
+      isTrainingDay: unifiedTrainingDates.has(d),
       waterMl: waterByDate.get(d) ?? null,
     };
   });
@@ -834,7 +873,6 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     .slice(0, 8)
     .map(({ count: _count, ...rest }) => rest);
 
-  const appleActivities = projectAppleTraining(store, userId, through, catalogue, workouts).entries;
   const scheduledDays = new Map(store.list(userId, "scheduledDay")
     .map(({ data }) => [(data as ScheduledDay).date, data as ScheduledDay]));
   const planAdherence = summarizePlanAdherence(
@@ -1253,21 +1291,48 @@ function computeAppleWorkoutBucket(
       }
     : null;
 
-  // WHO Weekly Aerobic Target (past 7 days) & Pace Trend
+  // WHO Weekly Aerobic Target (past 7 days) & Sport-Separated Pace / Speed Trends
+  const isStrengthOrMindBody = (type: string, title: string) =>
+    /traditionalstrength|functionalstrength|coretraining|strengthtraining|yoga|pilates|flexibility|cooldown|preparationandrecovery|力量|抗阻|瑜伽|普拉提|拉伸|恢复/i.test(
+      `${type} ${title}`,
+    );
+  const isAerobicCardio = (type: string, title: string) => {
+    if (isStrengthOrMindBody(type, title)) return false;
+    return /run|cycl|swim|hik|row|elliptical|hiit|highintensityinterval|walk|stair|jumprope|mixedcardio|crosstraining|dance|basketball|soccer|tennis|badminton|cardio|跑步|骑行|游泳|徒步|划船|椭圆|踏步|爬楼|跳绳|有氧|间歇|步行/i.test(
+      `${type} ${title}`,
+    );
+  };
+  const classifySportCategory = (type: string, title: string): "run" | "cycle" | "walk" | "other" => {
+    const joined = `${type} ${title}`;
+    if (/run|跑步/i.test(joined)) return "run";
+    if (/cycl|bike|骑行|單車/i.test(joined)) return "cycle";
+    if (/walk|hik|步行|健走|徒步/i.test(joined)) return "walk";
+    return "other";
+  };
+
   const cardioWeekStart = shiftDay(asOfDate, -6);
   let moderateSec = 0;
   let vigorousSec = 0;
+  let measuredSec = 0;
+  let estimatedSec = 0;
   for (const item of entries) {
     if (item.date < cardioWeekStart || item.date > asOfDate) continue;
     const dur = item.durationSeconds ?? 0;
     if (dur <= 0) continue;
+    if (!isAerobicCardio(item.activityType, item.activity.title)) continue;
     const avgHr = item.heartRate?.avgBpm ?? null;
     if (avgHr != null && hrMax != null) {
       const pct = avgHr / hrMax;
-      if (pct >= 0.8) vigorousSec += dur;
-      else if (pct >= 0.6) moderateSec += dur;
-    } else if (/run|cycl|swim|hik|row|elliptical|hiit|walk|跑步|骑行|游泳|徒步|划船|有氧/i.test(`${item.activityType} ${item.activity.title}`)) {
+      if (pct >= 0.8) {
+        vigorousSec += dur;
+        measuredSec += dur;
+      } else if (pct >= 0.6) {
+        moderateSec += dur;
+        measuredSec += dur;
+      }
+    } else {
       moderateSec += dur;
+      estimatedSec += dur;
     }
   }
   const moderateMinutes = Math.round(moderateSec / 60);
@@ -1277,26 +1342,37 @@ function computeAppleWorkoutBucket(
     targetMinutes: 150,
     moderateMinutes,
     vigorousMinutes,
+    measuredMinutes: Math.round(measuredSec / 60),
+    estimatedMinutes: Math.round(estimatedSec / 60),
     equivalentMinutes,
     completionPct: Math.min(100, Math.round((equivalentMinutes / 150) * 100)),
   };
 
-  const paceTrend = [...entries]
+  const paceEntries = [...entries]
     .filter((item) => (item.distanceMeters ?? 0) >= 500 && (item.durationSeconds ?? 0) >= 120)
     .sort((a, b) => a.date.localeCompare(b.date) || a.endedAt.localeCompare(b.endedAt))
-    .slice(-20)
     .map((item) => {
       const distanceKm = round2((item.distanceMeters ?? 0) / 1000);
       const durationMinutes = round1((item.durationSeconds ?? 0) / 60);
       const paceMinPerKm = round2(durationMinutes / Math.max(0.1, distanceKm));
+      const speedKmh = round2(distanceKm / Math.max(1 / 60, durationMinutes / 60));
+      const sportCategory = classifySportCategory(item.activityType, item.activity.title);
       return {
         date: item.date,
         title: item.activity.title,
+        sportCategory,
         distanceKm,
         durationMinutes,
         paceMinPerKm,
+        speedKmh,
       };
     });
+  const paceTrend = paceEntries.slice(-20);
+  const paceTrendsBySport = {
+    run: paceEntries.filter((e) => e.sportCategory === "run").slice(-20),
+    cycle: paceEntries.filter((e) => e.sportCategory === "cycle").slice(-20),
+    walk: paceEntries.filter((e) => e.sportCategory === "walk").slice(-20),
+  };
 
   return {
     totalCount: entries.length,
@@ -1310,6 +1386,7 @@ function computeAppleWorkoutBucket(
     hrZones,
     whoCardio,
     paceTrend,
+    paceTrendsBySport,
     byActivity,
     recent,
   };

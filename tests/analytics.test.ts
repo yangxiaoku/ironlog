@@ -1068,11 +1068,11 @@ test("全套升级：个人单品/减载偏好接口、180/365天窗口、平台
     assert.ok(bpPlateau, "bench-press regression should be flagged in plateaus");
     assert.equal(bpPlateau.status, "regression");
 
-    // Verify Rep-Max Matrix includes weighted pull-up (74.8kg latest bw + 20kg = 94.8kg @ 8RM)
+    // Verify Rep-Max Matrix includes weighted pull-up using workout-date bw (76.0kg on d1 + 20kg = 96kg @ 8RM)
     const puRm = data180.repMaxBoard.find((r: any) => r.id === "pull-up");
     assert.ok(puRm, "weighted pull-up should appear in repMaxBoard");
-    assert.equal(puRm.rm8.weight, 94.8);
-    assert.equal(puRm.rm5.weight, 94.8);
+    assert.equal(puRm.rm8.weight, 96);
+    assert.equal(puRm.rm5.weight, 96);
 
     // Verify Plan Adherence populated
     assert.equal(data180.planAdherence.hasPlan, true);

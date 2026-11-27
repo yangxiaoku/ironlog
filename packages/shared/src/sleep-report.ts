@@ -1,9 +1,10 @@
 export interface SleepReportDay {
   date: string;
   minutes: number | null;
-  source: "intervals" | "summary" | null;
+  source: "intervals" | "mixed" | "summary" | null;
   window: { startAt: string; endAt: string } | null;
   stages: { core: number | null; deep: number | null; rem: number | null } | null;
+  untimedStages?: Array<"core" | "deep" | "rem">;
 }
 
 interface SleepPeriodSummary {

@@ -436,16 +436,25 @@ interface AppleWorkoutsBucket {
     targetMinutes: number;
     moderateMinutes: number;
     vigorousMinutes: number;
+    measuredMinutes?: number;
+    estimatedMinutes?: number;
     equivalentMinutes: number;
     completionPct: number;
   };
   paceTrend?: Array<{
     date: string;
     title: string;
+    sportCategory?: "run" | "cycle" | "walk" | "other";
     distanceKm: number;
     durationMinutes: number;
     paceMinPerKm: number;
+    speedKmh?: number;
   }>;
+  paceTrendsBySport?: {
+    run: Array<{ date: string; title: string; distanceKm: number; durationMinutes: number; paceMinPerKm: number; speedKmh: number }>;
+    cycle: Array<{ date: string; title: string; distanceKm: number; durationMinutes: number; paceMinPerKm: number; speedKmh: number }>;
+    walk: Array<{ date: string; title: string; distanceKm: number; durationMinutes: number; paceMinPerKm: number; speedKmh: number }>;
+  };
   recent: Array<{
     id: string;
     date: string;

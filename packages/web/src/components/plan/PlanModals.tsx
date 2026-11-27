@@ -1186,6 +1186,9 @@ interface RoutinePreviewResponse {
     lastTop?: {
       date?: string | null;
       weight: number;
+      weightUnit?: "kg" | "lb";
+      originalWeight?: number;
+      originalUnit?: "kg" | "lb";
       reps: number;
       seconds: number;
       setsCount?: number;
@@ -1419,13 +1422,15 @@ export function RoutinePreviewModal({
           const isDeload = row.progression?.status === "plateau_deload";
           const ssBadge = ssBadges[index];
           const scaled = scaleRowTarget(row);
+          const targetUnit = row.weightUnit ?? "kg";
+          const lastUnit = row.lastTop?.weightUnit ?? targetUnit;
           const valText =
             row.snapshot.mode === "timed"
               ? `${fmt(row.seconds)} 秒`
               : row.snapshot.mode === "assisted"
-                ? `辅助 ${fmt(scaled.weight)} kg × ${fmt(row.reps)}`
+                ? `辅助 ${fmt(scaled.weight)} ${targetUnit} × ${fmt(row.reps)}`
                 : scaled.weight
-                  ? `${fmt(scaled.weight)} kg × ${fmt(row.reps)}`
+                  ? `${fmt(scaled.weight)} ${targetUnit} × ${fmt(row.reps)}`
                   : `${fmt(row.reps)} 次`;
 
           return (
@@ -1453,9 +1458,9 @@ export function RoutinePreviewModal({
                       {row.snapshot.mode === "timed"
                         ? `${fmt(row.lastTop.seconds)}s`
                         : row.snapshot.mode === "assisted"
-                          ? `辅助 ${fmt(row.lastTop.weight)} kg × ${fmt(row.lastTop.reps)}`
+                          ? `辅助 ${fmt(row.lastTop.weight)} ${lastUnit} × ${fmt(row.lastTop.reps)}`
                           : row.lastTop.weight > 0
-                            ? `${fmt(row.lastTop.weight)} ${row.weightUnit ?? "kg"} × ${fmt(row.lastTop.reps)}`
+                            ? `${fmt(row.lastTop.weight)} ${lastUnit} × ${fmt(row.lastTop.reps)}`
                             : `徒手 × ${fmt(row.lastTop.reps)}`}
                     </span>
                   ) : null}

@@ -24,6 +24,7 @@ export interface PlanActivation {
   id: string;
   version?: number;
   updatedAt?: string;
+  startedAt?: string;
   data: Plan;
 }
 
@@ -32,7 +33,7 @@ export interface ScheduledPlan extends PlanActivation {
 }
 
 export function planCycle(plan: PlanActivation, asOf: string) {
-  const instant = Date.parse(plan.updatedAt ?? "");
+  const instant = Date.parse(plan.startedAt ?? plan.updatedAt ?? "");
   if (!Number.isFinite(instant)) return null;
   const start = localDate(instant);
   const day = Math.floor((Date.parse(asOf) - Date.parse(start)) / 86400000);

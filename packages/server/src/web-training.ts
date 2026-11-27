@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
-  exercisePrBaselines, isValidWorkSet, localDate, muscleIntensityMapFromExercises, nutritionDayComplete, nutritionTotals, planOn,
+  exercisePrBaselines, isValidWorkSet, kgToUnit, localDate, muscleIntensityMapFromExercises, nutritionDayComplete, nutritionTotals, planOn,
   plannedExerciseSchema, previousExerciseRows, profileSchema, projectScheduleRange, projectWeekMuscleForecast,
   recommendInCycle, resolveRoutineWithTelemetry, scheduledDaySchema, weightToKg,
-  type Diet, type Exercise, type NutritionDay, type Routine, type ScheduledDay, type Weight, type Workout,
+  type Diet, type Exercise, type Mutation, type MutationResult, type NutritionDay, type Routine, type ScheduledDay, type Weight, type Workout,
 } from "@ironlog/shared";
 import { DomainError, type Store } from "./store.js";
 import { getDailyHealth, listDailyHealth, summarizeDailyHealth } from "./apple-health-daily.js";
@@ -206,6 +206,7 @@ export function getWebExerciseReferences(store: Store, userId: string, query: z.
     return [{
       id,
       ...(matchedDate ? { date: matchedDate } : {}),
+      ...(row.weightUnit ? { weightUnit: row.weightUnit } : {}),
       sets: row.sets.map((set) => isValidWorkSet(set, mode ?? row.snapshot?.mode)
         ? { weight: set.weight, reps: set.reps, seconds: set.seconds } : null),
     }];
@@ -306,6 +307,8 @@ export function getWebRoutine(store: Store, userId: string, query: z.infer<typeo
       : [];
     const lastTop = prevValidSets.length
       ? (() => {
+          const prevUnit: "kg" | "lb" = prevRow?.weightUnit ?? "kg";
+          const targetUnit: "kg" | "lb" = entry.item.weightUnit ?? "kg";
           const top = prevValidSets.reduce((best, cur) => {
             if (mode === "timed") return cur.seconds > best.seconds ? cur : best;
             if (mode === "assisted") {
@@ -317,9 +320,16 @@ export function getWebRoutine(store: Store, userId: string, query: z.infer<typeo
             if (cur.weight === best.weight && cur.reps > best.reps) return cur;
             return best;
           });
+          const convertedWeight =
+            mode === "timed" || top.weight <= 0 || prevUnit === targetUnit
+              ? top.weight
+              : kgToUnit(weightToKg(top.weight, prevUnit), targetUnit);
           return {
             date: prevRow ? dateByRow.get(prevRow) ?? null : null,
-            weight: top.weight,
+            weight: convertedWeight,
+            weightUnit: targetUnit,
+            originalWeight: top.weight,
+            originalUnit: prevUnit,
             reps: top.reps,
             seconds: top.seconds,
             setsCount: prevValidSets.length,
@@ -515,43 +525,90 @@ export const scheduleDayPutInput = z.object({
 });
 
 export function saveWebScheduleDay(store: Store, userId: string, date: string, input: z.infer<typeof scheduleDayPutInput>) {
-  const existing = store.get(userId, "scheduledDay", "schedule_" + date);
-  const currentVersion = existing?.version ?? 0;
-  if (
-    input.baseVersion !== undefined &&
-    input.baseVersion !== currentVersion &&
-    !(existing?.deleted && input.baseVersion === 0)
-  ) {
-    throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
-  }
-  const { opId, baseVersion: _ignored, ...rest } = input;
-  const data = scheduledDaySchema.parse({ ...rest, date });
-  const result = store.mutate(userId, {
-    opId: opId ?? randomUUID(),
-    id: "schedule_" + date,
-    kind: "scheduledDay",
-    baseVersion: currentVersion,
-    deleted: false,
-    data,
-  });
-  if (result.status === "conflict") throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
-  return { record: result.record, detail: getWebScheduleDay(store, userId, date) };
+  return store.db.transaction(() => {
+    const { opId, baseVersion, ...rest } = input;
+    const data = scheduledDaySchema.parse({ ...rest, date });
+    const recordId = "schedule_" + date;
+    if (opId) {
+      const receipt = store.operation(userId, opId);
+      if (receipt) {
+        const req = JSON.parse(receipt.request) as Mutation;
+        const res = JSON.parse(receipt.result) as MutationResult;
+        const priorDeletedRow =
+          baseVersion === 0 && req.baseVersion > 0
+            ? (store.db
+                .prepare("SELECT deleted FROM changes WHERE user_id=? AND kind='scheduledDay' AND id=? AND version=? ORDER BY seq DESC LIMIT 1")
+                .get(userId, recordId, req.baseVersion) as { deleted: number } | undefined)
+            : undefined;
+        const baseMatches =
+          baseVersion === undefined ||
+          req.baseVersion === baseVersion ||
+          Boolean(baseVersion === 0 && priorDeletedRow?.deleted === 1);
+        if (
+          req.kind !== "scheduledDay" ||
+          req.id !== recordId ||
+          req.deleted ||
+          JSON.stringify(req.data) !== JSON.stringify(data) ||
+          !baseMatches
+        ) {
+          throw new DomainError("操作 ID 已用于其他请求", 409);
+        }
+        if (res.status === "applied" && res.record) {
+          return { record: res.record, detail: getWebScheduleDay(store, userId, date) };
+        }
+        throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
+      }
+    }
+    const existing = store.get(userId, "scheduledDay", recordId);
+    const currentVersion = existing?.version ?? 0;
+    if (
+      baseVersion !== undefined &&
+      baseVersion !== currentVersion &&
+      !(existing?.deleted && baseVersion === 0)
+    ) {
+      throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
+    }
+    const result = store.mutate(userId, {
+      opId: opId ?? randomUUID(),
+      id: recordId,
+      kind: "scheduledDay",
+      baseVersion: currentVersion,
+      deleted: false,
+      data,
+    });
+    if (result.status === "conflict") throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
+    return { record: result.record, detail: getWebScheduleDay(store, userId, date) };
+  }).immediate();
 }
 
 export function clearWebScheduleDay(store: Store, userId: string, date: string, opId?: string) {
-  const existing = store.get(userId, "scheduledDay", "schedule_" + date);
-  if (existing && !existing.deleted) {
-    const result = store.mutate(userId, {
-      opId: opId ?? randomUUID(),
-      id: "schedule_" + date,
-      kind: "scheduledDay",
-      baseVersion: existing.version,
-      deleted: true,
-      data: existing.data,
-    });
-    if (result.status === "conflict") throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
-  }
-  return { detail: getWebScheduleDay(store, userId, date) };
+  return store.db.transaction(() => {
+    const recordId = "schedule_" + date;
+    if (opId) {
+      const receipt = store.operation(userId, opId);
+      if (receipt) {
+        const req = JSON.parse(receipt.request) as Mutation;
+        const res = JSON.parse(receipt.result) as MutationResult;
+        if (req.kind !== "scheduledDay" || req.id !== recordId || !req.deleted) {
+          throw new DomainError("操作 ID 已用于其他请求", 409);
+        }
+        if (res.status === "applied") return { detail: getWebScheduleDay(store, userId, date) };
+      }
+    }
+    const existing = store.get(userId, "scheduledDay", recordId);
+    if (existing && !existing.deleted) {
+      const result = store.mutate(userId, {
+        opId: opId ?? randomUUID(),
+        id: recordId,
+        kind: "scheduledDay",
+        baseVersion: existing.version,
+        deleted: true,
+        data: existing.data,
+      });
+      if (result.status === "conflict") throw new DomainError("排期已被其他页面修改，请刷新后再试", 409);
+    }
+    return { detail: getWebScheduleDay(store, userId, date) };
+  }).immediate();
 }
 
 export const scheduleShiftInput = z.object({
@@ -617,10 +674,12 @@ export function matchActivePlanRoutine(
   workout: Pick<Workout, "planId" | "routineId" | "title">,
 ): Routine | null {
   if (!active) return null;
-  if (workout.planId && workout.routineId) {
-    if (workout.planId !== active.id) return null;
+  if (workout.planId) {
+    if (workout.planId !== active.id || !workout.routineId) return null;
     return active.data.routines.find((r) => r.id === workout.routineId) ?? null;
   }
+  // Explicitly came from a standalone template or custom scheduled routine: never overwrite active plan by title.
+  if (workout.routineId) return null;
   const title = workout.title.trim();
   if (!title) return null;
   return active.data.routines.find((r) => r.name.trim() === title) ?? null;
@@ -643,15 +702,22 @@ export function syncWorkoutRoutineToActivePlan(
     if (workout.status !== "completed") throw new DomainError("仅已完成的训练可同步回计划", 409);
 
     const active = store.activePlan(userId);
-    const oldPlanRoutine = active ? matchActivePlanRoutine(active, workout) : null;
-    const routineIdx = active && oldPlanRoutine ? active.data.routines.findIndex((r) => r.id === oldPlanRoutine.id) : -1;
+    let oldPlanRoutine: Routine | null = null;
+    let templateRec: ReturnType<Store["get"]> = null;
+    let oldTemplate: Routine | null = null;
 
-    const templateRec =
-      !oldPlanRoutine && workout.routineId
-        ? store.get(userId, "template", workout.routineId)
-        : null;
-    const oldTemplate =
-      templateRec && !templateRec.deleted ? (templateRec.data as Routine) : null;
+    if (workout.planId) {
+      oldPlanRoutine = active ? matchActivePlanRoutine(active, workout) : null;
+    } else if (workout.routineId) {
+      const tpl = store.get(userId, "template", workout.routineId);
+      if (tpl && !tpl.deleted) {
+        templateRec = tpl;
+        oldTemplate = tpl.data as Routine;
+      }
+    } else {
+      oldPlanRoutine = active ? matchActivePlanRoutine(active, workout) : null;
+    }
+    const routineIdx = active && oldPlanRoutine ? active.data.routines.findIndex((r) => r.id === oldPlanRoutine.id) : -1;
 
     if (!oldPlanRoutine && !oldTemplate) {
       if (!active && !workout.routineId) throw new DomainError("当前没有正在执行的训练计划", 404);
@@ -693,24 +759,41 @@ export function syncWorkoutRoutineToActivePlan(
       const setsCount = Math.max(1, Math.min(100, workSets.length || nonWarmup.length || row.sets.length || 3));
       const maxSec = timed ? Math.max(0, ...row.sets.map((s) => s.seconds || 0)) : 0;
 
+      const oldUnit: "kg" | "lb" = oldMatch?.weightUnit ?? "kg";
+      const nextUnit: "kg" | "lb" = row.weightUnit ?? oldMatch?.weightUnit ?? "kg";
+      const syncedWeight =
+        !timed && oldMatch?.weight != null
+          ? oldUnit === nextUnit
+            ? oldMatch.weight
+            : kgToUnit(weightToKg(oldMatch.weight, oldUnit), nextUnit)
+          : null;
+      const syncedIncrement =
+        oldMatch?.increment != null
+          ? oldUnit === nextUnit
+            ? oldMatch.increment
+            : Math.max(0.5, Math.round(kgToUnit(weightToKg(oldMatch.increment, oldUnit), nextUnit) * 2) / 2)
+          : nextUnit === "lb"
+            ? 5
+            : 2.5;
+
       return plannedExerciseSchema.parse({
         exerciseId: row.exerciseId,
         sets: setsCount,
         repsMin: timed ? 1 : (oldMatch?.repsMin ?? 8),
         repsMax: timed ? 1 : (oldMatch ? Math.max(oldMatch.repsMin, oldMatch.repsMax) : 12),
-        weight: !timed && oldMatch?.weight != null ? oldMatch.weight : null,
+        weight: syncedWeight,
         seconds: timed ? Math.max(15, Math.min(86400, maxSec || oldMatch?.seconds || 45)) : 0,
         restSeconds: Math.max(0, Math.min(900, Math.round(row.restSeconds ?? oldMatch?.restSeconds ?? 90))),
         targetRir: oldMatch?.targetRir ?? 2,
         progression: oldMatch?.progression ?? (timed ? "manual" : "double"),
-        increment: oldMatch?.increment ?? 2.5,
+        increment: syncedIncrement,
         backupExerciseId: oldMatch?.backupExerciseId &&
           oldMatch.backupExerciseId !== row.exerciseId &&
           cat.has(oldMatch.backupExerciseId)
           ? oldMatch.backupExerciseId
           : null,
         supersetGroup: row.supersetGroup?.trim() ? row.supersetGroup.trim().slice(0, 16) : null,
-        ...(row.weightUnit ? { weightUnit: row.weightUnit } : oldMatch?.weightUnit ? { weightUnit: oldMatch.weightUnit } : {}),
+        ...(row.weightUnit || oldMatch?.weightUnit ? { weightUnit: nextUnit } : {}),
         ...(oldMatch?.autoWarmup ? { autoWarmup: true } : {}),
       });
     });
@@ -730,7 +813,7 @@ export function syncWorkoutRoutineToActivePlan(
       if (saved.status === "conflict" || !saved.record) {
         throw new DomainError("当前计划已变化，请刷新后重试", 409);
       }
-      const activePlan = store.applyPlan(userId, active.id, saved.record.version, active.revision, false);
+      const activePlan = store.applyPlan(userId, active.id, saved.record.version, active.revision, false, true);
       return {
         syncedKind: "plan" as const,
         syncedRoutineName: oldPlanRoutine.name,

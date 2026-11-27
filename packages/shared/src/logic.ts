@@ -193,8 +193,14 @@ export function nextTarget(
   doubleJump?: boolean;
 } {
   const assisted = mode === "assisted";
+  const targetUnit = item.weightUnit ?? "kg";
+  const prevUnit = previous?.weightUnit ?? "kg";
+  const toTargetWeight = (w: number) =>
+    prevUnit === targetUnit ? w : kgToUnit(weightToKg(w, prevUnit), targetUnit);
   const completed =
-    previous?.sets.filter((set) => set.completed && set.type !== "warmup" && (!assisted || set.reps > 0)) ??
+    previous?.sets
+      .filter((set) => set.completed && set.type !== "warmup" && (!assisted || set.reps > 0))
+      .map((set) => ({ ...set, weight: toTargetWeight(set.weight) })) ??
     [];
   const weight = completed.length
     ? (assisted ? Math.min : Math.max)(...completed.map((set) => set.weight))

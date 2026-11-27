@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { ApiError, apiFetch } from "../lib/api";
 import { copyText } from "../lib/clipboard";
 import { flushQueue, getOfflineStorage, readQueue } from "../lib/offline-queue";
-import { parseHashView, type ViewId } from "../lib/routes";
+import { isValidView, parseHashView, type ViewId } from "../lib/routes";
 import { useAuthStore } from "./useAuthStore";
 
 export type ThemeMode = "dark" | "light";
@@ -115,21 +115,22 @@ export const useUiStore = create<UiState>((set, get) => ({
   silentCloseSeq: 0,
 
   setView(view) {
-    set({ view });
+    set({ view: isValidView(view) ? view : "overview" });
   },
 
   navigate(view) {
-    set({ view });
-    if (typeof location !== "undefined" && location.hash.slice(1) !== view) {
+    const safeView: ViewId = isValidView(view) ? view : "overview";
+    set({ view: safeView });
+    if (typeof location !== "undefined" && location.hash.slice(1) !== safeView) {
       try {
         if (typeof history !== "undefined" && typeof history.replaceState === "function") {
-          const nextUrl = `${location.pathname}${location.search}#${view}`;
+          const nextUrl = `${location.pathname}${location.search}#${safeView}`;
           history.replaceState(history.state, "", nextUrl);
         } else {
-          location.hash = view;
+          location.hash = safeView;
         }
       } catch {
-        location.hash = view;
+        location.hash = safeView;
       }
     }
   },

@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import {
   getExerciseCategory, isValidWorkSet, localDate, planCycle, recommendInCycle,
-  type Exercise, type PlanCompletion, type Routine, type Workout,
+  type Exercise, type PlanCompletion, type Routine, type ScheduledDay, type Workout,
 } from "@ironlog/shared";
 import { z } from "zod";
 import { mergeAppleMeasurements, type AppleWorkoutData, type AppleWorkoutInput } from "./apple-health.js";
@@ -233,6 +233,11 @@ export function projectAppleTraining(
   if (!uploads.length) return { entries: agenda, completionHistory };
   const catalogue = knownExercises ?? store.catalogueMap(userId, true);
   const planHistory = [...(store.planSchedule(userId)?.history ?? [])].reverse();
+  const overridesByDate = new Map<string, ScheduledDay>();
+  for (const row of store.list(userId, "scheduledDay")) {
+    const data = row.data as ScheduledDay;
+    if (data.date <= through) overridesByDate.set(data.date, data);
+  }
   const routineKindCache = new Map<Routine, TrainingKind>();
   const cachedRoutineKind = (routine: Routine) => {
     let kind = routineKindCache.get(routine);
@@ -295,6 +300,7 @@ export function projectAppleTraining(
   const claimed = new Set<string>();
   for (const row of uploads) {
     const manual = manualByUploadId.get(row.id) ?? null;
+    const override = overridesByDate.get(row.date);
     const activation = planHistory.find((plan) => !!plan.updatedAt && plan.updatedAt <= row.startedAt);
     let matchedPlan: ApplePlanMatch | null = null;
     if (activation && !planCycle(activation, row.date)?.expired) {
@@ -305,10 +311,23 @@ export function projectAppleTraining(
       const linkedRoutine = manual && sameVersion(manual.workout)
         ? data.routines.find((routine) => routine.id === manual.workout.routineId) : undefined;
       const existingPlanLink = manual?.workout.planId != null;
-      const planned = !existingPlanLink && !claimed.has(dayKey)
-        ? recommendInCycle(activation, completionHistory.filter((workout) => workout.date < row.date), row.date)
-        : null;
-      const routine = linkedRoutine ?? (planned?.date === row.date ? planned.routine : null);
+      let routine: Routine | null = linkedRoutine ?? null;
+      if (!routine && !existingPlanLink && !claimed.has(dayKey)) {
+        if (override?.mode === "rest") {
+          // Manual rest day: keep Apple workout standalone rather than crediting an unscheduled plan day.
+          routine = null;
+        } else if (override?.mode === "workout") {
+          if (override.planId === id && override.routineId) {
+            routine = data.routines.find((item) => item.id === override.routineId)
+              ?? (override.exercises.length
+                ? { id: override.routineId, name: override.title || "排期训练", exercises: override.exercises }
+                : null);
+          }
+        } else {
+          const planned = recommendInCycle(activation, completionHistory.filter((workout) => workout.date < row.date), row.date);
+          routine = planned?.date === row.date ? planned.routine : null;
+        }
+      }
       const alreadyLogged = !linkedRoutine && routine && (byDay.get(row.date) ?? []).some(({ workout }) =>
         sameVersion(workout) && workout.routineId === routine.id);
       const provenExercise = !manual || !!linkedRoutine || (routine && manual.workout.exercises.some((performed) =>

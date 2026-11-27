@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 import { localDate, type Weight } from "@ironlog/shared";
 import { z } from "zod";
@@ -75,11 +76,19 @@ export interface DailyHealthSnapshot {
   dietaryProteinG?: number;
   dietaryCarbsG?: number;
   dietaryFatG?: number;
-  // Internal tracking for safe automatic weight backfill (never overwrites user manual edits)
+  // Internal tracking for safe automatic backfill (never overwrites newer samples or manual edits)
+  weightMeasuredAt?: string;
+  bodyFatMeasuredAt?: string;
   syncedWeightValue?: number;
+  syncedWeightAt?: string;
   syncedBodyFatValue?: number;
+  syncedBodyFatAt?: string;
+  waterSource?: "manual" | "apple";
+  waterUpdatedAt?: string;
+  waterAppleSyncedMl?: number;
   syncedSleepObservations?: SleepObservation[];
   stepsSampledAt?: string;
+  stepsHourly?: Record<string, number>;
 }
 
 const CUMULATIVE_KEYS: Array<keyof DailyHealthSnapshot> = [
@@ -97,7 +106,6 @@ const CUMULATIVE_KEYS: Array<keyof DailyHealthSnapshot> = [
   "sleepCoreMinutes",
   "sleepAwakeMinutes",
   "sleepInBedMinutes",
-  "waterMl",
   "dietaryEnergyKcal",
   "dietaryProteinG",
   "dietaryCarbsG",
@@ -395,6 +403,55 @@ function shortcutTotalsByDate(raw: unknown, from: string, through: string, label
   return totals;
 }
 
+function parseSampleHourKey(raw: string | undefined): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trim();
+  if (!/(?:T|\s)\d{1,2}:\d{2}/.test(trimmed)) return null;
+  const iso = parseFlexibleInstant(trimmed);
+  if (iso) {
+    const ms = Date.parse(iso);
+    if (Number.isFinite(ms)) {
+      const hour = new Date(ms + 8 * 3_600_000).getUTCHours();
+      return String(hour).padStart(2, "0");
+    }
+  }
+  const m = /(?:T|\s)(\d{1,2}):\d{2}/.exec(trimmed);
+  if (m) {
+    const h = Number(m[1]);
+    if (Number.isInteger(h) && h >= 0 && h <= 23) return String(h).padStart(2, "0");
+  }
+  return null;
+}
+
+function shortcutHourlyStepsByDate(raw: unknown, from: string, through: string, label: string, max: number) {
+  const byDate = new Map<string, { hourly: Record<string, number>; untimedTotal: number; total: number }>();
+  for (const line of sampleRows(raw)) {
+    if (typeof line !== "string") continue;
+    const [stamp, value] = line.split("|");
+    const date = parseMeasuredDate(stamp);
+    if (!date || date < from || date > through) continue;
+    try {
+      const amount = parseTolerantNumber(value, label, { max, digits: 6 });
+      if (amount === undefined) continue;
+      let bucket = byDate.get(date);
+      if (!bucket) {
+        bucket = { hourly: {}, untimedTotal: 0, total: 0 };
+        byDate.set(date, bucket);
+      }
+      const hourKey = parseSampleHourKey(stamp);
+      if (hourKey) {
+        bucket.hourly[hourKey] = (bucket.hourly[hourKey] ?? 0) + amount;
+      } else {
+        bucket.untimedTotal += amount;
+      }
+      bucket.total += amount;
+    } catch (error) {
+      if (!(error instanceof DomainError)) throw error;
+    }
+  }
+  return byDate;
+}
+
 function readSleepObservations(raw: unknown): SleepObservation[] {
   const observations: SleepObservation[] = [];
   for (const item of sampleRows(raw)) {
@@ -479,14 +536,15 @@ function splitTimedSleepByDate(observations: SleepObservation[]) {
 }
 
 export function timedSleepProfile(entry: DailyHealthSnapshot) {
-  const asleep = (entry.syncedSleepObservations ?? []).filter(
+  const allObs = entry.syncedSleepObservations ?? [];
+  const asleep = allObs.filter(
     (item): item is Extract<SleepObservation, { interval: Interval }> =>
       "interval" in item && isAsleepStage(item.stage)
       && Number.isFinite(item.interval[0]) && Number.isFinite(item.interval[1])
       && item.interval[1] > item.interval[0],
   );
   if (asleep.length === 0) return null;
-  const minutes = mergeIntervalsMinutes(asleep.map(({ interval }) => interval));
+  const timedMinutes = mergeIntervalsMinutes(asleep.map(({ interval }) => interval));
   const main = timedSleepSessions(asleep)
     .filter(({ end }) => localDate(end) === entry.date)
     .map((session) => ({
@@ -496,17 +554,43 @@ export function timedSleepProfile(entry: DailyHealthSnapshot) {
     .filter(({ minutes }) => minutes >= MIN_MAIN_SLEEP_MINUTES)
     .sort((a, b) => b.minutes - a.minutes || a.start - b.start)[0];
   const summary = summarizeSleep(asleep);
-  const stages = {
+  const timedStages = {
     core: summary.sleepCoreMinutes ?? null,
     deep: summary.sleepDeepMinutes ?? null,
     rem: summary.sleepRemMinutes ?? null,
   };
   const staged = mergeIntervalsMinutes(asleep.filter(({ stage }) => stage !== "asleep").map(({ interval }) => interval));
-  const stageTotal = (stages.core ?? 0) + (stages.deep ?? 0) + (stages.rem ?? 0);
+  const stageTotal = (timedStages.core ?? 0) + (timedStages.deep ?? 0) + (timedStages.rem ?? 0);
+  const hasGenericAsleep = asleep.some(({ stage }) => stage === "asleep");
+  const validTimedStages = stageTotal > staged + 1 ? null : timedStages;
+
+  // Include duration-only stage samples only when timed observations are stage-specific
+  // (no generic catch-all "asleep" window that could overlap with untimed stages).
+  const untimedByStage: Record<"core" | "deep" | "rem", number> = { core: 0, deep: 0, rem: 0 };
+  const untimedStages: ("core" | "deep" | "rem")[] = [];
+  if (!hasGenericAsleep && validTimedStages) {
+    for (const item of allObs) {
+      if (!("interval" in item) && (item.stage === "core" || item.stage === "deep" || item.stage === "rem") && item.minutes > 0) {
+        untimedByStage[item.stage] += item.minutes;
+      }
+    }
+    for (const st of ["core", "deep", "rem"] as const) {
+      if (untimedByStage[st] > 0) untimedStages.push(st);
+    }
+  }
+  const untimedExtra = Math.round(untimedByStage.core + untimedByStage.deep + untimedByStage.rem);
+  const stages = validTimedStages
+    ? {
+        core: (validTimedStages.core ?? 0) + Math.round(untimedByStage.core) || null,
+        deep: (validTimedStages.deep ?? 0) + Math.round(untimedByStage.deep) || null,
+        rem: (validTimedStages.rem ?? 0) + Math.round(untimedByStage.rem) || null,
+      }
+    : null;
   return {
-    minutes,
+    minutes: timedMinutes + untimedExtra,
     window: main ? { startAt: new Date(main.start).toISOString(), endAt: new Date(main.end).toISOString() } : null,
-    stages: stageTotal > staged + 1 ? null : stages,
+    stages,
+    untimedStages,
   };
 }
 
@@ -641,42 +725,113 @@ function writeRow(db: Db, userId: string, date: string, snapshot: DailyHealthSna
   dailyStatements(db).write.run(userId, date, snapshot.updatedAt, JSON.stringify(snapshot));
 }
 
-function maybeSyncWeightRecord(
-  store: Store,
-  userId: string,
-  targetDate: string,
-  weightKg: number | undefined,
-  bodyFatPct: number | undefined,
-  prevSyncedWeight: number | undefined,
-  prevSyncedBodyFat: number | undefined,
-): boolean {
-  if (weightKg == null) return false;
+function isStrictlyOlderSample(incomingAt: string | undefined, existingAt: string | undefined): boolean {
+  if (!incomingAt || !existingAt) return false;
+  const inMs = Date.parse(incomingAt);
+  const exMs = Date.parse(existingAt);
+  return Number.isFinite(inMs) && Number.isFinite(exMs) && inMs < exMs;
+}
+
+const INTERNAL_DAILY_META_KEYS = new Set<string>([
+  "stepsSampledAt",
+  "stepsHourly",
+  "weightMeasuredAt",
+  "bodyFatMeasuredAt",
+  "syncedWeightValue",
+  "syncedWeightAt",
+  "syncedBodyFatValue",
+  "syncedBodyFatAt",
+  "waterSource",
+  "waterUpdatedAt",
+  "waterAppleSyncedMl",
+]);
+
+function maybeSyncWeightRecord(params: {
+  store: Store;
+  userId: string;
+  targetDate: string;
+  weightKg: number | undefined;
+  weightAt: string | undefined;
+  bodyFatPct: number | undefined;
+  bodyFatAt: string | undefined;
+  prevSyncedWeight: number | undefined;
+  prevSyncedWeightAt: string | undefined;
+  prevSyncedBodyFat: number | undefined;
+  prevSyncedBodyFatAt: string | undefined;
+}): { syncedWeight: boolean; syncedBodyFat: boolean } {
+  const {
+    store, userId, targetDate,
+    weightKg, weightAt, bodyFatPct, bodyFatAt,
+    prevSyncedWeight, prevSyncedWeightAt, prevSyncedBodyFat, prevSyncedBodyFatAt,
+  } = params;
+
+  const validWeight = weightKg != null && !isStrictlyOlderSample(weightAt, prevSyncedWeightAt) ? weightKg : undefined;
+  const validBodyFat = bodyFatPct != null && !isStrictlyOlderSample(bodyFatAt, prevSyncedBodyFatAt) ? bodyFatPct : undefined;
+  if (validWeight === undefined && validBodyFat === undefined) {
+    return { syncedWeight: false, syncedBodyFat: false };
+  }
+
   const id = `weight_${targetDate}`;
   const existing = store.get(userId, "weight", id);
-  const existingData = existing && !existing.deleted ? existing.data as Weight : null;
+  // Respect explicit user deletion tombstones for this date.
+  if (existing?.deleted) {
+    return { syncedWeight: false, syncedBodyFat: false };
+  }
+  const existingData = existing ? (existing.data as Weight) : null;
 
-  // Never clobber a manual user weight record on that day unless it equals our prior Apple sync.
-  if (existingData && prevSyncedWeight == null) return false;
-  if (existingData && prevSyncedWeight != null && existingData.weight !== prevSyncedWeight) return false;
+  if (!existingData) {
+    if (validWeight === undefined) {
+      return { syncedWeight: false, syncedBodyFat: false };
+    }
+    store.mutate(userId, {
+      kind: "weight",
+      id,
+      opId: `ahw_${targetDate.replace(/-/g, "")}_${randomUUID().slice(0, 12)}`,
+      baseVersion: 0,
+      deleted: false,
+      data: {
+        date: targetDate,
+        weight: validWeight,
+        bodyFat: validBodyFat ?? null,
+      },
+    });
+    return { syncedWeight: true, syncedBodyFat: validBodyFat !== undefined };
+  }
 
-  const nextBodyFat = bodyFatPct ?? (existingData?.bodyFat ?? prevSyncedBodyFat ?? null);
-  if (existingData && existingData.weight === weightKg && (existingData.bodyFat ?? null) === nextBodyFat) {
-    return false;
+  const canUpdateWeight =
+    validWeight !== undefined &&
+    prevSyncedWeight !== undefined &&
+    existingData.weight === prevSyncedWeight;
+  const canUpdateBodyFat =
+    validBodyFat !== undefined &&
+    ((existingData.bodyFat == null && prevSyncedBodyFat === undefined) ||
+      (prevSyncedBodyFat !== undefined && existingData.bodyFat === prevSyncedBodyFat));
+
+  const nextWeight = canUpdateWeight ? validWeight : existingData.weight;
+  const nextBodyFat = canUpdateBodyFat ? validBodyFat : (existingData.bodyFat ?? null);
+  const weightChanged = nextWeight !== existingData.weight;
+  const bodyFatChanged = nextBodyFat !== (existingData.bodyFat ?? null);
+
+  if (!weightChanged && !bodyFatChanged) {
+    return { syncedWeight: false, syncedBodyFat: false };
   }
 
   store.mutate(userId, {
     kind: "weight",
     id,
     opId: `ahw_${targetDate.replace(/-/g, "")}_${Date.now()}`,
-    baseVersion: existing?.version ?? 0,
+    baseVersion: existing!.version,
     deleted: false,
     data: {
       date: targetDate,
-      weight: weightKg,
+      weight: nextWeight,
       bodyFat: nextBodyFat,
     },
   });
-  return true;
+  return {
+    syncedWeight: canUpdateWeight && validWeight !== undefined,
+    syncedBodyFat: canUpdateBodyFat && validBodyFat !== undefined,
+  };
 }
 
 /**
@@ -699,7 +854,7 @@ export function upsertDailyHealth(
 
   const today = localDate();
   const date = resolveTargetDate(input, today);
-  const threeDaySync = String(input.shortcutGenVersion) === "3";
+  const threeDaySync = Number(input.shortcutGenVersion) >= 3;
   const firstDate = localDate(Date.parse(`${date}T00:00:00+08:00`) - 2 * DAY_MS);
   const historical = new Map<string, Partial<DailyHealthSnapshot>>();
   function patchForDate(day: string) {
@@ -741,11 +896,22 @@ export function upsertDailyHealth(
     const metric = shortcutSumMetrics[key];
     parsed[key] = parseTolerantNumber(input[key], metric.label, metric);
     if (!threeDaySync) continue;
+    if (key === "steps") {
+      for (const [sampleDate, bucket] of shortcutHourlyStepsByDate(input.stepsSamples, firstDate, date, metric.label, metric.max)) {
+        if (bucket.total > metric.max) continue;
+        const patch = patchForDate(sampleDate);
+        patch.steps = parseTolerantNumber(bucket.total, metric.label, metric);
+        patch.stepsSampledAt = sampledAt;
+        if (Object.keys(bucket.hourly).length > 0) {
+          patch.stepsHourly = bucket.hourly;
+        }
+      }
+      continue;
+    }
     for (const [sampleDate, total] of shortcutTotalsByDate(input[`${key}Samples`], firstDate, date, metric.label, metric.max)) {
       if (total > metric.max) continue;
       const patch = patchForDate(sampleDate);
       patch[key] = parseTolerantNumber(total, metric.label, metric);
-      if (key === "steps") patch.stepsSampledAt = sampledAt;
     }
   }
   if (parsed.distanceKm === undefined) {
@@ -800,16 +966,58 @@ export function upsertDailyHealth(
   }
   const weightDate = measurementDate(input.weightMeasuredAt, parsed.weightKg);
   const bodyFatDate = measurementDate(input.bodyFatMeasuredAt, parsed.bodyFatPct);
+  const rawWeightInstant = parseFlexibleInstant(input.weightMeasuredAt);
+  const rawBodyFatInstant = parseFlexibleInstant(input.bodyFatMeasuredAt);
+  const weightMeasuredAt =
+    parsed.weightKg !== undefined
+      ? (rawWeightInstant ?? (!input.weightMeasuredAt && !threeDaySync ? sampledAt : undefined))
+      : undefined;
+  const bodyFatMeasuredAt =
+    parsed.bodyFatPct !== undefined
+      ? (rawBodyFatInstant ?? (!input.bodyFatMeasuredAt && !threeDaySync ? sampledAt : undefined))
+      : undefined;
   const weightKg = threeDaySync && !weightDate ? undefined : parsed.weightKg;
   const bodyFatPct = threeDaySync && !bodyFatDate ? undefined : parsed.bodyFatPct;
   if (threeDaySync) {
     delete parsed.weightKg;
     delete parsed.bodyFatPct;
-    if (weightDate && weightKg !== undefined) Object.assign(patchForDate(weightDate), { weightKg, weightDate });
-    if (bodyFatDate && bodyFatPct !== undefined) Object.assign(patchForDate(bodyFatDate), { bodyFatPct, bodyFatDate });
+    if (weightDate && weightKg !== undefined) {
+      Object.assign(patchForDate(weightDate), {
+        weightKg,
+        weightDate,
+        ...(weightMeasuredAt ? { weightMeasuredAt } : {}),
+      });
+    }
+    if (bodyFatDate && bodyFatPct !== undefined) {
+      Object.assign(patchForDate(bodyFatDate), {
+        bodyFatPct,
+        bodyFatDate,
+        ...(bodyFatMeasuredAt ? { bodyFatMeasuredAt } : {}),
+      });
+    }
   } else {
-    if (weightDate) parsed.weightDate = weightDate;
-    if (bodyFatDate) parsed.bodyFatDate = bodyFatDate;
+    if (weightDate) {
+      Object.assign(patchForDate(weightDate), {
+        ...(parsed.weightKg !== undefined ? { weightKg: parsed.weightKg } : {}),
+        weightDate,
+        ...(weightMeasuredAt ? { weightMeasuredAt } : {}),
+      });
+      if (weightDate !== date) {
+        delete parsed.weightKg;
+        delete parsed.weightDate;
+      }
+    }
+    if (bodyFatDate) {
+      Object.assign(patchForDate(bodyFatDate), {
+        ...(parsed.bodyFatPct !== undefined ? { bodyFatPct: parsed.bodyFatPct } : {}),
+        bodyFatDate,
+        ...(bodyFatMeasuredAt ? { bodyFatMeasuredAt } : {}),
+      });
+      if (bodyFatDate !== date) {
+        delete parsed.bodyFatPct;
+        delete parsed.bodyFatDate;
+      }
+    }
   }
 
   const computeMerged = (existing: DailyHealthSnapshot | null, forDate: string, patch: Partial<DailyHealthSnapshot>,
@@ -829,13 +1037,90 @@ export function upsertDailyHealth(
       };
     }
 
+    const skipStaleWeight =
+      !replaceDay && existing != null && isStrictlyOlderSample(effectivePatch.weightMeasuredAt, existing.weightMeasuredAt);
+    const skipStaleBodyFat =
+      !replaceDay && existing != null && isStrictlyOlderSample(effectivePatch.bodyFatMeasuredAt, existing.bodyFatMeasuredAt);
+
     for (const [k, value] of Object.entries(effectivePatch)) {
       if (value === undefined) continue;
-      if (k === "stepsSampledAt") continue;
+      if (INTERNAL_DAILY_META_KEYS.has(k)) continue;
+      if (k === "weightKg" || k === "weightDate") {
+        if (skipStaleWeight) continue;
+        (next as unknown as Record<string, unknown>)[k] = value;
+        if (k === "weightKg" && effectivePatch.weightMeasuredAt) {
+          next.weightMeasuredAt = effectivePatch.weightMeasuredAt;
+        }
+        continue;
+      }
+      if (k === "bodyFatPct" || k === "bodyFatDate") {
+        if (skipStaleBodyFat) continue;
+        (next as unknown as Record<string, unknown>)[k] = value;
+        if (k === "bodyFatPct" && effectivePatch.bodyFatMeasuredAt) {
+          next.bodyFatMeasuredAt = effectivePatch.bodyFatMeasuredAt;
+        }
+        continue;
+      }
+      if (k === "waterMl" && typeof value === "number") {
+        const prevApple =
+          existing?.waterAppleSyncedMl !== undefined
+            ? existing.waterAppleSyncedMl
+            : existing && existing.waterSource !== "manual" && typeof existing.waterMl === "number"
+              ? existing.waterMl
+              : undefined;
+        if (replaceDay || !existing) {
+          next.waterMl = value;
+          next.waterSource = "apple";
+          next.waterUpdatedAt = sampledAt;
+          next.waterAppleSyncedMl = value;
+        } else if (existing.waterSource === "manual") {
+          next.waterSource = "manual";
+          next.waterUpdatedAt = existing.waterUpdatedAt;
+          const isNewerSample =
+            !existing.waterUpdatedAt ||
+            (!isStrictlyOlderSample(sampledAt, existing.waterUpdatedAt) && sampledAt !== existing.waterUpdatedAt);
+          if (prevApple !== undefined && value > prevApple && isNewerSample) {
+            next.waterMl = Math.min(15000, (existing.waterMl ?? 0) + (value - prevApple));
+            next.waterAppleSyncedMl = value;
+          } else if (prevApple !== undefined) {
+            next.waterAppleSyncedMl = prevApple;
+          } else if (isNewerSample) {
+            next.waterAppleSyncedMl = value;
+          }
+        } else {
+          const prevVal = typeof existing.waterMl === "number" ? existing.waterMl : 0;
+          next.waterMl = Math.max(prevVal, value);
+          next.waterSource = "apple";
+          next.waterUpdatedAt = sampledAt;
+          next.waterAppleSyncedMl = Math.max(prevApple ?? 0, value);
+        }
+        continue;
+      }
       if (k === "steps" && typeof value === "number" && effectivePatch.stepsSampledAt) {
-        if (replaceDay || !existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt) {
+        if (effectivePatch.stepsHourly && Object.keys(effectivePatch.stepsHourly).length > 0) {
+          if (replaceDay) {
+            next.stepsHourly = { ...effectivePatch.stepsHourly };
+            next.steps = Math.round(Object.values(next.stepsHourly).reduce((sum, n) => sum + n, 0));
+            next.stepsSampledAt = effectivePatch.stepsSampledAt;
+          } else {
+            const mergedHourly: Record<string, number> = { ...(existing?.stepsHourly ?? {}) };
+            for (const [hr, hrVal] of Object.entries(effectivePatch.stepsHourly)) {
+              if (!existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt || mergedHourly[hr] === undefined) {
+                mergedHourly[hr] = hrVal;
+              }
+            }
+            const hourlySum = Math.round(Object.values(mergedHourly).reduce((sum, n) => sum + n, 0));
+            next.stepsHourly = mergedHourly;
+            next.steps = hourlySum;
+            next.stepsSampledAt =
+              !existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt
+                ? effectivePatch.stepsSampledAt
+                : existing.stepsSampledAt;
+          }
+        } else if (replaceDay || !existing?.stepsSampledAt || effectivePatch.stepsSampledAt >= existing.stepsSampledAt) {
           next.steps = value;
           next.stepsSampledAt = effectivePatch.stepsSampledAt;
+          if (replaceDay) delete next.stepsHourly;
         }
       } else if (k === "steps" && !replaceDay && existing?.stepsSampledAt) {
         continue;
@@ -872,54 +1157,64 @@ export function upsertDailyHealth(
 
   return store.db.transaction(() => {
     const existingMain = readRow(store.db, userId, date);
-    const mergedMain = computeMerged(existingMain, date, parsed);
-
+    let mergedMain = computeMerged(existingMain, date, parsed);
     let weightSynced = false;
-    // Route weight & bodyFat back to their actual measured date if measured earlier than today.
-    const actualWeightDate = weightDate ?? date;
-    const actualFatForWeight = bodyFatDate === actualWeightDate ? bodyFatPct : undefined;
 
-    if (actualWeightDate === date) {
-      weightSynced = maybeSyncWeightRecord(
+    const syncDayWeight = (
+      targetDay: string,
+      existingRow: DailyHealthSnapshot | null,
+      mergedRow: DailyHealthSnapshot,
+      incomingW: number | undefined,
+      incomingWAt: string | undefined,
+      incomingBf: number | undefined,
+      incomingBfAt: string | undefined,
+    ) => {
+      const res = maybeSyncWeightRecord({
         store,
         userId,
+        targetDate: targetDay,
+        weightKg: incomingW,
+        weightAt: incomingWAt,
+        bodyFatPct: incomingBf,
+        bodyFatAt: incomingBfAt,
+        prevSyncedWeight: existingRow?.syncedWeightValue,
+        prevSyncedWeightAt: existingRow?.syncedWeightAt,
+        prevSyncedBodyFat: existingRow?.syncedBodyFatValue,
+        prevSyncedBodyFatAt: existingRow?.syncedBodyFatAt,
+      });
+      if (res.syncedWeight && incomingW !== undefined) {
+        mergedRow.syncedWeightValue = incomingW;
+        if (incomingWAt) mergedRow.syncedWeightAt = incomingWAt;
+        weightSynced = true;
+      }
+      if (res.syncedBodyFat && incomingBf !== undefined) {
+        mergedRow.syncedBodyFatValue = incomingBf;
+        if (incomingBfAt) mergedRow.syncedBodyFatAt = incomingBfAt;
+      }
+      return mergedRow;
+    };
+
+    if ((weightDate === undefined || weightDate === date) && (weightKg !== undefined || (bodyFatDate === date && bodyFatPct !== undefined))) {
+      mergedMain = syncDayWeight(
         date,
+        existingMain,
+        mergedMain,
         weightKg,
-        actualFatForWeight ?? (threeDaySync ? undefined : bodyFatPct),
-        existingMain?.syncedWeightValue,
-        existingMain?.syncedBodyFatValue,
+        weightMeasuredAt,
+        bodyFatDate === date ? bodyFatPct : threeDaySync ? undefined : bodyFatPct,
+        bodyFatDate === date ? bodyFatMeasuredAt : threeDaySync ? undefined : bodyFatMeasuredAt,
       );
-      if (weightSynced && weightKg != null) {
-        mergedMain.syncedWeightValue = weightKg;
-        if ((actualFatForWeight ?? (threeDaySync ? undefined : bodyFatPct)) != null) {
-          mergedMain.syncedBodyFatValue = actualFatForWeight ?? (threeDaySync ? undefined : bodyFatPct);
-        }
-      }
-    } else if (weightKg != null) {
-      const existingWeightDay = readRow(store.db, userId, actualWeightDate);
-      const mergedWeightDay = computeMerged(existingWeightDay, actualWeightDate, {
-        weightKg,
-        weightDate: actualWeightDate,
-        ...(actualFatForWeight != null ? { bodyFatPct: actualFatForWeight, bodyFatDate: actualWeightDate } : {}),
-      }, threeDaySync ? false : replace);
-      weightSynced = maybeSyncWeightRecord(
-        store,
-        userId,
-        actualWeightDate,
-        weightKg,
-        actualFatForWeight,
-        existingWeightDay?.syncedWeightValue,
-        existingWeightDay?.syncedBodyFatValue,
-      );
-      if (weightSynced) {
-        mergedWeightDay.syncedWeightValue = weightKg;
-        if (actualFatForWeight != null) mergedWeightDay.syncedBodyFatValue = actualFatForWeight;
-      }
-      writeRow(store.db, userId, actualWeightDate, mergedWeightDay);
     }
 
     for (const [day, patch] of historical) {
-      writeRow(store.db, userId, day, computeMerged(readRow(store.db, userId, day), day, patch, false));
+      const existingHist = readRow(store.db, userId, day);
+      let mergedHist = computeMerged(existingHist, day, patch, day === weightDate && !threeDaySync ? replace : false);
+      const dayBf = patch.bodyFatDate === day ? patch.bodyFatPct : undefined;
+      const dayBfAt = patch.bodyFatDate === day ? patch.bodyFatMeasuredAt : undefined;
+      if (patch.weightKg !== undefined || dayBf !== undefined) {
+        mergedHist = syncDayWeight(day, existingHist, mergedHist, patch.weightKg, patch.weightMeasuredAt, dayBf, dayBfAt);
+      }
+      writeRow(store.db, userId, day, mergedHist);
     }
     if (!threeDaySync || Object.values(parsed).some((value) => value !== undefined)) {
       writeRow(store.db, userId, date, mergedMain);
@@ -929,7 +1224,21 @@ export function upsertDailyHealth(
 }
 
 export function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthSnapshot {
-  const { syncedWeightValue: _w, syncedBodyFatValue: _f, syncedSleepObservations: _s, stepsSampledAt: _steps, ...rest } = snapshot;
+  const {
+    weightMeasuredAt: _wm,
+    bodyFatMeasuredAt: _bm,
+    syncedWeightValue: _w,
+    syncedWeightAt: _wa,
+    syncedBodyFatValue: _f,
+    syncedBodyFatAt: _fa,
+    waterSource: _ws,
+    waterUpdatedAt: _wu,
+    waterAppleSyncedMl: _was,
+    syncedSleepObservations: _s,
+    stepsSampledAt: _steps,
+    stepsHourly: _sh,
+    ...rest
+  } = snapshot;
   return rest;
 }
 

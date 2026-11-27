@@ -16,6 +16,7 @@ const { app, auth, store } = createApp(
   db,
   {
     allowDevLogin: !demo && process.env.ALLOW_DEV_LOGIN === "true",
+    allowPrivateWebhooks: process.env.ALLOW_PRIVATE_WEBHOOKS === "true",
     healthDataExportWebhookUrl: process.env.HEALTH_DATA_EXPORT_WEBHOOK_URL,
     ai: demo && !hasLiveAi
       ? { baseUrl: "https://demo.invalid/v1", apiKey: "demo-session", model: "ironlog-demo-coach", mode: "demo" }

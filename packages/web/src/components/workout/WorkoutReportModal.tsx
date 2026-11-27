@@ -297,12 +297,25 @@ export function WorkoutReportModal({
     setBusyAction("fit");
     try {
       const full = await fetchFullRecord().catch(() => null);
+      const startIso = full?.data.startedAt ?? `${report.date}T12:00:00Z`;
+      const endIso = full?.data.endedAt ?? null;
+      const inferredDuration =
+        report.duration ??
+        (!full?.data.durationUnknown && startIso && endIso && Date.parse(endIso) > Date.parse(startIso)
+          ? Math.round((Date.parse(endIso) - Date.parse(startIso)) / 1000)
+          : null);
+      if (full?.data.durationUnknown || !inferredDuration || inferredDuration <= 0) {
+        notify("本场训练时长未知，无法生成符合实际记录的 .fit 文件；请先补充训练时长或改用 CSV/JSON 导出");
+        return;
+      }
       const bytes = encodeWorkoutToFit({
         title: report.title,
         date: report.date,
-        startedAt: full?.data.startedAt ?? `${report.date}T12:00:00Z`,
-        endedAt: full?.data.endedAt ?? null,
-        durationSeconds: report.duration,
+        startedAt: startIso,
+        endedAt: endIso,
+        durationSeconds: inferredDuration,
+        durationUnknown: Boolean(full?.data.durationUnknown),
+        activeCaloriesKcal: appleItem?.activeEnergyKcal ?? null,
         exercises: full?.data.exercises as Parameters<typeof encodeWorkoutToFit>[0]["exercises"],
         totalSets: report.sets,
         totalVolumeKg: report.volume,

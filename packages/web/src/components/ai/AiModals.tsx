@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { guessMeal, today } from "../../lib/date";
-import { MEALS, type DietData, type MealKey, type RecordEnvelope, type WorkoutData } from "../../lib/domain";
+import { MEALS, safeUuid, type DietData, type MealKey, type RecordEnvelope, type WorkoutData } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
@@ -196,6 +196,14 @@ export function AiReviewModal() {
 interface ParsedDietItem {
   _recordId: string;
   _opId: string;
+  _opFingerprint: string;
+  _baseVersion: number;
+  _saved?: boolean;
+  _conflict?: {
+    savedVersion: number;
+    savedName: string;
+    savedCalories: number;
+  } | null;
   include: boolean;
   name: string;
   calories: number;
@@ -255,8 +263,12 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
       );
       if (!mountedRef.current) return;
       const items = (res.foods ?? []).map((f) => ({
-        _recordId: crypto.randomUUID(),
-        _opId: crypto.randomUUID(),
+        _recordId: safeUuid(),
+        _opId: safeUuid(),
+        _opFingerprint: "",
+        _baseVersion: 0,
+        _saved: false,
+        _conflict: null,
         include: true,
         name: String(f.name || "食物"),
         calories: Math.max(0, Number(f.calories) || 0),
@@ -276,39 +288,105 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
 
   const confirmSave = async () => {
     if (!foods || saving) return;
-    const selected = foods.filter((f) => f.include);
-    if (!selected.length) return;
+    const pendingEntries = foods
+      .map((item, idx) => ({ item, idx }))
+      .filter(({ item }) => item.include && !item._saved);
+    if (!pendingEntries.length) return;
     setSaving(true);
     setError("");
+
+    const opByRecordId = new Map<string, { opId: string; fingerprint: string }>();
+    const mutations = pendingEntries.map(({ item }) => {
+      const bodyData: DietData = {
+        ...(item.raw as Partial<DietData>),
+        date,
+        meal,
+        name: item.name.trim() || "食物",
+        calories: Math.max(0, Number(item.calories) || 0),
+        protein: Math.max(0, Number(item.protein) || 0),
+        carbs: Math.max(0, Number(item.carbs) || 0),
+        fat: Math.max(0, Number(item.fat) || 0),
+      };
+      const fingerprint = JSON.stringify({ baseVersion: item._baseVersion, data: bodyData });
+      const opId = item._opFingerprint === fingerprint && item._opId ? item._opId : safeUuid();
+      opByRecordId.set(item._recordId, { opId, fingerprint });
+      return {
+        opId,
+        id: item._recordId,
+        kind: "diet" as const,
+        baseVersion: item._baseVersion,
+        deleted: false,
+        data: bodyData,
+      };
+    });
+
+    // Persist opIds + fingerprints so identical retries after network failure / 503 reuse the exact opId
+    setFoods((prev) =>
+      prev
+        ? prev.map((row) => {
+            const meta = opByRecordId.get(row._recordId);
+            return meta ? { ...row, _opId: meta.opId, _opFingerprint: meta.fingerprint } : row;
+          })
+        : null,
+    );
+
     try {
-      const mutations = selected.map((item) => {
-        const bodyData: DietData = {
-          ...(item.raw as Partial<DietData>),
-          date,
-          meal,
-          name: item.name.trim() || "食物",
-          calories: Math.max(0, Number(item.calories) || 0),
-          protein: Math.max(0, Number(item.protein) || 0),
-          carbs: Math.max(0, Number(item.carbs) || 0),
-          fat: Math.max(0, Number(item.fat) || 0),
-        };
-        return {
-          opId: crypto.randomUUID(),
-          id: item._recordId,
-          kind: "diet" as const,
-          baseVersion: 0,
-          deleted: false,
-          data: bodyData,
-        };
-      });
-      await apiFetch("/api/sync", {
+      const res = await apiFetch<{
+        results?: Array<{
+          opId: string;
+          status: "applied" | "conflict";
+          record?: RecordEnvelope<DietData>;
+        }>;
+      }>("/api/sync", {
         method: "POST",
         body: { cursor: 0, mutations },
       });
       if (!mountedRef.current) return;
-      bumpDataEpoch();
+
+      const resultsByOp = new Map((res.results ?? []).map((r) => [r.opId, r]));
+      let appliedCount = 0;
+      let conflictCount = 0;
+
+      const nextFoods = foods.map((row) => {
+        const meta = opByRecordId.get(row._recordId);
+        if (!meta) return row;
+        const outcome = resultsByOp.get(meta.opId);
+        if (outcome?.status === "applied") {
+          appliedCount++;
+          return {
+            ...row,
+            _saved: true,
+            _baseVersion: outcome.record?.version ?? row._baseVersion + 1,
+            _conflict: null,
+          };
+        }
+        conflictCount++;
+        const serverRec = outcome?.record;
+        return {
+          ...row,
+          _saved: false,
+          _baseVersion: serverRec?.version ?? row._baseVersion,
+          _opId: safeUuid(),
+          _opFingerprint: "",
+          _conflict: {
+            savedVersion: serverRec?.version ?? row._baseVersion,
+            savedName: serverRec?.data?.name ?? row.name,
+            savedCalories: serverRec?.data?.calories ?? row.calories,
+          },
+        };
+      });
+      setFoods(nextFoods);
+
+      if (appliedCount > 0) bumpDataEpoch();
+      if (conflictCount > 0) {
+        setError(
+          `有 ${conflictCount} 项记录与云端已保存版本冲突（已保留弹窗并自动更新版本号），请核对后再次点击保存以覆盖更新`,
+        );
+        return;
+      }
+
       closeAllModals();
-      notify(`已写入 ${selected.length} 项饮食记录`);
+      notify(`已写入 ${appliedCount} 项饮食记录`);
     } catch (err) {
       if (mountedRef.current) setError((err as Error)?.message || "保存饮食记录失败，请重试");
     } finally {
@@ -316,7 +394,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
     }
   };
 
-  const selectedCount = foods?.filter((f) => f.include).length ?? 0;
+  const selectedCount = foods?.filter((f) => f.include && !f._saved).length ?? 0;
 
   return (
     <form id="ai-diet-form" className="dialog-form ai-modal" onSubmit={(e) => void parseDiet(e)}>
@@ -381,6 +459,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
                   type="text"
                   maxLength={120}
                   value={item.name}
+                  disabled={Boolean(item._saved)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" && !e.nativeEvent.isComposing) e.preventDefault();
                   }}
@@ -390,6 +469,15 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
                   }}
                 />
               </label>
+              {item._saved ? (
+                <p className="muted" style={{ margin: "2px 0 4px", fontSize: 12 }}>
+                  ✓ 已保存（v{item._baseVersion}）
+                </p>
+              ) : item._conflict ? (
+                <p className="form-error" role="status" style={{ margin: "2px 0 6px", fontSize: 12 }}>
+                  版本冲突：云端已保存 v{item._conflict.savedVersion}「{item._conflict.savedName} · {item._conflict.savedCalories} kcal」，再次点击保存将按当前内容更新至 v{item._conflict.savedVersion + 1}。
+                </p>
+              ) : null}
               <div className="ai-food-nums">
                 {(
                   [
@@ -516,8 +604,8 @@ export function AiWorkoutModal({
       const res = await apiFetch<{ record: RecordEnvelope<WorkoutData> }>("/api/records", {
         method: "POST",
         body: {
-          opId: crypto.randomUUID(),
-          id: crypto.randomUUID(),
+          opId: safeUuid(),
+          id: safeUuid(),
           kind: "workout",
           baseVersion: 0,
           deleted: false,

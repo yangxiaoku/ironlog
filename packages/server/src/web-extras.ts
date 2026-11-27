@@ -395,6 +395,7 @@ export const waterUpdateInput = z
     date: z.iso.date(),
     deltaMl: z.number().int().min(-15000).max(15000).optional(),
     setMl: z.number().int().min(0).max(15000).optional(),
+    opId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   })
   .refine((v) => v.deltaMl !== undefined || v.setMl !== undefined, {
     message: "缺少饮水量参数",
@@ -409,6 +410,27 @@ export function updateDailyWater(
     throw new DomainError("只能记录今天或之前的饮水量", 400);
   }
   return db.transaction(() => {
+    const requestPayload = input.opId
+      ? JSON.stringify({
+          kind: "water",
+          date: input.date,
+          deltaMl: input.deltaMl ?? null,
+          setMl: input.setMl ?? null,
+        })
+      : null;
+    const opKey = input.opId ? `water:${input.opId}` : null;
+    if (opKey && requestPayload) {
+      const saved = db
+        .prepare("SELECT request, result FROM operations WHERE user_id=? AND op_id=?")
+        .get(userId, opKey) as { request: string; result: string } | undefined;
+      if (saved) {
+        if (saved.request !== requestPayload) {
+          throw new DomainError("操作 ID 已用于其他请求", 409);
+        }
+        return JSON.parse(saved.result) as { date: string; waterMl: number };
+      }
+    }
+
     const rawRow = db
       .prepare("SELECT data FROM apple_health_daily WHERE user_id=? AND date=?")
       .get(userId, input.date) as { data: string } | undefined;
@@ -417,17 +439,35 @@ export function updateDailyWater(
     const rawNext = input.setMl !== undefined ? input.setMl : current + (input.deltaMl ?? 0);
     const nextMl = Math.max(0, Math.min(15000, Math.round(rawNext)));
     const updatedAt = new Date().toISOString();
+    const preservedAppleMl =
+      existing?.waterAppleSyncedMl !== undefined
+        ? existing.waterAppleSyncedMl
+        : existing && existing.waterSource !== "manual" && typeof existing.waterMl === "number"
+          ? existing.waterMl
+          : undefined;
     const merged: DailyHealthSnapshot = {
       ...(existing ?? { date: input.date, updatedAt, source: "manual" }),
       date: input.date,
       updatedAt,
       waterMl: nextMl,
+      waterSource: "manual",
+      waterUpdatedAt: updatedAt,
+      ...(preservedAppleMl !== undefined ? { waterAppleSyncedMl: preservedAppleMl } : {}),
     };
     db.prepare(
       `INSERT INTO apple_health_daily (user_id, date, updated_at, data) VALUES (?, ?, ?, ?)
        ON CONFLICT(user_id, date) DO UPDATE SET updated_at=excluded.updated_at, data=excluded.data`,
     ).run(userId, input.date, updatedAt, JSON.stringify(merged));
-    return { date: input.date, waterMl: nextMl };
+    const outcome = { date: input.date, waterMl: nextMl };
+    if (opKey && requestPayload) {
+      db.prepare("INSERT INTO operations (user_id, op_id, request, result) VALUES (?, ?, ?, ?)").run(
+        userId,
+        opKey,
+        requestPayload,
+        JSON.stringify(outcome),
+      );
+    }
+    return outcome;
   }).immediate();
 }
 
@@ -500,18 +540,19 @@ export function buildWebCsv(
       "已完成",
       "容量(kg)",
       "开始时间",
+      "训练ID",
     ];
     const rows: unknown[][] = [];
     const workouts = store
       .list(userId, "workout")
-      .map((r) => r.data as Workout)
-      .filter((w) => w.status === "completed")
+      .map((r) => ({ id: r.id, w: r.data as Workout }))
+      .filter(({ w }) => w.status === "completed")
       .sort((a, b) =>
-        b.date.localeCompare(a.date) ||
-        (Date.parse(b.endedAt ?? b.startedAt) || 0) - (Date.parse(a.endedAt ?? a.startedAt) || 0),
+        b.w.date.localeCompare(a.w.date) ||
+        (Date.parse(b.w.endedAt ?? b.w.startedAt) || 0) - (Date.parse(a.w.endedAt ?? a.w.startedAt) || 0),
       );
 
-    for (const w of workouts) {
+    for (const { id: workoutId, w } of workouts) {
       const secs = workoutDurationSeconds(w);
       const mins = secs != null ? round1(secs / 60) : "";
       const feeling = w.feeling ? (FEELING_LABELS[w.feeling] ?? w.feeling) : "";
@@ -541,6 +582,7 @@ export function buildWebCsv(
             s.completed,
             vol,
             w.startedAt,
+            workoutId,
           ]);
         });
       }

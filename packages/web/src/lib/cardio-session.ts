@@ -222,13 +222,47 @@ export function requestCardioAppleSync(userId: string, session: LiveCardioSessio
   });
 }
 
+function canonicalCardioActivity(rawType: string): { base: string; inferredEnv?: "indoor" | "outdoor" } {
+  const trimmed = rawType.trim();
+  const localized: Record<string, { base: string; inferredEnv?: "indoor" | "outdoor" }> = {
+    "户外跑步": { base: "running", inferredEnv: "outdoor" },
+    "戶外跑步": { base: "running", inferredEnv: "outdoor" },
+    "室内跑步": { base: "running", inferredEnv: "indoor" },
+    "室內跑步": { base: "running", inferredEnv: "indoor" },
+    "跑步": { base: "running" },
+    "户外骑行": { base: "cycling", inferredEnv: "outdoor" },
+    "室内骑行": { base: "cycling", inferredEnv: "indoor" },
+    "骑行": { base: "cycling" },
+    "户外步行": { base: "walking", inferredEnv: "outdoor" },
+    "室内步行": { base: "walking", inferredEnv: "indoor" },
+    "步行": { base: "walking" },
+  };
+  if (Object.hasOwn(localized, trimmed)) return localized[trimmed]!;
+  const code = trimmed.toLowerCase().replace(/^hkworkoutactivitytype/, "").replace(/[-_\s]/g, "");
+  const prefixMatch = /^(indoor|outdoor)(running|walking|cycling)$/.exec(code);
+  if (prefixMatch) {
+    return { base: prefixMatch[2]!, inferredEnv: prefixMatch[1] as "indoor" | "outdoor" };
+  }
+  const suffixMatch = /^(running|walking|cycling)(indoor|outdoor)$/.exec(code);
+  if (suffixMatch) {
+    return { base: suffixMatch[1]!, inferredEnv: suffixMatch[2] as "indoor" | "outdoor" };
+  }
+  return { base: code };
+}
+
 export function matchesCardioAppleWorkout(session: LiveCardioSession, workout: {
   activityType: string; environment?: string; startedAt: string; endedAt: string;
 }): boolean {
   if (!session.finishedAt || !session.appleSyncRequestedAt) return false;
-  const normalize = (type: string) => type.toLowerCase().replace(/^hkworkoutactivitytype/, "").replace(/[-_]/g, "");
-  return normalize(workout.activityType) === normalize(session.activityType) &&
-    (workout.environment === session.environment || workout.environment === "unknown" || workout.environment == null) &&
+  const sessionNorm = canonicalCardioActivity(session.activityType);
+  const workoutNorm = canonicalCardioActivity(workout.activityType);
+  const effectiveWorkoutEnv =
+    workout.environment && workout.environment !== "unknown"
+      ? workout.environment
+      : workoutNorm.inferredEnv;
+  const effectiveSessionEnv = session.environment ?? sessionNorm.inferredEnv;
+  return workoutNorm.base === sessionNorm.base &&
+    (effectiveWorkoutEnv == null || effectiveSessionEnv == null || effectiveWorkoutEnv === effectiveSessionEnv) &&
     Math.abs(Date.parse(workout.startedAt) - Date.parse(session.startedAt)) <= 120_000 &&
     Date.parse(workout.endedAt) >= Date.parse(session.finishedAt) - 120_000 &&
     Date.parse(workout.endedAt) <= Date.parse(session.appleSyncRequestedAt) + 120_000;

@@ -100,6 +100,7 @@ export const workoutAdjustmentPatchSchema = z
   .object({
     exerciseId: id.optional(),
     weight: nonnegative.optional(),
+    weightUnit: weightUnitSchema.optional(),
     reps: z.number().int().min(1).max(1000).optional(),
     seconds: z.number().int().min(1).max(86400).optional(),
     restSeconds: z.number().int().min(0).max(900).optional(),
@@ -119,6 +120,7 @@ export const workoutAdjustmentRequestSchema = z.object({
 export const workoutAdjustmentSchema = workoutAdjustmentRequestSchema.extend({
   before: z.object({
     exerciseId: id,
+    weightUnit: weightUnitSchema.optional(),
     snapshot: exerciseSnapshotSchema.nullable().optional(),
     restSeconds: z.number().int().min(0).max(900),
     openSets: z

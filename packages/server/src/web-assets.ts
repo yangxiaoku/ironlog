@@ -28,6 +28,38 @@ interface CachedAsset {
 
 const assetCache = new Map<string, CachedAsset>();
 
+export function acceptsGzip(header: string | undefined | null): boolean {
+  if (!header) return false;
+  let explicitQ: number | null = null;
+  let wildcardQ: number | null = null;
+  for (const part of header.split(",")) {
+    const segments = part.trim().split(";").map((s) => s.trim());
+    const coding = (segments[0] ?? "").toLowerCase();
+    if (!coding) continue;
+    let q = 1;
+    let validQ = true;
+    for (let i = 1; i < segments.length; i++) {
+      const m = /^q\s*=\s*([01](?:\.\d{0,3})?)$/i.exec(segments[i]!);
+      if (m) {
+        const parsed = Number(m[1]);
+        if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 1) {
+          q = parsed;
+        } else {
+          validQ = false;
+        }
+      }
+    }
+    if (!validQ) continue;
+    if (coding === "gzip" || coding === "x-gzip") {
+      explicitQ = explicitQ === null ? q : Math.max(explicitQ, q);
+    } else if (coding === "*") {
+      wildcardQ = wildcardQ === null ? q : Math.max(wildcardQ, q);
+    }
+  }
+  if (explicitQ !== null) return explicitQ > 0;
+  return wildcardQ !== null && wildcardQ > 0;
+}
+
 export function mountWebAssets(app: Hono<{ Variables: { userId: string } }>) {
   app.get("/", (c) => c.redirect("/app/", 302));
   app.get("/app", (c) => c.redirect("/app/", 302));
@@ -77,7 +109,7 @@ export function mountWebAssets(app: Hono<{ Variables: { userId: string } }>) {
     c.header("Content-Security-Policy", csp);
     if (entry.gzip) c.header("Vary", "Accept-Encoding");
     if (c.req.header("If-None-Match") === entry.etag) return c.body(null, 304);
-    if (entry.gzip && /\bgzip\b/i.test(c.req.header("Accept-Encoding") ?? "")) {
+    if (entry.gzip && acceptsGzip(c.req.header("Accept-Encoding"))) {
       c.header("Content-Encoding", "gzip");
       return c.body(entry.gzip);
     }

@@ -97,8 +97,13 @@ export const HALFTONE_VIEWS = new Set<ViewId>([
   "calendar",
 ]);
 
+export const VALID_VIEWS = new Set<ViewId>(Object.keys(DESTINATIONS) as ViewId[]);
+
+export function isValidView(raw: string): raw is ViewId {
+  return VALID_VIEWS.has(raw as ViewId);
+}
+
 export function parseHashView(hash: string): ViewId {
   const raw = hash.replace(/^#/, "");
-  if (raw in DESTINATIONS) return raw as ViewId;
-  return "overview";
+  return isValidView(raw) ? raw : "overview";
 }

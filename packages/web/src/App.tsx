@@ -8,6 +8,7 @@ import { apiFetch, configureApi } from "./lib/api";
 import type { ProfileGoals } from "./lib/domain";
 import { prefetchViewChunk, viewLoaders } from "./lib/prefetch";
 import { cachedApiFetch, configureQueryCache, invalidateQueryCache } from "./lib/query-cache";
+import { getOfflineStorage, readQueue } from "./lib/offline-queue";
 import { openCommandPalette } from "./lib/record-openers";
 import {
   PROFILE_VERSION_EVENT,
@@ -62,6 +63,7 @@ export function App() {
 
   const booted = useAuthStore((s) => s.booted);
   const userId = useAuthStore((s) => s.userId);
+  const offlineBoot = useAuthStore((s) => s.offlineBoot);
   const view = useUiStore((s) => s.view);
 
   useEffect(() => {
@@ -92,6 +94,20 @@ export function App() {
     window.addEventListener("online", onOnline);
     return () => window.removeEventListener("online", onOnline);
   }, []);
+
+  // Auto-flush offline queue whenever an account becomes authenticated while online (password / passkey / pairing code / bootstrap)
+  useEffect(() => {
+    if (!userId || offlineBoot) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    const pendingBefore = readQueue(getOfflineStorage(), userId).length;
+    if (pendingBefore === 0) return;
+    void useUiStore.getState().syncOfflineQueue(userId, { silent: true }).then(() => {
+      const pendingAfter = readQueue(getOfflineStorage(), userId).length;
+      if (pendingAfter < pendingBefore) {
+        useUiStore.getState().bumpDataEpoch();
+      }
+    });
+  }, [userId, offlineBoot]);
 
   useEffect(() => {
     if (!userId) return;

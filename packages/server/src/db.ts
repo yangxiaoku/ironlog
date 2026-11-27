@@ -51,13 +51,12 @@ export function openDatabase(path: string): Database.Database {
     );
     CREATE TABLE IF NOT EXISTS active_plans (
       user_id TEXT PRIMARY KEY REFERENCES users(id), plan_id TEXT NOT NULL, version INTEGER NOT NULL,
-      revision INTEGER NOT NULL, updated_at TEXT NOT NULL
+      revision INTEGER NOT NULL, updated_at TEXT NOT NULL, cycle_started_at TEXT
     );
     CREATE TABLE IF NOT EXISTS plan_activations (
       user_id TEXT NOT NULL REFERENCES users(id), plan_id TEXT NOT NULL, version INTEGER NOT NULL,
-      revision INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(user_id, revision)
+      revision INTEGER NOT NULL, updated_at TEXT NOT NULL, cycle_started_at TEXT, PRIMARY KEY(user_id, revision)
     );
-    INSERT OR IGNORE INTO plan_activations SELECT user_id, plan_id, version, revision, updated_at FROM active_plans;
     CREATE TABLE IF NOT EXISTS plan_revision_floor (
       user_id TEXT PRIMARY KEY REFERENCES users(id), revision INTEGER NOT NULL
     );
@@ -151,7 +150,21 @@ export function openDatabase(path: string): Database.Database {
       last_used_at TEXT
     );
     CREATE INDEX IF NOT EXISTS web_passkeys_user ON web_passkeys(user_id, created_at DESC);
-    PRAGMA user_version = 6;
+    PRAGMA user_version = 7;
+  `);
+  const ensureColumn = (table: string, col: string, def: string) => {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!cols.some((c) => c.name === col)) {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+    }
+  };
+  ensureColumn("active_plans", "cycle_started_at", "TEXT");
+  ensureColumn("plan_activations", "cycle_started_at", "TEXT");
+  db.exec(`
+    UPDATE active_plans SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;
+    UPDATE plan_activations SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;
+    INSERT OR IGNORE INTO plan_activations (user_id, plan_id, version, revision, updated_at, cycle_started_at)
+      SELECT user_id, plan_id, version, revision, updated_at, COALESCE(cycle_started_at, updated_at) FROM active_plans;
   `);
   return db;
 }
