@@ -26,7 +26,9 @@ import {
   muscleNames,
   starterPlans,
   trackGoals,
+  webhookConfigSchema,
   workoutAdaptationSchema,
+  workoutMetrics,
   workoutPrefsPatchSchema,
   workoutPrefsSchema,
   workoutSchema,
@@ -34,6 +36,7 @@ import {
   type Mutation,
   type MutationResult,
   type NutritionDay,
+  type Workout,
 } from "@ironlog/shared";
 import { Auth } from "./auth.js";
 import { AiService, type AiConfig } from "./ai.js";
@@ -44,7 +47,8 @@ import { readHealthDataExport } from "./health-data-export.js";
 import { catalogueETag, catalogueLookup, catalogueQuery, CloudCatalogue, exerciseFrame } from "./cloud-catalogue.js";
 import { DomainError, Store } from "./store.js";
 import { getStats, getTrainingContext } from "./stats.js";
-import { getWebStatistics, saveWebPreferences, shiftDay, webPreferences, webPreferencesInput, webStatsQuery } from "./web-statistics.js";
+import { getWebStatistics, isoWeekKey, saveWebPreferences, shiftDay, webPreferences, webPreferencesInput, webStatsQuery } from "./web-statistics.js";
+import { deliverWebhookEvent } from "./webhook.js";
 import { getWebAnalytics, webAnalyticsQuery } from "./web-analytics.js";
 import { getWebBadges } from "./web-badges.js";
 import {
@@ -70,14 +74,18 @@ import {
   buildWebCsv,
   csvExportKind,
   deleteMeasurement,
+  deleteProgressPhoto,
   exerciseNoteInput,
   getExerciseHistory,
   getTrainedExercisesSummary,
   listExerciseNotes,
   listMeasurements,
+  listProgressPhotos,
   measurementInput,
+  progressPhotoInput,
   saveExerciseNote,
   saveMeasurement,
+  saveProgressPhoto,
   updateDailyWater,
   waterUpdateInput,
 } from "./web-extras.js";
@@ -232,11 +240,51 @@ export function createApp(
       .parse(await c.req.json());
     return c.json(auth.login(`dev:${input.identity}`));
   });
-  app.use("/auth/web/*", bodyLimit({ maxSize: 4096 }));
+  app.use("/auth/web/*", bodyLimit({ maxSize: 16384 }));
   app.use("/auth/web/*", async (c, next) => {
     c.header("Cache-Control", "no-store");
     checkBrowserWrite(c, trustProxy);
     await next();
+  });
+  const resolveOriginAndRp = (c: Context) => {
+    const rawOrigin = c.req.header("Origin");
+    const origin = rawOrigin ? new URL(rawOrigin).origin : new URL(c.req.url).origin;
+    const rpId = new URL(origin).hostname;
+    return { origin, rpId };
+  };
+  app.post("/auth/web/pairing-login", async (c) => {
+    const peer = requestPeer(c, trustProxy);
+    browser.limit("pairing:peer:" + peer, 20);
+    const { code } = z.object({ code: z.string().trim().min(1).max(20) }).parse(await c.req.json());
+    const account = browser.redeemPairingCode(code);
+    const options = cookieOptions(c, trustProxy);
+    const session = browser.issueSession(account.userId, getCookie(c, cookieName, options.prefix));
+    setCookie(c, cookieName, session, { ...options, maxAge: webSessionSeconds });
+    return c.json(account);
+  });
+  app.post("/auth/web/passkey/login/options", async (c) => {
+    const peer = requestPeer(c, trustProxy);
+    browser.limit("passkey:opt:" + peer, 40);
+    const body = await c.req.json().catch(() => ({}));
+    const { username: hint } = z.object({ username: z.string().max(100).optional() }).parse(body);
+    const { rpId } = resolveOriginAndRp(c);
+    return c.json(browser.createPasskeyLoginOptions(rpId, hint));
+  });
+  app.post("/auth/web/passkey/login/verify", async (c) => {
+    const peer = requestPeer(c, trustProxy);
+    browser.limit("passkey:login:" + peer, 30);
+    const input = z.object({
+      credentialId: z.string().min(1).max(512),
+      authenticatorData: z.string().min(1).max(4096),
+      clientDataJSON: z.string().min(1).max(4096),
+      signature: z.string().min(1).max(4096),
+    }).parse(await c.req.json());
+    const { origin, rpId } = resolveOriginAndRp(c);
+    const account = browser.verifyPasskeyLogin(input, origin, rpId);
+    const options = cookieOptions(c, trustProxy);
+    const session = browser.issueSession(account.userId, getCookie(c, cookieName, options.prefix));
+    setCookie(c, cookieName, session, { ...options, maxAge: webSessionSeconds });
+    return c.json(account);
   });
   for (const mode of ["register", "login"] as const) {
     app.post(`/auth/web/${mode}`, async (c) => {
@@ -706,6 +754,123 @@ export function createApp(
       return { waterGoalMl, version: result.record!.version };
     }).immediate());
   });
+  // 3.2 Progress Photos (bodyLimit 1.5MB for compressed JPEG/WebP)
+  const photoBodyLimit = bodyLimit({ maxSize: 1_500_000 });
+  app.get("/api/web/progress-photos", (c) => c.json(listProgressPhotos(db, c.get("userId"))));
+  app.post("/api/web/progress-photos", photoBodyLimit, async (c) =>
+    c.json(saveProgressPhoto(db, c.get("userId"), progressPhotoInput.parse(await c.req.json())), 201));
+  app.delete("/api/web/progress-photos/:id", (c) =>
+    c.json(deleteProgressPhoto(db, c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")))));
+
+  // 3.2 Streak Freeze (monthly allowance: 1 per calendar month)
+  app.post("/api/web/streak-freeze", async (c) => {
+    const body = await c.req.json().catch(() => ({}));
+    const { weekKey: requestedWeek, remove } = z
+      .object({
+        weekKey: z.string().regex(/^\d{4}-W\d{2}$/).optional(),
+        remove: z.boolean().optional(),
+      })
+      .parse(body);
+    const userId = c.get("userId");
+    const today = localDate();
+    const targetWeek = requestedWeek ?? isoWeekKey(today);
+    return c.json(db.transaction(() => {
+      const existing = store.get(userId, "profile", "settings");
+      const baseVersion = existing?.version ?? 0;
+      const previous = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
+      const curSet = new Set(previous.streakFreezeWeeks ?? []);
+      if (remove) {
+        curSet.delete(targetWeek);
+      } else {
+        if (!curSet.has(targetWeek)) {
+          const monthPrefix = today.slice(0, 7);
+          let usedThisMonth = false;
+          for (let offset = 0; offset < 31; offset++) {
+            const d = shiftDay(today, -offset);
+            if (!d.startsWith(monthPrefix)) break;
+            if (curSet.has(isoWeekKey(d))) {
+              usedThisMonth = true;
+              break;
+            }
+          }
+          if (usedThisMonth) throw new DomainError("本月连胜冻结卡已使用（每月限 1 次）", 400);
+          curSet.add(targetWeek);
+        }
+      }
+      const nextWeeks = [...curSet].sort().slice(-52);
+      const result = store.mutate(userId, {
+        id: "settings",
+        kind: "profile",
+        opId: crypto.randomUUID(),
+        baseVersion,
+        data: { ...previous, streakFreezeWeeks: nextWeeks },
+        deleted: false,
+      });
+      if (result.status === "conflict") throw new DomainError("连胜冻结状态冲突，请重试", 409);
+      return { weekKey: targetWeek, streakFreezeWeeks: nextWeeks, version: result.record!.version };
+    }).immediate());
+  });
+
+  // 3.3 Webhook config & test delivery
+  app.put("/api/web/profile/webhook", async (c) => {
+    const webhookConfig = webhookConfigSchema.parse(await c.req.json());
+    const userId = c.get("userId");
+    return c.json(db.transaction(() => {
+      const existing = store.get(userId, "profile", "settings");
+      const baseVersion = existing?.version ?? 0;
+      const previous = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
+      const result = store.mutate(userId, {
+        id: "settings",
+        kind: "profile",
+        opId: crypto.randomUUID(),
+        baseVersion,
+        data: { ...previous, webhookConfig },
+        deleted: false,
+      });
+      if (result.status === "conflict") throw new DomainError("Webhook 配置冲突，请重新加载", 409);
+      return { webhookConfig, version: result.record!.version };
+    }).immediate());
+  });
+  app.post("/api/web/webhook/test", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const userId = c.get("userId");
+    const existing = store.get(userId, "profile", "settings");
+    const profile = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
+    const cfg = body ? webhookConfigSchema.parse(body) : (profile.webhookConfig ?? webhookConfigSchema.parse({}));
+    const outcome = await deliverWebhookEvent(cfg, "webhook.test", {
+      message: "来自 铁记 Ironlog 的测试推送",
+      userId,
+    });
+    return c.json(outcome, outcome.delivered ? 200 : 400);
+  });
+
+  // 3.4 Authenticated Pairing Code & Passkey management
+  app.post("/api/web/auth/pairing-code", (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json(browser.issuePairingCode(c.get("userId")), 201);
+  });
+  app.get("/api/web/auth/passkeys", (c) => {
+    c.header("Cache-Control", "no-store");
+    return c.json(browser.listPasskeys(c.get("userId")));
+  });
+  app.delete("/api/web/auth/passkeys/:id", (c) =>
+    c.json(browser.deletePasskey(c.get("userId"), c.req.param("id"))));
+  app.post("/api/web/auth/passkey/register/options", (c) => {
+    c.header("Cache-Control", "no-store");
+    const { rpId } = resolveOriginAndRp(c);
+    return c.json(browser.createPasskeyRegisterOptions(c.get("userId"), rpId));
+  });
+  app.post("/api/web/auth/passkey/register/verify", async (c) => {
+    const input = z.object({
+      credentialId: z.string().min(1).max(512),
+      publicKeySpki: z.string().min(1).max(4096),
+      clientDataJSON: z.string().min(1).max(4096),
+      transports: z.array(z.string().max(32)).max(8).optional(),
+      label: z.string().max(60).optional(),
+    }).parse(await c.req.json());
+    const { origin } = resolveOriginAndRp(c);
+    return c.json(browser.verifyPasskeyRegistration(c.get("userId"), input, origin), 201);
+  });
   app.get(`${apple}/tokens`, (c) => c.json(health.devices(c.get("userId"))));
   app.post(`${apple}/tokens`, async (c) => {
     const { label } = z.object({ label: z.string().trim().min(1).max(80) }).parse(await c.req.json());
@@ -791,10 +956,33 @@ export function createApp(
     ),
   );
   app.post("/api/records", async (c) => {
-    const result = store.mutate(
-      c.get("userId"),
-      mutationSchema.parse(await c.req.json()),
-    );
+    const userId = c.get("userId");
+    const mutation = mutationSchema.parse(await c.req.json());
+    const prevRec = mutation.kind === "workout" ? store.get(userId, "workout", mutation.id) : null;
+    const prevCompleted = !prevRec?.deleted && (prevRec?.data as Workout | undefined)?.status === "completed";
+    const result = store.mutate(userId, mutation);
+    if (
+      result.status === "applied" &&
+      mutation.kind === "workout" &&
+      !mutation.deleted &&
+      !prevCompleted &&
+      (result.record?.data as Workout | undefined)?.status === "completed"
+    ) {
+      const profRec = store.get(userId, "profile", "settings");
+      const prof = profileSchema.parse(profRec?.deleted ? {} : profRec?.data ?? {});
+      if (prof.webhookConfig?.enabled && prof.webhookConfig.url) {
+        const w = result.record!.data as Workout;
+        const m = workoutMetrics(w, store.catalogueMap(userId, true));
+        void deliverWebhookEvent(prof.webhookConfig, "workout.completed", {
+          workoutId: result.record!.id,
+          title: w.title,
+          date: w.date,
+          completedSets: m.completedSets,
+          volumeKg: m.volume,
+          feeling: w.feeling ?? null,
+        }).catch(() => {});
+      }
+    }
     return c.json(result, result.status === "conflict" ? 409 : 200);
   });
   app.post("/api/sync", async (c) => {

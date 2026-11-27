@@ -11,6 +11,8 @@ import {
   evaluateNutritionEnergyBalance,
   evaluateProteinAdequacy,
   evaluateSessionInol,
+  evaluateStrengthStandards,
+  evaluateStructuralBalance,
   evaluateSymmetryAndFrequency,
   evaluateWeeklyMuscleDose,
   evaluateWeightChangeRate,
@@ -971,10 +973,71 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     through,
   );
 
+  const best1RMMap = new Map<string, number>();
+  for (const [exId, entry] of exercise1RMs) {
+    best1RMMap.set(exId, entry.best1RM);
+  }
+  const strengthStandards = evaluateStrengthStandards(best1RMMap, userWeightKg, userGender ?? "male");
+  const structuralBalance = evaluateStructuralBalance(best1RMMap);
+
+  const reviewYear = through.slice(0, 4);
+  const yearStart = `${reviewYear}-01-01`;
+  const yearEnd = `${reviewYear}-12-31`;
+  const yearActiveDays = new Set<string>();
+  const yearExCounts = new Map<string, { name: string; sets: number }>();
+  let yearSessions = 0;
+  let yearMinutes = 0;
+  let yearTonnageKg = 0;
+  let yearWorkSets = 0;
+  let yearBestPr: { name: string; oneRepMaxKg: number; date: string } | null = null;
+  for (const { workout } of workouts) {
+    if (workout.date < yearStart || workout.date > yearEnd) continue;
+    yearSessions++;
+    yearActiveDays.add(workout.date);
+    const durSec = workoutDurationSeconds(workout);
+    if (durSec != null && durSec > 0) yearMinutes += Math.round(durSec / 60);
+    for (const row of workout.exercises) {
+      const ex = row.snapshot ?? catalogue.get(row.exerciseId);
+      const exName = ex?.name ?? row.exerciseId;
+      for (const s of row.sets) {
+        if (!isValidWorkSet(s, ex?.mode)) continue;
+        yearWorkSets++;
+        const prevCnt = yearExCounts.get(row.exerciseId) ?? { name: exName, sets: 0 };
+        prevCnt.sets += 1;
+        yearExCounts.set(row.exerciseId, prevCnt);
+        if (ex?.mode === "reps" && s.weight > 0 && s.reps > 0) {
+          const wKg = weightToKg(s.weight, row.weightUnit);
+          yearTonnageKg += wKg * s.reps * (ex.volumeMultiplier ?? 1);
+          const e1rm = round1(estimatedOneRepMax(wKg, Math.min(s.reps, 12)));
+          if (!yearBestPr || e1rm > yearBestPr.oneRepMaxKg) {
+            yearBestPr = { name: exName, oneRepMaxKg: e1rm, date: workout.date };
+          }
+        }
+      }
+    }
+  }
+  const yearDietDays = new Set(
+    store.list(userId, "diet").map((r) => (r.data as Diet).date).filter((d) => d >= yearStart && d <= yearEnd),
+  ).size;
+  const yearInReview = {
+    year: Number(reviewYear),
+    sessions: yearSessions,
+    activeDays: yearActiveDays.size,
+    totalMinutes: yearMinutes,
+    totalTonnageKg: Math.round(yearTonnageKg),
+    totalWorkSets: yearWorkSets,
+    dietDays: yearDietDays,
+    topExercises: [...yearExCounts.values()].sort((a, b) => b.sets - a.sets).slice(0, 3),
+    bestPr: yearBestPr,
+  };
+
   return {
     today,
     through,
     period: displayPeriod,
+    strengthStandards,
+    structuralBalance,
+    yearInReview,
     userProfile: {
       weightKg: userWeightKg != null ? Math.round(userWeightKg * 10) / 10 : null,
       appleWeightKg: appleDailySummary.bodyReport.weightKg,

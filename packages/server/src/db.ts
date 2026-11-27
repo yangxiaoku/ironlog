@@ -121,7 +121,37 @@ export function openDatabase(path: string): Database.Database {
       PRIMARY KEY(user_id, date)
     );
     CREATE INDEX IF NOT EXISTS body_measurements_user_date ON body_measurements(user_id, date DESC);
-    PRAGMA user_version = 5;
+    CREATE TABLE IF NOT EXISTS progress_photos (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      date TEXT NOT NULL,
+      pose TEXT NOT NULL DEFAULT 'front',
+      mime TEXT NOT NULL,
+      image_data TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS progress_photos_user_date ON progress_photos(user_id, date DESC, created_at DESC);
+    CREATE TABLE IF NOT EXISTS web_pairing_codes (
+      code_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS web_pairing_codes_user ON web_pairing_codes(user_id, expires_at);
+    CREATE TABLE IF NOT EXISTS web_passkeys (
+      credential_id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      public_key TEXT NOT NULL,
+      counter INTEGER NOT NULL DEFAULT 0,
+      transports TEXT NOT NULL DEFAULT '[]',
+      label TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      last_used_at TEXT
+    );
+    CREATE INDEX IF NOT EXISTS web_passkeys_user ON web_passkeys(user_id, created_at DESC);
+    PRAGMA user_version = 6;
   `);
   return db;
 }

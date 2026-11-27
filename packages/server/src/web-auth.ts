@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, createPublicKey, randomBytes, randomInt, randomUUID, scrypt, timingSafeEqual, verify as verifySignature } from "node:crypto";
 import type Database from "better-sqlite3";
 import { z } from "zod";
 import type { Db } from "./db.js";
@@ -160,5 +160,242 @@ export class WebAuth {
   revokeSession(session?: string) {
     if (session && sessionPattern.test(session))
       this.stmtRevokeSession.run(sessionDigest(session));
+  }
+
+  // ===== 3.4 One-Time 6-Digit Device Pairing Codes (works over HTTP & HTTPS) =====
+  private readonly pairingTtlMs = 5 * 60_000;
+
+  issuePairingCode(userId: string): { code: string; expiresAt: string } {
+    const now = Date.now();
+    const expiresAt = new Date(now + this.pairingTtlMs).toISOString();
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const hash = sessionDigest(`pair:${code}`);
+    this.db.transaction(() => {
+      this.db.prepare("DELETE FROM web_pairing_codes WHERE expires_at <= ? OR used_at IS NOT NULL").run(new Date(now).toISOString());
+      this.db.prepare("DELETE FROM web_pairing_codes WHERE user_id = ?").run(userId);
+      this.db
+        .prepare("INSERT INTO web_pairing_codes (code_hash, user_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)")
+        .run(hash, userId, expiresAt, new Date(now).toISOString());
+    }).immediate();
+    return { code, expiresAt };
+  }
+
+  redeemPairingCode(rawCode: string): { userId: string } {
+    const code = rawCode.replace(/\s+/g, "");
+    if (!/^\d{6}$/.test(code)) throw new DomainError("请输入 6 位数字配对码", 400);
+    const hash = sessionDigest(`pair:${code}`);
+    const nowIso = new Date().toISOString();
+    return this.db.transaction(() => {
+      const row = this.db
+        .prepare("SELECT user_id AS userId, expires_at AS expiresAt, used_at AS usedAt FROM web_pairing_codes WHERE code_hash = ?")
+        .get(hash) as { userId: string; expiresAt: string; usedAt: string | null } | undefined;
+      if (!row || row.usedAt || row.expiresAt <= nowIso) {
+        throw new DomainError("配对码无效或已过期，请重新生成", 401);
+      }
+      this.db.prepare("UPDATE web_pairing_codes SET used_at = ? WHERE code_hash = ?").run(nowIso, hash);
+      return { userId: row.userId };
+    }).immediate();
+  }
+
+  // ===== 3.4 WebAuthn / Passkeys =====
+  private readonly challenges = new Map<string, { challenge: string; userId?: string; kind: "register" | "login"; expiresAt: number }>();
+
+  private purgeChallenges() {
+    const now = Date.now();
+    for (const [k, v] of this.challenges) {
+      if (v.expiresAt <= now) this.challenges.delete(k);
+    }
+  }
+
+  listPasskeys(userId: string) {
+    return this.db
+      .prepare(
+        "SELECT credential_id AS credentialId, label, transports, created_at AS createdAt, last_used_at AS lastUsedAt FROM web_passkeys WHERE user_id = ? ORDER BY created_at DESC",
+      )
+      .all(userId)
+      .map((r: unknown) => {
+        const row = r as { credentialId: string; label: string; transports: string; createdAt: string; lastUsedAt: string | null };
+        return {
+          credentialId: row.credentialId,
+          label: row.label || "通行密钥",
+          transports: (() => {
+            try { return JSON.parse(row.transports) as string[]; } catch { return []; }
+          })(),
+          createdAt: row.createdAt,
+          lastUsedAt: row.lastUsedAt,
+        };
+      });
+  }
+
+  deletePasskey(userId: string, credentialId: string) {
+    const res = this.db.prepare("DELETE FROM web_passkeys WHERE user_id = ? AND credential_id = ?").run(userId, credentialId);
+    if (!res.changes) throw new DomainError("找不到该通行密钥", 404);
+    return { ok: true };
+  }
+
+  createPasskeyRegisterOptions(userId: string, rpId: string, rpName = "铁记 Ironlog") {
+    this.purgeChallenges();
+    const challenge = randomBytes(32).toString("base64url");
+    const name = this.username(userId) ?? userId;
+    const existing = this.listPasskeys(userId);
+    this.challenges.set(`reg:${challenge}`, { challenge, userId, kind: "register", expiresAt: Date.now() + 5 * 60_000 });
+    return {
+      challenge,
+      rp: { id: rpId, name: rpName },
+      user: {
+        id: Buffer.from(userId, "utf8").toString("base64url"),
+        name,
+        displayName: name,
+      },
+      pubKeyCredParams: [
+        { type: "public-key", alg: -7 }, // ES256 (P-256)
+        { type: "public-key", alg: -257 }, // RS256
+      ],
+      timeout: 120_000,
+      attestation: "none",
+      authenticatorSelection: {
+        residentKey: "preferred",
+        userVerification: "preferred",
+      },
+      excludeCredentials: existing.map((k) => ({ id: k.credentialId, type: "public-key" })),
+    };
+  }
+
+  verifyPasskeyRegistration(
+    userId: string,
+    input: {
+      credentialId: string;
+      publicKeySpki: string;
+      clientDataJSON: string;
+      transports?: string[];
+      label?: string;
+    },
+    expectedOrigin: string,
+  ) {
+    this.purgeChallenges();
+    const clientData = JSON.parse(Buffer.from(input.clientDataJSON, "base64url").toString("utf8")) as {
+      type?: string;
+      challenge?: string;
+      origin?: string;
+    };
+    if (clientData.type !== "webauthn.create" || !clientData.challenge) {
+      throw new DomainError("通行密钥注册响应类型不正确", 400);
+    }
+    const chKey = `reg:${clientData.challenge}`;
+    const stored = this.challenges.get(chKey);
+    if (!stored || stored.userId !== userId || stored.expiresAt <= Date.now()) {
+      throw new DomainError("通行密钥注册挑战已过期，请重试", 400);
+    }
+    this.challenges.delete(chKey);
+    if (clientData.origin !== expectedOrigin) {
+      throw new DomainError("通行密钥来源域名不匹配", 400);
+    }
+    // Validate that publicKeySpki parses cleanly as a SPKI DER public key
+    const spkiBuf = Buffer.from(input.publicKeySpki, "base64url");
+    try {
+      createPublicKey({ key: spkiBuf, format: "der", type: "spki" });
+    } catch {
+      throw new DomainError("无效的通行密钥公钥格式", 400);
+    }
+    const nowIso = new Date().toISOString();
+    const cleanLabel = (input.label ?? "").trim().slice(0, 60) || "本机通行密钥";
+    const transportsJson = JSON.stringify((input.transports ?? []).slice(0, 6));
+    this.db
+      .prepare(
+        `INSERT INTO web_passkeys (credential_id, user_id, public_key, counter, transports, label, created_at, last_used_at)
+         VALUES (?, ?, ?, 0, ?, ?, ?, NULL)
+         ON CONFLICT(credential_id) DO UPDATE SET public_key = excluded.public_key, label = excluded.label`,
+      )
+      .run(input.credentialId, userId, input.publicKeySpki, transportsJson, cleanLabel, nowIso);
+    return { ok: true, credentialId: input.credentialId, label: cleanLabel };
+  }
+
+  createPasskeyLoginOptions(rpId: string, usernameHint?: string) {
+    this.purgeChallenges();
+    const challenge = randomBytes(32).toString("base64url");
+    let allowCredentials: Array<{ id: string; type: "public-key" }> = [];
+    let hintedUserId: string | undefined;
+    if (usernameHint?.trim()) {
+      const cleanName = usernameHint.trim().normalize("NFKC").toLowerCase();
+      const row = this.stmtLogin.get(cleanName) as { userId: string } | undefined;
+      if (row) {
+        hintedUserId = row.userId;
+        allowCredentials = this.listPasskeys(row.userId).map((k) => ({ id: k.credentialId, type: "public-key" as const }));
+      }
+    }
+    this.challenges.set(`login:${challenge}`, {
+      challenge,
+      userId: hintedUserId,
+      kind: "login",
+      expiresAt: Date.now() + 5 * 60_000,
+    });
+    return {
+      challenge,
+      rpId,
+      timeout: 120_000,
+      userVerification: "preferred",
+      ...(allowCredentials.length ? { allowCredentials } : {}),
+    };
+  }
+
+  verifyPasskeyLogin(
+    input: {
+      credentialId: string;
+      authenticatorData: string;
+      clientDataJSON: string;
+      signature: string;
+    },
+    expectedOrigin: string,
+    expectedRpId: string,
+  ): { userId: string } {
+    this.purgeChallenges();
+    const clientDataBuf = Buffer.from(input.clientDataJSON, "base64url");
+    const clientData = JSON.parse(clientDataBuf.toString("utf8")) as {
+      type?: string;
+      challenge?: string;
+      origin?: string;
+    };
+    if (clientData.type !== "webauthn.get" || !clientData.challenge) {
+      throw new DomainError("通行密钥登录响应类型不正确", 400);
+    }
+    const chKey = `login:${clientData.challenge}`;
+    const stored = this.challenges.get(chKey);
+    if (!stored || stored.expiresAt <= Date.now()) {
+      throw new DomainError("通行密钥登录挑战已过期，请重试", 401);
+    }
+    this.challenges.delete(chKey);
+    if (clientData.origin !== expectedOrigin) {
+      throw new DomainError("通行密钥来源域名不匹配", 401);
+    }
+    const keyRow = this.db
+      .prepare("SELECT user_id AS userId, public_key AS publicKey, counter FROM web_passkeys WHERE credential_id = ?")
+      .get(input.credentialId) as { userId: string; publicKey: string; counter: number } | undefined;
+    if (!keyRow) throw new DomainError("未找到匹配的通行密钥", 401);
+
+    const authData = Buffer.from(input.authenticatorData, "base64url");
+    if (authData.length < 37) throw new DomainError("无效的认证器数据", 400);
+    const rpIdHash = authData.subarray(0, 32);
+    const expectedRpHash = createHash("sha256").update(expectedRpId).digest();
+    if (!timingSafeEqual(rpIdHash, expectedRpHash)) {
+      throw new DomainError("通行密钥域名摘要校验失败", 401);
+    }
+    const flags = authData[32]!;
+    if ((flags & 0x01) === 0) throw new DomainError("认证器未确认用户在场", 401);
+    const signCount = authData.readUInt32BE(33);
+    if (keyRow.counter > 0 && signCount > 0 && signCount <= keyRow.counter) {
+      throw new DomainError("通行密钥计数器异常，可能存在克隆风险", 401);
+    }
+
+    const clientDataHash = createHash("sha256").update(clientDataBuf).digest();
+    const signedData = Buffer.concat([authData, clientDataHash]);
+    const sigBuf = Buffer.from(input.signature, "base64url");
+    const pubKey = createPublicKey({ key: Buffer.from(keyRow.publicKey, "base64url"), format: "der", type: "spki" });
+    const valid = verifySignature("sha256", signedData, pubKey, sigBuf);
+    if (!valid) throw new DomainError("通行密钥签名校验失败", 401);
+
+    this.db
+      .prepare("UPDATE web_passkeys SET counter = ?, last_used_at = ? WHERE credential_id = ?")
+      .run(Math.max(keyRow.counter, signCount), new Date().toISOString(), input.credentialId);
+    return { userId: keyRow.userId };
   }
 }

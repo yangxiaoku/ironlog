@@ -16,6 +16,8 @@ export * from "./apple-workout-annotation.js";
 export * from "./backup-limits.js";
 export * from "./classic-strength.js";
 export * from "./muscle-map.js";
+export * from "./strength-standards.js";
+export * from "./fit-export.js";
 export type * from "./catalogue-api.js";
 
 const id = z
@@ -273,6 +275,7 @@ const workoutPrefsBase = {
   collapseCompletedExercises: z.boolean(),
   voiceRestCues: z.boolean(),
   platePairs: z.record(z.string(), z.number().int().min(0).max(20)),
+  hiddenModules: z.array(z.enum(["diet", "sleep", "badges", "ai", "plateMath", "rir"])).max(10),
 };
 
 export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
@@ -309,6 +312,7 @@ export const workoutPrefsSchema = z.object({
   collapseCompletedExercises: workoutPrefsBase.collapseCompletedExercises.default(false),
   voiceRestCues: workoutPrefsBase.voiceRestCues.default(false),
   platePairs: workoutPrefsBase.platePairs.optional(),
+  hiddenModules: workoutPrefsBase.hiddenModules.default([]),
 });
 export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
 
@@ -337,6 +341,14 @@ export const equipmentProfileSchema = z.object({
 });
 export type EquipmentProfile = z.infer<typeof equipmentProfileSchema>;
 
+export const webhookConfigSchema = z.object({
+  enabled: z.boolean().default(false),
+  url: z.string().trim().max(500).default(""),
+  secret: z.string().trim().max(128).default(""),
+  allowPrivateNetwork: z.boolean().default(false),
+});
+export type WebhookConfig = z.infer<typeof webhookConfigSchema>;
+
 export const profileSchema = z.object({
   calories: z.number().min(1).max(20000).default(2200),
   protein: nonnegative.default(150),
@@ -361,6 +373,8 @@ export const profileSchema = z.object({
   quickFoods: z.array(quickFoodSchema).max(60).optional(),
   equipmentProfiles: z.array(equipmentProfileSchema).max(6).optional(),
   activeEquipmentProfileId: id.nullable().optional(),
+  streakFreezeWeeks: z.array(z.string().regex(/^\d{4}-W\d{2}$/)).max(52).optional(),
+  webhookConfig: webhookConfigSchema.optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;
 

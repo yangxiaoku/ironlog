@@ -4,6 +4,7 @@ import { Icon } from "../components/Icon";
 import { AiSettingsCard } from "../components/ai/AiSettingsCard";
 import type { AiStatus } from "../components/ai/AiModals";
 import { AppleAutomationCopyPanel, AppleSyncStatusCard } from "../components/apple/AppleHealthModals";
+import { AccountSecurityAndEcosystemCards } from "../components/settings/AccountSecurityCards";
 import { apiFetch } from "../lib/api";
 import { triggerAppleHubAction } from "../lib/apple-fitness";
 import { today } from "../lib/date";
@@ -1530,6 +1531,8 @@ export function SettingsView() {
                     </div>
                   </details>
                 ) : null}
+
+                <AccountSecurityAndEcosystemCards initialWebhook={profileGoalObj?.webhookConfig} demo={demo} />
 
                 <details className="settings-accordion api-tokens-section">
                   <summary>

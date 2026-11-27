@@ -250,10 +250,13 @@ export interface ProfileGoals {
     collapseCompletedExercises?: boolean;
     voiceRestCues?: boolean;
     platePairs?: Record<string, number>;
+    hiddenModules?: HiddenModuleKey[];
   };
   quickFoods?: QuickFoodItem[];
   equipmentProfiles?: EquipmentProfile[];
   activeEquipmentProfileId?: string | null;
+  streakFreezeWeeks?: string[];
+  webhookConfig?: WebhookConfig;
 }
 
 export interface OverviewStatsResponse {
@@ -310,6 +313,13 @@ export interface OverviewStatsResponse {
     daysSinceLast: number | null;
     recent7dSets: number;
   }>;
+  weeklyStreak?: {
+    currentWeeks: number;
+    currentWeekKey: string;
+    isCurrentWeekFrozen: boolean;
+    freezeRemainingThisMonth: number;
+    frozenWeeks: string[];
+  };
 }
 
 export interface TodayResponse {
@@ -433,6 +443,14 @@ export interface CatalogueExercise {
 
 export type ProgressionRule = "double" | "triple" | "linear" | "greyskull" | "manual";
 export type WorkoutLayoutMode = "card" | "compact" | "focus";
+export type HiddenModuleKey = "diet" | "sleep" | "badges" | "ai" | "plateMath" | "rir";
+
+export interface WebhookConfig {
+  enabled: boolean;
+  url: string;
+  secret: string;
+  allowPrivateNetwork: boolean;
+}
 
 export interface EquipmentProfile {
   id: string;

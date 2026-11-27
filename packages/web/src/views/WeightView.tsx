@@ -3,6 +3,7 @@ import { MiniSparkline, WeightChart } from "../components/Charts";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
+import { ProgressPhotosPanel } from "../components/weight/ProgressPhotosPanel";
 import { displayWeekday, fmt, shortDate, today } from "../lib/date";
 import {
   MEASUREMENT_SPECS,
@@ -422,10 +423,12 @@ export function WeightView() {
             </section>
           </div>
           {measurementsPanel}
+          <ProgressPhotosPanel />
         </>
       ) : (
         <>
           {measurementsPanel}
+          <ProgressPhotosPanel />
           <div className="empty">
             <strong>还没有体重记录</strong>
             <p>添加一次称重，即可开始查看变化。</p>

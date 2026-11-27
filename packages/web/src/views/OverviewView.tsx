@@ -503,7 +503,42 @@ export function OverviewView() {
           </div>
 
           <div className="hero-inner">
-            <h1>今天</h1>
+            <div className="hero-title-streak">
+              <h1>今天</h1>
+              {stats.weeklyStreak ? (
+                <div className="streak-pill-bar">
+                  <span className="streak-pill" title={`本周标识 ${stats.weeklyStreak.currentWeekKey}`}>
+                    🔥 连续 <b>{stats.weeklyStreak.currentWeeks}</b> 周
+                  </span>
+                  {stats.weeklyStreak.isCurrentWeekFrozen ? (
+                    <span className="streak-freeze-pill is-frozen">❄️ 本周已冻结保护</span>
+                  ) : stats.weeklyStreak.freezeRemainingThisMonth > 0 ? (
+                    <button
+                      type="button"
+                      className="streak-freeze-pill"
+                      title="出差或生病时使用每月 1 次的连胜冻结卡，避免周连胜清零"
+                      onClick={() => {
+                        openConfirm({
+                          title: "启用本周连胜冻结保护",
+                          message: `使用本月连胜冻结卡保护 ${stats.weeklyStreak!.currentWeekKey}（每月限 1 次），即使本周未练也不中断周连胜。确认启用？`,
+                          confirmLabel: "启用冻结卡",
+                          onConfirm: async () => {
+                            await apiFetch("/api/web/streak-freeze", {
+                              method: "POST",
+                              body: { weekKey: stats.weeklyStreak!.currentWeekKey },
+                            });
+                            bumpDataEpoch();
+                            notify("已启用本周连胜冻结保护 ❄️");
+                          },
+                        });
+                      }}
+                    >
+                      ❄️ 冻结卡 ({stats.weeklyStreak.freezeRemainingThisMonth})
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <WeekStrip
               activity={stats.activity}
               todayKey={todayKey}

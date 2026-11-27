@@ -3900,3 +3900,244 @@ dialog.cardio-dialog .dialog-head {
   color: var(--muted);
   cursor: pointer;
 }
+
+
+/* ===== OpenGym Parity Batch 3: Strength Standards, Structural Balance, Progress Photos, Streak Freeze, Year Review, Pairing/Passkey ===== */
+.hero-title-streak {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.streak-pill-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.streak-pill {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #f59e0b 16%, transparent);
+  color: var(--ink);
+  border: 1px solid color-mix(in srgb, #f59e0b 35%, var(--line));
+}
+.streak-freeze-pill {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #38bdf8 40%, var(--line));
+  background: color-mix(in srgb, #38bdf8 12%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+}
+.streak-freeze-pill.is-frozen {
+  cursor: default;
+  font-weight: 600;
+}
+.strength-standards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.strength-std-card {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.strength-std-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.strength-std-val {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 6px;
+}
+.structural-ratios-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.structural-ratio-row {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.structural-ratio-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.year-review-kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.year-review-kpis > div {
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.year-review-kpis span {
+  font-size: 12px;
+  color: var(--muted);
+}
+.year-review-kpis strong {
+  font-size: 20px;
+}
+.year-review-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.year-review-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.progress-photos-panel {
+  margin-top: 16px;
+}
+.progress-photo-upload-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.progress-photo-upload-controls input,
+.progress-photo-upload-controls select {
+  max-width: 150px;
+}
+.photo-compare-box {
+  margin-bottom: 14px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.photo-compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.photo-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.photo-compare-item {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.photo-compare-item img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 10px;
+}
+.photo-compare-item figcaption {
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.progress-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.progress-photo-card {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: var(--surface-2, var(--surface));
+  display: flex;
+  flex-direction: column;
+}
+.progress-photo-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.progress-photo-card img {
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  cursor: pointer;
+}
+.progress-photo-meta {
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+.progress-photo-meta small {
+  display: block;
+}
+.pairing-code-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.pairing-code-badge strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 18px;
+  letter-spacing: 0.14em;
+}
+.passkey-list {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.passkey-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+}
+.passkey-list li small {
+  display: block;
+}
+.auth-passkey-row {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+  text-align: center;
+}

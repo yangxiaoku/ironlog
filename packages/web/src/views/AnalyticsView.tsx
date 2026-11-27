@@ -1719,6 +1719,66 @@ export function AnalyticsView() {
               </div>
             </section>
 
+            {(data.strengthStandards?.length || data.structuralBalance) ? (
+              <section className="panel analytics-panel panel-structural-balance" id="panel-structural-balance">
+                <header className="panel-head">
+                  <div>
+                    <h2>力量等级与结构平衡（Poliquin / 力量举基准）</h2>
+                    <p>{data.structuralBalance?.summary ?? "结合体重与主项估算 1RM 评估相对力量与前后链比例"}</p>
+                  </div>
+                </header>
+                {data.strengthStandards?.length ? (
+                  <div className="strength-standards-grid">
+                    {data.strengthStandards.map((st) => (
+                      <div key={st.key} className="strength-std-card">
+                        <div className="strength-std-head">
+                          <strong>{st.label}</strong>
+                          <span className={`kpi-pill ${st.tier === "elite" || st.tier === "advanced" ? "is-sweet" : st.tier === "intermediate" ? "is-caution" : ""}`}>
+                            {st.tierLabel}
+                          </span>
+                        </div>
+                        <div className="strength-std-val">
+                          <b>{fmt(st.oneRepMaxKg, 1)} kg</b>
+                          <small className="muted">{fmt(st.ratioToBw, 2)}× 体重</small>
+                        </div>
+                        <div className="live-muscle-bar-track">
+                          <div className="live-muscle-bar-fill" style={{ width: `${st.progressPct}%` }} />
+                        </div>
+                        <small className="muted">
+                          {st.nextTierLabel && st.nextTierKg != null
+                            ? `距「${st.nextTierLabel}」目标 ${fmt(st.nextTierKg, 1)} kg`
+                            : "已达最高精英基准"}
+                        </small>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="muted" style={{ marginTop: 0 }}>记录体重与深蹲/卧推/硬拉/推举/划船后自动评定相对力量等级。</p>
+                )}
+
+                {data.structuralBalance?.ratios?.length ? (
+                  <div className="structural-ratios-list">
+                    {data.structuralBalance.ratios.map((item) => {
+                      const tone = item.status === "balanced" ? "is-sweet" : item.status === "weak" ? "is-danger" : "is-caution";
+                      return (
+                        <div key={item.id} className="structural-ratio-row">
+                          <div className="structural-ratio-head">
+                            <strong>{item.label}</strong>
+                            <span className={`kpi-pill ${tone}`}>
+                              {Math.round(item.actualRatio * 100)}% · {item.statusLabel}
+                            </span>
+                          </div>
+                          <small className="muted">
+                            黄金区间 {Math.round(item.targetMin * 100)}%–{Math.round(item.targetMax * 100)}% · {item.advice}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
             <section className="panel analytics-panel panel-inol" id="panel-inol">
               <header className="panel-head">
                 <div>
@@ -2445,6 +2505,53 @@ export function AnalyticsView() {
         {/* REPORTS SECTION */}
         {activeSection === "reports" ? (
           <>
+            {data.yearInReview ? (
+              <section className="panel analytics-panel panel-year-review" id="panel-year-review">
+                <header className="panel-head">
+                  <div>
+                    <h2>{data.yearInReview.year} 年度训练回顾</h2>
+                    <p>累计出勤、总吨位、最常练动作与年度巅峰 PR 一览</p>
+                  </div>
+                </header>
+                <div className="year-review-kpis">
+                  <div>
+                    <span>全年训练</span>
+                    <strong>{fmt(data.yearInReview.sessions)} 次</strong>
+                    <small>{fmt(data.yearInReview.activeDays)} 个训练日</small>
+                  </div>
+                  <div>
+                    <span>累计举起吨位</span>
+                    <strong>{fmt(data.yearInReview.totalTonnageKg / 1000, 1)} t</strong>
+                    <small>{fmt(data.yearInReview.totalWorkSets)} 个有效组</small>
+                  </div>
+                  <div>
+                    <span>累计训练时长</span>
+                    <strong>{fmt(Math.round((data.yearInReview.totalMinutes / 60) * 10) / 10, 1)} h</strong>
+                    <small>记录饮食 {fmt(data.yearInReview.dietDays)} 天</small>
+                  </div>
+                  {data.yearInReview.bestPr ? (
+                    <div>
+                      <span>年度巅峰估算 1RM</span>
+                      <strong>{fmt(data.yearInReview.bestPr.oneRepMaxKg, 1)} kg</strong>
+                      <small>{data.yearInReview.bestPr.name}</small>
+                    </div>
+                  ) : null}
+                </div>
+                {data.yearInReview.topExercises.length ? (
+                  <div className="year-review-top">
+                    <span className="muted">年度最常练动作 TOP 3：</span>
+                    <div className="year-review-chips">
+                      {data.yearInReview.topExercises.map((ex, i) => (
+                        <span key={ex.name} className="kpi-pill is-sweet">
+                          #{i + 1} {ex.name} · {ex.sets} 组
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </section>
+            ) : null}
+
             <section className="panel analytics-panel panel-apple-report" id="panel-apple-report">
               <header className="panel-head">
                 <div>

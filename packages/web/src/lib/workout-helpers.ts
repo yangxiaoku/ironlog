@@ -30,6 +30,17 @@ export const workoutLayoutPreference = "ironlog-web-workout-layout";
 export const collapseCompletedPreference = "ironlog-web-collapse-completed";
 export const voiceRestCuesPreference = "ironlog-web-voice-rest-cues";
 export const platePairsPreference = "ironlog-web-plate-pairs";
+export const hiddenModulesPreference = "ironlog-web-hidden-modules";
+
+export type HiddenModuleKey = "diet" | "sleep" | "badges" | "ai" | "plateMath" | "rir";
+export const MODULAR_UI_OPTIONS: ReadonlyArray<{ id: HiddenModuleKey; label: string; desc: string }> = [
+  { id: "diet", label: "饮食与营养", desc: "隐藏底部/侧栏饮食入口（保留已有数据）" },
+  { id: "sleep", label: "睡眠报告", desc: "隐藏分析页睡眠专题页签" },
+  { id: "badges", label: "成就勋章", desc: "隐藏勋章墙入口" },
+  { id: "ai", label: "AI 助手", desc: "隐藏 AI 计划/复盘/调整快捷按钮" },
+  { id: "plateMath", label: "杠铃配片", desc: "隐藏训中杠铃片配重计算" },
+  { id: "rir", label: "RIR 强度", desc: "隐藏训中 RIR 储备次数列" },
+];
 
 export const WORKOUT_PREFS_EVENT = "ironlog:workout-prefs-changed";
 export const PROFILE_VERSION_EVENT = "ironlog:profile-version";
@@ -176,6 +187,7 @@ export interface WorkoutPreferences {
   collapseCompletedExercises: boolean;
   voiceRestCues: boolean;
   platePairs?: Record<string, number>;
+  hiddenModules?: HiddenModuleKey[];
 }
 
 export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
@@ -343,6 +355,20 @@ function readPlatePairsPref(): Record<string, number> | undefined {
   return undefined;
 }
 
+function readHiddenModulesPref(): HiddenModuleKey[] | undefined {
+  if (typeof localStorage === "undefined") return undefined;
+  try {
+    const raw = JSON.parse(localStorage.getItem(hiddenModulesPreference) ?? "null");
+    if (Array.isArray(raw)) {
+      const valid = [...new Set(raw.filter((x): x is HiddenModuleKey =>
+        ["diet", "sleep", "badges", "ai", "plateMath", "rir"].includes(String(x)),
+      ))];
+      if (valid.length) return valid;
+    }
+  } catch {}
+  return undefined;
+}
+
 /**
  * Safely reads unified in-session workout preferences with validated defaults.
  */
@@ -429,7 +455,11 @@ export function readWorkoutPreferences(): WorkoutPreferences {
     ),
     ...(() => {
       const pairs = readPlatePairsPref();
-      return pairs ? { platePairs: pairs } : {};
+      const hidden = readHiddenModulesPref();
+      return {
+        ...(pairs ? { platePairs: pairs } : {}),
+        ...(hidden ? { hiddenModules: hidden } : {}),
+      };
     })(),
   };
 }
@@ -590,6 +620,13 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
           localStorage.removeItem(platePairsPreference);
         }
         break;
+      case "hiddenModules":
+        if (Array.isArray(value) && value.length) {
+          localStorage.setItem(hiddenModulesPreference, JSON.stringify(value));
+        } else {
+          localStorage.removeItem(hiddenModulesPreference);
+        }
+        break;
     }
   } catch {}
 }
@@ -700,6 +737,9 @@ export function applyRemoteWorkoutPreferences(
   if (remote.platePairs && typeof remote.platePairs === "object") {
     persistSinglePreference("platePairs", remote.platePairs);
   }
+  if (Array.isArray(remote.hiddenModules)) {
+    persistSinglePreference("hiddenModules", remote.hiddenModules);
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
@@ -739,6 +779,7 @@ const ALL_WORKOUT_PREF_KEYS = [
   collapseCompletedPreference,
   voiceRestCuesPreference,
   platePairsPreference,
+  hiddenModulesPreference,
 ] as const;
 
 /**

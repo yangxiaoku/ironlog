@@ -1,6 +1,7 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { triggerHaptic } from "../lib/haptics-audio";
 import { clearFailedMutations, getOfflineStorage, readQueue } from "../lib/offline-queue";
+import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../lib/workout-helpers";
 import { prefetchWorkspace } from "../lib/prefetch";
 import { openCommandPalette } from "../lib/record-openers";
 import {
@@ -43,6 +44,19 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   const activeWs = VIEW_WORKSPACE[view] ?? "overview";
   const activeGroup = WORKSPACES[activeWs];
+  const [hiddenModules, setHiddenModules] = useState<string[]>(() => readWorkoutPreferences().hiddenModules ?? []);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setHiddenModules(readWorkoutPreferences().hiddenModules ?? []);
+    window.addEventListener(WORKOUT_PREFS_EVENT, sync);
+    return () => window.removeEventListener(WORKOUT_PREFS_EVENT, sync);
+  }, []);
+  const isWorkspaceHidden = (id: WorkspaceId) =>
+    (id === "diet" && hiddenModules.includes("diet")) ||
+    (id === "badges" && hiddenModules.includes("badges"));
+  const visibleDailyNav = DAILY_NAV.filter((id) => !isWorkspaceHidden(id));
+  const visibleInsightNav = INSIGHT_NAV.filter((id) => !isWorkspaceHidden(id));
+  const visibleMobileTabs = MOBILE_TABS.filter((t) => !isWorkspaceHidden(t.id));
   const themeIcon = theme === "dark" ? "sun" : "moon";
   const activeTabLabel = activeGroup.tabs?.find((tab) => tab.id === view)?.label ?? DESTINATIONS[view];
   const moreMenuOpen = modals.at(-1)?.layout === "menu" && modals.at(-1)?.title === "更多";
@@ -157,17 +171,17 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <nav className="desktop-nav">
           <span className="nav-group-label">日常</span>
-          {DAILY_NAV.map(renderDesktopLink)}
+          {visibleDailyNav.map(renderDesktopLink)}
           <span className="nav-divider" aria-hidden="true" />
           <span className="nav-group-label">洞察</span>
-          {INSIGHT_NAV.map(renderDesktopLink)}
+          {visibleInsightNav.map(renderDesktopLink)}
           <span className="nav-divider" aria-hidden="true" />
           <span className="nav-group-label">系统</span>
           {SECONDARY_NAV.map(renderDesktopLink)}
         </nav>
 
         <nav className="mobile-nav" aria-label="手机导航">
-          {MOBILE_TABS.map(({ id, label }) => (
+          {visibleMobileTabs.map(({ id, label }) => (
             <a
               key={id}
               href={`#${id}`}

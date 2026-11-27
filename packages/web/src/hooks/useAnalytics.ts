@@ -70,6 +70,45 @@ interface AnalyticsResponse {
       status: "fresh" | "ready" | "due";
     }>;
   };
+  strengthStandards?: Array<{
+    key: "squat" | "bench" | "deadlift" | "ohp" | "row";
+    label: string;
+    oneRepMaxKg: number;
+    ratioToBw: number;
+    tier: string;
+    tierLabel: string;
+    nextTierLabel: string | null;
+    nextTierKg: number | null;
+    progressPct: number;
+  }>;
+  structuralBalance?: {
+    ratios: Array<{
+      id: string;
+      label: string;
+      framework: "poliquin" | "powerlifting";
+      numeratorLabel: string;
+      denominatorLabel: string;
+      actualRatio: number;
+      targetMin: number;
+      targetMax: number;
+      idealRatio: number;
+      status: "weak" | "balanced" | "strong";
+      statusLabel: string;
+      advice: string;
+    }>;
+    summary: string;
+  };
+  yearInReview?: {
+    year: number;
+    sessions: number;
+    activeDays: number;
+    totalMinutes: number;
+    totalTonnageKg: number;
+    totalWorkSets: number;
+    dietDays: number;
+    topExercises: Array<{ name: string; sets: number }>;
+    bestPr: { name: string; oneRepMaxKg: number; date: string } | null;
+  };
   effortSpectrum?: {
     totalWorkSets: number;
     repZones: {

@@ -71,6 +71,70 @@ export function saveWebPreferences(db: Db, userId: string, input: z.infer<typeof
   }).immediate();
 }
 
+export function isoWeekKey(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00Z`);
+  const day = d.getUTCDay() || 7;
+  d.setUTCDate(d.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+  const weekNo = Math.ceil((((d.getTime() - yearStart.getTime()) / 86_400_000) + 1) / 7);
+  return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
+}
+
+export function computeWeeklyStreak(
+  activityDays: ReadonlySet<string>,
+  todayDate: string,
+  frozenWeeks: readonly string[] = [],
+) {
+  const frozenSet = new Set(frozenWeeks);
+  const activeWeeks = new Set<string>();
+  for (const d of activityDays) {
+    if (d <= todayDate) activeWeeks.add(isoWeekKey(d));
+  }
+  const currentWeekKey = isoWeekKey(todayDate);
+  const prevWeekKey = isoWeekKey(shiftDay(todayDate, -7));
+
+  let cursorDate = activeWeeks.has(currentWeekKey) || frozenSet.has(currentWeekKey)
+    ? todayDate
+    : activeWeeks.has(prevWeekKey) || frozenSet.has(prevWeekKey)
+      ? shiftDay(todayDate, -7)
+      : null;
+
+  let currentWeeks = 0;
+  const seen = new Set<string>();
+  while (cursorDate) {
+    const wk = isoWeekKey(cursorDate);
+    if (seen.has(wk)) break;
+    seen.add(wk);
+    if (activeWeeks.has(wk) || frozenSet.has(wk)) {
+      currentWeeks++;
+      cursorDate = shiftDay(cursorDate, -7);
+    } else {
+      break;
+    }
+  }
+
+  // Monthly allowance: 1 freeze per calendar month
+  const currentMonthPrefix = todayDate.slice(0, 7);
+  let usedThisMonth = 0;
+  for (let offset = 0; offset < 31; offset++) {
+    const d = shiftDay(todayDate, -offset);
+    if (!d.startsWith(currentMonthPrefix)) break;
+    const wk = isoWeekKey(d);
+    if (frozenSet.has(wk)) {
+      usedThisMonth = 1;
+      break;
+    }
+  }
+
+  return {
+    currentWeeks,
+    currentWeekKey,
+    isCurrentWeekFrozen: frozenSet.has(currentWeekKey),
+    freezeRemainingThisMonth: Math.max(0, 1 - usedThisMonth),
+    frozenWeeks: [...frozenSet].sort(),
+  };
+}
+
 export function getWebStatistics(store: Store, userId: string, query: z.infer<typeof webStatsQuery>) {
   const preferences = webPreferences(store.db, userId);
   const period = query.days ?? preferences.days;
@@ -308,6 +372,7 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
       key, name: muscleNames[key as keyof typeof muscleNames] ?? key, sets,
     })).sort((a, b) => b.sets - a.sets),
     muscleStatus,
+    weeklyStreak: computeWeeklyStreak(activityDays, today, profile.streakFreezeWeeks ?? []),
     strength: { exercises, selectedExercise, points: selectedExercise ? strengthByExercise.get(selectedExercise) ?? [] : [] },
   };
 }

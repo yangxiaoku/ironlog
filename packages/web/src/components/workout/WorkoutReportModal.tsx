@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { encodeWorkoutToFit } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { duration, fmt, shortDate, today } from "../../lib/date";
@@ -288,6 +289,36 @@ export function WorkoutReportModal({
     });
   };
 
+  const handleExportFit = async () => {
+    if (!report) return;
+    setBusyAction("fit");
+    try {
+      const full = await fetchFullRecord().catch(() => null);
+      const bytes = encodeWorkoutToFit({
+        title: report.title,
+        date: report.date,
+        startedAt: full?.data.startedAt ?? `${report.date}T12:00:00Z`,
+        endedAt: full?.data.endedAt ?? null,
+        durationSeconds: report.duration,
+        exercises: full?.data.exercises as Parameters<typeof encodeWorkoutToFit>[0]["exercises"],
+        totalSets: report.sets,
+        totalVolumeKg: report.volume,
+      });
+      const blob = new Blob([bytes.buffer as ArrayBuffer], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ironlog-${report.date}-${report.id.slice(0, 8)}.fit`;
+      a.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      notify("已导出 Garmin / Strava 兼容 .fit 文件");
+    } catch (err) {
+      notify((err as Error)?.message || "导出 .fit 失败");
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const handleSaveTemplate = async () => {
     if (savedTemplate || busyAction) return;
     setBusyAction("template");
@@ -564,14 +595,24 @@ export function WorkoutReportModal({
             </button>
           ) : null}
           {report.exercises.length ? (
-            <button
-              type="button"
-              className="secondary-button"
-              disabled={busyAction !== "" || savedTemplate}
-              onClick={() => void handleSaveTemplate()}
-            >
-              <Icon name="bookmark" size={15} /> {savedTemplate ? "已存为模板" : "存为模板"}
-            </button>
+            <>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busyAction !== "" || savedTemplate}
+                onClick={() => void handleSaveTemplate()}
+              >
+                <Icon name="bookmark" size={15} /> {savedTemplate ? "已存为模板" : "存为模板"}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={busyAction !== ""}
+                onClick={() => void handleExportFit()}
+              >
+                <Icon name="download" size={15} /> {busyAction === "fit" ? "导出中…" : "导出 .fit"}
+              </button>
+            </>
           ) : null}
           <button
             type="button"

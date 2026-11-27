@@ -321,6 +321,75 @@ export function deleteMeasurement(db: Db, userId: string, date: string) {
   return { ok: true };
 }
 
+// ===== 3.2 Progress Photos =====
+export const progressPhotoInput = z.object({
+  date: z.iso.date(),
+  pose: z.enum(["front", "side", "back", "free"]).default("front"),
+  mime: z.enum(["image/jpeg", "image/png", "image/webp"]).default("image/jpeg"),
+  imageData: z
+    .string()
+    .min(32, "图片数据为空")
+    .max(1_000_000, "图片压缩后仍超过上限（最大约 700KB）")
+    .refine((v) => /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(v), "仅支持 JPEG / PNG / WebP 图片数据"),
+  note: z.string().trim().max(200).default(""),
+});
+
+export interface ProgressPhotoRow {
+  id: string;
+  date: string;
+  pose: "front" | "side" | "back" | "free";
+  mime: string;
+  imageData: string;
+  note: string;
+  createdAt: string;
+}
+
+export function listProgressPhotos(db: Db, userId: string): ProgressPhotoRow[] {
+  return db
+    .prepare(
+      `SELECT id, date, pose, mime, image_data AS imageData, note, created_at AS createdAt
+       FROM progress_photos WHERE user_id=? ORDER BY date DESC, created_at DESC LIMIT 60`,
+    )
+    .all(userId) as ProgressPhotoRow[];
+}
+
+export function saveProgressPhoto(
+  db: Db,
+  userId: string,
+  input: z.infer<typeof progressPhotoInput>,
+): ProgressPhotoRow {
+  if (input.date > localDate()) {
+    throw new DomainError("照片日期不能晚于今天", 400);
+  }
+  const existingCount = (
+    db.prepare("SELECT COUNT(*) AS cnt FROM progress_photos WHERE user_id=?").get(userId) as { cnt: number }
+  ).cnt;
+  if (existingCount >= 60) {
+    throw new DomainError("体态照片已达 60 张上限，请先删除旧照片再上传", 400);
+  }
+  const id = `photo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+  const createdAt = new Date().toISOString();
+  db.prepare(
+    `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, note, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, userId, input.date, input.pose, input.mime, input.imageData, input.note ?? "", createdAt);
+  return {
+    id,
+    date: input.date,
+    pose: input.pose,
+    mime: input.mime,
+    imageData: input.imageData,
+    note: input.note ?? "",
+    createdAt,
+  };
+}
+
+export function deleteProgressPhoto(db: Db, userId: string, id: string) {
+  const res = db.prepare("DELETE FROM progress_photos WHERE user_id=? AND id=?").run(userId, id);
+  if (!res.changes) throw new DomainError("找不到该体态照片", 404);
+  return { ok: true };
+}
+
 export const waterUpdateInput = z
   .object({
     date: z.iso.date(),
