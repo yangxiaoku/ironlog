@@ -236,16 +236,17 @@ function parseDateAndIso(raw: string): { date: string; iso: string } | null {
   if (!clean) return null;
 
   // ISO YYYY-MM-DD or YYYY-MM-DD HH:mm(:ss) or YYYY/MM/DD
-  const ymd = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?/i);
+  const ymd = clean.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?(?:\s*(?:Z|UTC|GMT|[+-]\d{2}:?\d{2}))?)?/i);
   if (ymd) {
     const y = Number(ymd[1]);
     const m = Number(ymd[2]);
     const d = Number(ymd[3]);
     if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
       const date = `${y}-${pad2(m)}-${pad2(d)}`;
-      const parsedMs = Date.parse(clean);
-      if (Number.isFinite(parsedMs) && (clean.includes("Z") || /[+-]\d{2}:?\d{2}$/.test(clean))) {
-        return { date, iso: new Date(parsedMs).toISOString() };
+      const hasExplicitTz = /(?:Z|\bUTC\b|\bGMT\b|[+-]\d{2}:?\d{2})$/i.test(clean);
+      const parsedMs = hasExplicitTz ? Date.parse(clean.replace(/\s+(?:UTC|GMT)$/i, "Z")) : NaN;
+      if (hasExplicitTz && Number.isFinite(parsedMs)) {
+        return { date: localDate(parsedMs), iso: new Date(parsedMs).toISOString() };
       }
       const hh = Number(ymd[4] ?? 18);
       const mm = Number(ymd[5] ?? 0);
@@ -255,13 +256,20 @@ function parseDateAndIso(raw: string): { date: string; iso: string } | null {
     }
   }
 
-  // Hevy style: "21 Nov 2026, 09:30" or "Nov 21, 2026 9:30 AM"
-  const dmy = clean.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  // Hevy style: "21 Nov 2026, 09:30" or "24 Nov 2026, 18:00 UTC" or "Nov 21, 2026 9:30 AM"
+  const dmy = clean.match(/^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(Z|UTC|GMT|[+-]\d{2}:?\d{2}))?)?/i);
   if (dmy) {
     const d = Number(dmy[1]);
     const mIdx = MONTH_MAP[dmy[2]!.toLowerCase()];
     const y = Number(dmy[3]);
     if (mIdx !== undefined && d >= 1 && d <= 31) {
+      const tz = dmy[7];
+      if (tz) {
+        const parsedMs = Date.parse(clean.replace(/,/g, ""));
+        if (Number.isFinite(parsedMs)) {
+          return { date: localDate(parsedMs), iso: new Date(parsedMs).toISOString() };
+        }
+      }
       const date = `${y}-${pad2(mIdx + 1)}-${pad2(d)}`;
       const hh = Number(dmy[4] ?? 18);
       const mm = Number(dmy[5] ?? 0);
@@ -475,6 +483,8 @@ interface NormalizedRow {
   supersetGroup: string | null;
   setType: Workout["exercises"][number]["sets"][number]["type"];
   weightKg: number;
+  weightUnit?: "kg" | "lb";
+  rawWeight?: number;
   reps: number;
   seconds: number;
   rir: number | null;
@@ -588,6 +598,16 @@ function buildNormalizedRows(
         tracker.lastExKey = exKey;
         tracker.lastSetNo = setNo;
       }
+      const unitRaw = col(row, "重量单位", "weight_unit", "weight unit").trim().toLowerCase();
+      const rowWeightUnit: "kg" | "lb" | undefined =
+        unitRaw === "lb" || unitRaw === "lbs" ? "lb" : unitRaw === "kg" || unitRaw === "kgs" ? "kg" : undefined;
+      const rawWeightCell = col(row, "原始重量", "raw_weight").trim();
+      const rawWeightVal = rawWeightCell !== "" ? numVal(rawWeightCell) : undefined;
+      const colKgVal = numVal(col(row, "重量(kg)"));
+      const weightKg =
+        rowWeightUnit === "lb" && rawWeightVal !== undefined
+          ? lbsToKg(rawWeightVal)
+          : colKgVal;
       rows.push({
         sessionKey: `${baseKey}||#${tracker.seq}`,
         sourceSessionId,
@@ -601,7 +621,9 @@ function buildNormalizedRows(
         categoryHint: "",
         supersetGroup,
         setType: parseSetType(col(row, "组类型")),
-        weightKg: numVal(col(row, "重量(kg)")),
+        weightKg,
+        ...(rowWeightUnit ? { weightUnit: rowWeightUnit } : {}),
+        ...(rawWeightVal !== undefined ? { rawWeight: rawWeightVal } : {}),
         reps: Math.round(numVal(col(row, "次数"))),
         seconds: Math.round(numVal(col(row, "时长(秒)"))),
         rir: parseRirOrRpe(col(row, "rir"), undefined),
@@ -843,13 +865,17 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
 
     const exercises: Workout["exercises"] = blocks.map((block) => {
       const ex = resolveOrCreateExercise(block.name, block.rows);
+      const preserveLb =
+        block.rows.length > 0 &&
+        block.rows.every((r) => r.weightUnit === "lb" && r.rawWeight !== undefined);
       const sets: Workout["exercises"][number]["sets"] = block.rows.map((r) => {
         const reps = ex.mode === "timed" ? 0 : r.reps > 0 ? Math.min(1000, r.reps) : (r.seconds > 0 ? 1 : 0);
         const seconds = Math.min(86400, Math.max(0, r.seconds));
+        const storedWeight = preserveLb ? r.rawWeight! : r.weightKg;
         return {
           id: `imp_set_${randomUUID()}`,
           type: r.setType,
-          weight: Math.min(100000, Math.max(0, r.weightKg)),
+          weight: Math.min(100000, Math.max(0, storedWeight)),
           reps,
           seconds,
           completed: r.completed,
@@ -862,6 +888,7 @@ function prepareImport(store: Store, userId: string, csvText: string): PreparedI
         exerciseId: ex.id,
         targetIndex: null,
         supersetGroup: block.supersetGroup,
+        ...(preserveLb ? { weightUnit: "lb" as const } : {}),
         restSeconds: 90,
         snapshot: {
           name: ex.name,

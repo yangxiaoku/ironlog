@@ -66,6 +66,8 @@ export function DietView() {
   const [dietDone, setDietDone] = useState(false);
   const [waterMl, setWaterMl] = useState(0);
   const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl(userId));
+  const [savingWaterGoal, setSavingWaterGoal] = useState(false);
+  const [failedWaterGoal, setFailedWaterGoal] = useState<number | null>(null);
   const [busyWater, setBusyWater] = useState(false);
   const [pendingWaterOp, setPendingWaterOp] = useState<{
     opId: string;
@@ -498,30 +500,81 @@ export function DietView() {
               <button
                 type="button"
                 className="quiet"
+                disabled={savingWaterGoal}
                 title={`已喝 ${waterCups} 杯，点击切换每日饮水目标`}
-                onClick={() => {
+                onClick={async () => {
+                  if (savingWaterGoal) return;
                   const next = WATER_GOALS[(WATER_GOALS.indexOf(waterGoal) + 1) % WATER_GOALS.length]!;
-                  setWaterGoal(next);
+                  setSavingWaterGoal(true);
                   try {
-                    localStorage.setItem(waterGoalKey(userId), String(next));
-                  } catch {}
-                  void apiFetch<{ version?: number }>("/api/web/profile/water-goal", {
-                    method: "PUT",
-                    body: { waterGoalMl: next },
-                  })
-                    .then((res) => {
-                      if (typeof res?.version === "number" && typeof window !== "undefined") {
-                        window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
-                      }
-                    })
-                    .catch(() => {});
-                  notify(`每日饮水目标已设为 ${fmt(next, 0)} ml（已同步云端）`);
+                    const res = await apiFetch<{ waterGoalMl?: number; version?: number }>("/api/web/profile/water-goal", {
+                      method: "PUT",
+                      body: { waterGoalMl: next },
+                    });
+                    const confirmed = typeof res?.waterGoalMl === "number" ? res.waterGoalMl : next;
+                    setWaterGoal(confirmed);
+                    setFailedWaterGoal(null);
+                    try {
+                      localStorage.setItem(waterGoalKey(userId), String(confirmed));
+                    } catch {}
+                    if (typeof res?.version === "number" && typeof window !== "undefined") {
+                      window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
+                    }
+                    notify(`每日饮水目标已设为 ${fmt(confirmed, 0)} ml（已同步云端）`);
+                  } catch (err) {
+                    setFailedWaterGoal(next);
+                    notify((err as Error)?.message || "饮水目标保存失败，未同步云端");
+                  } finally {
+                    setSavingWaterGoal(false);
+                  }
                 }}
               >
-                {waterPct}% · 目标
+                {savingWaterGoal ? "保存中…" : `${waterPct}% · 目标`}
               </button>
             </div>
             <ThinMeter ratio={waterMl / waterGoal} label="每日饮水完成度" />
+            {failedWaterGoal != null ? (
+              <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+                <span>饮水目标（{fmt(failedWaterGoal, 0)} ml）同步失败，当前仍为 {fmt(waterGoal, 0)} ml</span>
+                <span style={{ display: "flex", gap: 6 }}>
+                  <button
+                    type="button"
+                    className="micro-chip"
+                    disabled={savingWaterGoal}
+                    onClick={async () => {
+                      const target = failedWaterGoal;
+                      if (target == null || savingWaterGoal) return;
+                      setSavingWaterGoal(true);
+                      try {
+                        const res = await apiFetch<{ waterGoalMl?: number; version?: number }>("/api/web/profile/water-goal", {
+                          method: "PUT",
+                          body: { waterGoalMl: target },
+                        });
+                        const confirmed = typeof res?.waterGoalMl === "number" ? res.waterGoalMl : target;
+                        setWaterGoal(confirmed);
+                        setFailedWaterGoal(null);
+                        try {
+                          localStorage.setItem(waterGoalKey(userId), String(confirmed));
+                        } catch {}
+                        if (typeof res?.version === "number" && typeof window !== "undefined") {
+                          window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
+                        }
+                        notify(`每日饮水目标已设为 ${fmt(confirmed, 0)} ml（已同步云端）`);
+                      } catch (err) {
+                        notify((err as Error)?.message || "饮水目标保存失败，未同步云端");
+                      } finally {
+                        setSavingWaterGoal(false);
+                      }
+                    }}
+                  >
+                    重试同步
+                  </button>
+                  <button type="button" className="quiet" disabled={savingWaterGoal} onClick={() => setFailedWaterGoal(null)}>
+                    取消
+                  </button>
+                </span>
+              </div>
+            ) : null}
             {pendingWaterOp && pendingWaterOp.date === date ? (
               <div className="form-error" role="status" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
                 <span>上次「{pendingWaterOp.label}」未收到确认回执</span>

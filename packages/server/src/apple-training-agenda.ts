@@ -128,21 +128,35 @@ function overlapping(
   return a > 0 && b > 0 && shared >= 0.8 * Math.min(a, b) && shared >= 0.55 * Math.max(a, b);
 }
 
-const SAME_DAY_RESISTANCE_MAX_GAP_MS = 90 * 60_000;
+const SAME_DAY_RESISTANCE_MAX_POST_LOG_GAP_MS = 30 * 60_000;
+const MIN_PARTIAL_OVERLAP_MS = 5 * 60_000;
+
+function adjacentDays(date: string): string[] {
+  const base = startOf(date);
+  return [localDate(base - DAY), date, localDate(base + DAY)];
+}
 
 function nearSameDayResistance(
-  first: { startedAt: string; endedAt: string | null },
-  second: { startedAt: string; endedAt: string | null },
+  appleWorkout: { startedAt: string; endedAt: string | null },
+  manualWorkout: { startedAt: string; endedAt: string | null },
 ) {
-  if (!first.endedAt || !second.endedAt) return false;
-  const startA = Date.parse(first.startedAt), endA = Date.parse(first.endedAt);
-  const startB = Date.parse(second.startedAt), endB = Date.parse(second.endedAt);
+  if (!appleWorkout.endedAt || !manualWorkout.endedAt) return false;
+  const startA = Date.parse(appleWorkout.startedAt), endA = Date.parse(appleWorkout.endedAt);
+  const startB = Date.parse(manualWorkout.startedAt), endB = Date.parse(manualWorkout.endedAt);
   if (!Number.isFinite(startA) || !Number.isFinite(endA) || !Number.isFinite(startB) || !Number.isFinite(endB)) {
     return false;
   }
-  if (endA <= startA || endB <= startB) return false;
-  const gap = Math.max(0, Math.max(startA, startB) - Math.min(endA, endB));
-  return gap <= SAME_DAY_RESISTANCE_MAX_GAP_MS;
+  const durA = endA - startA;
+  const durB = endB - startB;
+  if (durA <= 0 || durB <= 0) return false;
+  const shared = Math.min(endA, endB) - Math.max(startA, startB);
+  // Meaningful partial overlap (e.g. Watch started earlier or Ironlog started partway through)
+  if (shared > 0) {
+    return shared >= MIN_PARTIAL_OVERLAP_MS || shared >= 0.25 * Math.min(durA, durB);
+  }
+  // Post-workout backfill only: manual session logged in Ironlog within 30 min AFTER Watch ended.
+  // Never merge a Watch workout that started after a manual session already finished.
+  return startB >= endA && startB - endA <= SAME_DAY_RESISTANCE_MAX_POST_LOG_GAP_MS;
 }
 
 function sameSourceWorkout(a: Uploaded, b: Uploaded) {
@@ -263,7 +277,9 @@ export function projectAppleTraining(
   const possible = new Map<string, Manual[]>();
   const useCount = new Map<string, number>();
   for (const row of uploads) {
-    const joined = (byDay.get(row.date) ?? []).filter((record) =>
+    // Check adjacent dates so cross-midnight sessions (e.g. manual 23:59 vs Watch 00:01) still pair strictly.
+    const candidates = adjacentDays(row.date).flatMap((d) => byDay.get(d) ?? []);
+    const joined = candidates.filter((record) =>
       compatible(row.activity, record.kind, false) && overlapping(row, record.workout));
     possible.set(row.id, joined);
     for (const item of joined) useCount.set(item.id, (useCount.get(item.id) ?? 0) + 1);
@@ -277,13 +293,14 @@ export function projectAppleTraining(
       pairedManualIds.add(matches[0]!.id);
     }
   }
-  // Pass 2: for same-day resistance workouts (e.g. Watch started earlier, Ironlog finished late, or logged right after),
-  // pair uniquely matched unmatched resistance sessions within 90 minutes.
+  // Pass 2: high-confidence fallback for resistance workouts (meaningful partial overlap across adjacent dates,
+  // or manual backfill logged in Ironlog within 30 minutes after Watch finished).
   const fallbackPossible = new Map<string, Manual[]>();
   const fallbackUseCount = new Map<string, number>();
   for (const row of uploads) {
     if (manualByUploadId.has(row.id) || row.activity.family !== "resistance") continue;
-    const joined = (byDay.get(row.date) ?? []).filter((record) =>
+    const candidates = adjacentDays(row.date).flatMap((d) => byDay.get(d) ?? []);
+    const joined = candidates.filter((record) =>
       !pairedManualIds.has(record.id) &&
       record.kind.family === "resistance" &&
       nearSameDayResistance(row, record.workout));
@@ -300,12 +317,13 @@ export function projectAppleTraining(
   const claimed = new Set<string>();
   for (const row of uploads) {
     const manual = manualByUploadId.get(row.id) ?? null;
-    const override = overridesByDate.get(row.date);
+    const effectiveDate = manual ? manual.workout.date : row.date;
+    const override = overridesByDate.get(effectiveDate);
     const activation = planHistory.find((plan) => !!plan.updatedAt && plan.updatedAt <= row.startedAt);
     let matchedPlan: ApplePlanMatch | null = null;
-    if (activation && !planCycle(activation, row.date)?.expired) {
+    if (activation && !planCycle(activation, effectiveDate)?.expired) {
       const { id, version, data } = activation;
-      const dayKey = `${row.date}:${id}:${version ?? ""}`;
+      const dayKey = `${effectiveDate}:${id}:${version ?? ""}`;
       const sameVersion = (workout: Workout) => workout.planId === id &&
         (workout.planVersion == null || workout.planVersion === version);
       const linkedRoutine = manual && sameVersion(manual.workout)
@@ -324,11 +342,11 @@ export function projectAppleTraining(
                 : null);
           }
         } else {
-          const planned = recommendInCycle(activation, completionHistory.filter((workout) => workout.date < row.date), row.date);
-          routine = planned?.date === row.date ? planned.routine : null;
+          const planned = recommendInCycle(activation, completionHistory.filter((workout) => workout.date < effectiveDate), effectiveDate);
+          routine = planned?.date === effectiveDate ? planned.routine : null;
         }
       }
-      const alreadyLogged = !linkedRoutine && routine && (byDay.get(row.date) ?? []).some(({ workout }) =>
+      const alreadyLogged = !linkedRoutine && routine && (byDay.get(effectiveDate) ?? []).some(({ workout }) =>
         sameVersion(workout) && workout.routineId === routine.id);
       const provenExercise = !manual || !!linkedRoutine || (routine && manual.workout.exercises.some((performed) =>
         performed.sets.some((set) => isValidWorkSet(set, performed.snapshot?.mode)) &&
@@ -337,12 +355,12 @@ export function projectAppleTraining(
         matchedPlan = { planId: id, planVersion: version ?? null, routineId: routine.id, name: routine.name };
         claimed.add(dayKey);
         if (!linkedRoutine) completionHistory.push({
-          title: routine.name, date: row.date, startedAt: row.startedAt, endedAt: row.endedAt,
+          title: routine.name, date: effectiveDate, startedAt: row.startedAt, endedAt: row.endedAt,
           status: "completed", planId: id, routineId: routine.id,
         });
       }
     }
-    agenda.push({ ...row, manualWorkoutId: manual?.id ?? null, plan: matchedPlan });
+    agenda.push({ ...row, date: effectiveDate, manualWorkoutId: manual?.id ?? null, plan: matchedPlan });
   }
   return { entries: agenda, completionHistory };
 }

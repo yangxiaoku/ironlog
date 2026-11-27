@@ -1,10 +1,12 @@
 export class ApiError extends Error {
   status?: number;
+  payload?: unknown;
 
-  constructor(message: string, status?: number) {
+  constructor(message: string, status?: number, payload?: unknown) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.payload = payload;
   }
 }
 
@@ -82,7 +84,7 @@ export async function apiFetch<T = unknown>(
             ? `${data.error}（${detailPath ? `${detailPath}: ` : ""}${detailMsg}）`
             : data.error
           : (detailMsg ?? "请求失败，请重试");
-    throw new ApiError(msg, response.status);
+    throw new ApiError(msg, response.status, data);
   }
 
   if (data === undefined) {

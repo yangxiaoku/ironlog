@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { apiFetch } from "../../lib/api";
 import { shortDate, today } from "../../lib/date";
+import { safeUuid } from "../../lib/domain";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
@@ -62,6 +63,14 @@ export function ProgressPhotosPanel() {
   const [uploadDate, setUploadDate] = useState(() => today());
   const [uploadNote, setUploadNote] = useState("");
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [pendingUpload, setPendingUpload] = useState<{
+    opId: string;
+    date: string;
+    pose: ProgressPhotoItem["pose"];
+    mime: "image/jpeg";
+    imageData: string;
+    note: string;
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
@@ -80,28 +89,51 @@ export function ProgressPhotosPanel() {
     void load();
   }, []);
 
+  const submitPhotoUpload = async (req: {
+    opId: string;
+    date: string;
+    pose: ProgressPhotoItem["pose"];
+    mime: "image/jpeg";
+    imageData: string;
+    note: string;
+  }) => {
+    setUploading(true);
+    try {
+      const saved = await apiFetch<ProgressPhotoItem>("/api/web/progress-photos", {
+        method: "POST",
+        body: req,
+      });
+      setPhotos((prev) => [saved, ...prev.filter((p) => p.id !== saved.id)]);
+      setPendingUpload(null);
+      setUploadNote("");
+      notify("体态进度照片已保存");
+    } catch (err) {
+      setPendingUpload(req);
+      notify((err as Error)?.message || "保存进度照片失败，可点击重试（不会重复生成）");
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const handleFileChange = async (file: File | undefined) => {
     if (!file) return;
     setUploading(true);
     try {
       const imageData = await compressImageToDataUrl(file);
-      const saved = await apiFetch<ProgressPhotoItem>("/api/web/progress-photos", {
-        method: "POST",
-        body: {
-          date: uploadDate || today(),
-          pose: uploadPose,
-          mime: "image/jpeg",
-          imageData,
-          note: uploadNote.trim(),
-        },
-      });
-      setPhotos((prev) => [saved, ...prev]);
-      setUploadNote("");
-      notify("体态进度照片已保存");
+      const req = {
+        opId: safeUuid(),
+        date: uploadDate || today(),
+        pose: uploadPose,
+        mime: "image/jpeg" as const,
+        imageData,
+        note: uploadNote.trim(),
+      };
+      setPendingUpload(req);
+      await submitPhotoUpload(req);
     } catch (err) {
+      setUploading(false);
       notify((err as Error)?.message || "保存进度照片失败");
     } finally {
-      setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
     }
   };
@@ -184,6 +216,28 @@ export function ProgressPhotosPanel() {
           </button>
         </div>
       </header>
+
+      {pendingUpload && !uploading ? (
+        <div
+          className="form-error"
+          role="status"
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}
+        >
+          <span>上次上传未收到确认回执，点击重试将沿用同一操作 ID 防止重复保存</span>
+          <span style={{ display: "flex", gap: 6 }}>
+            <button
+              type="button"
+              className="micro-chip"
+              onClick={() => void submitPhotoUpload(pendingUpload)}
+            >
+              重试原上传
+            </button>
+            <button type="button" className="quiet" onClick={() => setPendingUpload(null)}>
+              取消
+            </button>
+          </span>
+        </div>
+      ) : null}
 
       {compared.length === 2 ? (
         <div className="photo-compare-box">

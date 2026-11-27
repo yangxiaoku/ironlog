@@ -80,12 +80,36 @@ export function isoWeekKey(dateStr: string): string {
   return `${d.getUTCFullYear()}-W${String(weekNo).padStart(2, "0")}`;
 }
 
+export type StreakFreezeEntry = { weekKey: string; usedAt: string };
+
+export function hasUsedStreakFreezeInMonth(
+  targetDate: string,
+  frozenWeeks: readonly string[] = [],
+  freezeLog: readonly StreakFreezeEntry[] = [],
+): boolean {
+  const monthPrefix = targetDate.slice(0, 7);
+  if (freezeLog.some((entry) => entry.usedAt.startsWith(monthPrefix))) {
+    return true;
+  }
+  // Legacy fallback: only inspect weeks that have no recorded `usedAt` date in freezeLog.
+  const loggedWeeks = new Set(freezeLog.map((entry) => entry.weekKey));
+  const legacyWeeks = new Set(frozenWeeks.filter((wk) => !loggedWeeks.has(wk)));
+  if (legacyWeeks.size === 0) return false;
+  for (let offset = 0; offset < 31; offset++) {
+    const d = shiftDay(targetDate, -offset);
+    if (!d.startsWith(monthPrefix)) break;
+    if (legacyWeeks.has(isoWeekKey(d))) return true;
+  }
+  return false;
+}
+
 export function computeWeeklyStreak(
   activityDays: ReadonlySet<string>,
   todayDate: string,
   frozenWeeks: readonly string[] = [],
+  freezeLog: readonly StreakFreezeEntry[] = [],
 ) {
-  const frozenSet = new Set(frozenWeeks);
+  const frozenSet = new Set<string>([...frozenWeeks, ...freezeLog.map((entry) => entry.weekKey)]);
   const activeWeeks = new Set<string>();
   for (const d of activityDays) {
     if (d <= todayDate) activeWeeks.add(isoWeekKey(d));
@@ -113,18 +137,8 @@ export function computeWeeklyStreak(
     }
   }
 
-  // Monthly allowance: 1 freeze per calendar month
-  const currentMonthPrefix = todayDate.slice(0, 7);
-  let usedThisMonth = 0;
-  for (let offset = 0; offset < 31; offset++) {
-    const d = shiftDay(todayDate, -offset);
-    if (!d.startsWith(currentMonthPrefix)) break;
-    const wk = isoWeekKey(d);
-    if (frozenSet.has(wk)) {
-      usedThisMonth = 1;
-      break;
-    }
-  }
+  // Monthly allowance: 1 freeze per calendar month based on consumption date (`usedAt`)
+  const usedThisMonth = hasUsedStreakFreezeInMonth(todayDate, frozenWeeks, freezeLog) ? 1 : 0;
 
   return {
     currentWeeks,
@@ -292,7 +306,7 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
       ...nutritionTotals(meals.map(({ data }) => data as Diet)) };
   });
   const apple = projectAppleTraining(store, userId, through, catalogue, workouts).entries.flatMap((item) => {
-    if (item.date >= earliest) activityDays.add(item.date);
+    if (!item.manualWorkoutId && item.date >= earliest) activityDays.add(item.date);
     const day = days.get(item.date);
     if (day) {
       day.apple++;
@@ -372,7 +386,7 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
       key, name: muscleNames[key as keyof typeof muscleNames] ?? key, sets,
     })).sort((a, b) => b.sets - a.sets),
     muscleStatus,
-    weeklyStreak: computeWeeklyStreak(activityDays, today, profile.streakFreezeWeeks ?? []),
+    weeklyStreak: computeWeeklyStreak(activityDays, through, profile.streakFreezeWeeks ?? [], profile.streakFreezeLog ?? []),
     strength: { exercises, selectedExercise, points: selectedExercise ? strengthByExercise.get(selectedExercise) ?? [] : [] },
   };
 }

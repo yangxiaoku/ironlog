@@ -379,6 +379,15 @@ export const profileSchema = z.object({
   equipmentProfiles: z.array(equipmentProfileSchema).max(6).optional(),
   activeEquipmentProfileId: id.nullable().optional(),
   streakFreezeWeeks: z.array(z.string().regex(/^\d{4}-W\d{2}$/)).max(52).optional(),
+  streakFreezeLog: z
+    .array(
+      z.object({
+        weekKey: z.string().regex(/^\d{4}-W\d{2}$/),
+        usedAt: z.iso.date(),
+      }),
+    )
+    .max(52)
+    .optional(),
   webhookConfig: webhookConfigSchema.optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;

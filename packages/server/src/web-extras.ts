@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   estimatedOneRepMax,
@@ -12,6 +13,12 @@ import {
 import type { Db } from "./db.js";
 import { DomainError, type Store } from "./store.js";
 import type { DailyHealthSnapshot } from "./apple-health-daily.js";
+
+const LB_TO_KG = 0.45359237;
+
+function toKg(weight: number, unit?: "kg" | "lb"): number {
+  return unit === "lb" ? weight * LB_TO_KG : weight;
+}
 
 function round1(value: number) {
   return Math.round(value * 10) / 10;
@@ -63,13 +70,14 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
     date: string;
     endedAtMs: number;
     title: string;
+    weightUnit: "kg" | "lb";
     topWeight: number | null;
     topReps: number | null;
     estimated1rm: number | null;
     bestSeconds: number | null;
     workSets: number;
     volume: number;
-    sets: Array<{ type: string; weight: number; reps: number; seconds: number; rir: number | null }>;
+    sets: Array<{ type: string; weight: number; weightUnit: "kg" | "lb"; weightKg: number; reps: number; seconds: number; rir: number | null }>;
   }> = [];
 
   for (const record of store.list(userId, "workout")) {
@@ -85,6 +93,7 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
 
       const mode = exMeta?.mode ?? "reps";
       const mult = exMeta?.volumeMultiplier ?? 1;
+      const rowUnit: "kg" | "lb" = row.weightUnit === "lb" ? "lb" : "kg";
       const validSets = row.sets.filter((s) => isValidWorkSet(s, mode));
       if (!validSets.length) continue;
 
@@ -99,26 +108,27 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
           if (bestSeconds === null || s.seconds > bestSeconds) bestSeconds = s.seconds;
           continue;
         }
-        if (s.weight > 0 && s.reps > 0) {
-          volume += s.weight * s.reps * mult;
+        const weightKg = toKg(s.weight, rowUnit);
+        if (weightKg > 0 && s.reps > 0) {
+          volume += weightKg * s.reps * mult;
         }
         if (mode === "assisted") {
-          if (topWeight === null || s.weight < topWeight) {
-            topWeight = s.weight;
+          if (topWeight === null || weightKg < topWeight) {
+            topWeight = weightKg;
             topReps = s.reps;
           }
           continue;
         }
         const effectiveReps =
           s.rir != null && Number.isFinite(s.rir) && s.rir >= 0 && s.rir <= 4 ? s.reps + s.rir : s.reps;
-        const est = s.weight > 0 && effectiveReps > 0 ? estimatedOneRepMax(s.weight, Math.min(effectiveReps, 12)) : 0;
+        const est = weightKg > 0 && effectiveReps > 0 ? estimatedOneRepMax(weightKg, Math.min(effectiveReps, 12)) : 0;
         if (est > best1rm) best1rm = est;
         if (
           topWeight === null ||
-          s.weight > topWeight ||
-          (s.weight === topWeight && s.reps > (topReps ?? 0))
+          weightKg > topWeight ||
+          (weightKg === topWeight && s.reps > (topReps ?? 0))
         ) {
-          topWeight = s.weight;
+          topWeight = weightKg;
           topReps = s.reps;
         }
       }
@@ -129,6 +139,7 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
         date: workout.date,
         endedAtMs,
         title: workout.title,
+        weightUnit: rowUnit,
         topWeight: topWeight !== null ? round2(topWeight) : null,
         topReps,
         estimated1rm: best1rm > 0 ? round1(best1rm) : null,
@@ -138,6 +149,8 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
         sets: validSets.map((s) => ({
           type: s.type,
           weight: s.weight,
+          weightUnit: rowUnit,
+          weightKg: round2(toKg(s.weight, rowUnit)),
           reps: s.reps,
           seconds: s.seconds,
           rir: s.rir ?? null,
@@ -213,24 +226,27 @@ export function getTrainedExercisesSummary(store: Store, userId: string) {
       acc.totalWorkSets += validSets.length;
       if (workout.date > acc.lastDate) acc.lastDate = workout.date;
 
+      const rowUnit: "kg" | "lb" = row.weightUnit === "lb" ? "lb" : "kg";
       for (const s of validSets) {
         if (mode === "timed") {
           if (acc.bestHold === null || s.seconds > acc.bestHold) acc.bestHold = s.seconds;
           continue;
         }
+        const rawKg = toKg(s.weight, rowUnit);
         if (mode === "assisted") {
-          if (acc.bestAssistance === null || s.weight < acc.bestAssistance) {
-            acc.bestAssistance = round2(s.weight);
+          const assistKg = round2(rawKg);
+          if (acc.bestAssistance === null || assistKg < acc.bestAssistance) {
+            acc.bestAssistance = assistKg;
           }
           continue;
         }
-        if (s.weight > 0 && s.reps > 0) {
-          const w = round2(s.weight);
+        if (rawKg > 0 && s.reps > 0) {
+          const w = round2(rawKg);
           if (acc.bestWeight === null || w > acc.bestWeight) acc.bestWeight = w;
           const effReps = s.rir != null && Number.isFinite(s.rir) && s.rir >= 0 && s.rir <= 4
             ? s.reps + s.rir
             : s.reps;
-          const est = round1(estimatedOneRepMax(s.weight, Math.min(effReps, 12)));
+          const est = round1(estimatedOneRepMax(rawKg, Math.min(effReps, 12)));
           if (est > 0 && (acc.best1rm === null || est > acc.best1rm)) acc.best1rm = est;
         }
       }
@@ -251,20 +267,26 @@ export function getTrainedExercisesSummary(store: Store, userId: string) {
   return { total: items.length, items };
 }
 
-export const measurementInput = z
-  .object({
-    date: z.iso.date(),
-    waistCm: z.number().min(30).max(250).nullable().optional(),
-    chestCm: z.number().min(40).max(250).nullable().optional(),
-    armCm: z.number().min(15).max(100).nullable().optional(),
-    thighCm: z.number().min(25).max(150).nullable().optional(),
-    hipCm: z.number().min(40).max(250).nullable().optional(),
-    notes: z.string().trim().max(300).optional().default(""),
-  })
-  .refine(
-    (v) => [v.waistCm, v.chestCm, v.armCm, v.thighCm, v.hipCm].some((x) => x != null),
-    { message: "请至少填写一项围度数据" },
-  );
+const measurementBaseSchema = z.object({
+  waistCm: z.number().min(30).max(250).nullable().optional(),
+  chestCm: z.number().min(40).max(250).nullable().optional(),
+  armCm: z.number().min(15).max(100).nullable().optional(),
+  thighCm: z.number().min(25).max(150).nullable().optional(),
+  hipCm: z.number().min(40).max(250).nullable().optional(),
+  notes: z.string().trim().max(300).optional(),
+});
+
+export const measurementInput = z.object({
+  date: z.iso.date(),
+  waistCm: z.number().min(30).max(250).nullable().optional(),
+  chestCm: z.number().min(40).max(250).nullable().optional(),
+  armCm: z.number().min(15).max(100).nullable().optional(),
+  thighCm: z.number().min(25).max(150).nullable().optional(),
+  hipCm: z.number().min(40).max(250).nullable().optional(),
+  notes: z.string().trim().max(300).optional(),
+  expectedUpdatedAt: z.string().nullable().optional(),
+  base: measurementBaseSchema.optional(),
+});
 
 export interface BodyMeasurementRow {
   date: string;
@@ -277,6 +299,15 @@ export interface BodyMeasurementRow {
   updatedAt: string;
 }
 
+export class MeasurementConflictError extends DomainError {
+  constructor(
+    message: string,
+    public readonly current: BodyMeasurementRow | null,
+  ) {
+    super(message, 409);
+  }
+}
+
 export function listMeasurements(db: Db, userId: string): BodyMeasurementRow[] {
   return db
     .prepare(
@@ -287,6 +318,8 @@ export function listMeasurements(db: Db, userId: string): BodyMeasurementRow[] {
     .all(userId) as BodyMeasurementRow[];
 }
 
+const MEASUREMENT_NUM_KEYS = ["waistCm", "chestCm", "armCm", "thighCm", "hipCm"] as const;
+
 export function saveMeasurement(
   db: Db,
   userId: string,
@@ -295,25 +328,74 @@ export function saveMeasurement(
   if (input.date > localDate()) {
     throw new DomainError("测量日期不能晚于今天", 400);
   }
-  const updatedAt = new Date().toISOString();
-  const row: BodyMeasurementRow = {
-    date: input.date,
-    waistCm: input.waistCm != null ? round1(input.waistCm) : null,
-    chestCm: input.chestCm != null ? round1(input.chestCm) : null,
-    armCm: input.armCm != null ? round1(input.armCm) : null,
-    thighCm: input.thighCm != null ? round1(input.thighCm) : null,
-    hipCm: input.hipCm != null ? round1(input.hipCm) : null,
-    notes: input.notes ?? "",
-    updatedAt,
-  };
-  db.prepare(
-    `INSERT INTO body_measurements (user_id, date, waist_cm, chest_cm, arm_cm, thigh_cm, hip_cm, notes, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-     ON CONFLICT(user_id, date) DO UPDATE SET
-       waist_cm=excluded.waist_cm, chest_cm=excluded.chest_cm, arm_cm=excluded.arm_cm,
-       thigh_cm=excluded.thigh_cm, hip_cm=excluded.hip_cm, notes=excluded.notes, updated_at=excluded.updated_at`,
-  ).run(userId, row.date, row.waistCm, row.chestCm, row.armCm, row.thighCm, row.hipCm, row.notes, row.updatedAt);
-  return row;
+  return db.transaction(() => {
+    const existing = db
+      .prepare(
+        `SELECT date, waist_cm AS waistCm, chest_cm AS chestCm, arm_cm AS armCm,
+                thigh_cm AS thighCm, hip_cm AS hipCm, notes, updated_at AS updatedAt
+         FROM body_measurements WHERE user_id=? AND date=?`,
+      )
+      .get(userId, input.date) as BodyMeasurementRow | undefined;
+
+    if (input.expectedUpdatedAt !== undefined && (existing?.updatedAt ?? null) !== input.expectedUpdatedAt) {
+      // Allow automatic merge ONLY when caller sends dirty fields + their original `base` values
+      // and none of those fields were touched on the server since the client loaded the row.
+      let canMergeNonOverlapping = Boolean(existing && input.base);
+      if (canMergeNonOverlapping && existing && input.base) {
+        let checkedAny = false;
+        for (const k of MEASUREMENT_NUM_KEYS) {
+          if (input[k] !== undefined) {
+            checkedAny = true;
+            const baseVal = input.base[k] != null ? round1(input.base[k]!) : null;
+            if (input.base[k] === undefined || existing[k] !== baseVal) {
+              canMergeNonOverlapping = false;
+              break;
+            }
+          }
+        }
+        if (canMergeNonOverlapping && input.notes !== undefined) {
+          checkedAny = true;
+          if (input.base.notes === undefined || (existing.notes ?? "") !== input.base.notes) {
+            canMergeNonOverlapping = false;
+          }
+        }
+        if (!checkedAny) canMergeNonOverlapping = false;
+      }
+      if (!canMergeNonOverlapping) {
+        throw new MeasurementConflictError(
+          "该日期的围度已在其他设备更新，请刷新查看最新数据后再保存",
+          existing ?? null,
+        );
+      }
+    }
+
+    const resolveNum = (k: (typeof MEASUREMENT_NUM_KEYS)[number]): number | null => {
+      if (input[k] !== undefined) return input[k] != null ? round1(input[k]!) : null;
+      return existing ? existing[k] : null;
+    };
+    const updatedAt = new Date().toISOString();
+    const row: BodyMeasurementRow = {
+      date: input.date,
+      waistCm: resolveNum("waistCm"),
+      chestCm: resolveNum("chestCm"),
+      armCm: resolveNum("armCm"),
+      thighCm: resolveNum("thighCm"),
+      hipCm: resolveNum("hipCm"),
+      notes: input.notes !== undefined ? input.notes : (existing?.notes ?? ""),
+      updatedAt,
+    };
+    if (!MEASUREMENT_NUM_KEYS.some((k) => row[k] != null)) {
+      throw new DomainError("请至少填写一项围度数据", 400);
+    }
+    db.prepare(
+      `INSERT INTO body_measurements (user_id, date, waist_cm, chest_cm, arm_cm, thigh_cm, hip_cm, notes, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(user_id, date) DO UPDATE SET
+         waist_cm=excluded.waist_cm, chest_cm=excluded.chest_cm, arm_cm=excluded.arm_cm,
+         thigh_cm=excluded.thigh_cm, hip_cm=excluded.hip_cm, notes=excluded.notes, updated_at=excluded.updated_at`,
+    ).run(userId, row.date, row.waistCm, row.chestCm, row.armCm, row.thighCm, row.hipCm, row.notes, row.updatedAt);
+    return row;
+  }).immediate();
 }
 
 export function deleteMeasurement(db: Db, userId: string, date: string) {
@@ -323,6 +405,7 @@ export function deleteMeasurement(db: Db, userId: string, date: string) {
 
 // ===== 3.2 Progress Photos =====
 export const progressPhotoInput = z.object({
+  opId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
   date: z.iso.date(),
   pose: z.enum(["front", "side", "back", "free"]).default("front"),
   mime: z.enum(["image/jpeg", "image/png", "image/webp"]).default("image/jpeg"),
@@ -361,27 +444,77 @@ export function saveProgressPhoto(
   if (input.date > localDate()) {
     throw new DomainError("照片日期不能晚于今天", 400);
   }
-  const existingCount = (
-    db.prepare("SELECT COUNT(*) AS cnt FROM progress_photos WHERE user_id=?").get(userId) as { cnt: number }
-  ).cnt;
-  if (existingCount >= 60) {
-    throw new DomainError("体态照片已达 60 张上限，请先删除旧照片再上传", 400);
-  }
-  const id = `photo_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
-  const createdAt = new Date().toISOString();
-  db.prepare(
-    `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, note, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, userId, input.date, input.pose, input.mime, input.imageData, input.note ?? "", createdAt);
-  return {
-    id,
-    date: input.date,
-    pose: input.pose,
-    mime: input.mime,
-    imageData: input.imageData,
-    note: input.note ?? "",
-    createdAt,
-  };
+  return db.transaction(() => {
+    const opKey = input.opId ? `photo:${input.opId}` : null;
+    const requestPayload = opKey
+      ? JSON.stringify({
+          kind: "progressPhoto",
+          date: input.date,
+          pose: input.pose,
+          mime: input.mime,
+          note: input.note ?? "",
+          imageHash: createHash("sha256").update(input.imageData).digest("hex"),
+        })
+      : null;
+
+    if (opKey && requestPayload) {
+      const saved = db
+        .prepare("SELECT request, result FROM operations WHERE user_id=? AND op_id=?")
+        .get(userId, opKey) as { request: string; result: string } | undefined;
+      if (saved) {
+        if (saved.request !== requestPayload) {
+          throw new DomainError("重复操作 ID 与原始上传内容不一致", 409);
+        }
+        const meta = JSON.parse(saved.result) as { id: string; createdAt: string };
+        const existingPhoto = db
+          .prepare(
+            `SELECT id, date, pose, mime, image_data AS imageData, note, created_at AS createdAt
+             FROM progress_photos WHERE user_id=? AND id=?`,
+          )
+          .get(userId, meta.id) as ProgressPhotoRow | undefined;
+        if (existingPhoto) return existingPhoto;
+        return {
+          id: meta.id,
+          date: input.date,
+          pose: input.pose,
+          mime: input.mime,
+          imageData: input.imageData,
+          note: input.note ?? "",
+          createdAt: meta.createdAt,
+        };
+      }
+    }
+
+    const existingCount = (
+      db.prepare("SELECT COUNT(*) AS cnt FROM progress_photos WHERE user_id=?").get(userId) as { cnt: number }
+    ).cnt;
+    if (existingCount >= 60) {
+      throw new DomainError("体态照片已达 60 张上限，请先删除旧照片再上传", 400);
+    }
+    const id = `photo_${randomUUID()}`;
+    const createdAt = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO progress_photos (id, user_id, date, pose, mime, image_data, note, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, userId, input.date, input.pose, input.mime, input.imageData, input.note ?? "", createdAt);
+    if (opKey && requestPayload) {
+      db.prepare("INSERT INTO operations (user_id, op_id, request, result) VALUES (?, ?, ?, ?)").run(
+        userId,
+        opKey,
+        requestPayload,
+        JSON.stringify({ id, createdAt }),
+      );
+    }
+    return {
+      id,
+      date: input.date,
+      pose: input.pose,
+      mime: input.mime,
+      imageData: input.imageData,
+      note: input.note ?? "",
+      createdAt,
+    };
+  }).immediate();
 }
 
 export function deleteProgressPhoto(db: Db, userId: string, id: string) {
@@ -541,6 +674,8 @@ export function buildWebCsv(
       "容量(kg)",
       "开始时间",
       "训练ID",
+      "重量单位",
+      "原始重量",
     ];
     const rows: unknown[][] = [];
     const workouts = store
@@ -561,10 +696,12 @@ export function buildWebCsv(
         const name = meta?.name ?? ex.exerciseId;
         const mult = meta?.volumeMultiplier ?? 1;
         const mode = meta?.mode ?? "reps";
+        const unit: "kg" | "lb" = ex.weightUnit === "lb" ? "lb" : "kg";
         ex.sets.forEach((s, idx) => {
+          const weightKg = round2(toKg(s.weight, unit));
           const isWork = isValidWorkSet(s, mode);
-          const vol = isWork && mode === "reps" && s.weight > 0 && s.reps > 0
-            ? round1(s.weight * s.reps * mult)
+          const vol = isWork && mode === "reps" && weightKg > 0 && s.reps > 0
+            ? round1(weightKg * s.reps * mult)
             : 0;
           rows.push([
             w.date,
@@ -575,7 +712,7 @@ export function buildWebCsv(
             ex.supersetGroup ?? "",
             idx + 1,
             SET_TYPE_LABELS[s.type] ?? s.type,
-            s.weight,
+            weightKg,
             s.reps,
             s.seconds,
             s.rir ?? "",
@@ -583,6 +720,8 @@ export function buildWebCsv(
             vol,
             w.startedAt,
             workoutId,
+            unit,
+            s.weight,
           ]);
         });
       }

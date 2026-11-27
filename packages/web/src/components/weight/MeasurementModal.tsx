@@ -32,12 +32,25 @@ export function MeasurementModal({
   const [date, setDate] = useState(existing?.date ?? todayStr);
   const [values, setValues] = useState<Record<keyof MeasurementValues, string>>(() => valuesFromEntry(existing));
   const [notes, setNotes] = useState(existing?.notes ?? "");
+  const [baseEntry, setBaseEntry] = useState<MeasurementEntry | null>(existing ?? null);
+  const [conflictCurrent, setConflictCurrent] = useState<MeasurementEntry | null>(null);
   const [loadedFromDate, setLoadedFromDate] = useState<string>(existing?.date ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (initialHistory.length > 0) return;
+    if (initialHistory.length > 0) {
+      if (!existing) {
+        const matched = initialHistory.find((r) => r.date === date);
+        if (matched) {
+          setValues(valuesFromEntry(matched));
+          setNotes(matched.notes ?? "");
+          setBaseEntry(matched);
+          setLoadedFromDate(matched.date);
+        }
+      }
+      return;
+    }
     let active = true;
     void apiFetch<MeasurementEntry[]>("/api/web/measurements")
       .then((rows) => {
@@ -48,6 +61,7 @@ export function MeasurementModal({
           if (matched) {
             setValues(valuesFromEntry(matched));
             setNotes(matched.notes ?? "");
+            setBaseEntry(matched);
             setLoadedFromDate(matched.date);
           }
         }
@@ -59,7 +73,7 @@ export function MeasurementModal({
   }, []);
 
   const byDate = useMemo(() => new Map(history.map((m) => [m.date, m])), [history]);
-  const activeExisting = existing ?? byDate.get(date) ?? null;
+  const activeExisting = baseEntry ?? existing ?? byDate.get(date) ?? null;
 
   const latestByKey = useMemo(() => {
     const out: Partial<Record<keyof MeasurementValues, number>> = {};
@@ -73,15 +87,51 @@ export function MeasurementModal({
 
   const handleDateChange = (nextDate: string) => {
     setDate(nextDate);
+    setConflictCurrent(null);
+    setError("");
     const matched = byDate.get(nextDate);
     if (matched) {
       setValues(valuesFromEntry(matched));
       setNotes(matched.notes ?? "");
+      setBaseEntry(matched);
       setLoadedFromDate(matched.date);
     } else if (loadedFromDate) {
       setValues(valuesFromEntry(null));
       setNotes("");
+      setBaseEntry(null);
       setLoadedFromDate("");
+    }
+  };
+
+  const handleReloadLatest = async () => {
+    setError("");
+    try {
+      const latest = conflictCurrent ?? (await apiFetch<MeasurementEntry[]>("/api/web/measurements")).find((r) => r.date === date) ?? null;
+      if (latest) {
+        setHistory((prev) => [latest, ...prev.filter((r) => r.date !== latest.date)]);
+        setBaseEntry(latest);
+        // Preserve user's locally modified fields while pulling fresh server values for untouched fields
+        setValues((prev) => {
+          const baseVals = valuesFromEntry(activeExisting);
+          const serverVals = valuesFromEntry(latest);
+          const merged = { ...serverVals };
+          for (const [k] of MEASUREMENT_SPECS) {
+            if (prev[k].trim() !== baseVals[k].trim()) merged[k] = prev[k];
+          }
+          return merged;
+        });
+        const baseNotes = (activeExisting?.notes ?? "").trim();
+        if (notes.trim() === baseNotes) {
+          setNotes(latest.notes ?? "");
+        }
+        setConflictCurrent(null);
+        notify("已载入最新围度，请核对后再次保存");
+      } else {
+        setBaseEntry(null);
+        setConflictCurrent(null);
+      }
+    } catch {
+      setError("刷新最新围度失败，请稍后重试");
     }
   };
 
@@ -93,7 +143,7 @@ export function MeasurementModal({
       return raw === "" ? null : Number(raw);
     };
 
-    const parsedVals = {
+    const parsedVals: Record<keyof MeasurementValues, number | null> = {
       waistCm: parseNum("waistCm"),
       chestCm: parseNum("chestCm"),
       armCm: parseNum("armCm"),
@@ -105,14 +155,44 @@ export function MeasurementModal({
       return;
     }
 
-    const payload = {
+    const trimmedNotes = notes.trim();
+    const loaded = activeExisting;
+    const payload: Record<string, unknown> = {
       date,
-      ...parsedVals,
-      notes: notes.trim(),
+      expectedUpdatedAt: loaded?.updatedAt ?? null,
     };
+
+    if (loaded) {
+      const base: Record<string, unknown> = {};
+      let dirtyCount = 0;
+      for (const [k] of MEASUREMENT_SPECS) {
+        const prevVal = loaded[k] != null ? Number(loaded[k]) : null;
+        const nextVal = parsedVals[k];
+        if (nextVal !== prevVal) {
+          payload[k] = nextVal;
+          base[k] = prevVal;
+          dirtyCount++;
+        }
+      }
+      const prevNotes = (loaded.notes ?? "").trim();
+      if (trimmedNotes !== prevNotes) {
+        payload.notes = trimmedNotes;
+        base.notes = prevNotes;
+        dirtyCount++;
+      }
+      if (dirtyCount === 0) {
+        closeAllModals();
+        notify("未检测到围度修改");
+        return;
+      }
+      payload.base = base;
+    } else {
+      Object.assign(payload, parsedVals, { notes: trimmedNotes });
+    }
 
     setSaving(true);
     setError("");
+    setConflictCurrent(null);
     try {
       await apiFetch("/api/web/measurements", { method: "PUT", body: payload });
       triggerHaptic("success");
@@ -120,7 +200,13 @@ export function MeasurementModal({
       closeAllModals();
       notify("身体围度已保存");
     } catch (err) {
-      setError((err as Error)?.message || "保存失败");
+      const apiErr = err as Error & { status?: number; payload?: { current?: MeasurementEntry | null } };
+      if (apiErr.status === 409) {
+        setConflictCurrent(apiErr.payload?.current ?? null);
+        setError(apiErr.message || "该日期的围度已在其他设备更新，请刷新合并后再保存");
+      } else {
+        setError(apiErr?.message || "保存失败");
+      }
     } finally {
       setSaving(false);
     }
@@ -196,6 +282,13 @@ export function MeasurementModal({
       <p className="form-error" role="alert" hidden={!error}>
         {error}
       </p>
+      {conflictCurrent ? (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginTop: -4 }}>
+          <button type="button" className="secondary-button" onClick={() => void handleReloadLatest()}>
+            载入最新围度并保留当前草稿
+          </button>
+        </div>
+      ) : null}
 
       <footer className={`dialog-foot${activeExisting ? " has-remove" : ""}`}>
         {activeExisting ? (

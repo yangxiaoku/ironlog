@@ -47,7 +47,7 @@ import { readHealthDataExport } from "./health-data-export.js";
 import { catalogueETag, catalogueLookup, catalogueQuery, CloudCatalogue, exerciseFrame } from "./cloud-catalogue.js";
 import { DomainError, Store } from "./store.js";
 import { getStats, getTrainingContext } from "./stats.js";
-import { getWebStatistics, isoWeekKey, saveWebPreferences, shiftDay, webPreferences, webPreferencesInput, webStatsQuery } from "./web-statistics.js";
+import { getWebStatistics, hasUsedStreakFreezeInMonth, isoWeekKey, saveWebPreferences, shiftDay, webPreferences, webPreferencesInput, webStatsQuery } from "./web-statistics.js";
 import { deliverWebhookEvent, validateWebhookTarget, type WebhookPolicy } from "./webhook.js";
 import { getWebAnalytics, webAnalyticsQuery } from "./web-analytics.js";
 import { getWebBadges } from "./web-badges.js";
@@ -81,6 +81,7 @@ import {
   getTrainedExercisesSummary,
   listExerciseNotes,
   listMeasurements,
+  MeasurementConflictError,
   listProgressPhotos,
   measurementInput,
   progressPhotoInput,
@@ -226,6 +227,8 @@ export function createApp(
         400,
       );
     }
+    if (error instanceof MeasurementConflictError)
+      return c.json({ error: error.message, current: error.current }, 409);
     if (error instanceof DomainError)
       return c.json({ error: error.message }, error.status);
     if (error instanceof SyntaxError)
@@ -770,7 +773,7 @@ export function createApp(
   app.delete("/api/web/progress-photos/:id", (c) =>
     c.json(deleteProgressPhoto(db, c.get("userId"), mutationSchema.shape.id.parse(c.req.param("id")))));
 
-  // 3.2 Streak Freeze (monthly allowance: 1 per calendar month)
+  // 3.2 Streak Freeze (monthly allowance: 1 per calendar month by consumption date)
   app.post("/api/web/streak-freeze", async (c) => {
     const body = await c.req.json().catch(() => ({}));
     const { weekKey: requestedWeek, remove } = z
@@ -787,35 +790,39 @@ export function createApp(
       const baseVersion = existing?.version ?? 0;
       const previous = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
       const curSet = new Set(previous.streakFreezeWeeks ?? []);
+      let nextLog = [...(previous.streakFreezeLog ?? [])];
       if (remove) {
         curSet.delete(targetWeek);
+        nextLog = nextLog.filter((entry) => entry.weekKey !== targetWeek);
       } else {
         if (!curSet.has(targetWeek)) {
-          const monthPrefix = today.slice(0, 7);
-          let usedThisMonth = false;
-          for (let offset = 0; offset < 31; offset++) {
-            const d = shiftDay(today, -offset);
-            if (!d.startsWith(monthPrefix)) break;
-            if (curSet.has(isoWeekKey(d))) {
-              usedThisMonth = true;
-              break;
-            }
+          if (hasUsedStreakFreezeInMonth(today, previous.streakFreezeWeeks ?? [], nextLog)) {
+            throw new DomainError("本月连胜冻结卡已使用（每月限 1 次）", 400);
           }
-          if (usedThisMonth) throw new DomainError("本月连胜冻结卡已使用（每月限 1 次）", 400);
           curSet.add(targetWeek);
+          nextLog = [...nextLog.filter((entry) => entry.weekKey !== targetWeek), { weekKey: targetWeek, usedAt: today }];
         }
       }
       const nextWeeks = [...curSet].sort().slice(-52);
+      const trimmedLog = nextLog
+        .filter((entry) => nextWeeks.includes(entry.weekKey))
+        .sort((a, b) => a.usedAt.localeCompare(b.usedAt) || a.weekKey.localeCompare(b.weekKey))
+        .slice(-52);
       const result = store.mutate(userId, {
         id: "settings",
         kind: "profile",
         opId: crypto.randomUUID(),
         baseVersion,
-        data: { ...previous, streakFreezeWeeks: nextWeeks },
+        data: { ...previous, streakFreezeWeeks: nextWeeks, streakFreezeLog: trimmedLog },
         deleted: false,
       });
       if (result.status === "conflict") throw new DomainError("连胜冻结状态冲突，请重试", 409);
-      return { weekKey: targetWeek, streakFreezeWeeks: nextWeeks, version: result.record!.version };
+      return {
+        weekKey: targetWeek,
+        streakFreezeWeeks: nextWeeks,
+        streakFreezeLog: trimmedLog,
+        version: result.record!.version,
+      };
     }).immediate());
   });
 

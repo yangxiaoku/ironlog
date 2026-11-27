@@ -22,11 +22,12 @@ interface ExerciseHistorySession {
   date: string;
   title: string;
   workSets: number;
+  weightUnit?: "kg" | "lb";
   topWeight?: number | null;
   topReps?: number | null;
   estimated1rm?: number | null;
   bestSeconds?: number | null;
-  sets: Array<{ weight: number; reps: number; seconds: number }>;
+  sets: Array<{ weight: number; weightUnit?: "kg" | "lb"; weightKg?: number; reps: number; seconds: number }>;
 }
 
 interface ExerciseHistoryResponse {
@@ -404,7 +405,9 @@ export function ExerciseDetailModal({
                   </div>
                   <div className="ex-hist-sets">
                     {s.sets.slice(0, 6).map((st, sIdx) => (
-                      <span key={sIdx}>{timed ? `${st.seconds}s` : `${fmt(st.weight)}×${st.reps}`}</span>
+                      <span key={sIdx}>
+                        {timed ? `${st.seconds}s` : `${fmt(st.weight)}${st.weightUnit ?? s.weightUnit ?? "kg"}×${st.reps}`}
+                      </span>
                     ))}
                   </div>
                 </li>
