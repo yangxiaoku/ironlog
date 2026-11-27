@@ -4575,7 +4575,8 @@ dialog.cardio-dialog .dialog-head {
   white-space: nowrap;
   flex-shrink: 0;
 }
-.cal-schedule-preview .hero-drawer-actions {
+.cal-schedule-preview .hero-drawer-actions,
+dialog .hero-drawer-actions {
   justify-content: flex-start !important;
 }
 .dossier-quick-btn {
@@ -4933,7 +4934,8 @@ dialog.cardio-dialog .dialog-head {
   max-width: 100%;
   min-width: 0;
 }
-.analytics-period-segments {
+.analytics-period-segments,
+.apple-chart-subbar .segments {
   display: flex !important;
   flex-wrap: nowrap !important;
   overflow-x: auto !important;
@@ -4941,10 +4943,12 @@ dialog.cardio-dialog .dialog-head {
   scrollbar-width: none;
   -webkit-overflow-scrolling: touch;
 }
-.analytics-period-segments::-webkit-scrollbar {
+.analytics-period-segments::-webkit-scrollbar,
+.apple-chart-subbar .segments::-webkit-scrollbar {
   display: none;
 }
-.analytics-period-segments button {
+.analytics-period-segments button,
+.apple-chart-subbar .segments button {
   flex: 0 0 auto !important;
   white-space: nowrap !important;
   padding: 6px 10px !important;

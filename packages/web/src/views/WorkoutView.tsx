@@ -251,11 +251,13 @@ export function WorkoutView() {
         title="训练"
         view="workout"
         controls={
-          <div className="heading-actions">
-            <button type="button" className="secondary-button" onClick={() => openWorkoutEditor({ goals })}>
-              <Icon name="plus" size={16} /> 自由训练
-            </button>
-          </div>
+          primaryActiveCloud || localDraft || plannedToday ? (
+            <div className="heading-actions">
+              <button type="button" className="secondary-button" onClick={() => openWorkoutEditor({ goals })}>
+                <Icon name="plus" size={16} /> 自由训练
+              </button>
+            </div>
+          ) : undefined
         }
       />
 
