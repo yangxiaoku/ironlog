@@ -2,6 +2,7 @@ import { useEffect, useId, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotMeter } from "../components/Meters";
+import { MuscleBodyMap } from "../components/MuscleBodyMap";
 import { SleepReportPanel } from "../components/SleepReportPanel";
 import type { AppleDailyEntry, AppleWorkoutAgendaItem } from "../components/apple/AppleHealthModals";
 import { formatSleepMinutes } from "../components/apple/AppleHealthModals";
@@ -9,7 +10,7 @@ import { downloadClientFile } from "../components/settings/DataModals";
 import { ANALYTICS_PERIODS, useAnalytics, type AnalyticsPeriod } from "../hooks/useAnalytics";
 import { apiFetch } from "../lib/api";
 import { duration, fmt, shortDate, today } from "../lib/date";
-import type { EquipmentKey, ProfileGoals, RecordEnvelope, WeightData } from "../lib/domain";
+import { MUSCLES, type EquipmentKey, type MuscleKey, type ProfileGoals, type RecordEnvelope, type WeightData } from "../lib/domain";
 import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
@@ -1605,6 +1606,47 @@ export function AnalyticsView() {
         {/* STRENGTH & MUSCLE SECTION */}
         {activeSection === "strength" ? (
           <>
+            {muscles.retention?.length ? (
+              <section className="panel analytics-panel panel-muscle-retention" id="panel-muscle-retention">
+                <header className="panel-head">
+                  <div>
+                    <h2>肌群活跃与力量保持度</h2>
+                    <p>基于近 14 天距上次有效刺激天数衰减（1.0 充分活跃 → 0.50 建议补练）</p>
+                  </div>
+                </header>
+                <div className="muscle-retention-layout">
+                  <MuscleBodyMap
+                    mode="retention"
+                    size="md"
+                    showLabels
+                    scores={Object.fromEntries(muscles.retention.map((r) => [r.muscle, r.retention])) as Partial<Record<MuscleKey, number>>}
+                  />
+                  <div className="muscle-retention-grid">
+                    {muscles.retention.map((r) => {
+                      const tone = r.status === "fresh" ? "is-sweet" : r.status === "ready" ? "is-caution" : "is-danger";
+                      const statusText = r.status === "fresh" ? "近期已刺激" : r.status === "ready" ? "可安排再练" : "久未训练";
+                      return (
+                        <div key={r.muscle} className="muscle-retention-row">
+                          <div className="muscle-retention-head">
+                            <strong>{MUSCLES[r.muscle] ?? r.muscle}</strong>
+                            <span className={`kpi-pill ${tone}`}>{Math.round(r.retention * 100)}% · {statusText}</span>
+                          </div>
+                          <small className="muted">
+                            {r.daysSinceLast == null
+                              ? "近两周暂无有效刺激"
+                              : r.daysSinceLast === 0
+                                ? "今天刚练过"
+                                : `${r.daysSinceLast} 天前练过`}
+                            {r.setsLast14d > 0 ? ` · 近14天 ${fmt(r.setsLast14d, 1)} 组` : ""}
+                          </small>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+            ) : null}
+
             <section className="panel analytics-panel panel-muscle-dose" id="panel-muscle-dose">
               <header className="panel-head">
                 <div>

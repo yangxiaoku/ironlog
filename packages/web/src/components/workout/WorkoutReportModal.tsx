@@ -28,10 +28,14 @@ const METRIC_LABELS: Record<string, [string, string]> = {
   assistance: ["最低辅助重量", "kg"],
 };
 
-function formatSetValue(set: { weight: number; reps: number; seconds: number }, mode: ExerciseMode): string {
+function formatSetValue(
+  set: { weight: number; reps: number; seconds: number },
+  mode: ExerciseMode,
+  unit: "kg" | "lb" = "kg",
+): string {
   if (mode === "timed") return `${fmt(set.seconds)} 秒`;
-  if (mode === "assisted") return `辅助 ${fmt(set.weight)} kg × ${set.reps}`;
-  return set.weight ? `${fmt(set.weight)} kg × ${set.reps}` : `${fmt(set.reps)} 次`;
+  if (mode === "assisted") return `辅助 ${fmt(set.weight)} ${unit} × ${set.reps}`;
+  return set.weight ? `${fmt(set.weight)} ${unit} × ${set.reps}` : `${fmt(set.reps)} 次`;
 }
 
 export function WorkoutReportModal({
@@ -229,6 +233,7 @@ export function WorkoutReportModal({
           id: crypto.randomUUID(),
           exerciseId: row.exerciseId,
           supersetGroup: row.supersetGroup ?? null,
+          ...(row.weightUnit ? { weightUnit: row.weightUnit } : {}),
           restSeconds: row.restSeconds ?? 90,
           snapshot: row.snapshot ?? null,
           sets: pool.map((s) => ({
@@ -507,6 +512,7 @@ export function WorkoutReportModal({
               <h4>
                 {row.supersetGroup ? <span className="superset-pill">超级组 {row.supersetGroup}</span> : null}
                 {row.name}{" "}
+                {row.weightUnit === "lb" ? <span className="unit-pill">lb</span> : null}
                 <small>
                   {row.completed.length} 组{row.volume > 0 ? ` · ${fmt(row.volume, 0)} kg` : ""}
                 </small>
@@ -515,9 +521,10 @@ export function WorkoutReportModal({
                 {row.completed.map((s, idx) => (
                   <li key={idx}>
                     <span className="set-index">{idx + 1}</span>
-                    <span>{formatSetValue(s, row.mode)}</span>
+                    <span>{formatSetValue(s, row.mode, row.weightUnit ?? "kg")}</span>
                     {s.rir != null ? <small className="set-rir-tag">RIR {s.rir}</small> : null}
                     {s.type !== "normal" ? <small>{SET_TYPES[s.type]?.label ?? s.type}</small> : null}
+                    {s.note ? <small className="set-note-tag">「{s.note}」</small> : null}
                   </li>
                 ))}
               </ul>

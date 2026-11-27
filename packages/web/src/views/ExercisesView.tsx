@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
+import { MuscleBodyMap } from "../components/MuscleBodyMap";
 import { WorkspaceTabs } from "../components/WorkspaceTabs";
 import { apiFetch } from "../lib/api";
 import { safeExerciseMediaUrl } from "../lib/catalogue";
@@ -74,6 +75,7 @@ export function ExercisesView() {
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [scope, setScope] = useState<CatalogueScope>("all");
   const [muscle, setMuscle] = useState<MuscleKey | "">("");
+  const [showBodyMap, setShowBodyMap] = useState(false);
   const [equipmentFilter, setEquipmentFilter] = useState<EquipmentKey | "" | "__mine__">("");
   const [trainedSort, setTrainedSort] = useState<TrainedSort>("recent");
 
@@ -450,9 +452,42 @@ export function ExercisesView() {
                 {lbl}
               </button>
             ))}
+            <button
+              type="button"
+              className="body-map-toggle-pill"
+              aria-pressed={showBodyMap}
+              onClick={() => setShowBodyMap((v) => !v)}
+            >
+              {showBodyMap ? "收起人体图" : "人体图选肌群"}
+            </button>
           </div>
           <p className="catalogue-status">{statusText}</p>
         </div>
+
+        {showBodyMap ? (
+          <div className="panel catalogue-body-map-panel">
+            <div className="catalogue-body-map-head">
+              <div>
+                <strong>点击人体部位筛选动作</strong>
+                <small className="muted">
+                  {muscle ? `当前已选：${MUSCLES[muscle] ?? muscle}（再次点击取消）` : "支持点击正面或背面肌群快速定位动作"}
+                </small>
+              </div>
+              {muscle ? (
+                <button type="button" className="quiet" onClick={() => setMuscle("")}>
+                  显示全部
+                </button>
+              ) : null}
+            </div>
+            <MuscleBodyMap
+              size="md"
+              showLabels
+              scores={muscle ? { [muscle]: 1 } : { chest: 0.35, back: 0.35, shoulders: 0.35, arms: 0.35, core: 0.35, legs: 0.35 }}
+              selectedMuscle={muscle}
+              onSelectMuscle={(m) => setMuscle(muscle === m ? "" : m)}
+            />
+          </div>
+        ) : null}
 
         <section id="exercise-results" aria-busy={loading || loadingMore}>
           {scope === "trained" && userId ? (

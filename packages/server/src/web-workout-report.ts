@@ -1,5 +1,5 @@
 import {
-  estimatedOneRepMax, isValidWorkSet, workoutDurationSeconds,
+  estimatedOneRepMax, isValidWorkSet, weightToKg, workoutDurationSeconds,
   type Exercise, type Workout,
 } from "@ironlog/shared";
 import { DomainError, type Store } from "./store.js";
@@ -19,20 +19,22 @@ function trainingRows(workout: Workout, catalogue: ReadonlyMap<string, Exercise>
     const exercise = row.snapshot ?? catalogueEx;
     const mode = exercise?.mode ?? (row.sets.some((set) => set.seconds > 0) && row.sets.every((set) => set.reps === 0) ? "timed" : "reps");
     const working = row.sets.filter((set) => isValidWorkSet(set, exercise?.mode));
+    const unit = row.weightUnit;
     const volume = exercise?.mode === "reps" ? working.reduce((sum, set) =>
-      sum + set.weight * set.reps * exercise.volumeMultiplier, 0) : 0;
+      sum + weightToKg(set.weight, unit) * set.reps * exercise.volumeMultiplier, 0) : 0;
     return {
       id: row.id, exerciseId: row.exerciseId, name: exercise?.name ?? row.exerciseId, mode, working,
       muscle: exercise?.muscle ?? catalogueEx?.muscle ?? null,
       secondaryMuscles: catalogueEx?.secondaryMuscles ?? [],
       supersetGroup: row.supersetGroup ?? null,
+      weightUnit: unit ?? "kg",
       completed: row.sets.filter((set) => isValidWorkSet({ ...set, type: "normal" }, exercise?.mode)),
       volume,
     };
   });
 }
 
-function performances(mode: Exercise["mode"], sets: Set[]): Scores {
+function performances(mode: Exercise["mode"], sets: Array<Set & { _unit?: "kg" | "lb" }>): Scores {
   if (!sets.length) return {};
   if (mode === "timed") {
     let hold = -Infinity;
@@ -41,7 +43,10 @@ function performances(mode: Exercise["mode"], sets: Set[]): Scores {
   }
   if (mode === "assisted") {
     let assistance = Infinity;
-    for (const set of sets) if (set.weight < assistance) assistance = set.weight;
+    for (const set of sets) {
+      const wKg = weightToKg(set.weight, set._unit);
+      if (wKg < assistance) assistance = wKg;
+    }
     return { assistance };
   }
   let maxWeight = 0;
@@ -50,9 +55,10 @@ function performances(mode: Exercise["mode"], sets: Set[]): Scores {
   let has1rm = false;
   for (const set of sets) {
     if (set.weight <= 0 || set.reps <= 0) continue;
-    if (!hasWeight || set.weight > maxWeight) { maxWeight = set.weight; hasWeight = true; }
+    const wKg = weightToKg(set.weight, set._unit);
+    if (!hasWeight || wKg > maxWeight) { maxWeight = wKg; hasWeight = true; }
     if (set.reps <= 10) {
-      const est = estimatedOneRepMax(set.weight, set.reps);
+      const est = estimatedOneRepMax(wKg, set.reps);
       if (!has1rm || est > max1rm) { max1rm = est; has1rm = true; }
     }
   }
@@ -101,7 +107,7 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
       const working = row.sets.filter((set) => isValidWorkSet(set, exercise?.mode));
       if (!working.length) continue;
       const scores = baseline.get(exerciseKey) ?? {};
-      const today = performances(mode, working);
+      const today = performances(mode, working.map((s) => ({ ...s, _unit: row.weightUnit })));
       for (const metric of Object.keys(today) as Metric[]) {
         const value = today[metric]!;
         const previous = scores[metric];
@@ -110,11 +116,11 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
       baseline.set(exerciseKey, scores);
     }
   }
-  const bestNow = new Map<string, { name: string; mode: Exercise["mode"]; sets: Set[] }>();
+  const bestNow = new Map<string, { name: string; mode: Exercise["mode"]; sets: Array<Set & { _unit?: "kg" | "lb" }> }>();
   for (const row of rows) {
     const exerciseKey = key(row);
     const current = bestNow.get(exerciseKey) ?? { name: row.name, mode: row.mode, sets: [] };
-    current.sets = current.sets.concat(row.working);
+    current.sets = current.sets.concat(row.working.map((s) => ({ ...s, _unit: row.weightUnit as "kg" | "lb" })));
     bestNow.set(exerciseKey, current);
   }
   const records = [...bestNow.entries()].flatMap(([exerciseKey, row]) => {
@@ -187,7 +193,10 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
     exercises: rows.filter((row) => row.completed.length).map((row) => ({
       id: row.id, exerciseId: row.exerciseId, name: row.name, mode: row.mode,
       supersetGroup: row.supersetGroup,
-      completed: row.completed.map(({ type, weight, reps, seconds, rir }) => ({ type, weight, reps, seconds, rir })),
+      weightUnit: row.weightUnit,
+      completed: row.completed.map(({ type, weight, reps, seconds, rir, note }) => ({
+        type, weight, reps, seconds, rir, ...(note ? { note } : {}),
+      })),
       volume: round(row.volume),
     })),
     records,

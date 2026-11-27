@@ -15,6 +15,7 @@ export * from "./science-analytics.js";
 export * from "./apple-workout-annotation.js";
 export * from "./backup-limits.js";
 export * from "./classic-strength.js";
+export * from "./muscle-map.js";
 export type * from "./catalogue-api.js";
 
 const id = z
@@ -61,6 +62,9 @@ export const exerciseSnapshotSchema = exerciseSchema.pick({
   volumeMultiplier: true,
 });
 
+export const weightUnitSchema = z.enum(["kg", "lb"]);
+export type WeightUnit = z.infer<typeof weightUnitSchema>;
+
 export const setSchema = z.object({
   id,
   type: z.enum(["normal", "warmup", "failure", "drop", "rest_pause"]),
@@ -73,12 +77,17 @@ export const setSchema = z.object({
     z.iso.datetime({ offset: true }).optional(),
   ),
   rir: z.number().int().min(0).max(10).nullable().default(null),
+  note: z.preprocess(
+    (v) => (v === null || v === "" ? undefined : v),
+    z.string().trim().max(200).optional(),
+  ),
 });
 export const sessionExerciseSchema = z.object({
   id,
   exerciseId: id,
   targetIndex: z.number().int().min(0).max(99).nullable().optional(),
   supersetGroup: z.string().trim().max(16).nullable().optional(),
+  weightUnit: weightUnitSchema.optional(),
   restSeconds: z.number().int().min(0).max(900),
   snapshot: exerciseSnapshotSchema.nullable().default(null),
   sets: z.array(setSchema).max(100),
@@ -347,6 +356,7 @@ export const plannedExerciseSchema =
       increment: z.number().min(0).max(20).default(2.5),
       backupExerciseId: id.nullable().default(null),
       supersetGroup: z.string().trim().max(16).nullable().optional(),
+      weightUnit: weightUnitSchema.optional(),
     })
     .refine((value) => value.repsMax >= value.repsMin, {
       message: "次数上限不能低于下限",

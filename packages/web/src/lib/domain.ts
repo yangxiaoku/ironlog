@@ -11,6 +11,7 @@ export type EquipmentKey =
 export type FeelingKey = "easy" | "balanced" | "fatigued";
 export type MealKey = "breakfast" | "lunch" | "dinner" | "snack";
 export type SetType = "normal" | "warmup" | "failure" | "drop" | "rest_pause";
+export type WeightUnit = "kg" | "lb";
 export type ExerciseMode = "reps" | "timed" | "assisted";
 export type LoadMetricKey = "volume" | "sets" | "workouts" | "seconds";
 export type PeriodDays = 7 | 30 | 90 | 365;
@@ -112,6 +113,7 @@ export interface WorkoutSet {
   completed: boolean;
   completedAt?: string;
   rir: number | null;
+  note?: string;
 }
 
 export interface WorkoutExercise {
@@ -119,6 +121,7 @@ export interface WorkoutExercise {
   exerciseId: string;
   targetIndex?: number | null;
   supersetGroup?: string | null;
+  weightUnit?: WeightUnit;
   restSeconds: number;
   snapshot?: ExerciseSnapshot | null;
   backupExerciseId?: string | null;
@@ -306,7 +309,15 @@ export interface OverviewStatsResponse {
 export interface TodayResponse {
   date: string;
   active?: { id: string; title: string; done: number; total: number; from?: string } | null;
-  planned?: { id: string; date: string; name: string; exercises: number; source?: string } | null;
+  planned?: {
+    id: string;
+    date: string;
+    name: string;
+    exercises: number;
+    source?: string;
+    muscleScores?: Partial<Record<MuscleKey, number>>;
+    scheduleMode?: "rotation" | "weekdays";
+  } | null;
   completed?: number;
   restToday?: boolean;
   weight?: number | null;
@@ -353,12 +364,14 @@ export interface WorkoutReportResponse {
     name: string;
     mode: ExerciseMode;
     supersetGroup?: string | null;
+    weightUnit?: WeightUnit;
     completed: Array<{
       type: SetType;
       weight: number;
       reps: number;
       seconds: number;
       rir: number | null;
+      note?: string;
     }>;
     volume: number;
   }>;
@@ -427,6 +440,7 @@ export interface PlannedExercise {
   increment: number;
   backupExerciseId?: string | null;
   supersetGroup?: string | null;
+  weightUnit?: WeightUnit;
 }
 
 export interface PlanRoutine {
@@ -501,6 +515,18 @@ export function workoutSeconds(data: WorkoutData): number | null {
     : null;
 }
 
+export const LB_TO_KG = 0.45359237;
+
+export function weightToKg(weight: number, unit?: WeightUnit): number {
+  if (!Number.isFinite(weight) || weight <= 0) return 0;
+  return unit === "lb" ? Math.round(weight * LB_TO_KG * 100) / 100 : weight;
+}
+
+export function kgToUnit(kg: number, unit?: WeightUnit): number {
+  if (!Number.isFinite(kg) || kg <= 0) return 0;
+  return unit === "lb" ? Math.round((kg / LB_TO_KG) * 10) / 10 : Math.round(kg * 100) / 100;
+}
+
 export function summarizeWorkoutRecord(data: WorkoutData): { sets: number; volume: number } {
   let sets = 0;
   let vol = 0;
@@ -511,7 +537,7 @@ export function summarizeWorkoutRecord(data: WorkoutData): { sets: number; volum
       if (!entry.completed || entry.type === "warmup") continue;
       sets++;
       if (mode === "reps" && entry.weight > 0 && entry.reps > 0) {
-        vol += entry.weight * entry.reps * mult;
+        vol += weightToKg(entry.weight, row.weightUnit) * entry.reps * mult;
       }
     }
   }

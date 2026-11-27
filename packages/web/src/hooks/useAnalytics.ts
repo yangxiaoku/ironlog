@@ -62,6 +62,13 @@ interface AnalyticsResponse {
       upperLowerRatio: number | null;
       advice: string;
     };
+    retention?: Array<{
+      muscle: "chest" | "back" | "shoulders" | "arms" | "core" | "legs";
+      retention: number;
+      daysSinceLast: number | null;
+      setsLast14d: number;
+      status: "fresh" | "ready" | "due";
+    }>;
   };
   effortSpectrum?: {
     totalWorkSets: number;

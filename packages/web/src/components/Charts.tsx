@@ -105,23 +105,30 @@ export function WeekStrip({
   activity,
   todayKey,
   selectedDate = "",
+  scheduleDays,
   onSelectDate,
 }: {
   activity: Array<{ date: string; active: boolean }>;
   todayKey: string;
   selectedDate?: string;
+  scheduleDays?: Array<{ date: string; status: string; title?: string }>;
   onSelectDate?: (date: string) => void;
 }) {
   const activeSet = new Set((activity ?? []).filter((c) => c.active).map((c) => c.date));
+  const schedByDate = new Map((scheduleDays ?? []).map((d) => [d.date, d]));
   const anchor = new Date(`${todayKey}T00:00:00Z`);
   const weekday = (anchor.getUTCDay() + 6) % 7;
 
   const days = WEEK_LABELS.map((label, i) => {
     const iso = new Date(anchor.getTime() + (i - weekday) * 86_400_000).toISOString().slice(0, 10);
+    const sched = schedByDate.get(iso);
     return {
       label,
       iso,
       active: activeSet.has(iso),
+      scheduled: sched?.status === "scheduled" || sched?.status === "projected",
+      rest: sched?.status === "rest",
+      schedTitle: sched?.title ?? "",
       isToday: iso === todayKey,
       isFuture: iso > todayKey,
     };
@@ -132,21 +139,36 @@ export function WeekStrip({
   return (
     <div className="hero-week" aria-label="本周训练打卡与排期">
       <div className="hero-week-head">
-        <span>本周节律</span>
+        <span>本周节律 · 点日期可快调排期</span>
         <b>{doneCount} / 7 天</b>
       </div>
       <div className="hero-week-days">
-        {days.map(({ label, iso, active, isToday, isFuture }) => {
-          const cls = ["week-pill", active ? "is-active" : "", isToday ? "is-today" : "", isFuture ? "is-future" : ""]
+        {days.map(({ label, iso, active, scheduled, rest, schedTitle, isToday, isFuture }) => {
+          const cls = [
+            "week-pill",
+            active ? "is-active" : "",
+            !active && scheduled ? "is-scheduled" : "",
+            !active && rest ? "is-rest" : "",
+            isToday ? "is-today" : "",
+            isFuture ? "is-future" : "",
+          ]
             .filter(Boolean)
             .join(" ");
+          const statusDesc = active
+            ? "已训练"
+            : rest
+              ? "休息日"
+              : scheduled
+                ? `计划：${schedTitle || "训练日"}`
+                : "点击调整";
           return (
             <button
               key={iso}
               type="button"
               className={cls}
+              title={`${iso} · ${statusDesc}`}
               aria-pressed={selectedDate === iso}
-              aria-label={`${iso}${active ? " 已训练" : ""}`}
+              aria-label={`${iso} ${statusDesc}`}
               onClick={() => onSelectDate?.(selectedDate === iso ? "" : iso)}
             >
               <span>{label}</span>

@@ -3,6 +3,8 @@ import { LoadChart, MiniSparkline, MuscleDistributionCard, WeekStrip, WeightChar
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import { DotCheckIcon, DotPlayIcon, ThinMeter } from "../components/Meters";
+import { MuscleBodyMap } from "../components/MuscleBodyMap";
+import type { ScheduleResponse } from "../components/plan/PlanModals";
 import {
   AppleDailyStrip,
   AppleLine,
@@ -63,12 +65,14 @@ export function OverviewView() {
   const [selectedMuscle, setSelectedMuscle] = useState<MuscleKey | "">("");
   const [statsCategory, setStatsCategory] = useState<"all" | "load" | "muscle" | "weight">("all");
   const [weekDate, setWeekDate] = useState<string>("");
+  const [quickDayBusy, setQuickDayBusy] = useState(false);
 
   interface OverviewSnapshot {
     stats: OverviewStatsResponse;
     day: TodayResponse | null;
     badges: BadgeSummary | null;
     hasPlan: boolean;
+    schedule: ScheduleResponse | null;
     visiblePanels: string[] | null;
     appleDaily: AppleDailyEntry | null;
     appleAgenda: AppleWorkoutAgendaItem[];
@@ -83,6 +87,7 @@ export function OverviewView() {
   const [day, setDay] = useState<TodayResponse | null>(() => cachedInit?.day ?? null);
   const [badges, setBadges] = useState<BadgeSummary | null>(() => cachedInit?.badges ?? null);
   const [hasPlan, setHasPlan] = useState<boolean>(() => cachedInit?.hasPlan ?? false);
+  const [scheduleData, setScheduleData] = useState<ScheduleResponse | null>(() => cachedInit?.schedule ?? null);
   const [visiblePanels, setVisiblePanels] = useState<string[] | null>(() => cachedInit?.visiblePanels ?? null);
   const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(() => cachedInit?.appleDaily ?? null);
   const [appleAgenda, setAppleAgenda] = useState<AppleWorkoutAgendaItem[]>(() => cachedInit?.appleAgenda ?? []);
@@ -103,6 +108,7 @@ export function OverviewView() {
       setDay(staleHit.day);
       setBadges(staleHit.badges);
       setHasPlan(staleHit.hasPlan);
+      setScheduleData(staleHit.schedule ?? null);
       setVisiblePanels(staleHit.visiblePanels);
       setAppleDaily(staleHit.appleDaily);
       setAppleAgenda(staleHit.appleAgenda);
@@ -117,7 +123,7 @@ export function OverviewView() {
       cachedApiFetch<TodayResponse>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId }).catch(() => null),
       cachedApiFetch<BadgeSummary>("/api/web/badges", { epoch: dataEpoch, userId }).catch(() => null),
       cachedApiFetch<{ panels?: string[] }>("/api/web/preferences", { epoch: dataEpoch, userId }).catch(() => null),
-      cachedApiFetch<{ planId?: string | null }>("/api/web/schedule", { epoch: dataEpoch, userId }).catch(() => null),
+      cachedApiFetch<ScheduleResponse>("/api/web/schedule", { epoch: dataEpoch, userId }).catch(() => null),
       appleHealthConnected
         ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
             `/api/integrations/apple-health/daily?from=${encodeURIComponent(currentToday)}&through=${encodeURIComponent(currentToday)}`,
@@ -140,7 +146,8 @@ export function OverviewView() {
           stats: statsRes,
           day: todayRes,
           badges: badgesRes,
-          hasPlan: Boolean(schedRes?.planId || todayRes?.planned),
+          hasPlan: Boolean(schedRes?.activePlan?.id || todayRes?.planned),
+          schedule: schedRes ?? null,
           visiblePanels: Array.isArray(prefsRes?.panels) ? prefsRes.panels : null,
           appleDaily: dailyRes?.entries?.[0] ?? null,
           appleAgenda: Array.isArray(agendaRes) ? agendaRes : [],
@@ -151,6 +158,7 @@ export function OverviewView() {
         setDay(nextSnap.day);
         setBadges(nextSnap.badges);
         setHasPlan(nextSnap.hasPlan);
+        setScheduleData(nextSnap.schedule);
         setVisiblePanels(nextSnap.visiblePanels);
         setAppleDaily(nextSnap.appleDaily);
         setAppleAgenda(nextSnap.appleAgenda);
@@ -351,6 +359,98 @@ export function OverviewView() {
     weight: "体重趋势",
   };
 
+  const handleQuickDayAction = async (
+    targetDate: string,
+    action:
+      | { kind: "rest" }
+      | { kind: "reset" }
+      | { kind: "swap"; title: string; planId?: string | null; routineId?: string | null; templateId?: string | null; exercises: unknown[] },
+  ) => {
+    if (quickDayBusy) return;
+    setQuickDayBusy(true);
+    try {
+      const detail = await apiFetch<{ override?: { version: number } | null }>(
+        `/api/web/schedule/${encodeURIComponent(targetDate)}`,
+      ).catch(() => ({ override: null }));
+      const baseVersion = detail?.override?.version ?? 0;
+
+      if (action.kind === "reset") {
+        if (!detail?.override) {
+          notify("该日当前已是默认排期");
+          return;
+        }
+        await apiFetch(`/api/web/schedule/${encodeURIComponent(targetDate)}`, {
+          method: "DELETE",
+          body: { baseVersion },
+        });
+        notify(`已恢复 ${shortDate(targetDate)} 默认排期`);
+      } else if (action.kind === "rest") {
+        await apiFetch(`/api/web/schedule/${encodeURIComponent(targetDate)}`, {
+          method: "PUT",
+          body: {
+            baseVersion,
+            mode: "rest",
+            title: "休息日",
+            notes: "",
+            planId: null,
+            routineId: null,
+            templateId: null,
+            exercises: [],
+          },
+        });
+        notify(`已将 ${shortDate(targetDate)} 设为休息/跳过`);
+      } else {
+        await apiFetch(`/api/web/schedule/${encodeURIComponent(targetDate)}`, {
+          method: "PUT",
+          body: {
+            baseVersion,
+            mode: "workout",
+            title: action.title,
+            notes: "",
+            planId: action.planId ?? null,
+            routineId: action.routineId ?? null,
+            templateId: action.templateId ?? null,
+            exercises: action.exercises,
+          },
+        });
+        notify(`已将 ${shortDate(targetDate)} 临时调整为「${action.title}」`);
+      }
+      setWeekDate("");
+      bumpDataEpoch();
+    } catch (err) {
+      notify((err as Error)?.message || "调整排期失败");
+    } finally {
+      setQuickDayBusy(false);
+    }
+  };
+
+  const selectedWeekEntry = weekDate ? scheduleData?.days?.find((d) => d.date === weekDate) ?? null : null;
+  const swapChoices: Array<{
+    key: string;
+    title: string;
+    planId?: string | null;
+    routineId?: string | null;
+    templateId?: string | null;
+    exercises: unknown[];
+  }> = [
+    ...(scheduleData?.activePlan?.routines ?? []).map((r) => ({
+      key: `plan:${r.id}`,
+      title: r.name,
+      planId: scheduleData!.activePlan!.id,
+      routineId: r.id,
+      templateId: null,
+      exercises: r.exercises,
+    })),
+    ...(scheduleData?.templates ?? []).map((t) => ({
+      key: `tpl:${t.id}`,
+      title: t.name,
+      planId: null,
+      routineId: null,
+      templateId: t.id,
+      exercises: t.exercises,
+    })),
+  ];
+
   return (
     <>
       {error ? (
@@ -408,12 +508,90 @@ export function OverviewView() {
               activity={stats.activity}
               todayKey={todayKey}
               selectedDate={weekDate}
-              onSelectDate={(iso) => {
-                setWeekDate(iso);
-                openCalendarDayModal(iso, (d) => setWeekDate(d));
-              }}
+              scheduleDays={scheduleData?.days}
+              onSelectDate={(iso) => setWeekDate(iso)}
             />
           </div>
+
+          {weekDate ? (
+            <div className="week-quick-sheet" role="region" aria-label="单日排期快操">
+              <div className="week-quick-head">
+                <div>
+                  <strong>{shortDate(weekDate)}</strong>
+                  <small className="muted">
+                    {selectedWeekEntry?.status === "completed"
+                      ? `已完成 · ${selectedWeekEntry.title}`
+                      : selectedWeekEntry?.status === "rest"
+                        ? "当前为休息日"
+                        : selectedWeekEntry?.title
+                          ? `当前安排：${selectedWeekEntry.title}`
+                          : "暂无排期"}
+                  </small>
+                </div>
+                <button type="button" className="quiet" onClick={() => setWeekDate("")}>
+                  收起
+                </button>
+              </div>
+              <div className="week-quick-actions">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={quickDayBusy}
+                  onClick={() => void handleQuickDayAction(weekDate, { kind: "rest" })}
+                >
+                  跳过 / 设休息
+                </button>
+                {selectedWeekEntry?.source === "scheduled" ? (
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={quickDayBusy}
+                    onClick={() => void handleQuickDayAction(weekDate, { kind: "reset" })}
+                  >
+                    恢复默认排期
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="quiet"
+                  onClick={() => {
+                    const target = weekDate;
+                    setWeekDate("");
+                    openCalendarDayModal(target, (d) => setWeekDate(d));
+                  }}
+                >
+                  查看当日档案
+                </button>
+              </div>
+              {swapChoices.length ? (
+                <div className="week-quick-swap">
+                  <span className="muted">临时换成：</span>
+                  <div className="week-quick-swap-chips">
+                    {swapChoices.slice(0, 8).map((choice) => (
+                      <button
+                        key={choice.key}
+                        type="button"
+                        className="quiet"
+                        disabled={quickDayBusy}
+                        onClick={() =>
+                          void handleQuickDayAction(weekDate, {
+                            kind: "swap",
+                            title: choice.title,
+                            planId: choice.planId,
+                            routineId: choice.routineId,
+                            templateId: choice.templateId,
+                            exercises: choice.exercises,
+                          })
+                        }
+                      >
+                        {choice.title}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </section>
 
         {day ? (
@@ -430,10 +608,16 @@ export function OverviewView() {
                 <span className="today-caption">
                   {trainingTile.active ? <span className="training-led" aria-hidden="true" /> : null}
                   今日训练
+                  {day.planned?.scheduleMode === "rotation" && isPlannedToday ? (
+                    <em className="today-mode-pill">轮换顺延</em>
+                  ) : null}
                 </span>
                 <strong>{trainingTile.main}</strong>
                 {trainingTile.note ? <small>{trainingTile.note}</small> : null}
               </span>
+              {day.planned?.muscleScores && Object.keys(day.planned.muscleScores).length > 0 && isPlannedToday ? (
+                <MuscleBodyMap size="mini" scores={day.planned.muscleScores} />
+              ) : null}
               <span className={`today-cta-pill${trainingTile.active ? " is-live" : trainingTile.completed ? " is-done" : ""}`}>
                 {trainingTile.label}
               </span>

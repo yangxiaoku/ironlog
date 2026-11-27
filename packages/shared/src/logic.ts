@@ -31,6 +31,18 @@ export function compareWorkouts(a: WorkoutOrder, b: WorkoutOrder) {
   );
 }
 
+export const LB_TO_KG = 0.45359237;
+
+export function weightToKg(weight: number, unit?: "kg" | "lb"): number {
+  if (!Number.isFinite(weight) || weight <= 0) return 0;
+  return unit === "lb" ? Math.round(weight * LB_TO_KG * 100) / 100 : weight;
+}
+
+export function kgToUnit(kg: number, unit?: "kg" | "lb"): number {
+  if (!Number.isFinite(kg) || kg <= 0) return 0;
+  return unit === "lb" ? Math.round((kg / LB_TO_KG) * 10) / 10 : Math.round(kg * 100) / 100;
+}
+
 export function estimatedOneRepMax(weight: number, reps: number): number {
   if (weight <= 0 || reps <= 0) return 0;
   return reps === 1 ? weight : weight * (1 + reps / 30);
@@ -104,13 +116,14 @@ export function workoutMetrics(workout: Workout, catalogue: Exercise[] | Readonl
       if (!set.completed || set.type === "warmup") continue;
       completedSets++;
       if (!exercise || exercise.mode !== "reps" || set.reps <= 0) continue;
-      volume += set.weight * set.reps * exercise.volumeMultiplier;
+      const weightKg = weightToKg(set.weight, item.weightUnit);
+      volume += weightKg * set.reps * exercise.volumeMultiplier;
       const prior = best[item.exerciseId] ?? { weight: 0, estimated1rm: 0 };
       best[item.exerciseId] = {
-        weight: Math.max(prior.weight, set.weight),
+        weight: Math.max(prior.weight, weightKg),
         estimated1rm: Math.max(
           prior.estimated1rm,
-          estimatedOneRepMax(set.weight, set.reps),
+          estimatedOneRepMax(weightKg, set.reps),
         ),
       };
     }

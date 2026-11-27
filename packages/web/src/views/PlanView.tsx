@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { ThinMeter } from "../components/Meters";
+import { MuscleBodyMap } from "../components/MuscleBodyMap";
 import { WorkspaceTabs } from "../components/WorkspaceTabs";
 import { type ScheduleResponse } from "../components/plan/PlanModals";
 import { MuscleDistributionSummary, PROGRESSION_SHORT_LABELS, supersetBadges } from "../components/plan/PlannedExerciseList";
@@ -327,6 +328,10 @@ export function PlanView() {
     const checkedIn = isActiveRoutine && currentDay?.applePlan?.routineId === routine.id;
     const isNext = isActiveRoutine && next?.id === routine.id;
     const mChips = routineMuscleSummary(routine);
+    const maxChipVal = Math.max(1, ...mChips.map(([, v]) => v));
+    const routineScores = Object.fromEntries(
+      mChips.map(([k, v]) => [k, Math.min(1, Math.max(0.25, v / maxChipVal))]),
+    ) as Partial<Record<MuscleKey, number>>;
     const ssBadges = supersetBadges(routine.exercises);
 
     return (
@@ -335,15 +340,22 @@ export function PlanView() {
         className={`panel routine routine-card${checkedIn ? " is-done" : isNext ? " is-next" : ""}`}
       >
         <header className="panel-head">
-          <div>
-            <h3>{routine.name}</h3>
-            {checkedIn ? (
-              <span className="apple-status">Apple 健康已完成</span>
-            ) : isNext ? (
-              <span className="plan-next-tag">下次安排</span>
-            ) : isActiveRoutine && planData?.schedule === "weekdays" && planData.weekdays?.[index] ? (
-              <p>星期{WEEKDAY_CHARS[planData.weekdays[index]! - 1] ?? ""}</p>
-            ) : null}
+          <div className="routine-head-lead">
+            {mChips.length ? <MuscleBodyMap size="mini" scores={routineScores} /> : null}
+            <div>
+              <h3>{routine.name}</h3>
+              {checkedIn ? (
+                <span className="apple-status">Apple 健康已完成</span>
+              ) : isNext ? (
+                <span className="plan-next-tag">
+                  {planData?.schedule === "rotation" ? "轮换下一日" : "下次安排"}
+                </span>
+              ) : isActiveRoutine && planData?.schedule === "weekdays" && planData.weekdays?.[index] ? (
+                <p>星期{WEEKDAY_CHARS[planData.weekdays[index]! - 1] ?? ""}</p>
+              ) : isActiveRoutine && planData?.schedule === "rotation" ? (
+                <p>轮换顺序第 {index + 1} 日</p>
+              ) : null}
+            </div>
           </div>
           <div className="routine-head-actions">
             <button
@@ -429,7 +441,11 @@ export function PlanView() {
       <header className="page-heading masthead-plan">
         <div>
           <h1>训练计划</h1>
-          {planData ? <p>{planData.name} · {planData.weeks} 周</p> : null}
+          {planData ? (
+            <p>
+              {planData.name} · {planData.weeks} 周 · {planData.schedule === "rotation" ? "轮换顺延制（跳过当天自动顺延）" : "固定星期排期"}
+            </p>
+          ) : null}
         </div>
         <div className="heading-actions">
           <button

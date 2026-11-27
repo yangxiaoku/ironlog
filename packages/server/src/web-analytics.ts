@@ -5,6 +5,7 @@ import {
   calculateIpfGlPoints,
   calculateMonotonyAndStrain,
   classicStrength,
+  computeMuscleRetention,
   calculateSetInol,
   evaluateEffortAndRepZones,
   evaluateNutritionEnergyBalance,
@@ -20,6 +21,7 @@ import {
   nutritionDayComplete,
   profileSchema,
   SCIENCE_CITATIONS,
+  weightToKg,
   workoutDurationSeconds,
   type Exercise,
   type Diet,
@@ -286,11 +288,12 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
             set.type === "failure" ||
             set.type === "drop";
           if (isHard && weekEntry) weekEntry.hardSets++;
+          const rawWeightKg = weightToKg(set.weight, item.weightUnit);
           periodEffortSets.push({
             reps: set.reps,
             rir: set.rir ?? null,
             mode: exercise?.mode ?? "reps",
-            weight: set.weight,
+            weight: rawWeightKg,
             setType: set.type,
           });
         } else if (inPrevPeriod) {
@@ -316,11 +319,12 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
         }
 
         if (exercise && exercise.mode === "reps" && set.weight > 0 && set.reps > 0) {
+          const setWeightKg = weightToKg(set.weight, item.weightUnit);
           const weightedBw = isWeightedBodyweight(item.exerciseId, exercise.name);
           if (weightedBw) loadUsesReferenceWeight ||= userWeightKg == null;
           const effectiveWeight = weightedBw
-            ? round1(loadWeightKg + set.weight)
-            : set.weight;
+            ? round1(loadWeightKg + setWeightKg)
+            : setWeightKg;
           const setVolume = effectiveWeight * set.reps * exercise.volumeMultiplier;
           const hasValidRir = set.rir != null && Number.isFinite(set.rir) && set.rir >= 0 && set.rir <= 4;
           const effortMult = set.rir != null && Number.isFinite(set.rir) && set.rir >= 0 && set.rir <= 5
@@ -1006,6 +1010,11 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     muscles: {
       audits: muscleAudits,
       symmetry,
+      retention: computeMuscleRetention(
+        workouts.map((r) => r.workout),
+        catalogue,
+        through,
+      ),
       citations: SCIENCE_CITATIONS.schoenfeld2017,
     },
     effortSpectrum,

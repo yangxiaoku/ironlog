@@ -3472,3 +3472,294 @@ dialog.cardio-dialog .dialog-head {
   align-items: center;
   gap: 5px;
 }
+
+
+/* ===== OpenGym Parity Batch 1: Muscle Body Map, Quick Week Actions, Live Coach & Set Notes ===== */
+.muscle-body-map {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.muscle-body-map svg {
+  display: block;
+  overflow: visible;
+}
+.muscle-body-map .body-map-zone {
+  transition: fill-opacity 0.16s ease, transform 0.16s ease, filter 0.16s ease;
+}
+.muscle-body-map .body-map-zone.is-clickable {
+  cursor: pointer;
+}
+.muscle-body-map .body-map-zone.is-clickable:hover {
+  filter: brightness(1.18);
+}
+.body-map-quick-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+}
+.body-map-chip {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+.body-map-chip.is-active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.body-map-toggle-pill {
+  border-style: dashed !important;
+}
+.catalogue-body-map-panel {
+  margin-bottom: 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.catalogue-body-map-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.catalogue-body-map-head small {
+  display: block;
+}
+.routine-head-lead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.today-mode-pill {
+  font-style: normal;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-left: 6px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.week-pill.is-scheduled i {
+  background: var(--muted);
+  opacity: 0.7;
+}
+.week-pill.is-rest i {
+  background: transparent;
+  border: 1px dashed var(--muted);
+  opacity: 0.65;
+}
+.week-quick-sheet {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.week-quick-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.week-quick-head small {
+  display: block;
+}
+.week-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.week-quick-swap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+}
+.week-quick-swap-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.muscle-retention-layout {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.muscle-retention-grid {
+  flex: 1 1 240px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.muscle-retention-row {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.muscle-retention-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.workout-muscle-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.live-muscle-map-wrap {
+  display: flex;
+  justify-content: center;
+  padding: 6px 0 12px;
+}
+.live-muscle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.live-muscle-row {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.live-muscle-row-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+}
+.live-muscle-bar-track {
+  height: 7px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.live-muscle-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.merge-routine-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.merge-routine-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.merge-routine-item small {
+  display: block;
+}
+.coach-scenario-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.coach-scenario-btn {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.coach-scenario-btn.is-active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+}
+.coach-scenario-btn small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.coach-advice-card h4 {
+  margin: 0 0 6px;
+}
+.coach-advice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.unit-pill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #f59e0b 18%, transparent);
+  color: #d97706;
+  margin-right: 4px;
+}
+.set-note-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px dashed var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.set-note-chip.has-note {
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  color: var(--ink);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.set-note-input {
+  flex: 1 1 160px;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: var(--surface);
+  color: var(--ink);
+}
+.set-note-tag {
+  color: var(--muted);
+  font-style: italic;
+}

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
-  exercisePrBaselines, isValidWorkSet, localDate, nutritionDayComplete, nutritionTotals, planOn,
+  exercisePrBaselines, isValidWorkSet, localDate, muscleIntensityMapFromExercises, nutritionDayComplete, nutritionTotals, planOn,
   plannedExerciseSchema, previousExerciseRows, profileSchema, projectScheduleRange, projectWeekMuscleForecast,
-  recommendInCycle, resolveRoutineWithTelemetry, scheduledDaySchema,
+  recommendInCycle, resolveRoutineWithTelemetry, scheduledDaySchema, weightToKg,
   type Diet, type Exercise, type NutritionDay, type Routine, type ScheduledDay, type Weight, type Workout,
 } from "@ironlog/shared";
 import { DomainError, type Store } from "./store.js";
@@ -50,7 +50,7 @@ function computeReadinessHint(store: Store, userId: string, workouts: Workout[],
       if (mode !== "reps") continue;
       for (const s of row.sets) {
         if (isValidWorkSet(s, mode) && s.weight > 0 && s.reps > 0) {
-          wLoad += s.weight * s.reps * mult;
+          wLoad += weightToKg(s.weight, row.weightUnit) * s.reps * mult;
         }
       }
     }
@@ -106,7 +106,16 @@ export function getWebToday(store: Store, userId: string, date = localDate()) {
   const manualPlanDone = plan && completed.some((workout) => workout.planId === plan.id &&
     (workout.planVersion === null || workout.planVersion === plan.version) &&
     plan.data.routines.some((routine) => routine.id === workout.routineId));
-  let planned: { id: string; name: string; date: string; exercises: number; source?: "plan" | "scheduled" } | null = null;
+  const catalogueMap = store.catalogueMap(userId, true);
+  let planned: {
+    id: string;
+    name: string;
+    date: string;
+    exercises: number;
+    source?: "plan" | "scheduled";
+    muscleScores?: Record<string, number>;
+    scheduleMode?: "rotation" | "weekdays";
+  } | null = null;
   if (override?.mode === "workout") {
     const scheduledDone = completed.some((workout) => matchesScheduledWorkout(override, workout, plan)) ||
       apple.some(({ plan: match }) => match && matchesScheduledWorkout(override, match, plan));
@@ -117,6 +126,8 @@ export function getWebToday(store: Store, userId: string, date = localDate()) {
         date,
         exercises: override.exercises.length,
         source: "scheduled",
+        muscleScores: muscleIntensityMapFromExercises(override.exercises, catalogueMap),
+        ...(plan?.data.schedule ? { scheduleMode: plan.data.schedule } : {}),
       };
     }
   } else if (!override && plan && !applePlan && !manualPlanDone) {
@@ -127,6 +138,8 @@ export function getWebToday(store: Store, userId: string, date = localDate()) {
         name: suggested.routine.name,
         date: suggested.date,
         exercises: suggested.routine.exercises.length,
+        muscleScores: muscleIntensityMapFromExercises(suggested.routine.exercises, catalogueMap),
+        scheduleMode: plan.data.schedule,
       };
     }
   }

@@ -1,5 +1,5 @@
 import type { Exercise, Plan, Routine, ScheduledDay, Workout } from "./index.js";
-import { compareWorkouts, estimatedOneRepMax, isValidWorkSet, localDate, nextTarget } from "./logic.js";
+import { compareWorkouts, estimatedOneRepMax, isValidWorkSet, localDate, nextTarget, weightToKg } from "./logic.js";
 
 export type PrMetric = "weight" | "oneRepMax" | "hold" | "assistance";
 
@@ -114,9 +114,10 @@ export function exercisePrBaselines(
         } else if (mode === "assisted") {
           if (set.weight < bestAssist) bestAssist = set.weight;
         } else if (set.weight > 0 && set.reps > 0) {
-          if (set.weight > maxW) maxW = set.weight;
+          const wKg = weightToKg(set.weight, row.weightUnit);
+          if (wKg > maxW) maxW = wKg;
           if (set.reps <= 10) {
-            const est = round2(estimatedOneRepMax(set.weight, set.reps));
+            const est = round2(estimatedOneRepMax(wKg, set.reps));
             if (!has1rm || est > max1rm) {
               max1rm = est;
               has1rm = true;

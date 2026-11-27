@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type TouchEvent } from "react";
+import { summarizeWorkoutMuscleSets } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import {
   buildAppleHubActionUrl,
   isAppleMobileDevice,
   triggerAppleHubAction,
 } from "../../lib/apple-fitness";
+import { resolveCatalogueMap } from "../../lib/catalogue";
+import {
+  COACH_QUICK_SCENARIOS,
+  appendRoutineExercises,
+  buildCoachQuickAdvice,
+  type CoachQuickScenario,
+} from "../../lib/coach-quick";
 import { fmt, today } from "../../lib/date";
 import {
   EQUIPMENT,
@@ -12,15 +20,20 @@ import {
   MUSCLES,
   SET_TYPES,
   estimated1RM,
+  kgToUnit,
   summarizeWorkoutRecord,
+  weightToKg,
   workoutDraftKey,
   type CatalogueExercise,
   type ExerciseMode,
   type ExerciseReferenceEntry,
   type FeelingKey,
+  type MuscleKey,
+  type PlannedExercise,
   type ProfileGoals,
   type RecordEnvelope,
   type SetType,
+  type WeightUnit,
   type WorkoutData,
   type WorkoutExercise,
   type WorkoutSet,
@@ -70,6 +83,8 @@ import {
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
+import { MuscleBodyMap } from "../MuscleBodyMap";
+import type { ScheduleResponse } from "../plan/PlanModals";
 import { ExercisePickerModal } from "./ExercisePickerModal";
 
 const SET_TYPE_ORDER: SetType[] = ["normal", "warmup", "failure", "drop", "rest_pause"];
@@ -164,6 +179,7 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
       increment,
       backupExerciseId,
       supersetGroup,
+      ...(it.weightUnit === "kg" || it.weightUnit === "lb" ? { weightUnit: it.weightUnit } : {}),
     });
   }
   return { id: r.id, name, exercises: cleanExercises };
@@ -360,6 +376,13 @@ export function WorkoutEditorModal({
   const [activeExIdx, setActiveExIdx] = useState(0);
   const [viewMode, setViewMode] = useState<"single" | "all">(() => (isHistoricalEdit ? "all" : "single"));
   const [openMenu, setOpenMenu] = useState(false);
+  const [muscleProgressOpen, setMuscleProgressOpen] = useState(false);
+  const [mergeRoutineOpen, setMergeRoutineOpen] = useState(false);
+  const [mergeOptions, setMergeOptions] = useState<Array<{ key: string; title: string; source: string; exercises: PlannedExercise[] }>>([]);
+  const [loadingMergeOptions, setLoadingMergeOptions] = useState(false);
+  const [coachExIdx, setCoachExIdx] = useState<number | null>(null);
+  const [coachScenario, setCoachScenario] = useState<CoachQuickScenario>("pain");
+  const [editingSetNoteId, setEditingSetNoteId] = useState<string | null>(null);
   const [finishPanelOpen, setFinishPanelOpen] = useState(isHistoricalEdit);
   const [openSettingsIds, setOpenSettingsIds] = useState<Set<string>>(() => new Set());
   const [refsByExId, setRefsByExId] = useState<Map<string, ExerciseReferenceEntry["sets"]>>(() => new Map());
@@ -1209,6 +1232,7 @@ export function WorkoutEditorModal({
           exerciseId: ex.exerciseId,
           targetIndex: cleanTargetIdx,
           supersetGroup: cleanSuperset,
+          ...(ex.weightUnit === "lb" || ex.weightUnit === "kg" ? { weightUnit: ex.weightUnit } : {}),
           restSeconds: Number.isFinite(cleanRest) ? Math.max(0, Math.min(900, Math.round(cleanRest))) : 90,
           snapshot: sanitizeExerciseSnapshot(ex.snapshot),
           sets: (Array.isArray(ex.sets) ? ex.sets : []).slice(0, 100).map((s) => {
@@ -1218,6 +1242,7 @@ export function WorkoutEditorModal({
             const rawRir = s.rir == null ? NaN : Number(s.rir);
             const cleanCompleted = Boolean(s.completed);
             const cleanCompletedAt = cleanCompleted ? normalizeIsoTimestamp(s.completedAt) : undefined;
+            const cleanNote = typeof s.note === "string" ? s.note.trim().slice(0, 200) : "";
             return {
               id: takeUniqueId(s.id),
               type: VALID_SET_TYPES.has(s.type) ? s.type : "normal",
@@ -1227,6 +1252,7 @@ export function WorkoutEditorModal({
               completed: cleanCompleted,
               ...(cleanCompletedAt ? { completedAt: cleanCompletedAt } : {}),
               rir: Number.isFinite(rawRir) ? Math.max(0, Math.min(10, Math.round(rawRir))) : null,
+              ...(cleanNote ? { note: cleanNote } : {}),
             };
           }),
         };
@@ -1418,6 +1444,99 @@ export function WorkoutEditorModal({
   const onIos = isAppleMobileDevice();
   const appleEndUrl = buildAppleHubActionUrl("end", prefs);
 
+  const liveMuscleProgress = useMemo(() => summarizeWorkoutMuscleSets(exercises), [exercises]);
+  const liveMuscleScores = useMemo(() => {
+    const map: Partial<Record<MuscleKey, number>> = {};
+    for (const item of liveMuscleProgress) {
+      map[item.muscle] = item.completedSets > 0 ? Math.max(0.45, item.ratio) : 0.25;
+    }
+    return map;
+  }, [liveMuscleProgress]);
+
+  const openMergeRoutineOverlay = async () => {
+    setOpenMenu(false);
+    setMergeRoutineOpen(true);
+    setLoadingMergeOptions(true);
+    try {
+      const sched = await apiFetch<ScheduleResponse>("/api/web/schedule");
+      const opts: Array<{ key: string; title: string; source: string; exercises: PlannedExercise[] }> = [
+        ...(sched.activePlan?.routines ?? []).map((r) => ({
+          key: `plan:${r.id}`,
+          title: r.name,
+          source: "当前计划",
+          exercises: r.exercises,
+        })),
+        ...(sched.templates ?? []).map((t) => ({
+          key: `tpl:${t.id}`,
+          title: t.name,
+          source: "训练模板",
+          exercises: t.exercises,
+        })),
+      ];
+      setMergeOptions(opts);
+    } catch {
+      setMergeOptions([]);
+      notify("加载可合并训练日失败");
+    } finally {
+      setLoadingMergeOptions(false);
+    }
+  };
+
+  const handleMergeRoutine = async (opt: { title: string; exercises: PlannedExercise[] }) => {
+    if (!opt.exercises.length) return;
+    try {
+      const catMap = await resolveCatalogueMap(opt.exercises.map((e) => e.exerciseId));
+      setExercises((prev) =>
+        appendRoutineExercises(
+          prev,
+          opt.exercises,
+          (exId) => {
+            const ex = catMap.get(exId);
+            return ex
+              ? {
+                  name: ex.name,
+                  muscle: ex.muscle,
+                  equipment: ex.equipment,
+                  mode: ex.mode,
+                  volumeMultiplier: ex.volumeMultiplier ?? 1,
+                }
+              : null;
+          },
+          newId,
+        ),
+      );
+      setMergeRoutineOpen(false);
+      triggerHaptic("light");
+      notify(`已将「${opt.title}」的 ${opt.exercises.length} 个动作合并到本次训练`);
+    } catch {
+      notify("合并训练日失败");
+    }
+  };
+
+  const toggleExerciseWeightUnit = (exIdx: number, nextUnit: WeightUnit) => {
+    setExercises((prev) =>
+      prev.map((ex, i) => {
+        if (i !== exIdx) return ex;
+        const prevUnit: WeightUnit = ex.weightUnit ?? "kg";
+        if (prevUnit === nextUnit) return ex;
+        const convertedSets = ex.sets.map((s) => {
+          if (!(s.weight > 0)) return s;
+          const weightKg = weightToKg(s.weight, prevUnit);
+          const rawNext = kgToUnit(weightKg, nextUnit);
+          const step = nextUnit === "lb" ? 2.5 : 0.5;
+          const rounded = Math.round(rawNext / step) * step;
+          return { ...s, weight: round2(rounded) };
+        });
+        return { ...ex, weightUnit: nextUnit, sets: convertedSets };
+      }),
+    );
+    triggerHaptic("light");
+    notify(`已切换为 ${nextUnit}（统计自动统一折算 kg）`);
+  };
+
+  const coachTargetRow = coachExIdx != null ? exercises[coachExIdx] ?? null : null;
+  const coachAdvice = coachTargetRow ? buildCoachQuickAdvice(coachScenario, coachTargetRow, weightStepKg) : null;
+
   return (
     <div className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""}`}>
       {!isHistoricalEdit ? (
@@ -1481,9 +1600,179 @@ export function WorkoutEditorModal({
 
           <div className="workout-progress-strip">
             <progress value={doneSets} max={Math.max(1, totalSets)} />
+            {liveMuscleProgress.length > 0 ? (
+              <button
+                type="button"
+                className="workout-muscle-btn"
+                title="查看本次训练练到哪些肌群"
+                onClick={() => {
+                  triggerHaptic("light");
+                  setMuscleProgressOpen(true);
+                }}
+              >
+                肌群进度 ({liveMuscleProgress.length})
+              </button>
+            ) : null}
             <span className="workout-live-vol">{fmt(liveVolume, 0)} kg</span>
           </div>
         </header>
+      ) : null}
+
+      {/* Live "本次练到哪里" Muscle Progress Overlay */}
+      {muscleProgressOpen ? (
+        <div className="session-menu-overlay" role="dialog" aria-label="本次训练肌群进度">
+          <div className="picker-overlay-head">
+            <strong>这次训练练到哪里</strong>
+            <button type="button" className="secondary-button picker-close-btn" onClick={() => setMuscleProgressOpen(false)}>
+              返回训练
+            </button>
+          </div>
+          <div className="session-menu-body">
+            <div className="live-muscle-map-wrap">
+              <MuscleBodyMap size="md" showLabels scores={liveMuscleScores} />
+            </div>
+            <div className="live-muscle-list">
+              {liveMuscleProgress.map((entry) => (
+                <div key={entry.muscle} className="live-muscle-row">
+                  <div className="live-muscle-row-head">
+                    <strong>{MUSCLES[entry.muscle] ?? entry.muscle}</strong>
+                    <span>
+                      <b>{fmt(entry.completedSets, 1)}</b> / {fmt(entry.plannedSets, 1)} 组
+                    </span>
+                  </div>
+                  <div className="live-muscle-bar-track">
+                    <div
+                      className="live-muscle-bar-fill"
+                      style={{ width: `${Math.round(entry.ratio * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Merge Another Routine Overlay */}
+      {mergeRoutineOpen ? (
+        <div className="session-menu-overlay" role="dialog" aria-label="合并其他训练日">
+          <div className="picker-overlay-head">
+            <strong>合并其他训练日</strong>
+            <button type="button" className="secondary-button picker-close-btn" onClick={() => setMergeRoutineOpen(false)}>
+              取消
+            </button>
+          </div>
+          <div className="session-menu-body">
+            <p className="muted" style={{ marginTop: 0 }}>
+              选择计划中的训练日或自定义模板，将其动作直接追加到本次训练末尾（不影响已完成组）。
+            </p>
+            {loadingMergeOptions ? (
+              <div className="empty loading">正在加载训练日…</div>
+            ) : mergeOptions.length === 0 ? (
+              <div className="empty">暂无可合并的训练日或模板，可先到「计划」页创建。</div>
+            ) : (
+              <div className="merge-routine-list">
+                {mergeOptions.map((opt) => (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    className="merge-routine-item"
+                    onClick={() => void handleMergeRoutine(opt)}
+                  >
+                    <div>
+                      <strong>{opt.title}</strong>
+                      <small className="muted">{opt.source} · {opt.exercises.length} 个动作</small>
+                    </div>
+                    <span className="secondary-button">+ 合并</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Contextual "问教练" Quick Scenario Overlay */}
+      {coachExIdx != null && coachTargetRow && coachAdvice ? (
+        <div className="session-menu-overlay" role="dialog" aria-label="训中问教练">
+          <div className="picker-overlay-head">
+            <strong>问教练 · {coachTargetRow.snapshot?.name ?? coachTargetRow.exerciseId}</strong>
+            <button type="button" className="secondary-button picker-close-btn" onClick={() => setCoachExIdx(null)}>
+              关闭
+            </button>
+          </div>
+          <div className="session-menu-body">
+            <div className="coach-scenario-grid" role="group" aria-label="选择现场情况">
+              {COACH_QUICK_SCENARIOS.map((sc) => (
+                <button
+                  key={sc.id}
+                  type="button"
+                  className={`coach-scenario-btn${coachScenario === sc.id ? " is-active" : ""}`}
+                  aria-pressed={coachScenario === sc.id}
+                  onClick={() => {
+                    triggerHaptic("light");
+                    setCoachScenario(sc.id);
+                  }}
+                >
+                  <strong>{sc.label}</strong>
+                  <small>{sc.subtitle}</small>
+                </button>
+              ))}
+            </div>
+
+            <div className="panel coach-advice-card">
+              <h4>{coachAdvice.headline}</h4>
+              <p className="muted">{coachAdvice.rationale}</p>
+              <div className="coach-advice-actions">
+                <button
+                  type="button"
+                  className="primary-button"
+                  onClick={() => {
+                    const targetIdx = coachExIdx;
+                    if (coachAdvice.actionKind === "swap_backup") {
+                      setCoachExIdx(null);
+                      void swapToBackupExercise(targetIdx);
+                    } else if (coachAdvice.actionKind === "open_swap") {
+                      setCoachExIdx(null);
+                      openSwapExercisePicker(targetIdx);
+                    } else if (coachAdvice.apply) {
+                      const unitStep = (coachTargetRow.weightUnit ?? "kg") === "lb" ? 5 : weightStepKg;
+                      setExercises((prev) =>
+                        prev.map((ex, i) => (i === targetIdx ? coachAdvice.apply!(ex, unitStep) : ex)),
+                      );
+                      setCoachExIdx(null);
+                      triggerHaptic("light");
+                      notify(`已应用调整：${coachAdvice.actionLabel}`);
+                    }
+                  }}
+                >
+                  {coachAdvice.actionLabel}
+                </button>
+                {aiReady ? (
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    onClick={() => {
+                      setCoachExIdx(null);
+                      openAiAdaptWorkoutModal({
+                        ensureSavedWorkout: ensureSavedDraft,
+                        onApplied: (updated) => {
+                          savedRecordRef.current = updated;
+                          setSavedRecord(updated);
+                          setExercises(updated.data.exercises);
+                          bumpDataEpoch();
+                          notify("已应用 AI 训中调整");
+                        },
+                      });
+                    }}
+                  >
+                    让 AI 深度调整整场
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
       ) : null}
 
       {/* Topbar Dropdown / Overlay Settings */}
@@ -1497,7 +1786,7 @@ export function WorkoutEditorModal({
           </div>
           <div className="session-menu-body">
             <div className="session-settings-group">
-              <h4 className="session-settings-group-title">基本信息</h4>
+              <h4 className="session-settings-group-title">基本信息与扩展</h4>
               <label className="field">
                 <span>训练名称</span>
                 <input value={title} maxLength={120} onChange={(e) => setTitle(e.target.value)} />
@@ -1506,6 +1795,11 @@ export function WorkoutEditorModal({
                 <span>训练日期</span>
                 <input type="date" value={date} min="1902-01-01" max={todayStr} onChange={(e) => setDate(e.target.value)} />
               </label>
+              {!isHistoricalEdit ? (
+                <button type="button" className="secondary-button" onClick={() => void openMergeRoutineOverlay()}>
+                  <Icon name="plus" size={14} /> 合并其他训练日到本次训练
+                </button>
+              ) : null}
             </div>
 
             <div className="session-settings-group">
@@ -2143,7 +2437,9 @@ export function WorkoutEditorModal({
               const mode: ExerciseMode = snap?.mode ?? "reps";
               const isTimed = mode === "timed";
               const isAssisted = mode === "assisted";
-              const isBarbell = snap?.equipment === "barbell";
+              const exUnit: WeightUnit = row.weightUnit ?? "kg";
+              const exWeightStep = exUnit === "lb" ? 5 : weightStepKg;
+              const isBarbell = snap?.equipment === "barbell" && exUnit === "kg";
               const exDoneCount = row.sets.filter((s) => s.completed).length;
               const exVolume = summarizeWorkoutRecord({
                 date,
@@ -2217,6 +2513,7 @@ export function WorkoutEditorModal({
                         {snap?.equipment ? (
                           <span className="ex-tag">{EQUIPMENT[snap.equipment] ?? snap.equipment}</span>
                         ) : null}
+                        {exUnit === "lb" ? <span className="unit-pill">lb 磅</span> : null}
                         {row.supersetGroup ? <span className="superset-pill">超级组 {row.supersetGroup}</span> : null}
                       </div>
                     </div>
@@ -2245,19 +2542,32 @@ export function WorkoutEditorModal({
                     </span>
                     <span className="ex-quick-stat">休息 {row.restSeconds ?? 90}s</span>
                     {!isHistoricalEdit ? (
-                      <button
-                        type="button"
-                        className="ex-quick-rest-btn"
-                        onClick={() => {
-                          const sec = Math.max(15, row.restSeconds ?? 90);
-                          triggerHaptic("light");
-                          audio.unlock();
-                          restAlarmFiredForRef.current = null;
-                          setRest(createRestTimer(sec, row.id));
-                        }}
-                      >
-                        <Icon name="clock" size={12} /> 开始休息 {row.restSeconds ?? 90}s
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          className="ex-quick-rest-btn"
+                          onClick={() => {
+                            triggerHaptic("light");
+                            setCoachScenario("pain");
+                            setCoachExIdx(exIdx);
+                          }}
+                        >
+                          问教练
+                        </button>
+                        <button
+                          type="button"
+                          className="ex-quick-rest-btn"
+                          onClick={() => {
+                            const sec = Math.max(15, row.restSeconds ?? 90);
+                            triggerHaptic("light");
+                            audio.unlock();
+                            restAlarmFiredForRef.current = null;
+                            setRest(createRestTimer(sec, row.id));
+                          }}
+                        >
+                          <Icon name="clock" size={12} /> 休息 {row.restSeconds ?? 90}s
+                        </button>
+                      </>
                     ) : null}
                   </div>
 
@@ -2428,6 +2738,22 @@ export function WorkoutEditorModal({
                         </div>
                       </div>
                       <div className="rest-preset-row">
+                        <label>重量单位</label>
+                        <div className="rest-quick-pills">
+                          {(["kg", "lb"] as const).map((u) => (
+                            <button
+                              key={u}
+                              type="button"
+                              className="quiet"
+                              aria-pressed={exUnit === u}
+                              onClick={() => toggleExerciseWeightUnit(exIdx, u)}
+                            >
+                              {u === "kg" ? "公斤 (kg)" : "磅 (lb)"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rest-preset-row">
                         <label>超级组标记</label>
                         <div className="rest-quick-pills">
                           {([null, "A", "B", "C"] as const).map((code) => (
@@ -2520,7 +2846,7 @@ export function WorkoutEditorModal({
                 <div className="sets-card">
                   <div className="set-head">
                     <span>组</span>
-                    <span>{isTimed ? "时长(秒)" : snap?.mode === "assisted" ? "辅助(kg)" : "重量(kg)"}</span>
+                    <span>{isTimed ? "时长(秒)" : snap?.mode === "assisted" ? `辅助(${exUnit})` : `重量(${exUnit})`}</span>
                     {!isTimed ? <span>次数</span> : null}
                     <span className="col-rir">RIR</span>
                     <span>完成</span>
@@ -2572,11 +2898,11 @@ export function WorkoutEditorModal({
                                 <button
                                   type="button"
                                   className="num-step-btn"
-                                  aria-label={`减 ${weightStepKg}kg`}
+                                  aria-label={`减 ${exWeightStep}${exUnit}`}
                                   onClick={() => {
                                     triggerHaptic("light");
                                     updateSetAndCascade(exIdx, setIdx, (cur) => ({
-                                      weight: Math.max(0, round2(cur.weight - weightStepKg)),
+                                      weight: Math.max(0, round2(cur.weight - exWeightStep)),
                                     }));
                                   }}
                                 >
@@ -2599,11 +2925,11 @@ export function WorkoutEditorModal({
                                 <button
                                   type="button"
                                   className="num-step-btn"
-                                  aria-label={`加 ${weightStepKg}kg`}
+                                  aria-label={`加 ${exWeightStep}${exUnit}`}
                                   onClick={() => {
                                     triggerHaptic("light");
                                     updateSetAndCascade(exIdx, setIdx, (cur) => ({
-                                      weight: round2(cur.weight + weightStepKg),
+                                      weight: round2(cur.weight + exWeightStep),
                                     }));
                                   }}
                                 >
@@ -2753,7 +3079,7 @@ export function WorkoutEditorModal({
                           </button>
                         </div>
 
-                        {platesInfo?.valid || (setRef && !s.completed) ? (
+                        {platesInfo?.valid || (setRef && !s.completed) || s.note || editingSetNoteId === s.id || !s.completed ? (
                           <div className="set-inline-meta">
                             {platesInfo?.valid ? (
                               <div className="set-inline-top">
@@ -2764,8 +3090,8 @@ export function WorkoutEditorModal({
                                 {deltaHint ? <span className="set-plate-delta">{deltaHint}</span> : null}
                               </div>
                             ) : null}
-                            {setRef && !s.completed ? (
-                              <div className="set-inline-top">
+                            <div className="set-inline-top">
+                              {setRef && !s.completed ? (
                                 <button
                                   type="button"
                                   className="set-ref-chip"
@@ -2781,8 +3107,36 @@ export function WorkoutEditorModal({
                                 >
                                   上次 {isTimed ? `${setRef.seconds}s` : isAssisted ? `辅助${setRef.weight}×${setRef.reps}` : `${setRef.weight}×${setRef.reps}`} · 填入
                                 </button>
-                              </div>
-                            ) : null}
+                              ) : null}
+                              {editingSetNoteId === s.id ? (
+                                <input
+                                  type="text"
+                                  className="set-note-input"
+                                  maxLength={200}
+                                  autoFocus
+                                  placeholder="单组备注（如：暂停推 / 左肩微紧）"
+                                  value={s.note ?? ""}
+                                  onChange={(e) =>
+                                    updateSet(exIdx, setIdx, (cur) => ({ ...cur, note: e.target.value }))
+                                  }
+                                  onBlur={() => setEditingSetNoteId(null)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === "Escape") {
+                                      e.preventDefault();
+                                      setEditingSetNoteId(null);
+                                    }
+                                  }}
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  className={`set-note-chip${s.note ? " has-note" : ""}`}
+                                  onClick={() => setEditingSetNoteId(s.id)}
+                                >
+                                  {s.note ? `备注：${s.note}` : "+ 组备注"}
+                                </button>
+                              )}
+                            </div>
                           </div>
                         ) : null}
                       </div>

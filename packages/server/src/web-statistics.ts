@@ -2,7 +2,7 @@ import { z } from "zod";
 import type Database from "better-sqlite3";
 import {
   compareWorkouts, estimateEnergy, estimatedOneRepMax, isValidWorkSet, localDate, muscleNames,
-  nutritionDayComplete, nutritionTotals, profileSchema, weightTrend, workoutDurationSeconds,
+  nutritionDayComplete, nutritionTotals, profileSchema, weightToKg, weightTrend, workoutDurationSeconds,
   type Diet, type NutritionDay, type StoredRecord, type Weight, type Workout,
 } from "@ironlog/shared";
 import { listDailyHealth, summarizeDailyHealth } from "./apple-health-daily.js";
@@ -158,12 +158,13 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
         if (inPeriod(workout.date))
           muscleSets[exercise.muscle] = (muscleSets[exercise.muscle] ?? 0) + 1;
         if (exercise.mode !== "reps" || set.weight <= 0) continue;
-        sessionVolume += set.weight * set.reps * exercise.volumeMultiplier;
+        const setWeightKg = weightToKg(set.weight, row.weightUnit);
+        sessionVolume += setWeightKg * set.reps * exercise.volumeMultiplier;
         if (warmup) continue;
         const previous = byExercise.get(row.exerciseId);
-        const estimate = set.reps <= 10 ? estimatedOneRepMax(set.weight, set.reps) : null;
+        const estimate = set.reps <= 10 ? estimatedOneRepMax(setWeightKg, set.reps) : null;
         byExercise.set(row.exerciseId, {
-          name: exercise.name, weight: Math.max(previous?.weight ?? 0, set.weight),
+          name: exercise.name, weight: Math.max(previous?.weight ?? 0, setWeightKg),
           estimated1rm: estimate == null ? previous?.estimated1rm ?? null : Math.max(previous?.estimated1rm ?? 0, estimate),
         });
       }
