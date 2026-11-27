@@ -51,6 +51,7 @@ import {
   restProgress,
   resumeRestTimer,
   shiftRestTimer,
+  speakCue,
   triggerHaptic,
   type RestTimerState,
   type WorkoutTiming,
@@ -61,6 +62,7 @@ import {
   applySetFieldUpdate,
   BAR_PRESETS,
   buildWarmupSetsPlan,
+  DEFAULT_EQUIPMENT_PROFILES,
   plateBreakdown,
   plateDeltaLabel,
   readWorkoutPreferences,
@@ -71,9 +73,11 @@ import {
   WARMUP_REST_PRESETS,
   WARMUP_SCHEMES,
   WEIGHT_STEP_PRESETS,
+  WORKOUT_LAYOUT_PRESETS,
   WORKOUT_PREFS_EVENT,
   writeWorkoutPreference,
   type SetFieldPatch,
+  type WorkoutLayoutMode,
   type WorkoutPreferences,
 } from "../../lib/workout-helpers";
 import {
@@ -156,7 +160,10 @@ function sanitizeTargetSnapshot(raw: unknown): unknown {
     const restSeconds = Math.max(0, Math.min(900, Math.round(Number(it.restSeconds) || 90)));
     const targetRir = Math.max(0, Math.min(10, Math.round(Number(it.targetRir ?? 2) || 0)));
     const progression =
-      it.progression === "linear" || it.progression === "greyskull" || it.progression === "manual"
+      it.progression === "linear" ||
+      it.progression === "greyskull" ||
+      it.progression === "triple" ||
+      it.progression === "manual"
         ? it.progression
         : "double";
     const rawInc = Number(it.increment);
@@ -356,8 +363,12 @@ export function WorkoutEditorModal({
     weightStepKg,
     barWeight,
     enabledPlates,
+    platePairs,
     showPlateMath,
     warmupScheme,
+    workoutLayout,
+    collapseCompletedExercises,
+    voiceRestCues,
   } = prefs;
   const [wakeActive, setWakeActive] = useState(false);
 
@@ -374,7 +385,19 @@ export function WorkoutEditorModal({
   }, []);
 
   const [activeExIdx, setActiveExIdx] = useState(0);
-  const [viewMode, setViewMode] = useState<"single" | "all">(() => (isHistoricalEdit ? "all" : "single"));
+  const [viewMode, setViewMode] = useState<"single" | "all">(() =>
+    isHistoricalEdit ? "all" : prefs.workoutLayout === "compact" ? "all" : "single",
+  );
+  const [expandedDoneIds, setExpandedDoneIds] = useState<Set<string>>(() => new Set());
+  const [timedSetClock, setTimedSetClock] = useState<{
+    exIdx: number;
+    setIdx: number;
+    setId: string;
+    targetSeconds: number;
+    endAt: number;
+  } | null>(null);
+  const restTenSecSpokenForRef = useRef<number | null>(null);
+  const timedCueSpokenSecRef = useRef<number | null>(null);
   const [openMenu, setOpenMenu] = useState(false);
   const [muscleProgressOpen, setMuscleProgressOpen] = useState(false);
   const [mergeRoutineOpen, setMergeRoutineOpen] = useState(false);
@@ -650,13 +673,33 @@ export function WorkoutEditorModal({
     };
   }, []);
 
-  // Rest completion alarm
+  // Rest 10-second voice cue & completion alarm
   useEffect(() => {
     if (!rest || rest.pausedLeftMs != null) return;
+    const leftSec = Math.ceil((rest.end - nowMs) / 1000);
+    if (voiceRestCues && leftSec === 10 && restTenSecSpokenForRef.current !== rest.end) {
+      restTenSecSpokenForRef.current = rest.end;
+      speakCue("还剩 10 秒", { enabled: true });
+    }
     if (nowMs >= rest.end && restAlarmFiredForRef.current !== rest.end) {
       restAlarmFiredForRef.current = rest.end;
       if (nowMs - rest.end <= 60_000) {
         audio.play(true);
+        if (voiceRestCues) {
+          const nextEx = exercises[safeExIdx] ?? exercises.find((e) => e.sets.some((s) => !s.completed));
+          const nextSet = nextEx?.sets.find((s) => !s.completed);
+          const nextName = nextEx?.snapshot?.name ?? "";
+          const nextUnit = nextEx?.weightUnit === "lb" ? "磅" : "公斤";
+          const cueText =
+            nextName && nextSet
+              ? nextEx?.snapshot?.mode === "timed"
+                ? `休息结束，下一组 ${nextName}，${nextSet.seconds} 秒`
+                : nextSet.weight > 0
+                  ? `休息结束，下一组 ${nextName}，${nextSet.weight} ${nextUnit} ${nextSet.reps} 次`
+                  : `休息结束，下一组 ${nextName}，${nextSet.reps} 次`
+              : "休息结束，准备下一组";
+          speakCue(cueText, { enabled: true });
+        }
         if (notifyRestPref && typeof Notification !== "undefined" && Notification.permission === "granted") {
           try {
             new Notification("铁记 · 组间休息结束", { body: "准备下一组训练", tag: "ironlog-rest" });
@@ -665,7 +708,40 @@ export function WorkoutEditorModal({
       }
       setRest(null);
     }
-  }, [rest, nowMs, audio, notifyRestPref]);
+  }, [rest, nowMs, audio, notifyRestPref, voiceRestCues, exercises, safeExIdx]);
+
+  // Isometric / timed set countdown with 3-2-1 cue and auto-complete
+  useEffect(() => {
+    if (!timedSetClock) return;
+    const leftSec = Math.ceil((timedSetClock.endAt - nowMs) / 1000);
+    if (leftSec >= 1 && leftSec <= 3 && timedCueSpokenSecRef.current !== leftSec) {
+      timedCueSpokenSecRef.current = leftSec;
+      if (voiceRestCues) speakCue(String(leftSec), { enabled: true });
+      else audio.play(false);
+    }
+    if (nowMs >= timedSetClock.endAt) {
+      const doneClock = timedSetClock;
+      setTimedSetClock(null);
+      timedCueSpokenSecRef.current = null;
+      audio.play(true);
+      if (voiceRestCues) speakCue("计时完成", { enabled: true });
+      triggerHaptic("success");
+      setExercises((prev) =>
+        prev.map((ex, ei) =>
+          ei !== doneClock.exIdx
+            ? ex
+            : {
+                ...ex,
+                sets: ex.sets.map((s, si) =>
+                  si === doneClock.setIdx
+                    ? { ...s, seconds: Math.max(s.seconds, doneClock.targetSeconds), completed: true, completedAt: new Date().toISOString() }
+                    : s,
+                ),
+              },
+        ),
+      );
+    }
+  }, [timedSetClock, nowMs, audio, voiceRestCues]);
 
   // Wake lock guard
   useEffect(() => {
@@ -1538,7 +1614,9 @@ export function WorkoutEditorModal({
   const coachAdvice = coachTargetRow ? buildCoachQuickAdvice(coachScenario, coachTargetRow, weightStepKg) : null;
 
   return (
-    <div className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""}`}>
+    <div
+      className={`dialog-form workout-form${showRir ? " show-rir" : ""}${!isHistoricalEdit ? " is-live" : ""} layout-${workoutLayout}`}
+    >
       {!isHistoricalEdit ? (
         <header className="workout-topbar">
           <div className="workout-topbar-row">
@@ -1803,8 +1881,75 @@ export function WorkoutEditorModal({
             </div>
 
             <div className="session-settings-group">
+              <h4 className="session-settings-group-title">界面布局与场馆配置</h4>
+              <div className="field">
+                <span>训练界面布局</span>
+                <div className="segments">
+                  {WORKOUT_LAYOUT_PRESETS.map((lay) => (
+                    <button
+                      key={lay.id}
+                      type="button"
+                      aria-pressed={workoutLayout === lay.id}
+                      onClick={() => {
+                        updatePref("workoutLayout", lay.id);
+                        if (!isHistoricalEdit) {
+                          setViewMode(lay.id === "compact" ? "all" : "single");
+                        }
+                        notify(`已切换为「${lay.label}」布局`);
+                      }}
+                    >
+                      {lay.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="field">
+                <span>快速切换训练场馆（自动同步杆重与杠铃片库存）</span>
+                <div className="segments">
+                  {(goals?.equipmentProfiles?.length ? goals.equipmentProfiles : DEFAULT_EQUIPMENT_PROFILES).map((gp) => (
+                    <button
+                      key={gp.id}
+                      type="button"
+                      aria-pressed={barWeight === gp.barWeight && JSON.stringify(enabledPlates) === JSON.stringify(gp.enabledPlates)}
+                      onClick={() => {
+                        updatePref("barWeight", gp.barWeight);
+                        updatePref("enabledPlates", gp.enabledPlates);
+                        updatePref("platePairs", gp.platePairs);
+                        notify(`已套用场馆「${gp.name}」配置（${gp.barWeight}kg 杆）`);
+                      }}
+                    >
+                      {gp.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="session-settings-group">
               <h4 className="session-settings-group-title">记录与自动联动</h4>
               <div className="session-options">
+                <label className="switch-chip">
+                  <span>完成动作自动折叠</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={collapseCompletedExercises}
+                    onChange={(e) => updatePref("collapseCompletedExercises", e.target.checked)}
+                  />
+                </label>
+                <label className="switch-chip">
+                  <span>休息语音播报（剩10秒/下组目标）</span>
+                  <input
+                    className="switch"
+                    type="checkbox"
+                    checked={voiceRestCues}
+                    onChange={(e) => {
+                      const next = e.target.checked;
+                      updatePref("voiceRestCues", next);
+                      if (next) speakCue("已开启语音播报", { enabled: true });
+                    }}
+                  />
+                </label>
                 <label className="switch-chip">
                   <span>默认同步后续组</span>
                   <input
@@ -2441,6 +2586,53 @@ export function WorkoutEditorModal({
               const exWeightStep = exUnit === "lb" ? 5 : weightStepKg;
               const isBarbell = snap?.equipment === "barbell" && exUnit === "kg";
               const exDoneCount = row.sets.filter((s) => s.completed).length;
+              const exAllDone = row.sets.length > 0 && exDoneCount === row.sets.length;
+              const isCollapsedDone =
+                collapseCompletedExercises &&
+                viewMode === "all" &&
+                exAllDone &&
+                !expandedDoneIds.has(row.id);
+              const snapTarget = (
+                sessionMetaRef.current.targetSnapshot as
+                  | {
+                      isDeload?: boolean;
+                      exercises?: Array<{
+                        exerciseId: string;
+                        sets: number;
+                        setsMax?: number;
+                        repsMin: number;
+                        repsMax: number;
+                        progression?: string;
+                        increment?: number;
+                        targetRir?: number;
+                      }>;
+                    }
+                  | null
+                  | undefined
+              );
+              const plannedItem =
+                row.targetIndex != null
+                  ? snapTarget?.exercises?.[row.targetIndex]
+                  : snapTarget?.exercises?.find((e) => e.exerciseId === row.exerciseId);
+              const progRuleName =
+                plannedItem?.progression === "triple"
+                  ? "三重渐进"
+                  : plannedItem?.progression === "linear"
+                    ? "线性渐进"
+                    : plannedItem?.progression === "greyskull"
+                      ? "Greyskull"
+                      : plannedItem?.progression === "manual"
+                        ? "固定负荷"
+                        : plannedItem
+                          ? "双线性渐进"
+                          : "";
+              const progInlineText = plannedItem
+                ? `${progRuleName} · 目标 ${plannedItem.sets}${plannedItem.progression === "triple" && plannedItem.setsMax ? `–${plannedItem.setsMax}` : ""} 组 × ${
+                    plannedItem.repsMin === plannedItem.repsMax
+                      ? `${plannedItem.repsMin}`
+                      : `${plannedItem.repsMin}–${plannedItem.repsMax}`
+                  } 次${plannedItem.increment && plannedItem.progression !== "manual" ? ` · 达标 +${plannedItem.increment}${exUnit}` : ""}${snapTarget?.isDeload ? " · 减载日" : ""}`
+                : "";
               const exVolume = summarizeWorkoutRecord({
                 date,
                 title,
@@ -2471,6 +2663,37 @@ export function WorkoutEditorModal({
                   )
                 : 0;
               const e1rmGain = prevBestE1rm > 0 && todayBestE1rm > prevBestE1rm ? todayBestE1rm - prevBestE1rm : 0;
+
+              if (isCollapsedDone) {
+                return (
+                  <section
+                    key={row.id}
+                    ref={(el) => {
+                      cardRefs.current[row.id] = el;
+                    }}
+                    className="exercise-editor is-collapsed-done"
+                  >
+                    <button
+                      type="button"
+                      className="collapsed-ex-strip"
+                      onClick={() =>
+                        setExpandedDoneIds((prev) => {
+                          const next = new Set(prev);
+                          next.add(row.id);
+                          return next;
+                        })
+                      }
+                    >
+                      <span className="collapsed-ex-check">✓</span>
+                      <strong>{snap?.name ?? row.exerciseId}</strong>
+                      <small className="muted">
+                        {exDoneCount}/{row.sets.length} 组{exVolume > 0 ? ` · ${fmt(exVolume, 0)} kg` : ""}
+                      </small>
+                      <span className="quiet">展开</span>
+                    </button>
+                  </section>
+                );
+              }
 
               return (
                 <section
@@ -2570,6 +2793,13 @@ export function WorkoutEditorModal({
                       </>
                     ) : null}
                   </div>
+
+                  {progInlineText ? (
+                    <div className="ex-inline-prog-strip" role="note">
+                      <span className="ex-inline-prog-dot" aria-hidden="true" />
+                      <span>{progInlineText}</span>
+                    </div>
+                  ) : null}
 
                   <div className="ex-cue-row" data-no-swipe="true">
                     {editingNoteExId === row.id ? (
@@ -2862,11 +3092,11 @@ export function WorkoutEditorModal({
                     const setRef = s.type === "warmup" ? null : (validRefs[workSetIdx] ?? validRefs.at(-1) ?? null);
                     const deltaHint =
                       showPlateMath && isBarbell && prevSet && s.weight > barWeight
-                        ? plateDeltaLabel(prevSet.weight, s.weight, barWeight, enabledPlates)
+                        ? plateDeltaLabel(prevSet.weight, s.weight, barWeight, enabledPlates, platePairs)
                         : "";
                     const platesInfo =
                       showPlateMath && isBarbell && s.weight > barWeight
-                        ? plateBreakdown(s.weight, barWeight, enabledPlates)
+                        ? plateBreakdown(s.weight, barWeight, enabledPlates, platePairs)
                         : null;
                     const typeInfo = SET_TYPES[s.type];
 
@@ -2980,44 +3210,80 @@ export function WorkoutEditorModal({
                               </div>
                             </>
                           ) : (
-                            <div className="num-stepper">
-                              <button
-                                type="button"
-                                className="num-step-btn"
-                                onClick={() => {
-                                  triggerHaptic("light");
-                                  updateSetAndCascade(exIdx, setIdx, (cur) => ({
-                                    seconds: Math.max(0, cur.seconds - 5),
-                                  }));
-                                }}
-                              >
-                                −
-                              </button>
-                              <input
-                                type="number"
-                                inputMode="numeric"
-                                min={0}
-                                max={86400}
-                                value={s.seconds}
-                                onFocus={(e) => e.currentTarget.select()}
-                                onChange={(e) =>
-                                  updateSetAndCascade(exIdx, setIdx, {
-                                    seconds: Math.max(0, Math.round(Number(e.target.value) || 0)),
-                                  })
-                                }
-                              />
-                              <button
-                                type="button"
-                                className="num-step-btn"
-                                onClick={() => {
-                                  triggerHaptic("light");
-                                  updateSetAndCascade(exIdx, setIdx, (cur) => ({
-                                    seconds: cur.seconds + 5,
-                                  }));
-                                }}
-                              >
-                                +
-                              </button>
+                            <div className="timed-set-cell">
+                              <div className="num-stepper">
+                                <button
+                                  type="button"
+                                  className="num-step-btn"
+                                  onClick={() => {
+                                    triggerHaptic("light");
+                                    updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                      seconds: Math.max(0, cur.seconds - 5),
+                                    }));
+                                  }}
+                                >
+                                  −
+                                </button>
+                                <input
+                                  type="number"
+                                  inputMode="numeric"
+                                  min={0}
+                                  max={86400}
+                                  value={s.seconds}
+                                  onFocus={(e) => e.currentTarget.select()}
+                                  onChange={(e) =>
+                                    updateSetAndCascade(exIdx, setIdx, {
+                                      seconds: Math.max(0, Math.round(Number(e.target.value) || 0)),
+                                    })
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  className="num-step-btn"
+                                  onClick={() => {
+                                    triggerHaptic("light");
+                                    updateSetAndCascade(exIdx, setIdx, (cur) => ({
+                                      seconds: cur.seconds + 5,
+                                    }));
+                                  }}
+                                >
+                                  +
+                                </button>
+                              </div>
+                              {!isHistoricalEdit ? (() => {
+                                const isRunningThis = timedSetClock?.setId === s.id;
+                                const leftTimedSec = isRunningThis
+                                  ? Math.max(0, Math.ceil((timedSetClock.endAt - nowMs) / 1000))
+                                  : null;
+                                return (
+                                  <button
+                                    type="button"
+                                    className={`timed-go-btn${isRunningThis ? " is-running" : ""}`}
+                                    title={isRunningThis ? "停止倒计时" : "开始本组等长倒计时"}
+                                    onClick={() => {
+                                      triggerHaptic("light");
+                                      audio.unlock();
+                                      if (isRunningThis) {
+                                        setTimedSetClock(null);
+                                        timedCueSpokenSecRef.current = null;
+                                      } else {
+                                        const sec = Math.max(5, s.seconds || 30);
+                                        timedCueSpokenSecRef.current = null;
+                                        setTimedSetClock({
+                                          exIdx,
+                                          setIdx,
+                                          setId: s.id,
+                                          targetSeconds: sec,
+                                          endAt: Date.now() + sec * 1000,
+                                        });
+                                        if (voiceRestCues) speakCue(`开始计时 ${sec} 秒`, { enabled: true });
+                                      }
+                                    }}
+                                  >
+                                    {isRunningThis ? `${leftTimedSec}s ⏹` : "▶ 倒计"}
+                                  </button>
+                                );
+                              })() : null}
                             </div>
                           )}
 

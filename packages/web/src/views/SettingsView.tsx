@@ -8,12 +8,13 @@ import { apiFetch } from "../lib/api";
 import { triggerAppleHubAction } from "../lib/apple-fitness";
 import { today } from "../lib/date";
 import { EQUIPMENT, INTERVALS, type EquipmentKey, type PeriodDays, type ProfileGoals } from "../lib/domain";
-import { createRestAudio, triggerHaptic } from "../lib/haptics-audio";
+import { createRestAudio, speakCue, triggerHaptic } from "../lib/haptics-audio";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
   ALL_PLATES,
   BAR_PRESETS,
   DEFAULT_APPLE_HUB_SHORTCUT,
+  DEFAULT_EQUIPMENT_PROFILES,
   PROFILE_VERSION_EVENT,
   readWorkoutPreferences,
   REST_SOUND_PRESETS,
@@ -21,6 +22,7 @@ import {
   WARMUP_REST_PRESETS,
   WARMUP_SCHEMES,
   WEIGHT_STEP_PRESETS,
+  WORKOUT_LAYOUT_PRESETS,
   WORKOUT_PREFS_EVENT,
   writeWorkoutPreference,
   type WorkoutPreferences,
@@ -931,6 +933,30 @@ export function SettingsView() {
                         onChange={(e) => updateWorkoutPref("showPlateMath", e.target.checked)}
                       />
                     </label>
+                    <label className="switch-chip">
+                      <span>完成动作自动折叠</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.collapseCompletedExercises}
+                        onChange={(e) => updateWorkoutPref("collapseCompletedExercises", e.target.checked)}
+                      />
+                    </label>
+                  </div>
+                  <div className="field" style={{ marginTop: 10 }}>
+                    <span>默认训练界面布局</span>
+                    <div className="segments">
+                      {WORKOUT_LAYOUT_PRESETS.map((lay) => (
+                        <button
+                          key={lay.id}
+                          type="button"
+                          aria-pressed={workoutPrefs.workoutLayout === lay.id}
+                          onClick={() => updateWorkoutPref("workoutLayout", lay.id, `默认布局已切换为「${lay.label}」`)}
+                        >
+                          {lay.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </section>
 
@@ -996,7 +1022,34 @@ export function SettingsView() {
                         }}
                       />
                     </label>
+                    <label className="switch-chip">
+                      <span>休息语音播报（剩10秒/下组目标）</span>
+                      <input
+                        className="switch"
+                        type="checkbox"
+                        checked={workoutPrefs.voiceRestCues}
+                        onChange={(e) => {
+                          const next = e.target.checked;
+                          updateWorkoutPref("voiceRestCues", next, next ? "已开启语音播报" : "已关闭语音播报");
+                          if (next) speakCue("语音播报已开启，休息结束将提示下一组目标", { enabled: true });
+                        }}
+                      />
+                    </label>
                   </div>
+                  {workoutPrefs.voiceRestCues ? (
+                    <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 6 }}>
+                      <button
+                        type="button"
+                        className="quiet"
+                        onClick={() => {
+                          const ok = speakCue("休息结束，下一组平板杠铃卧推，60 公斤 8 次", { enabled: true });
+                          if (!ok) notify("当前浏览器不支持语音合成，将自动使用提示音");
+                        }}
+                      >
+                        试听语音播报
+                      </button>
+                    </div>
+                  ) : null}
                   {workoutPrefs.soundOn ? (
                     <div className="field">
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -1101,33 +1154,77 @@ export function SettingsView() {
                       </div>
                     </div>
                     <div className="field">
-                      <span>可用杠铃片（每侧自动配片）</span>
+                      <span>多场馆器械预设（一键切换杆重与片数库存）</span>
+                      <div className="segments">
+                        {DEFAULT_EQUIPMENT_PROFILES.map((gp) => (
+                          <button
+                            key={gp.id}
+                            type="button"
+                            aria-pressed={
+                              workoutPrefs.barWeight === gp.barWeight &&
+                              JSON.stringify(workoutPrefs.enabledPlates) === JSON.stringify(gp.enabledPlates)
+                            }
+                            onClick={() => {
+                              updateWorkoutPref("barWeight", gp.barWeight);
+                              updateWorkoutPref("enabledPlates", gp.enabledPlates);
+                              updateWorkoutPref("platePairs", gp.platePairs);
+                              setEquipment(new Set(gp.equipment));
+                              notify(`已套用「${gp.name}」配置（${gp.barWeight}kg 杆），记得点击上方保存目标以同步器械筛选`);
+                            }}
+                          >
+                            {gp.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>可用杠铃片（每侧自动配片与对数上限）</span>
                       <div className="plate-chip-grid">
                         {ALL_PLATES.map((plate) => {
                           const active = workoutPrefs.enabledPlates.includes(plate);
+                          const pairs = workoutPrefs.platePairs?.[String(plate)];
                           return (
-                            <button
-                              key={plate}
-                              type="button"
-                              className="plate-chip"
-                              aria-pressed={active}
-                              onClick={() => {
-                                if (active) {
-                                  if (workoutPrefs.enabledPlates.length <= 1) {
-                                    notify("至少保留一种杠铃片规格");
-                                    return;
+                            <div key={plate} className="plate-pair-cell">
+                              <button
+                                type="button"
+                                className="plate-chip"
+                                aria-pressed={active}
+                                onClick={() => {
+                                  if (active) {
+                                    if (workoutPrefs.enabledPlates.length <= 1) {
+                                      notify("至少保留一种杠铃片规格");
+                                      return;
+                                    }
+                                    updateWorkoutPref(
+                                      "enabledPlates",
+                                      workoutPrefs.enabledPlates.filter((p) => p !== plate),
+                                    );
+                                  } else {
+                                    updateWorkoutPref("enabledPlates", [...workoutPrefs.enabledPlates, plate]);
                                   }
-                                  updateWorkoutPref(
-                                    "enabledPlates",
-                                    workoutPrefs.enabledPlates.filter((p) => p !== plate),
-                                  );
-                                } else {
-                                  updateWorkoutPref("enabledPlates", [...workoutPrefs.enabledPlates, plate]);
-                                }
-                              }}
-                            >
-                              {plate}kg
-                            </button>
+                                }}
+                              >
+                                {plate}kg
+                              </button>
+                              {active ? (
+                                <button
+                                  type="button"
+                                  className="plate-pair-count-btn"
+                                  title="点击循环设置单侧可用对数（无限 / 1对 / 2对 / 4对）"
+                                  onClick={() => {
+                                    const cycle = [undefined, 1, 2, 4] as const;
+                                    const curIdx = cycle.indexOf(pairs as 1 | 2 | 4 | undefined);
+                                    const nextVal = cycle[(curIdx + 1) % cycle.length];
+                                    const nextMap = { ...(workoutPrefs.platePairs ?? {}) };
+                                    if (nextVal === undefined) delete nextMap[String(plate)];
+                                    else nextMap[String(plate)] = nextVal;
+                                    updateWorkoutPref("platePairs", Object.keys(nextMap).length ? nextMap : undefined);
+                                  }}
+                                >
+                                  {pairs == null ? "∞对" : `${pairs}对`}
+                                </button>
+                              ) : null}
+                            </div>
                           );
                         })}
                       </div>

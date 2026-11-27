@@ -122,7 +122,13 @@ export function ExercisesView() {
               cachedApiFetch<Array<RecordEnvelope<FavoriteData>>>("/api/records/favorite", { epoch: dataEpoch, userId }).catch(() => []),
               cachedApiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise", { epoch: dataEpoch, userId }).catch(() => []),
               equipmentFilter === "__mine__"
-                ? cachedApiFetch<{ profile?: { equipment?: string[] } }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null)
+                ? cachedApiFetch<{
+                    profile?: {
+                      equipment?: string[];
+                      activeEquipmentProfileId?: string | null;
+                      equipmentProfiles?: Array<{ id: string; equipment?: string[] }>;
+                    };
+                  }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null)
                 : Promise.resolve(null),
             ])
           : [[], [], null];
@@ -137,9 +143,13 @@ export function ExercisesView() {
         const favIds = new Set(activeFavs.map((r) => r.data.exerciseId));
         const customList: DisplayExerciseItem[] = activeCustoms.map((r) => ({ ...r.data, custom: true }));
         const customIds = new Set(customList.map((ex) => ex.id));
+        const activeEquipProfile =
+          mineProfile?.profile?.activeEquipmentProfileId && Array.isArray(mineProfile?.profile?.equipmentProfiles)
+            ? mineProfile.profile.equipmentProfiles.find((p) => p.id === mineProfile.profile!.activeEquipmentProfileId)
+            : null;
         const mineSet =
           equipmentFilter === "__mine__"
-            ? new Set(mineProfile?.profile?.equipment ?? ["barbell", "dumbbell", "machine"])
+            ? new Set(activeEquipProfile?.equipment ?? mineProfile?.profile?.equipment ?? ["barbell", "dumbbell", "machine"])
             : null;
 
         if (scope === "trained" && userId) {

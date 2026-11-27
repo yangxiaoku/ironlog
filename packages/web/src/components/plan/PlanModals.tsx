@@ -529,7 +529,7 @@ export function PlanBuilderModal({
   );
   const [routines, setRoutines] = useState<PlanRoutine[]>(() =>
     src?.routines?.length
-      ? src.routines.map((r) => ({ id: r.id, name: r.name, exercises: r.exercises.map((e) => ({ ...e })) }))
+      ? src.routines.map((r) => ({ id: r.id, name: r.name, ...(r.isDeload ? { isDeload: true } : {}), exercises: r.exercises.map((e) => ({ ...e })) }))
       : [{ id: "routine_0", name: "训练日 A", exercises: [] }],
   );
   const [activeRoutineIdx, setActiveRoutineIdx] = useState(0);
@@ -798,6 +798,15 @@ export function PlanBuilderModal({
             required
             value={currentRoutine.name}
             onChange={(e) => updateCurrentRoutine({ name: e.target.value })}
+          />
+        </label>
+        <label className="switch-chip" style={{ alignSelf: "flex-end", marginBottom: 4 }}>
+          <span>减载训练日</span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={Boolean(currentRoutine.isDeload)}
+            onChange={(e) => updateCurrentRoutine({ isDeload: e.target.checked })}
           />
         </label>
         <label className="field" hidden={schedule !== "weekdays"}>

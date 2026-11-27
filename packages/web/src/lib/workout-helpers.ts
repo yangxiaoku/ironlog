@@ -26,6 +26,10 @@ export const warmupSchemePreference = "ironlog-web-warmup-scheme";
 export const deloadModePreference = "ironlog-web-deload-mode";
 export const deloadWeightPctPreference = "ironlog-web-deload-weight-pct";
 export const deloadSetsPctPreference = "ironlog-web-deload-sets-pct";
+export const workoutLayoutPreference = "ironlog-web-workout-layout";
+export const collapseCompletedPreference = "ironlog-web-collapse-completed";
+export const voiceRestCuesPreference = "ironlog-web-voice-rest-cues";
+export const platePairsPreference = "ironlog-web-plate-pairs";
 
 export const WORKOUT_PREFS_EVENT = "ironlog:workout-prefs-changed";
 export const PROFILE_VERSION_EVENT = "ironlog:profile-version";
@@ -38,7 +42,51 @@ export const REST_STEP_PRESETS = [10, 15, 30] as const;
 
 export type WarmupScheme = "light" | "standard" | "heavy";
 export type RestSoundStyle = "chime" | "marimba" | "bell";
+export type WorkoutLayoutMode = "card" | "compact" | "focus";
 export type AppleFitnessLaunchMode = "hub" | "shortcut" | "fitness_app" | "off";
+
+export const WORKOUT_LAYOUT_PRESETS: ReadonlyArray<{ id: WorkoutLayoutMode; label: string; desc: string }> = [
+  { id: "card", label: "标准卡片", desc: "完整展示目标、上次记录与配片" },
+  { id: "compact", label: "紧凑列表", desc: "高密度组行，一屏总览多组" },
+  { id: "focus", label: "专注单动作", desc: "大字大触控区，单手极速录组" },
+];
+
+export interface EquipmentProfilePreset {
+  id: string;
+  name: string;
+  equipment: Array<"barbell" | "dumbbell" | "cable" | "machine" | "bodyweight" | "kettlebell" | "band" | "weighted">;
+  barWeight: number;
+  enabledPlates: number[];
+  platePairs?: Record<string, number>;
+  dumbbellMinKg?: number;
+  dumbbellMaxKg?: number;
+  dumbbellStepKg?: number;
+}
+
+export const DEFAULT_EQUIPMENT_PROFILES: readonly EquipmentProfilePreset[] = [
+  {
+    id: "gym_commercial",
+    name: "商业健身房",
+    equipment: ["barbell", "dumbbell", "machine", "cable", "bodyweight", "kettlebell", "weighted"],
+    barWeight: 20,
+    enabledPlates: [25, 20, 15, 10, 5, 2.5, 1.25],
+    platePairs: { "25": 4, "20": 4, "15": 2, "10": 4, "5": 4, "2.5": 2, "1.25": 2 },
+    dumbbellMinKg: 2,
+    dumbbellMaxKg: 50,
+    dumbbellStepKg: 2,
+  },
+  {
+    id: "home_compact",
+    name: "居家训练",
+    equipment: ["dumbbell", "bodyweight", "band"],
+    barWeight: 10,
+    enabledPlates: [10, 5, 2.5, 1.25],
+    platePairs: { "10": 2, "5": 2, "2.5": 2, "1.25": 2 },
+    dumbbellMinKg: 2,
+    dumbbellMaxKg: 24,
+    dumbbellStepKg: 2,
+  },
+];
 
 export const DEFAULT_APPLE_HUB_SHORTCUT = "铁记-通用-Apple健康全能联动";
 export const DEFAULT_APPLE_STRENGTH_SHORTCUT = "铁记开始力量";
@@ -124,6 +172,10 @@ export interface WorkoutPreferences {
   deloadMode: boolean;
   deloadWeightPct: number;
   deloadSetsPct: number;
+  workoutLayout: WorkoutLayoutMode;
+  collapseCompletedExercises: boolean;
+  voiceRestCues: boolean;
+  platePairs?: Record<string, number>;
 }
 
 export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
@@ -154,6 +206,9 @@ export const DEFAULT_WORKOUT_PREFERENCES: WorkoutPreferences = {
   deloadMode: false,
   deloadWeightPct: 80,
   deloadSetsPct: 50,
+  workoutLayout: "card",
+  collapseCompletedExercises: false,
+  voiceRestCues: false,
 };
 
 function readBoolPrefValue(key: string, defaultOn: boolean): boolean {
@@ -263,6 +318,31 @@ function readIntRangePref(key: string, min: number, max: number, fallback: numbe
   return fallback;
 }
 
+function readWorkoutLayoutPref(): WorkoutLayoutMode {
+  if (typeof localStorage === "undefined") return DEFAULT_WORKOUT_PREFERENCES.workoutLayout;
+  try {
+    const raw = localStorage.getItem(workoutLayoutPreference);
+    if (raw === "card" || raw === "compact" || raw === "focus") return raw;
+  } catch {}
+  return DEFAULT_WORKOUT_PREFERENCES.workoutLayout;
+}
+
+function readPlatePairsPref(): Record<string, number> | undefined {
+  if (typeof localStorage === "undefined") return undefined;
+  try {
+    const raw = JSON.parse(localStorage.getItem(platePairsPreference) ?? "null");
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const clean: Record<string, number> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        const n = Math.round(Number(v));
+        if (Number.isFinite(n) && n >= 0 && n <= 20) clean[k] = n;
+      }
+      if (Object.keys(clean).length) return clean;
+    }
+  } catch {}
+  return undefined;
+}
+
 /**
  * Safely reads unified in-session workout preferences with validated defaults.
  */
@@ -338,6 +418,19 @@ export function readWorkoutPreferences(): WorkoutPreferences {
       100,
       DEFAULT_WORKOUT_PREFERENCES.deloadSetsPct,
     ),
+    workoutLayout: readWorkoutLayoutPref(),
+    collapseCompletedExercises: readBoolPrefValue(
+      collapseCompletedPreference,
+      DEFAULT_WORKOUT_PREFERENCES.collapseCompletedExercises,
+    ),
+    voiceRestCues: readBoolPrefValue(
+      voiceRestCuesPreference,
+      DEFAULT_WORKOUT_PREFERENCES.voiceRestCues,
+    ),
+    ...(() => {
+      const pairs = readPlatePairsPref();
+      return pairs ? { platePairs: pairs } : {};
+    })(),
   };
 }
 
@@ -481,6 +574,22 @@ function persistSinglePreference<K extends keyof WorkoutPreferences>(
           String(Math.max(25, Math.min(100, Math.round(Number(value) || 50)))),
         );
         break;
+      case "workoutLayout":
+        localStorage.setItem(workoutLayoutPreference, String(value));
+        break;
+      case "collapseCompletedExercises":
+        localStorage.setItem(collapseCompletedPreference, value ? "on" : "off");
+        break;
+      case "voiceRestCues":
+        localStorage.setItem(voiceRestCuesPreference, value ? "on" : "off");
+        break;
+      case "platePairs":
+        if (value && typeof value === "object" && Object.keys(value).length) {
+          localStorage.setItem(platePairsPreference, JSON.stringify(value));
+        } else {
+          localStorage.removeItem(platePairsPreference);
+        }
+        break;
     }
   } catch {}
 }
@@ -520,6 +629,8 @@ export function applyRemoteWorkoutPreferences(
     "appleFitnessAutoLaunch",
     "appleAutoSyncOnFinish",
     "deloadMode",
+    "collapseCompletedExercises",
+    "voiceRestCues",
   ] as const;
   for (const key of boolKeys) {
     if (typeof remote[key] === "boolean") persistSinglePreference(key, remote[key]!);
@@ -583,6 +694,12 @@ export function applyRemoteWorkoutPreferences(
     const clamped = Math.max(25, Math.min(100, Math.round(remote.deloadSetsPct)));
     persistSinglePreference("deloadSetsPct", clamped);
   }
+  if (remote.workoutLayout === "card" || remote.workoutLayout === "compact" || remote.workoutLayout === "focus") {
+    persistSinglePreference("workoutLayout", remote.workoutLayout);
+  }
+  if (remote.platePairs && typeof remote.platePairs === "object") {
+    persistSinglePreference("platePairs", remote.platePairs);
+  }
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(WORKOUT_PREFS_EVENT));
   }
@@ -618,6 +735,10 @@ const ALL_WORKOUT_PREF_KEYS = [
   deloadModePreference,
   deloadWeightPctPreference,
   deloadSetsPctPreference,
+  workoutLayoutPreference,
+  collapseCompletedPreference,
+  voiceRestCuesPreference,
+  platePairsPreference,
 ] as const;
 
 /**
@@ -749,10 +870,64 @@ function runPlateDp(
   return { dpCount, dpChoice };
 }
 
+function runBoundedPlateDp(
+  maxUnits: number,
+  plateUnits: readonly number[],
+  plateLimits: readonly number[],
+  maxPlates = PLATE_MAX_COUNT,
+): { bestU: number; plates: number[] } {
+  // Expand available single-side plates (capped by pair inventory) and run 0/1 knapsack minimizing plate count.
+  const expanded: Array<{ unit: number; idx: number }> = [];
+  for (let i = 0; i < plateUnits.length; i++) {
+    const cap = Math.max(0, Math.min(maxPlates, plateLimits[i] ?? maxPlates));
+    const maxUseful = plateUnits[i]! > 0 ? Math.min(cap, Math.floor(maxUnits / plateUnits[i]!)) : 0;
+    for (let k = 0; k < maxUseful; k++) {
+      expanded.push({ unit: plateUnits[i]!, idx: i });
+    }
+  }
+  const dpCount = new Uint8Array(maxUnits + 1).fill(255);
+  const dpPrevU = new Int16Array(maxUnits + 1).fill(-1);
+  const dpPicked = new Int16Array(maxUnits + 1).fill(-1);
+  dpCount[0] = 0;
+
+  for (let e = 0; e < expanded.length; e++) {
+    const item = expanded[e]!;
+    for (let u = maxUnits; u >= item.unit; u--) {
+      const prev = dpCount[u - item.unit]!;
+      if (prev === 255) continue;
+      const cand = prev + 1;
+      if (cand <= maxPlates && cand < dpCount[u]!) {
+        dpCount[u] = cand;
+        dpPrevU[u] = u - item.unit;
+        dpPicked[u] = item.idx;
+      }
+    }
+  }
+
+  let bestU = 0;
+  for (let u = maxUnits; u >= 0; u--) {
+    if (dpCount[u]! <= maxPlates) {
+      bestU = u;
+      break;
+    }
+  }
+
+  const pickedIdx: number[] = [];
+  let cur = bestU;
+  while (cur > 0) {
+    const idx = dpPicked[cur]!;
+    if (idx < 0) break;
+    pickedIdx.push(idx);
+    cur = dpPrevU[cur]!;
+  }
+  return { bestU, plates: pickedIdx };
+}
+
 export function plateBreakdown(
   totalWeight: number,
   barWeight = 20,
   availablePlates: readonly number[] = DEFAULT_PLATES,
+  platePairs?: Record<string, number>,
 ): PlateBreakdownResult {
   const weight = Number(totalWeight);
   const rawBar = Number(barWeight);
@@ -761,11 +936,28 @@ export function plateBreakdown(
     return { valid: false, bar, perSide: 0, plates: [], remainder: 0, achievable: true };
   }
   const perSide = round2((weight - bar) / 2);
-  const sortedPlates = sanitizeAvailablePlates(availablePlates);
+  const hasPairLimits = Boolean(platePairs && Object.keys(platePairs).length > 0);
+  const sortedPlates = sanitizeAvailablePlates(availablePlates).filter((p) => {
+    if (!hasPairLimits) return true;
+    const cap = platePairs![String(p)];
+    return cap === undefined ? true : cap > 0;
+  });
 
   if (sortedPlates.length && perSide <= 500 && areQuarterMultiples(sortedPlates)) {
     const targetUnits = Math.max(0, Math.floor(perSide * PLATE_DP_SCALE + 1e-6));
     const plateUnits = sortedPlates.map((p) => Math.round(p * PLATE_DP_SCALE));
+
+    if (hasPairLimits) {
+      const limits = sortedPlates.map((p) => {
+        const cap = platePairs![String(p)];
+        return cap === undefined ? PLATE_MAX_COUNT : Math.max(0, Math.round(cap));
+      });
+      const { bestU, plates: pickedIndices } = runBoundedPlateDp(targetUnits, plateUnits, limits, PLATE_MAX_COUNT);
+      const plates = pickedIndices.map((idx) => sortedPlates[idx]!).sort((a, b) => b - a);
+      const remainder = Math.max(0, round2(perSide - bestU / PLATE_DP_SCALE));
+      return { valid: true, bar, perSide, plates, remainder, achievable: remainder <= 0.01 };
+    }
+
     const { dpCount, dpChoice } = runPlateDp(targetUnits, plateUnits, PLATE_MAX_COUNT);
 
     let bestU = 0;
@@ -792,8 +984,11 @@ export function plateBreakdown(
   let remaining = perSide;
   const plates: number[] = [];
   for (const plate of sortedPlates) {
-    while (plates.length < PLATE_MAX_COUNT && remaining + 1e-6 >= plate) {
+    const cap = hasPairLimits && platePairs![String(plate)] !== undefined ? platePairs![String(plate)]! : PLATE_MAX_COUNT;
+    let used = 0;
+    while (used < cap && plates.length < PLATE_MAX_COUNT && remaining + 1e-6 >= plate) {
       plates.push(plate);
+      used++;
       remaining = round2(remaining - plate);
     }
     if (plates.length >= PLATE_MAX_COUNT) break;
@@ -806,10 +1001,11 @@ export function plateDeltaLabel(
   curWeight: number,
   barWeight = 20,
   enabledPlates: readonly number[] = ALL_PLATES,
+  platePairs?: Record<string, number>,
 ): string {
   if (!(prevWeight > barWeight) || !(curWeight > barWeight) || prevWeight === curWeight) return "";
-  const prevCalc = plateBreakdown(prevWeight, barWeight, enabledPlates);
-  const curCalc = plateBreakdown(curWeight, barWeight, enabledPlates);
+  const prevCalc = plateBreakdown(prevWeight, barWeight, enabledPlates, platePairs);
+  const curCalc = plateBreakdown(curWeight, barWeight, enabledPlates, platePairs);
   if (!prevCalc.valid || !curCalc.valid) return "";
   const counts = new Map<number, number>();
   for (const p of curCalc.plates) counts.set(p, (counts.get(p) ?? 0) + 1);

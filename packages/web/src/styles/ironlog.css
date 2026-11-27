@@ -3763,3 +3763,140 @@ dialog.cardio-dialog .dialog-head {
   color: var(--muted);
   font-style: italic;
 }
+
+
+/* ===== OpenGym Parity Batch 2: Layouts, Auto-Collapse, Triple Progression, Timed Go, Plate Pairs ===== */
+.workout-form.layout-compact .exercise-editor {
+  padding: 10px 12px;
+  gap: 8px;
+}
+.workout-form.layout-compact .ex-hero-thumb,
+.workout-form.layout-compact .ex-cue-row {
+  display: none;
+}
+.workout-form.layout-compact .set-row {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+.workout-form.layout-focus .exercise-editor {
+  padding: 18px 16px;
+}
+.workout-form.layout-focus .ex-title-btn h3 {
+  font-size: 20px;
+}
+.workout-form.layout-focus .num-step-btn {
+  min-width: 34px;
+  min-height: 40px;
+  font-size: 18px;
+}
+.workout-form.layout-focus .num-stepper input {
+  min-height: 40px;
+  font-size: 17px;
+  font-weight: 700;
+}
+.workout-form.layout-focus .check-set span {
+  width: 42px;
+  height: 42px;
+}
+.exercise-editor.is-collapsed-done {
+  padding: 0;
+  border-style: dashed;
+}
+.collapsed-ex-strip {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.collapsed-ex-strip strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.collapsed-ex-check {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.ex-inline-prog-strip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--line));
+  color: var(--ink);
+}
+.ex-inline-prog-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex-shrink: 0;
+}
+.deload-day-pill {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #3b82f6 16%, transparent);
+  color: #3b82f6;
+  vertical-align: middle;
+}
+.timed-set-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.timed-go-btn {
+  padding: 4px 8px;
+  min-height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.timed-go-btn.is-running {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.plate-pair-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+.plate-pair-count-btn {
+  font-size: 10px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--surface-2, var(--surface));
+  color: var(--muted);
+  cursor: pointer;
+}

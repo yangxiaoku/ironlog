@@ -343,7 +343,10 @@ export function PlanView() {
           <div className="routine-head-lead">
             {mChips.length ? <MuscleBodyMap size="mini" scores={routineScores} /> : null}
             <div>
-              <h3>{routine.name}</h3>
+              <h3>
+                {routine.name}
+                {"isDeload" in routine && routine.isDeload ? <span className="deload-day-pill">减载日</span> : null}
+              </h3>
               {checkedIn ? (
                 <span className="apple-status">Apple 健康已完成</span>
               ) : isNext ? (

@@ -436,6 +436,29 @@ export function createRestAudio(enabled: () => boolean, getStyle?: () => RestSou
   };
 }
 
+export function speakCue(
+  text: string,
+  options: { enabled?: boolean; lang?: string; rate?: number } = {},
+): boolean {
+  if (options.enabled === false) return false;
+  const clean = text.trim();
+  if (!clean) return false;
+  if (typeof window === "undefined" || typeof window.speechSynthesis === "undefined") return false;
+  if (typeof SpeechSynthesisUtterance === "undefined") return false;
+  try {
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const utter = new SpeechSynthesisUtterance(clean);
+    utter.lang = options.lang ?? "zh-CN";
+    utter.rate = options.rate ?? 1.05;
+    utter.volume = 0.95;
+    synth.speak(utter);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function keepWorkoutScreenAwake(isActive: () => boolean, onStatus: (active: boolean) => void) {
   let lock: WakeLockSentinel | undefined;
   let pending = false;

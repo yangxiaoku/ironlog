@@ -246,8 +246,14 @@ export interface ProfileGoals {
     deloadMode?: boolean;
     deloadWeightPct?: number;
     deloadSetsPct?: number;
+    workoutLayout?: WorkoutLayoutMode;
+    collapseCompletedExercises?: boolean;
+    voiceRestCues?: boolean;
+    platePairs?: Record<string, number>;
   };
   quickFoods?: QuickFoodItem[];
+  equipmentProfiles?: EquipmentProfile[];
+  activeEquipmentProfileId?: string | null;
 }
 
 export interface OverviewStatsResponse {
@@ -425,11 +431,26 @@ export interface CatalogueExercise {
   } | null;
 }
 
-export type ProgressionRule = "double" | "linear" | "greyskull" | "manual";
+export type ProgressionRule = "double" | "triple" | "linear" | "greyskull" | "manual";
+export type WorkoutLayoutMode = "card" | "compact" | "focus";
+
+export interface EquipmentProfile {
+  id: string;
+  name: string;
+  equipment: EquipmentKey[];
+  barWeight: number;
+  enabledPlates: number[];
+  platePairs?: Record<string, number>;
+  dumbbellMinKg?: number;
+  dumbbellMaxKg?: number;
+  dumbbellStepKg?: number;
+}
 
 export interface PlannedExercise {
   exerciseId: string;
   sets: number;
+  setsMax?: number;
+  deloadMissThreshold?: number;
   repsMin: number;
   repsMax: number;
   weight: number | null;
@@ -446,6 +467,7 @@ export interface PlannedExercise {
 export interface PlanRoutine {
   id: string;
   name: string;
+  isDeload?: boolean;
   exercises: PlannedExercise[];
 }
 

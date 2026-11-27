@@ -29,9 +29,13 @@ export interface PrOpportunity {
 export interface ExerciseProgressionReport {
   weight: number;
   reps: number;
+  sets?: number;
   increased: boolean;
+  setsIncreased?: boolean;
+  consecutiveMisses?: number;
+  deloadMissThreshold?: number;
   ruleLabel: string;
-  status: "progress_weight" | "progress_reps" | "plateau_deload" | "maintain" | "baseline";
+  status: "progress_weight" | "progress_reps" | "progress_sets" | "plateau_deload" | "maintain" | "baseline";
   statusLabel: string;
   reason: string;
   forecast: string;
@@ -274,6 +278,10 @@ export function progressionRuleLabel(item: Routine["exercises"][number], mode: E
   const range = item.repsMin === item.repsMax ? `${item.repsMin} 次` : `${item.repsMin}–${item.repsMax} 次`;
   if (item.progression === "manual") return `固定负荷 ${range}`;
   const sign = mode === "assisted" ? "-" : "+";
+  if (item.progression === "triple") {
+    const setsMax = Math.max(item.sets, item.setsMax ?? item.sets + 2);
+    return `三重渐进 ${item.sets}–${setsMax} 组 × ${range} · ${sign}${item.increment}kg`;
+  }
   if (item.progression === "greyskull") return `Greyskull AMRAP ${range}+ · 达标 ${sign}${item.increment}kg / 翻倍×2 / 失利-10%`;
   if (item.progression === "linear") return `线性渐进 ${range} · 达标 ${sign}${item.increment}kg`;
   return `双重渐进 ${range} · RIR≥${item.targetRir} · ${sign}${item.increment}kg`;
@@ -304,27 +312,36 @@ export function evaluateExerciseProgression(
     : computed.weight;
 
   // Detect consecutive misses or recent fatigued streak on progression exercises
+  const deloadMissThreshold = Math.max(2, Math.min(5, item.deloadMissThreshold ?? 3));
+  let consecutiveMisses = 0;
+  if (item.progression !== "manual" && mode !== "timed") {
+    for (const entry of recentSameExercise) {
+      const work = entry.row.sets.filter((set) => isValidWorkSet(set, mode));
+      const missed = work.length < item.sets || work.some((set) => set.reps < item.repsMin);
+      if (missed) consecutiveMisses++;
+      else break;
+    }
+  }
   let plateau = false;
-  if (item.progression !== "manual" && !computed.increased && recentSameExercise.length >= 2 && mode !== "timed") {
+  if (item.progression !== "manual" && !computed.increased && !computed.setsIncreased && recentSameExercise.length >= 2 && mode !== "timed") {
     const recentTwo = recentSameExercise.slice(0, 2);
-    const missedTwice = recentTwo.every(({ row }) => {
-      const work = row.sets.filter((set) => isValidWorkSet(set, mode));
-      return work.length < item.sets || work.some((set) => set.reps < item.repsMin);
-    });
     const fatiguedStreak = recentTwo.every(({ feeling }) => feeling === "fatigued");
-    if (missedTwice || fatiguedStreak) plateau = true;
+    if (consecutiveMisses >= Math.min(deloadMissThreshold, 2) || fatiguedStreak) plateau = true;
   }
 
   const nextMilestoneWeight = mode === "timed"
     ? computed.weight
     : Math.max(0, round2(computed.weight + (assisted ? -item.increment : item.increment)));
+  const setsMax = Math.max(item.sets, item.setsMax ?? item.sets + 2);
   const forecast = item.progression === "manual" || mode === "timed"
     ? `当前按 ${item.sets} 组 × ${mode === "timed" ? `${item.seconds} 秒` : `${item.repsMin}–${item.repsMax} 次`} 稳定推进`
-    : item.progression === "greyskull"
-      ? `末组全力冲刺（AMRAP）：满 ${item.repsMin} 次升至 ${nextMilestoneWeight} kg，满 ${item.repsMin * 2} 次双倍加重`
-      : item.progression === "linear"
-        ? `下次满 ${item.sets} 组达 ${item.repsMin} 次且 RIR≥${item.targetRir}，将推至 ${nextMilestoneWeight} kg`
-        : `满 ${item.sets} 组达 ${item.repsMax} 次且 RIR≥${item.targetRir}，将升至 ${nextMilestoneWeight} kg`;
+    : item.progression === "triple"
+      ? `满 ${computed.sets ?? item.sets} 组 × ${item.repsMax} 次后${(computed.sets ?? item.sets) < setsMax ? `加至 ${(computed.sets ?? item.sets) + 1} 组` : `升至 ${nextMilestoneWeight} kg 并回落 ${item.sets} 组`}`
+      : item.progression === "greyskull"
+        ? `末组全力冲刺（AMRAP）：满 ${item.repsMin} 次升至 ${nextMilestoneWeight} kg，满 ${item.repsMin * 2} 次双倍加重`
+        : item.progression === "linear"
+          ? `下次满 ${item.sets} 组达 ${item.repsMin} 次且 RIR≥${item.targetRir}，将推至 ${nextMilestoneWeight} kg`
+          : `满 ${item.sets} 组达 ${item.repsMax} 次且 RIR≥${item.targetRir}，将升至 ${nextMilestoneWeight} kg`;
 
   if (computed.deloaded) {
     return {
@@ -376,22 +393,43 @@ export function evaluateExerciseProgression(
     };
   }
 
+  if (computed.setsIncreased && computed.sets) {
+    return {
+      ...computed,
+      consecutiveMisses,
+      deloadMissThreshold,
+      ruleLabel,
+      status: "progress_sets",
+      statusLabel: `三重渐进 · 加至 ${computed.sets} 组`,
+      reason: `上次已做满 ${item.repsMax} 次，本轮维持 ${computed.weight} kg 并追加至 ${computed.sets}/${setsMax} 组 × ${item.repsMin} 次`,
+      forecast,
+      deloadWeight: null,
+      backupExerciseId: item.backupExerciseId,
+    };
+  }
+
   if (plateau) {
     return {
       ...computed,
+      consecutiveMisses,
+      deloadMissThreshold,
       ruleLabel,
       status: "plateau_deload",
-      statusLabel: "平台期 · 建议减载",
-      reason: `连续 2 次未稳步达成最低 ${item.repsMin} 次或体感疲惫，可减载至 ${deloadWeight ?? computed.weight} kg 调整状态`,
+      statusLabel: consecutiveMisses > 0 ? `连续 ${consecutiveMisses}/${deloadMissThreshold} 次未达标 · 建议减载` : "平台期 · 建议减载",
+      reason: consecutiveMisses > 0
+        ? `连续 ${consecutiveMisses}/${deloadMissThreshold} 次未达成最低 ${item.repsMin} 次，可先减载至 ${deloadWeight ?? computed.weight} kg 重建势能`
+        : `近期连续体感疲惫，可减载至 ${deloadWeight ?? computed.weight} kg 调整状态`,
       forecast,
       deloadWeight,
       backupExerciseId: item.backupExerciseId,
     };
   }
 
-  if (previousRow && item.progression === "double" && computed.reps > item.repsMin) {
+  if (previousRow && (item.progression === "double" || item.progression === "triple") && computed.reps > item.repsMin) {
     return {
       ...computed,
+      consecutiveMisses,
+      deloadMissThreshold,
       ruleLabel,
       status: "progress_reps",
       statusLabel: `冲次数 ${computed.reps}/${item.repsMax}`,
@@ -405,9 +443,16 @@ export function evaluateExerciseProgression(
   if (previousRow || historicalRow) {
     return {
       ...computed,
+      consecutiveMisses,
+      deloadMissThreshold,
       ruleLabel,
       status: "maintain",
-      statusLabel: item.progression === "manual" ? "固定负荷" : "巩固冲击上限",
+      statusLabel:
+        consecutiveMisses > 0
+          ? `沿用重量（未达标 ${consecutiveMisses}/${deloadMissThreshold} 次）`
+          : item.progression === "manual"
+            ? "固定负荷"
+            : "巩固冲击上限",
       reason: previousRow
         ? `沿用 ${computed.weight} kg，完成全组 ${item.progression === "linear" || item.progression === "greyskull" ? item.repsMin : item.repsMax} 次（RIR≥${item.targetRir}）即可触发下轮渐进`
         : `参考历史同动作表现预设为 ${computed.weight} kg`,

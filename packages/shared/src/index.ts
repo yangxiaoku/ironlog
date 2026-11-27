@@ -269,6 +269,10 @@ const workoutPrefsBase = {
   deloadMode: z.boolean(),
   deloadWeightPct: z.number().int().min(50).max(95),
   deloadSetsPct: z.number().int().min(25).max(100),
+  workoutLayout: z.enum(["card", "compact", "focus"]),
+  collapseCompletedExercises: z.boolean(),
+  voiceRestCues: z.boolean(),
+  platePairs: z.record(z.string(), z.number().int().min(0).max(20)),
 };
 
 export const workoutPrefsPatchSchema = z.object(workoutPrefsBase).partial();
@@ -301,6 +305,10 @@ export const workoutPrefsSchema = z.object({
   deloadMode: workoutPrefsBase.deloadMode.default(false),
   deloadWeightPct: workoutPrefsBase.deloadWeightPct.default(80),
   deloadSetsPct: workoutPrefsBase.deloadSetsPct.default(50),
+  workoutLayout: workoutPrefsBase.workoutLayout.default("card"),
+  collapseCompletedExercises: workoutPrefsBase.collapseCompletedExercises.default(false),
+  voiceRestCues: workoutPrefsBase.voiceRestCues.default(false),
+  platePairs: workoutPrefsBase.platePairs.optional(),
 });
 export type WorkoutPrefs = z.infer<typeof workoutPrefsSchema>;
 
@@ -315,6 +323,19 @@ export const quickFoodSchema = z.object({
   fat: nonnegative,
 });
 export type QuickFood = z.infer<typeof quickFoodSchema>;
+
+export const equipmentProfileSchema = z.object({
+  id,
+  name: shortText,
+  equipment: z.array(z.string().max(100)).max(30).default(["barbell", "dumbbell", "machine"]),
+  barWeight: z.number().min(0).max(100).default(20),
+  enabledPlates: z.array(z.number().positive().max(100)).min(1).max(20).default([25, 20, 15, 10, 5, 2.5, 1.25]),
+  platePairs: z.record(z.string(), z.number().int().min(0).max(20)).optional(),
+  dumbbellMinKg: z.number().min(0).max(100).optional(),
+  dumbbellMaxKg: z.number().min(0).max(150).optional(),
+  dumbbellStepKg: z.number().min(0.5).max(10).optional(),
+});
+export type EquipmentProfile = z.infer<typeof equipmentProfileSchema>;
 
 export const profileSchema = z.object({
   calories: z.number().min(1).max(20000).default(2200),
@@ -338,6 +359,8 @@ export const profileSchema = z.object({
   goalHistory: z.array(goalSnapshotSchema).optional(),
   workoutPrefs: workoutPrefsSchema.optional(),
   quickFoods: z.array(quickFoodSchema).max(60).optional(),
+  equipmentProfiles: z.array(equipmentProfileSchema).max(6).optional(),
+  activeEquipmentProfileId: id.nullable().optional(),
 });
 export type Profile = z.infer<typeof profileSchema>;
 
@@ -352,7 +375,9 @@ export const plannedExerciseSchema =
       seconds: z.number().int().min(0).max(86400).default(0),
       restSeconds: z.number().int().min(0).max(900),
       targetRir: z.number().int().min(0).max(10).default(2),
-      progression: z.enum(["double", "linear", "greyskull", "manual"]).default("double"),
+      progression: z.enum(["double", "triple", "linear", "greyskull", "manual"]).default("double"),
+      setsMax: z.number().int().min(1).max(20).optional(),
+      deloadMissThreshold: z.number().int().min(2).max(5).optional(),
       increment: z.number().min(0).max(20).default(2.5),
       backupExerciseId: id.nullable().default(null),
       supersetGroup: z.string().trim().max(16).nullable().optional(),
@@ -384,6 +409,7 @@ export type ScheduledDay = z.infer<typeof scheduledDaySchema>;
 export const routineSchema = z.object({
   id,
   name: shortText,
+  isDeload: z.boolean().optional(),
   exercises: z.array(plannedExerciseSchema).min(1).max(100),
 });
 export const planSchema = z

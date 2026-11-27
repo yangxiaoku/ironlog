@@ -183,7 +183,15 @@ export function nextTarget(
   item: Routine["exercises"][number],
   previous?: Workout["exercises"][number],
   mode = previous?.snapshot?.mode ?? "reps",
-): { weight: number; reps: number; increased: boolean; deloaded?: boolean; doubleJump?: boolean } {
+): {
+  weight: number;
+  reps: number;
+  sets?: number;
+  increased: boolean;
+  setsIncreased?: boolean;
+  deloaded?: boolean;
+  doubleJump?: boolean;
+} {
   const assisted = mode === "assisted";
   const completed =
     previous?.sets.filter((set) => set.completed && set.type !== "warmup" && (!assisted || set.reps > 0)) ??
@@ -191,6 +199,51 @@ export function nextTarget(
   const weight = completed.length
     ? (assisted ? Math.min : Math.max)(...completed.map((set) => set.weight))
     : (item.weight ?? 0);
+  if (item.progression === "triple") {
+    const baseSets = Math.max(1, item.sets);
+    const setsMax = Math.max(baseSets, item.setsMax ?? baseSets + 2);
+    if (!completed.length) {
+      return { weight, reps: item.repsMin, sets: baseSets, increased: false };
+    }
+    const currentSets = Math.min(setsMax, Math.max(baseSets, completed.length));
+    const allHitMax =
+      completed.length >= currentSets &&
+      completed.every(
+        (set) =>
+          set.weight === weight &&
+          set.reps >= item.repsMax &&
+          (set.rir === null || set.rir >= item.targetRir),
+      );
+    if (allHitMax) {
+      if (currentSets < setsMax) {
+        return {
+          weight: Math.round(Math.max(0, weight) * 100) / 100,
+          reps: item.repsMin,
+          sets: currentSets + 1,
+          increased: false,
+          setsIncreased: true,
+        };
+      }
+      const canProgress = !assisted || (weight > 0 && item.increment > 0);
+      const change = canProgress ? item.increment : 0;
+      return {
+        weight: Math.round(Math.max(0, weight + (assisted ? -change : change)) * 100) / 100,
+        reps: item.repsMin,
+        sets: baseSets,
+        increased: change > 0,
+      };
+    }
+    const nextReps = Math.min(
+      item.repsMax,
+      Math.max(item.repsMin, Math.min(...completed.map((set) => set.reps)) + 1),
+    );
+    return {
+      weight: Math.round(Math.max(0, weight) * 100) / 100,
+      reps: nextReps,
+      sets: currentSets,
+      increased: false,
+    };
+  }
   if (item.progression === "greyskull") {
     if (!completed.length) {
       return { weight, reps: item.repsMin, increased: false };

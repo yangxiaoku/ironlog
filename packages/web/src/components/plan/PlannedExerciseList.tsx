@@ -15,6 +15,7 @@ import { Icon } from "../Icon";
 
 export const PROGRESSION_NAMES: Record<ProgressionRule, string> = {
   double: "双线性渐进（推荐）",
+  triple: "三重渐进（次→组→重）",
   linear: "每次线性加重",
   greyskull: "Greyskull AMRAP",
   manual: "手动 / 保持",
@@ -22,6 +23,7 @@ export const PROGRESSION_NAMES: Record<ProgressionRule, string> = {
 
 export const PROGRESSION_SHORT_LABELS: Record<ProgressionRule, string> = {
   double: "双线性",
+  triple: "三重渐进",
   linear: "线性递增",
   greyskull: "Greyskull",
   manual: "",
@@ -75,12 +77,24 @@ export function sanitizePlannedExercises(
       seconds: timed ? Math.max(1, Math.min(86400, Math.round(Number(row.seconds) || 45))) : 0,
       restSeconds: Math.max(0, Math.min(900, Math.round(Number.isFinite(rawRest) ? rawRest : 90))),
       targetRir: Math.max(0, Math.min(10, Math.round(Number(row.targetRir ?? 2)))),
-      progression: (["double", "linear", "greyskull", "manual"].includes(row.progression)
+      progression: (["double", "triple", "linear", "greyskull", "manual"].includes(row.progression)
         ? row.progression
         : "double") as ProgressionRule,
+      ...(row.progression === "triple"
+        ? {
+            setsMax: Math.max(
+              Math.max(1, Math.min(100, Math.round(Number(row.sets) || 3))),
+              Math.min(20, Math.round(Number(row.setsMax) || (Number(row.sets) || 3) + 2)),
+            ),
+          }
+        : {}),
+      ...(row.deloadMissThreshold != null
+        ? { deloadMissThreshold: Math.max(2, Math.min(5, Math.round(Number(row.deloadMissThreshold) || 3))) }
+        : {}),
       increment: Math.max(0, Math.min(20, Number(row.increment ?? 2.5))),
       backupExerciseId: row.backupExerciseId && row.backupExerciseId !== row.exerciseId ? row.backupExerciseId : null,
       supersetGroup: row.supersetGroup ? String(row.supersetGroup).trim().slice(0, 16) : null,
+      ...(row.weightUnit === "kg" || row.weightUnit === "lb" ? { weightUnit: row.weightUnit } : {}),
     };
   });
 }
@@ -497,7 +511,13 @@ export function PlannedExerciseList({
                       <span>渐进规则</span>
                       <select
                         value={row.progression ?? "double"}
-                        onChange={(e) => updateRow(index, { progression: e.target.value as ProgressionRule })}
+                        onChange={(e) => {
+                          const nextProg = e.target.value as ProgressionRule;
+                          updateRow(index, {
+                            progression: nextProg,
+                            ...(nextProg === "triple" && !row.setsMax ? { setsMax: Math.min(20, (row.sets || 3) + 2) } : {}),
+                          });
+                        }}
                       >
                         {(Object.entries(PROGRESSION_NAMES) as Array<[ProgressionRule, string]>).map(([k, lbl]) => (
                           <option key={k} value={k}>
@@ -506,6 +526,21 @@ export function PlannedExerciseList({
                         ))}
                       </select>
                     </label>
+                    {row.progression === "triple" ? (
+                      <label>
+                        <span>组数上限</span>
+                        <input
+                          type="number"
+                          inputMode="numeric"
+                          min={Math.max(1, row.sets || 1)}
+                          max={20}
+                          step={1}
+                          value={row.setsMax ?? Math.min(20, (row.sets || 3) + 2)}
+                          onKeyDown={stopEnter}
+                          onChange={(e) => updateRow(index, { setsMax: Math.max(row.sets || 1, Number(e.target.value) || row.sets || 3) })}
+                        />
+                      </label>
+                    ) : null}
                     <label>
                       <span>每次增量 kg</span>
                       <input
