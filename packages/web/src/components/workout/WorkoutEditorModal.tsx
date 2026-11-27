@@ -3139,7 +3139,9 @@ export function WorkoutEditorModal({
                     <span className="ex-quick-stat">
                       容量 <strong>{fmt(exVolume, 0)} kg</strong>
                     </span>
-                    <span className="ex-quick-stat">休息 {row.restSeconds ?? 90}s</span>
+                    {isHistoricalEdit ? (
+                      <span className="ex-quick-stat">休息 {row.restSeconds ?? 90}s</span>
+                    ) : null}
                     <button
                       type="button"
                       className="ex-quick-rest-btn"
@@ -3507,9 +3509,18 @@ export function WorkoutEditorModal({
                     const cmpDir = compareSetAgainstReference(s, setRef, mode);
                     const prHit = checkSetBeatsPrBaseline(s, mode, row.weightUnit, prBaseline);
                     const isSetMenuOpen = openSetMenuId === s.id;
+                    const showSetRefChip = Boolean(
+                      !isHistoricalEdit &&
+                        setIdx === nextIncompleteSetIdx &&
+                        setRef &&
+                        !s.completed &&
+                        (isTimed
+                          ? setRef.seconds > 0 && setRef.seconds !== s.seconds
+                          : setRef.weight > 0 && (setRef.weight !== s.weight || setRef.reps !== s.reps)),
+                    );
                     const hasInlineMeta =
                       Boolean(platesInfo?.valid) ||
-                      Boolean(setRef && !s.completed) ||
+                      showSetRefChip ||
                       Boolean(s.note) ||
                       editingSetNoteId === s.id ||
                       Boolean(cmpDir) ||
@@ -3904,7 +3915,7 @@ export function WorkoutEditorModal({
                                 {deltaHint ? <span className="set-plate-delta">{deltaHint}</span> : null}
                               </div>
                             ) : null}
-                            {(setRef && !s.completed) || cmpDir || prHit || s.restAfterSeconds != null || s.note || editingSetNoteId === s.id ? (
+                            {showSetRefChip || cmpDir || prHit || s.restAfterSeconds != null || s.note || editingSetNoteId === s.id ? (
                               <div className="set-inline-top">
                                 {prHit ? (
                                   <span className="set-pr-badge" title="超越历史最佳纪录">
@@ -3930,7 +3941,7 @@ export function WorkoutEditorModal({
                                     {s.restAfterSeconds === 0 ? "组后免休" : `组后休 ${s.restAfterSeconds}s`}
                                   </span>
                                 ) : null}
-                                {setRef && !s.completed ? (
+                                {showSetRefChip && setRef ? (
                                   <button
                                     type="button"
                                     className="set-ref-chip"

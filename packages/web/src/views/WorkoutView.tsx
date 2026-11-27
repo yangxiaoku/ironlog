@@ -143,8 +143,13 @@ export function WorkoutView() {
   }, [completed, shownCount]);
 
   const prPicks = useMemo(() => {
-    if (!trainedItems.length) return [];
-    const byId = new Map(trainedItems.map((i) => [i.id, i]));
+    const withRealPr = trainedItems.filter((e) =>
+      e.mode === "timed"
+        ? e.bestHold != null && e.bestHold > 0
+        : (e.best1rm != null && e.best1rm > 0) || (e.bestWeight != null && e.bestWeight > 0),
+    );
+    if (!withRealPr.length) return [];
+    const byId = new Map(withRealPr.map((i) => [i.id, i]));
     const picks: TrainedExerciseSummary[] = [];
     const seen = new Set<string>();
     for (const id of [...classicLiftIds.bench, ...classicLiftIds.squat, ...classicLiftIds.deadlift, "overhead-press", "barbell-row"]) {
@@ -156,7 +161,7 @@ export function WorkoutView() {
     }
     const score = (e: TrainedExerciseSummary) =>
       e.mode === "timed" ? e.bestHold ?? 0 : e.best1rm ?? e.bestWeight ?? 0;
-    for (const item of [...trainedItems].sort((a, b) => score(b) - score(a))) {
+    for (const item of [...withRealPr].sort((a, b) => score(b) - score(a))) {
       if (picks.length >= 6) break;
       if (!seen.has(item.id)) {
         seen.add(item.id);
@@ -341,7 +346,9 @@ export function WorkoutView() {
                 </p>
               </div>
               {plannedToday?.muscleScores && Object.keys(plannedToday.muscleScores).length > 0 ? (
-                <MuscleBodyMap size="mini" scores={plannedToday.muscleScores} />
+                <div className="launchpad-hero-map">
+                  <MuscleBodyMap size="sm" scores={plannedToday.muscleScores} />
+                </div>
               ) : null}
               <div className="launchpad-hero-cta">
                 {plannedToday ? (
@@ -393,7 +400,7 @@ export function WorkoutView() {
                 <button
                   key={`r:${r.id}`}
                   type="button"
-                  className="quiet"
+                  className="launchpad-chip"
                   disabled={launchingKey !== null}
                   onClick={() => void handleDirectLaunch(`r:${r.id}`, { id: r.id, source: "plan", date: today() })}
                 >
@@ -404,16 +411,13 @@ export function WorkoutView() {
                 <button
                   key={`t:${t.id}`}
                   type="button"
-                  className="quiet"
+                  className="launchpad-chip"
                   disabled={launchingKey !== null}
                   onClick={() => void handleDirectLaunch(`t:${t.id}`, { id: t.id, source: "template", date: today() })}
                 >
                   {launchingKey === `t:${t.id}` ? "准备中…" : t.name}
                 </button>
               ))}
-              <button type="button" className="quiet" onClick={() => openWorkoutEditor({ goals })}>
-                + 自由训练
-              </button>
             </div>
           </div>
         ) : null}

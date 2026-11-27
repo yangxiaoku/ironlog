@@ -385,11 +385,13 @@ export function DietView() {
         <section className="panel diet-summary">
           <header className="panel-head">
             <h2>当天摄入</h2>
-            {goalDiffNote ? <span className="diet-diff">{goalDiffNote}</span> : null}
+            {goalDiffNote && dayRows.length > 0 ? <span className="diet-diff">{goalDiffNote}</span> : null}
           </header>
 
           <div className="diet-energy">
-            <strong>{dayRows.length ? <MatrixText value={fmt(totalKcal, 0)} /> : "—"}</strong>
+            <strong>
+              <MatrixText value={dayRows.length ? fmt(totalKcal, 0) : "0"} />
+            </strong>
             <span>kcal</span>
           </div>
 
@@ -627,11 +629,11 @@ export function DietView() {
                     ) : null}
                     <button
                       type="button"
-                      className="quiet"
+                      className="secondary-button meal-add-btn"
                       aria-label={`记录${mealLabel}`}
                       onClick={() => openDietEditor({ date, meal: mealKey, recentFoods })}
                     >
-                      <Icon name="plus" size={17} /> 添加
+                      <Icon name="plus" size={15} /> 添加
                     </button>
                   </div>
                 </header>
