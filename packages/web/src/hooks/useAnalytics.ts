@@ -434,6 +434,7 @@ interface AnalyticsResponse {
   } | null;
   appleWorkouts?: AppleWorkoutsBucket & {
     realDeviceCount: number;
+    manualCount?: number;
     demoCount: number;
     realDeviceStats?: AppleWorkoutsBucket | null;
   };
@@ -443,6 +444,7 @@ interface AppleWorkoutsBucket {
   totalCount: number;
   realDeviceCount?: number;
   linkedManualCount?: number;
+  truncatedCount?: number;
   totalDurationSeconds: number;
   totalCaloriesKcal: number;
   totalDistanceKm: number;
@@ -482,6 +484,7 @@ interface AppleWorkoutsBucket {
     date: string;
     title: string;
     activityType: string;
+    source?: "device" | "manual" | "demo";
     isDemo?: boolean;
     captureMethod?: string;
     startedAt?: string;

@@ -18,10 +18,10 @@ import { useUiStore } from "../../store/useUiStore";
 import {
   WORKOUT_PREFS_EVENT,
   applyDeloadToTarget,
-  buildWarmupSetsPlan,
   readWorkoutPreferences,
   writeWorkoutPreference,
 } from "../../lib/workout-helpers";
+import { buildWorkoutSeedFromRoutine } from "../../lib/routine-launch";
 import { Icon } from "../Icon";
 import { exportPlanAsJson } from "../settings/DataModals";
 import {
@@ -348,7 +348,8 @@ export function DaySchedulerModal({
             title: "休息日",
             notes: notes.trim(),
             exercises: [],
-            ...(detail.override ? { baseVersion } : {}),
+            // #272: Always send observed baseVersion (including 0 when blank) so concurrent creations trigger 409
+            baseVersion,
           },
         });
         bumpDataEpoch();
@@ -357,13 +358,60 @@ export function DaySchedulerModal({
         notify(`${shortDate(date)} 已设为休息日`);
       } else if (op === "shift") {
         const nextDate = shiftDateStr(date, 1);
-        await apiFetch("/api/web/schedule/shift", { method: "POST", body: { fromDate: date, toDate: nextDate } });
-        bumpDataEpoch();
-        closeAllModals();
-        onSaved?.(nextDate);
-        notify(`已顺延至 ${shortDate(nextDate)}`);
+        try {
+          await apiFetch("/api/web/schedule/shift", { method: "POST", body: { fromDate: date, toDate: nextDate } });
+          bumpDataEpoch();
+          closeAllModals();
+          onSaved?.(nextDate);
+          notify(`已顺延至 ${shortDate(nextDate)}`);
+        } catch (shiftErr) {
+          // #274: Reuse shift conflict confirmation inside DaySchedulerModal
+          const apiErr = shiftErr as Error & {
+            status?: number;
+            payload?: {
+              conflictTarget?: { date: string; title: string; notes: string; version: number; routineId?: string | null };
+              fromVersion?: number;
+              planRevision?: number;
+              fromRoutineId?: string | null;
+            };
+          };
+          if (apiErr.status === 409 && apiErr.payload?.conflictTarget) {
+            const target = apiErr.payload.conflictTarget;
+            setSaving(false);
+            useUiStore.getState().openConfirm({
+              title: "目标日期已有训练安排",
+              message: `${shortDate(nextDate)} 已有「${target.title}」${target.notes ? `（备注：${target.notes}）` : ""}。确认将 ${shortDate(date)} 的安排顺延并覆盖目标日期吗？`,
+              confirmLabel: "确认覆盖",
+              onConfirm: async () => {
+                await apiFetch("/api/web/schedule/shift", {
+                  method: "POST",
+                  body: {
+                    fromDate: date,
+                    toDate: nextDate,
+                    overwrite: true,
+                    expectedFromVersion: apiErr.payload?.fromVersion,
+                    expectedToVersion: target.version,
+                    expectedPlanRevision: apiErr.payload?.planRevision,
+                    expectedFromRoutineId: apiErr.payload?.fromRoutineId,
+                    expectedToRoutineId: target.routineId ?? null,
+                  },
+                });
+                bumpDataEpoch();
+                closeAllModals();
+                onSaved?.(nextDate);
+                notify(`已将 ${shortDate(date)} 训练顺延并覆盖至 ${shortDate(nextDate)}`);
+              },
+            });
+            return;
+          }
+          throw shiftErr;
+        }
       } else {
-        await apiFetch(`/api/web/schedule/${encodeURIComponent(date)}`, { method: "DELETE" });
+        // #273: Pass observed baseVersion on DELETE so newer edits from another device are not silently deleted
+        await apiFetch(
+          `/api/web/schedule/${encodeURIComponent(date)}?baseVersion=${encodeURIComponent(String(baseVersion))}`,
+          { method: "DELETE" },
+        );
         bumpDataEpoch();
         closeAllModals();
         onSaved?.(date);
@@ -377,7 +425,8 @@ export function DaySchedulerModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (saving) return;
+    // #275: Prevent saving stale exercises while a selected template/preset is still loading
+    if (saving || applyingPresetName) return;
     setError("");
     const sanitized = sanitizePlannedExercises(exercises, catalogueMap);
     if (!sanitized.length) {
@@ -396,7 +445,8 @@ export function DaySchedulerModal({
           templateId,
           notes: notes.trim(),
           exercises: sanitized,
-          ...(detail.override ? { baseVersion } : {}),
+          // #272: Always send observed baseVersion (including 0 for previously blank days)
+          baseVersion,
         },
       });
       bumpDataEpoch();
@@ -536,8 +586,8 @@ export function DaySchedulerModal({
         <button type="button" className="secondary-button" onClick={closeAllModals}>
           取消
         </button>
-        <button type="submit" className="primary-button" disabled={saving}>
-          {saving ? "保存中…" : "保存排期"}
+        <button type="submit" className="primary-button" disabled={saving || Boolean(applyingPresetName)}>
+          {applyingPresetName ? "载入模板中…" : saving ? "保存中…" : "保存排期"}
         </button>
       </footer>
     </form>
@@ -546,8 +596,16 @@ export function DaySchedulerModal({
 
 export function PlanBuilderModal({
   existingPlan,
+  expectedRevision,
 }: {
-  existingPlan?: { id: string; version?: number; data: PlanData } | null;
+  existingPlan?: {
+    id: string;
+    version?: number;
+    data: PlanData;
+    expectedRevision?: number;
+    isActiveSource?: boolean;
+  } | null;
+  expectedRevision?: number;
 }) {
   const closeAllModals = useUiStore((s) => s.closeAllModals);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -555,6 +613,8 @@ export function PlanBuilderModal({
   const notify = useUiStore((s) => s.notify);
 
   const src = existingPlan?.data;
+  const initialExpectedRevision = existingPlan?.expectedRevision ?? expectedRevision;
+  const hasExplicitExpectedRevision = typeof initialExpectedRevision === "number";
   const [name, setName] = useState(src?.name || "自定义力量分化");
   const [weeks, setWeeks] = useState(src?.weeks ?? 6);
   const [schedule, setSchedule] = useState<"rotation" | "weekdays">(src?.schedule ?? "rotation");
@@ -574,10 +634,12 @@ export function PlanBuilderModal({
   const [metaRetryNonce, setMetaRetryNonce] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [conflictActive, setConflictActive] = useState<{ id: string; version: number; revision: number; name: string } | null>(null);
   const createdDraftRef = useRef<{ id: string; version: number; fingerprint: string } | null>(null);
   // #158: Bind stable opId per draft content fingerprint before POST /api/plans/drafts
   const pendingDraftOpRef = useRef<{ fingerprint: string; opId: string } | null>(null);
-  const openingRevisionRef = useRef<number>(0);
+  // #271: Bind expectedRevision to the exact plan snapshot the user opened from instead of silently overwriting with a newer active revision
+  const openingRevisionRef = useRef<number>(initialExpectedRevision ?? 0);
 
   // R15 UX: Render form immediately; fetch catalogue, activePlan, and PRs independently without blocking editing
   useEffect(() => {
@@ -598,11 +660,13 @@ export function PlanBuilderModal({
       })
       .catch(() => {});
 
-    void apiFetch<{ revision?: number } | null>("/api/plans/active")
-      .then((activePlan) => {
-        if (active) openingRevisionRef.current = activePlan?.revision ?? 0;
-      })
-      .catch(() => {});
+    if (!hasExplicitExpectedRevision) {
+      void apiFetch<{ revision?: number } | null>("/api/plans/active")
+        .then((activePlan) => {
+          if (active) openingRevisionRef.current = activePlan?.revision ?? 0;
+        })
+        .catch(() => {});
+    }
 
     if (ids.length) {
       setPrLoading(true);
@@ -777,12 +841,30 @@ export function PlanBuilderModal({
           // #159: On 409 conflict, check if this exact draft is ALREADY the active plan (lost receipt from previous attempt)
           const status = (applyErr as { status?: number })?.status;
           if (status === 409) {
-            const currentActive = await apiFetch<{ id?: string; version?: number } | null>("/api/plans/active").catch(() => null);
+            const currentActive = await apiFetch<{
+              id?: string;
+              version?: number;
+              revision?: number;
+              data?: { name?: string };
+            } | null>("/api/plans/active").catch(() => null);
             if (currentActive && currentActive.id === targetDraft.id && currentActive.version === targetDraft.version) {
               bumpDataEpoch();
               closeAllModals();
               openPlanSection("current");
               notify("训练计划已保存并启用");
+              return;
+            }
+            if (currentActive?.id) {
+              setConflictActive({
+                id: currentActive.id,
+                version: currentActive.version ?? 1,
+                revision: currentActive.revision ?? 0,
+                name: currentActive.data?.name || "其他生效计划",
+              });
+              setError(
+                `当前生效计划已在其他设备更新为「${currentActive.data?.name || "其他生效计划"}」（修订 #${currentActive.revision ?? 0}）。您的修改已存为草稿，请核对后再决定是否覆盖启用。`,
+              );
+              setSaving(false);
               return;
             }
           }
@@ -941,6 +1023,7 @@ export function PlanBuilderModal({
       <section className="form-section">
         <h3 className="form-section-title">当日动作与渐进配置</h3>
         <PlannedExerciseList
+          scopeKey={currentRoutine.id}
           items={currentRoutine.exercises}
           catalogueMap={catalogueMap}
           prMap={prMap}
@@ -955,6 +1038,32 @@ export function PlanBuilderModal({
           }}
         />
       </section>
+
+      {existingPlan ? (
+        <p className="muted" style={{ fontSize: 12.5, margin: "4px 0" }}>
+          编辑来源：{existingPlan.data.name}（v{existingPlan.version ?? 1}
+          {existingPlan.isActiveSource ? ` · 生效修订 #${openingRevisionRef.current}` : ""}）
+        </p>
+      ) : null}
+      {conflictActive ? (
+        <div className="notice-banner" role="status" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span>
+            云端当前生效：<strong>{conflictActive.name}</strong>（修订 #{conflictActive.revision}）
+          </span>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => {
+              openingRevisionRef.current = conflictActive.revision;
+              setConflictActive(null);
+              setError("");
+              notify(`已对齐至最新修订 #${conflictActive.revision}，可再次点击「保存并立即启用」覆盖`);
+            }}
+          >
+            核对后允许覆盖启用
+          </button>
+        </div>
+      ) : null}
 
       <p className="form-error" role="alert" hidden={!error}>
         {error}
@@ -982,7 +1091,7 @@ export function TemplateEditorModal({
 
   const isEdit = Boolean(existingTemplate?.data);
   const [tplId] = useState(() => existingTemplate?.id ?? `tpl_${safeUuid().slice(0, 12)}`);
-  const baseVersion = existingTemplate?.version ?? 0;
+  const [baseVersion, setBaseVersion] = useState(existingTemplate?.version ?? 0);
 
   const [name, setName] = useState(existingTemplate?.data?.name ?? "");
   const [items, setItems] = useState<PlannedExercise[]>(() =>
@@ -993,7 +1102,9 @@ export function TemplateEditorModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const createdDraftRef = useRef<{ id: string; version: number; fingerprint: string } | null>(null);
+  const [conflictRecord, setConflictRecord] = useState<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }> | null>(null);
+  // #276: Bind stable opId per payload fingerprint so retrying after a lost response reuses the same opId
+  const pendingOpRef = useRef<{ fingerprint: string; opId: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -1048,23 +1159,44 @@ export function TemplateEditorModal({
       return;
     }
     setSaving(true);
+    setConflictRecord(null);
+    const dataPayload = { id: tplId, name: cleanName, exercises: sanitized };
+    const fingerprint = JSON.stringify({ id: tplId, baseVersion, data: dataPayload });
+    if (!pendingOpRef.current || pendingOpRef.current.fingerprint !== fingerprint) {
+      pendingOpRef.current = { fingerprint, opId: safeUuid() };
+    }
     try {
       await apiFetch("/api/records", {
         method: "POST",
         body: {
-          opId: crypto.randomUUID(),
+          opId: pendingOpRef.current.opId,
           id: tplId,
           kind: "template",
           baseVersion,
           deleted: false,
-          data: { id: tplId, name: cleanName, exercises: sanitized },
+          data: dataPayload,
         },
       });
+      pendingOpRef.current = null;
       bumpDataEpoch();
       closeAllModals();
       notify(isEdit ? `已更新模板「${cleanName}」` : `已保存模板「${cleanName}」`);
     } catch (err) {
-      setError((err as Error)?.message || "保存模板失败");
+      const apiErr = err as Error & { status?: number };
+      if (apiErr?.status === 409) {
+        const latest = await apiFetch<RecordEnvelope<{ id: string; name: string; exercises: PlannedExercise[] }>>(
+          `/api/web/records/template/${encodeURIComponent(tplId)}?includeDeleted=1`,
+        ).catch(() => null);
+        if (latest) {
+          setConflictRecord(latest);
+          setError(
+            `模板已在其他端更新至版本 v${latest.version}（名称：「${latest.data?.name ?? cleanName}」，${latest.data?.exercises?.length ?? 0} 个动作）。请核对后选择载入最新版本或覆盖保存。`,
+          );
+          setSaving(false);
+          return;
+        }
+      }
+      setError(apiErr?.message || "保存模板失败");
       setSaving(false);
     }
   };
@@ -1108,6 +1240,43 @@ export function TemplateEditorModal({
           }}
         />
       </section>
+      {conflictRecord ? (
+        <div className="notice-banner" role="status" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+          <span>
+            云端版本 v{conflictRecord.version}：「{conflictRecord.data?.name}」（{conflictRecord.data?.exercises?.length ?? 0} 个动作）
+          </span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setBaseVersion(conflictRecord.version);
+                setName(conflictRecord.data?.name ?? "");
+                setItems((conflictRecord.data?.exercises ?? []).map((e) => ({ ...e })));
+                pendingOpRef.current = null;
+                setConflictRecord(null);
+                setError("");
+                notify(`已载入云端最新模板 v${conflictRecord.version}`);
+              }}
+            >
+              载入云端版本
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => {
+                setBaseVersion(conflictRecord.version);
+                pendingOpRef.current = null;
+                setConflictRecord(null);
+                setError("");
+                notify(`已基于 v${conflictRecord.version} 准备覆盖，请再次点击「保存模板」`);
+              }}
+            >
+              保留当前编辑并重试
+            </button>
+          </div>
+        </div>
+      ) : null}
       <p className="form-error" role="alert" hidden={!error}>
         {error}
       </p>
@@ -1412,61 +1581,11 @@ export function RoutinePreviewModal({
   );
   const ssBadges = supersetBadges(result.exercises);
 
+  // #278: Reuse buildWorkoutSeedFromRoutine so preview launch matches direct launch (including 45 lb barbell & lb plate warmups)
   const handleLaunch = () => {
     const livePrefs = readWorkoutPreferences();
-    const exercises = result.exercises.map((row) => {
-      const scaled = scaleRowTarget(row);
-      const workSets = Array.from({ length: scaled.sets }, () => ({
-        id: safeUuid(),
-        type: "normal" as const,
-        weight: scaled.weight,
-        reps: row.reps,
-        seconds: row.seconds,
-        completed: false,
-        rir: null,
-      }));
-      const warmupSets =
-        row.autoWarmup && row.snapshot.mode === "reps" && scaled.weight > 0
-          ? buildWarmupSetsPlan(
-              scaled.weight,
-              row.snapshot.equipment === "barbell" && (row.weightUnit ?? "kg") === "kg",
-              livePrefs.barWeight,
-              livePrefs.enabledPlates,
-              livePrefs.warmupScheme,
-            ).map((step) => ({
-              id: safeUuid(),
-              type: "warmup" as const,
-              weight: step.weight,
-              reps: step.reps,
-              seconds: 0,
-              completed: false,
-              rir: null,
-            }))
-          : [];
-      return {
-        id: safeUuid(),
-        exerciseId: row.exerciseId,
-        targetIndex: row.targetIndex ?? null,
-        restSeconds: row.restSeconds,
-        supersetGroup: row.supersetGroup ?? null,
-        ...(row.weightUnit ? { weightUnit: row.weightUnit } : {}),
-        snapshot: row.snapshot,
-        backupExerciseId: row.backup?.id ?? null,
-        backupExerciseName: row.backup?.name ?? null,
-        sets: [...warmupSets, ...workSets],
-      };
-    });
-    onLaunchWorkout(
-      {
-        title: result.name,
-        exercises,
-        planId: result.planId ?? null,
-        planVersion: result.planVersion ?? null,
-        routineId: result.routineId,
-        targetSnapshot: result.targetSnapshot,
-      },
-      goals,
-    );
+    const seed = buildWorkoutSeedFromRoutine(result, { prefs: livePrefs });
+    onLaunchWorkout(seed, goals);
   };
 
   return (

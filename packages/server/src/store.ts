@@ -633,6 +633,12 @@ export class Store {
       receivedAt: row.receivedAt,
       ...(JSON.parse(row.data) as Record<string, unknown>),
     }));
+    const statsPrefRow = this.db
+      .prepare("SELECT revision, data FROM web_statistics_preferences WHERE user_id = ?")
+      .get(userId) as { revision: number; data: string } | undefined;
+    const statisticsPreferences = statsPrefRow
+      ? { revision: statsPrefRow.revision, ...(JSON.parse(statsPrefRow.data) as Record<string, unknown>) }
+      : null;
     return {
       format: "ironlog",
       schemaVersion: 1,
@@ -643,6 +649,7 @@ export class Store {
         data: JSON.parse(row.data),
       })),
       activePlan: this.planSchedule(userId),
+      statisticsPreferences,
       exerciseNotes,
       bodyMeasurements,
       progressPhotos,
@@ -651,10 +658,41 @@ export class Store {
     };
   }
 
+  private computeUserStateToken(userId: string): string {
+    const records = this.db
+      .prepare("SELECT kind, id, version, deleted, updated_at FROM records WHERE user_id = ? ORDER BY kind, id")
+      .all(userId);
+    const active = this.db
+      .prepare("SELECT plan_id, version, revision, updated_at FROM active_plans WHERE user_id = ?")
+      .get(userId) ?? null;
+    const measurements = this.db
+      .prepare("SELECT date, updated_at FROM body_measurements WHERE user_id = ? ORDER BY date")
+      .all(userId);
+    const notes = this.db
+      .prepare("SELECT exercise_id, updated_at FROM exercise_notes WHERE user_id = ? ORDER BY exercise_id")
+      .all(userId);
+    const photos = this.db
+      .prepare("SELECT id, created_at FROM progress_photos WHERE user_id = ? ORDER BY id")
+      .all(userId);
+    const daily = this.db
+      .prepare("SELECT date, updated_at FROM apple_health_daily WHERE user_id = ? ORDER BY date")
+      .all(userId);
+    const workouts = this.db
+      .prepare("SELECT id, identity_key, received_at FROM apple_health_workouts WHERE user_id = ? ORDER BY id")
+      .all(userId);
+    const statsPrefs = this.db
+      .prepare("SELECT revision, data FROM web_statistics_preferences WHERE user_id = ?")
+      .get(userId) ?? null;
+    return createHash("sha256")
+      .update(JSON.stringify({ records, active, measurements, notes, photos, daily, workouts, statsPrefs }))
+      .digest("hex")
+      .slice(0, 24);
+  }
+
   restoreBackup(
     userId: string,
     rawPayload: unknown,
-    options: { mode?: "preview" | "commit"; strategy?: "merge" | "replace"; opId?: string } = {},
+    options: { mode?: "preview" | "commit"; strategy?: "merge" | "replace"; opId?: string; expectedStateToken?: string } = {},
   ) {
     const mode = options.mode ?? "preview";
     const strategy = options.strategy ?? "merge";
@@ -697,6 +735,26 @@ export class Store {
     const rawProgressPhotos = hasProgressPhotosArray ? (parsedObj.progressPhotos as Record<string, unknown>[]) : [];
     const rawAppleDaily = Array.isArray(parsedObj.appleHealthDaily) ? (parsedObj.appleHealthDaily as Record<string, unknown>[]) : [];
     const rawAppleWorkouts = Array.isArray(parsedObj.appleHealthWorkouts) ? (parsedObj.appleHealthWorkouts as Record<string, unknown>[]) : [];
+    const hasStatisticsPreferences = Object.prototype.hasOwnProperty.call(parsedObj, "statisticsPreferences");
+    const VALID_STATS_DAYS = new Set([7, 30, 90, 365]);
+    const VALID_STATS_PANELS = new Set(["load", "muscle", "consistency", "strength", "weight", "nutrition", "apple", "feeling"]);
+    let validStatsPrefs: { days: number; includeWarmups: boolean; panels: string[]; revision: number } | null = null;
+    if (hasStatisticsPreferences && parsedObj.statisticsPreferences !== null && parsedObj.statisticsPreferences !== undefined) {
+      if (typeof parsedObj.statisticsPreferences !== "object" || Array.isArray(parsedObj.statisticsPreferences)) {
+        if (strategy === "replace") throw new DomainError("备份中的统计偏好格式无效，无法覆盖恢复", 400);
+      } else {
+        const sp = parsedObj.statisticsPreferences as Record<string, unknown>;
+        const spDays = typeof sp.days === "number" && VALID_STATS_DAYS.has(sp.days) ? sp.days : 30;
+        const spWarmups = typeof sp.includeWarmups === "boolean" ? sp.includeWarmups : false;
+        const rawPanels = Array.isArray(sp.panels)
+          ? sp.panels.filter((p): p is string => typeof p === "string" && VALID_STATS_PANELS.has(p))
+          : [];
+        const uniquePanels = [...new Set(rawPanels)];
+        const spPanels = uniquePanels.length > 0 ? uniquePanels : [...VALID_STATS_PANELS];
+        const spRev = typeof sp.revision === "number" && Number.isSafeInteger(sp.revision) && sp.revision >= 0 ? sp.revision : 1;
+        validStatsPrefs = { days: spDays, includeWarmups: spWarmups, panels: spPanels, revision: spRev };
+      }
+    }
 
     const now = new Date().toISOString();
     const strictPlanRestore = strategy === "replace";
@@ -1020,20 +1078,146 @@ export class Store {
       capacityLimit: PHOTO_LIMIT,
     };
 
+    const appleIdentityOf = (w: Record<string, unknown>): string => {
+      const rawKey = typeof w.identityKey === "string" ? w.identityKey.trim() : "";
+      if (rawKey) return rawKey;
+      const extId = w.externalWorkoutId ?? w.externalId;
+      return appleWorkoutIdentity({
+        externalWorkoutId: typeof extId === "string" && extId.trim() ? extId.trim() : null,
+        activityType: w.activityType as string,
+        startedAt: backupInstant(w.startedAt)!,
+        endedAt: backupInstant(w.endedAt)!,
+      });
+    };
+
     if (mode === "preview") {
-      let toImport = 0;
-      let toUpdate = 0;
-      let unchanged = 0;
+      const breakdown = {
+        records: { toImport: 0, toUpdate: 0, unchanged: 0 },
+        measurements: { toImport: 0, toUpdate: 0, unchanged: 0 },
+        exerciseNotes: { toImport: 0, toUpdate: 0, unchanged: 0 },
+        progressPhotos: { toImport: previewPhotosToImport, toUpdate: 0, unchanged: previewPhotoDuplicates },
+        appleDaily: { toImport: 0, toUpdate: 0, unchanged: 0 },
+        appleWorkouts: { toImport: 0, toUpdate: 0, unchanged: 0 },
+        statisticsPreferences: { toImport: 0, toUpdate: 0, unchanged: 0 },
+      };
       const incomingRecordKeys = new Set<string>();
       for (const rec of validRecords) {
         incomingRecordKeys.add(backupRecordKey(rec));
         const existing = this.get(userId, rec.kind, rec.id);
-        if (!existing) toImport++;
-        else if (strategy === "replace" || newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) toUpdate++;
-        else unchanged++;
+        if (!existing) breakdown.records.toImport++;
+        else if (strategy === "replace" || newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) breakdown.records.toUpdate++;
+        else breakdown.records.unchanged++;
       }
 
-      // #92: In replace strategy, compute exact deletion counts across generic records and auxiliary tables.
+      // #227: Count auxiliary categories accurately in preview
+      const existingMeasMap = new Map(
+        (this.db.prepare("SELECT date, updated_at AS updatedAt FROM body_measurements WHERE user_id = ?").all(userId) as Array<{ date: string; updatedAt: string }>)
+          .map((r) => [r.date, r.updatedAt]),
+      );
+      for (const m of validMeasurements) {
+        const cur = existingMeasMap.get(m.date);
+        if (!cur) breakdown.measurements.toImport++;
+        else if (strategy === "replace" || newerBackupRecord(m.updatedAt, cur)) breakdown.measurements.toUpdate++;
+        else breakdown.measurements.unchanged++;
+      }
+
+      const existingNotesMap = new Map(
+        (this.db.prepare("SELECT exercise_id AS exerciseId, updated_at AS updatedAt FROM exercise_notes WHERE user_id = ?").all(userId) as Array<{ exerciseId: string; updatedAt: string }>)
+          .map((r) => [r.exerciseId, r.updatedAt]),
+      );
+      for (const n of validNotes) {
+        const cur = existingNotesMap.get(n.exerciseId);
+        if (!cur) breakdown.exerciseNotes.toImport++;
+        else if (strategy === "replace" || newerBackupRecord(n.updatedAt, cur)) breakdown.exerciseNotes.toUpdate++;
+        else breakdown.exerciseNotes.unchanged++;
+      }
+
+      const existingDailyMap = new Map(
+        (this.db.prepare("SELECT date, updated_at AS updatedAt FROM apple_health_daily WHERE user_id = ?").all(userId) as Array<{ date: string; updatedAt: string }>)
+          .map((r) => [r.date, r.updatedAt]),
+      );
+      for (const d of dailyHealthRows) {
+        const cur = existingDailyMap.get(d.date);
+        if (!cur) breakdown.appleDaily.toImport++;
+        else if (strategy === "replace" || newerBackupRecord(d.updatedAt, cur)) breakdown.appleDaily.toUpdate++;
+        else breakdown.appleDaily.unchanged++;
+      }
+
+      const existingAppleMap = new Map(
+        (this.db.prepare("SELECT identity_key AS identityKey, received_at AS receivedAt FROM apple_health_workouts WHERE user_id = ?").all(userId) as Array<{ identityKey: string; receivedAt: string }>)
+          .map((r) => [r.identityKey, r.receivedAt]),
+      );
+      for (const w of validAppleWorkouts) {
+        const ikey = appleIdentityOf(w);
+        const cur = existingAppleMap.get(ikey);
+        if (!cur) breakdown.appleWorkouts.toImport++;
+        else if (strategy === "replace" || newerBackupRecord(backupInstant(w.receivedAt), cur)) breakdown.appleWorkouts.toUpdate++;
+        else breakdown.appleWorkouts.unchanged++;
+      }
+
+      const existingStatsPref = this.db
+        .prepare("SELECT revision FROM web_statistics_preferences WHERE user_id = ?")
+        .get(userId) as { revision: number } | undefined;
+      if (validStatsPrefs) {
+        if (!existingStatsPref) breakdown.statisticsPreferences.toImport++;
+        else if (strategy === "replace" || validStatsPrefs.revision > existingStatsPref.revision) breakdown.statisticsPreferences.toUpdate++;
+        else breakdown.statisticsPreferences.unchanged++;
+      }
+
+      const toImport =
+        breakdown.records.toImport +
+        breakdown.measurements.toImport +
+        breakdown.exerciseNotes.toImport +
+        breakdown.progressPhotos.toImport +
+        breakdown.appleDaily.toImport +
+        breakdown.appleWorkouts.toImport +
+        breakdown.statisticsPreferences.toImport;
+      const toUpdate =
+        breakdown.records.toUpdate +
+        breakdown.measurements.toUpdate +
+        breakdown.exerciseNotes.toUpdate +
+        breakdown.progressPhotos.toUpdate +
+        breakdown.appleDaily.toUpdate +
+        breakdown.appleWorkouts.toUpdate +
+        breakdown.statisticsPreferences.toUpdate;
+      const unchanged =
+        breakdown.records.unchanged +
+        breakdown.measurements.unchanged +
+        breakdown.exerciseNotes.unchanged +
+        breakdown.progressPhotos.unchanged +
+        breakdown.appleDaily.unchanged +
+        breakdown.appleWorkouts.unchanged +
+        breakdown.statisticsPreferences.unchanged;
+
+      // #224: Explicitly compute activePlan status change so deactivating an active plan is surfaced in preview
+      const currentActive = this.activePlan(userId);
+      const activePlanAction: "none" | "keep" | "activate" | "switch" | "deactivate" =
+        strategy === "replace"
+          ? currentActive && !activePlan
+            ? "deactivate"
+            : !currentActive && activePlan
+              ? "activate"
+              : currentActive && activePlan && (currentActive.id !== activePlan.id || currentActive.version !== activePlan.version)
+                ? "switch"
+                : currentActive && activePlan
+                  ? "keep"
+                  : "none"
+          : !currentActive && activePlan
+            ? "activate"
+            : currentActive
+              ? "keep"
+              : "none";
+      const activePlanChange = {
+        action: activePlanAction,
+        current: currentActive
+          ? { id: currentActive.id, name: currentActive.data.name, version: currentActive.version, revision: currentActive.revision }
+          : null,
+        incoming: activePlan
+          ? { id: activePlan.id, name: activePlan.data.name, version: activePlan.version }
+          : null,
+      };
+
+      // #92 & #224: In replace strategy, compute exact deletion counts across generic records, auxiliary tables, and activePlan.
       const deletions = {
         records: 0,
         measurements: 0,
@@ -1041,6 +1225,7 @@ export class Store {
         exerciseNotes: 0,
         appleDaily: 0,
         appleWorkouts: 0,
+        activePlan: 0,
         total: 0,
       };
       if (strategy === "replace") {
@@ -1052,16 +1237,10 @@ export class Store {
           if (!incoming || incoming.deleted) deletions.records++;
         }
         const incomingMeasDates = new Set(validMeasurements.map((m) => m.date));
-        const curMeas = this.db
-          .prepare("SELECT date FROM body_measurements WHERE user_id = ?")
-          .all(userId) as Array<{ date: string }>;
-        deletions.measurements = curMeas.filter((m) => !incomingMeasDates.has(m.date)).length;
+        deletions.measurements = [...existingMeasMap.keys()].filter((date) => !incomingMeasDates.has(date)).length;
 
         const incomingNoteExIds = new Set(validNotes.map((n) => n.exerciseId));
-        const curNotes = this.db
-          .prepare("SELECT exercise_id AS exerciseId FROM exercise_notes WHERE user_id = ?")
-          .all(userId) as Array<{ exerciseId: string }>;
-        deletions.exerciseNotes = curNotes.filter((n) => !incomingNoteExIds.has(n.exerciseId)).length;
+        deletions.exerciseNotes = [...existingNotesMap.keys()].filter((exId) => !incomingNoteExIds.has(exId)).length;
 
         if (hasProgressPhotosArray) {
           const incomingPhotoKeys = new Set(validProgressPhotos.flatMap((p) => [p.id, p.sourceKey]));
@@ -1071,28 +1250,14 @@ export class Store {
         }
 
         const incomingDailyDates = new Set(dailyHealthRows.map((d) => d.date));
-        const curDaily = this.db
-          .prepare("SELECT date FROM apple_health_daily WHERE user_id = ?")
-          .all(userId) as Array<{ date: string }>;
-        deletions.appleDaily = curDaily.filter((d) => !incomingDailyDates.has(d.date)).length;
+        deletions.appleDaily = [...existingDailyMap.keys()].filter((date) => !incomingDailyDates.has(date)).length;
 
-        const incomingAppleIds = new Set(
-          validAppleWorkouts.map((w) => {
-            const rawKey = typeof w.identityKey === "string" ? w.identityKey.trim() : "";
-            if (rawKey) return rawKey;
-            const extId = w.externalWorkoutId ?? w.externalId;
-            return appleWorkoutIdentity({
-              externalWorkoutId: typeof extId === "string" && extId.trim() ? extId.trim() : null,
-              activityType: w.activityType as string,
-              startedAt: backupInstant(w.startedAt)!,
-              endedAt: backupInstant(w.endedAt)!,
-            });
-          }),
-        );
-        const curApple = this.db
-          .prepare("SELECT identity_key AS identityKey FROM apple_health_workouts WHERE user_id = ?")
-          .all(userId) as Array<{ identityKey: string }>;
-        deletions.appleWorkouts = curApple.filter((a) => !incomingAppleIds.has(a.identityKey)).length;
+        const incomingAppleIds = new Set(validAppleWorkouts.map(appleIdentityOf));
+        deletions.appleWorkouts = [...existingAppleMap.keys()].filter((ikey) => !incomingAppleIds.has(ikey)).length;
+
+        if (activePlanAction === "deactivate") {
+          deletions.activePlan = 1;
+        }
 
         deletions.total =
           deletions.records +
@@ -1100,15 +1265,24 @@ export class Store {
           deletions.progressPhotos +
           deletions.exerciseNotes +
           deletions.appleDaily +
-          deletions.appleWorkouts;
+          deletions.appleWorkouts +
+          deletions.activePlan;
       }
 
       return {
         mode: "preview" as const,
         strategy,
         exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
+        stateToken: this.computeUserStateToken(userId),
         counts,
+        activePlanChange,
+        statisticsPreferences: {
+          included: hasStatisticsPreferences && validStatsPrefs != null,
+          missingInBackup: !hasStatisticsPreferences,
+          willResetToDefault: strategy === "replace" && hasStatisticsPreferences && validStatsPrefs == null && Boolean(existingStatsPref),
+        },
         photos: photoPlanSummary,
+        breakdown,
         diff: {
           toImport,
           toUpdate,
@@ -1144,6 +1318,23 @@ export class Store {
         }
       }
 
+      // #223: Enforce stateToken snapshot consistency so records added after preview are never silently wiped
+      if (options.expectedStateToken) {
+        const currentStateToken = this.computeUserStateToken(userId);
+        if (currentStateToken !== options.expectedStateToken) {
+          throw new DomainError("预览后账号数据已发生变化，请重新解析预览并核对最新覆盖范围后再确认", 409);
+        }
+      }
+
+      const breakdown = {
+        records: { imported: 0, updated: 0, skipped: 0 },
+        measurements: { imported: 0, updated: 0, skipped: 0 },
+        exerciseNotes: { imported: 0, updated: 0, skipped: 0 },
+        progressPhotos: { imported: 0, updated: 0, skipped: 0 },
+        appleDaily: { imported: 0, updated: 0, skipped: 0 },
+        appleWorkouts: { imported: 0, updated: 0, skipped: 0 },
+        statisticsPreferences: { imported: 0, updated: 0, skipped: 0 },
+      };
       let importedCount = 0;
       let updatedCount = 0;
       let skippedCount = 0;
@@ -1154,6 +1345,22 @@ export class Store {
         this.stmtInsertChange.run(...args);
         this.listCache.clear();
       };
+      const priorStatsPref = this.db
+        .prepare("SELECT revision, data FROM web_statistics_preferences WHERE user_id = ?")
+        .get(userId) as { revision: number; data: string } | undefined;
+      const priorMeasDates = new Set(
+        (this.db.prepare("SELECT date FROM body_measurements WHERE user_id = ?").all(userId) as Array<{ date: string }>).map((r) => r.date),
+      );
+      const priorNoteExIds = new Set(
+        (this.db.prepare("SELECT exercise_id AS exerciseId FROM exercise_notes WHERE user_id = ?").all(userId) as Array<{ exerciseId: string }>).map((r) => r.exerciseId),
+      );
+      const priorDailyDates = new Set(
+        (this.db.prepare("SELECT date FROM apple_health_daily WHERE user_id = ?").all(userId) as Array<{ date: string }>).map((r) => r.date),
+      );
+      const priorAppleIdentities = new Set(
+        (this.db.prepare("SELECT identity_key AS identityKey FROM apple_health_workouts WHERE user_id = ?").all(userId) as Array<{ identityKey: string }>).map((r) => r.identityKey),
+      );
+
       type RecordRevision = Pick<StoredRecord, "kind" | "id" | "version">;
       const priorRecords = new Map<string, RecordRevision>();
       if (strategy === "replace") {
@@ -1176,6 +1383,9 @@ export class Store {
           this.db.prepare("DELETE FROM progress_photos WHERE user_id = ?").run(userId);
         }
         this.db.prepare("DELETE FROM exercise_notes WHERE user_id = ?").run(userId);
+        if (hasStatisticsPreferences) {
+          this.db.prepare("DELETE FROM web_statistics_preferences WHERE user_id = ?").run(userId);
+        }
         this.db.prepare("DELETE FROM plan_activations WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM active_plans WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM plan_versions WHERE user_id = ?").run(userId);
@@ -1194,6 +1404,7 @@ export class Store {
         const existing = strategy === "merge" ? this.get(userId, rec.kind, rec.id) : null;
         if (existing && !newerBackupRecord(rec.sourceUpdatedAt, existing.updatedAt)) {
           skippedCount++;
+          breakdown.records.skipped++;
           continue;
         }
         const previous = priorRecords.get(key) ?? existing;
@@ -1206,8 +1417,13 @@ export class Store {
           restoredPlanVersionMap.set(`${rec.id}:${rec.version}`, version);
         }
         writeRestored({ ...rec, version });
-        if (previous) updatedCount++;
-        else importedCount++;
+        if (previous) {
+          updatedCount++;
+          breakdown.records.updated++;
+        } else {
+          importedCount++;
+          breakdown.records.imported++;
+        }
       }
 
       for (const previous of priorRecords.values()) {
@@ -1247,17 +1463,71 @@ export class Store {
         this.stmtInsertPlanActivation.run(userId, id, backupVer, finalRev, updatedAt, startedAt ?? updatedAt);
       }
 
-      // Restore exerciseNotes
+      // #225: Restore web_statistics_preferences
+      if (validStatsPrefs) {
+        const stmtUpsertStatsPref = this.db.prepare(
+          `INSERT INTO web_statistics_preferences VALUES (?, ?, ?)
+           ON CONFLICT(user_id) DO UPDATE SET revision = excluded.revision, data = excluded.data`,
+        );
+        const prefPayload = JSON.stringify({
+          days: validStatsPrefs.days,
+          includeWarmups: validStatsPrefs.includeWarmups,
+          panels: validStatsPrefs.panels,
+        });
+        if (strategy === "replace") {
+          const nextRev = Math.max((priorStatsPref?.revision ?? 0) + 1, validStatsPrefs.revision || 1);
+          stmtUpsertStatsPref.run(userId, nextRev, prefPayload);
+          if (priorStatsPref) {
+            updatedCount++;
+            breakdown.statisticsPreferences.updated++;
+          } else {
+            importedCount++;
+            breakdown.statisticsPreferences.imported++;
+          }
+        } else if (!priorStatsPref) {
+          stmtUpsertStatsPref.run(userId, Math.max(1, validStatsPrefs.revision || 1), prefPayload);
+          importedCount++;
+          breakdown.statisticsPreferences.imported++;
+        } else if (validStatsPrefs.revision > priorStatsPref.revision) {
+          stmtUpsertStatsPref.run(userId, validStatsPrefs.revision, prefPayload);
+          updatedCount++;
+          breakdown.statisticsPreferences.updated++;
+        } else {
+          skippedCount++;
+          breakdown.statisticsPreferences.skipped++;
+        }
+      }
+
+      // Restore exerciseNotes (#227: track imported/updated/skipped)
       const stmtUpsertNote = this.db.prepare(
         `INSERT INTO exercise_notes VALUES (?, ?, ?, ?)
          ON CONFLICT(user_id, exercise_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at
          WHERE ? AND (julianday(exercise_notes.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(exercise_notes.updated_at))`,
       );
       for (const noteItem of validNotes) {
-        stmtUpsertNote.run(userId, noteItem.exerciseId, noteItem.note, noteItem.updatedAt ?? now, Number(noteItem.updatedAt != null));
+        const existed = priorNoteExIds.has(noteItem.exerciseId);
+        const info = stmtUpsertNote.run(
+          userId,
+          noteItem.exerciseId,
+          noteItem.note,
+          noteItem.updatedAt ?? now,
+          Number(noteItem.updatedAt != null),
+        ) as { changes: number };
+        if (info.changes > 0) {
+          if (existed) {
+            updatedCount++;
+            breakdown.exerciseNotes.updated++;
+          } else {
+            importedCount++;
+            breakdown.exerciseNotes.imported++;
+          }
+        } else {
+          skippedCount++;
+          breakdown.exerciseNotes.skipped++;
+        }
       }
 
-      // Restore bodyMeasurements
+      // Restore bodyMeasurements (#227: track imported/updated/skipped)
       const stmtUpsertMeas = this.db.prepare(
         `INSERT INTO body_measurements VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, date) DO UPDATE SET
@@ -1266,7 +1536,8 @@ export class Store {
          WHERE ? AND (julianday(body_measurements.updated_at) IS NULL OR julianday(excluded.updated_at) > julianday(body_measurements.updated_at))`,
       );
       for (const m of validMeasurements) {
-        stmtUpsertMeas.run(
+        const existed = priorMeasDates.has(m.date);
+        const info = stmtUpsertMeas.run(
           userId,
           m.date,
           m.waistCm,
@@ -1277,7 +1548,19 @@ export class Store {
           m.notes,
           m.updatedAt ?? now,
           Number(m.updatedAt != null),
-        );
+        ) as { changes: number };
+        if (info.changes > 0) {
+          if (existed) {
+            updatedCount++;
+            breakdown.measurements.updated++;
+          } else {
+            importedCount++;
+            breakdown.measurements.imported++;
+          }
+        } else {
+          skippedCount++;
+          breakdown.measurements.skipped++;
+        }
       }
 
       // Restore progressPhotos (#18, #93 stable source_key dedup, #95 accurate capacity accounting)
@@ -1297,11 +1580,14 @@ export class Store {
         const alreadyOwned = stmtUserHasSourcePhoto.get(userId, photo.id, photo.sourceKey);
         if (alreadyOwned) {
           photosSkippedDuplicate++;
+          breakdown.progressPhotos.skipped++;
+          skippedCount++;
           continue;
         }
         const currentCount = (stmtPhotoCount.get(userId) as { cnt: number }).cnt;
         if (currentCount >= PHOTO_LIMIT) {
           photosSkippedCapacity++;
+          breakdown.progressPhotos.skipped++;
           skippedCount++;
           continue;
         }
@@ -1320,9 +1606,11 @@ export class Store {
           photo.sourceKey,
         );
         photosImported++;
+        importedCount++;
+        breakdown.progressPhotos.imported++;
       }
 
-      // Restore appleHealthDaily
+      // Restore appleHealthDaily (#226: field-level timestamp merge for weightKg & bodyFatPct; #227: count)
       const stmtDailyByDate = this.db.prepare("SELECT updated_at, data FROM apple_health_daily WHERE user_id = ? AND date = ?");
       const stmtUpsertDaily = this.db.prepare(
         `INSERT INTO apple_health_daily VALUES (?, ?, ?, ?)
@@ -1330,6 +1618,7 @@ export class Store {
       );
       for (const { date, updatedAt, metrics, observations } of dailyHealthRows) {
         const existing = stmtDailyByDate.get(userId, date) as { updated_at: string; data: string } | undefined;
+        const existed = priorDailyDates.has(date);
         const saved = existing ? JSON.parse(existing.data) as Record<string, unknown> : {};
         const savedSleep = sleepObservationsSchema.safeParse(saved.syncedSleepObservations);
         const currentObservations = savedSleep.success ? savedSleep.data : [];
@@ -1337,8 +1626,52 @@ export class Store {
         const backfillSleep = !currentObservations.length && observations.length > 0;
         const savedStepsAt = backupInstant(saved.stepsSampledAt);
         const incomingStepsAt = typeof metrics.steps === "number" ? backupInstant(metrics.stepsSampledAt) : null;
-        const useDatedSteps = incomingStepsAt && (!savedStepsAt || incomingStepsAt > savedStepsAt);
-        if (!useIncoming && !backfillSleep && !useDatedSteps) continue;
+        const useDatedSteps = Boolean(incomingStepsAt && (!savedStepsAt || Date.parse(incomingStepsAt) > Date.parse(savedStepsAt)));
+
+        // #226: Compare measurement-level timestamps for weightKg & bodyFatPct so an older body weight never overwrites a newer one just because resting HR updated the row timestamp
+        const savedWeightAt = backupInstant(saved.weightMeasuredAt);
+        const incomingWeightAt = typeof metrics.weightKg === "number" ? backupInstant(metrics.weightMeasuredAt) : null;
+        const hasSavedWeight = typeof saved.weightKg === "number" || Boolean(saved.manualWeightProtected || saved.weightManualCleared);
+        const hasIncomingWeight = typeof metrics.weightKg === "number";
+        const useDatedWeight = Boolean(
+          hasIncomingWeight &&
+          !saved.manualWeightProtected &&
+          !saved.weightManualCleared &&
+          incomingWeightAt &&
+          (!savedWeightAt || Date.parse(incomingWeightAt) > Date.parse(savedWeightAt)),
+        );
+        const keepSavedWeight = Boolean(
+          hasSavedWeight &&
+          (saved.manualWeightProtected ||
+            saved.weightManualCleared ||
+            (savedWeightAt && incomingWeightAt && Date.parse(savedWeightAt) >= Date.parse(incomingWeightAt)) ||
+            (savedWeightAt && !incomingWeightAt)),
+        );
+
+        const savedBodyFatAt = backupInstant(saved.bodyFatMeasuredAt);
+        const incomingBodyFatAt = typeof metrics.bodyFatPct === "number" ? backupInstant(metrics.bodyFatMeasuredAt) : null;
+        const hasSavedBodyFat = typeof saved.bodyFatPct === "number" || Boolean(saved.manualBodyFatProtected || saved.bodyFatManualCleared);
+        const hasIncomingBodyFat = typeof metrics.bodyFatPct === "number";
+        const useDatedBodyFat = Boolean(
+          hasIncomingBodyFat &&
+          !saved.manualBodyFatProtected &&
+          !saved.bodyFatManualCleared &&
+          incomingBodyFatAt &&
+          (!savedBodyFatAt || Date.parse(incomingBodyFatAt) > Date.parse(savedBodyFatAt)),
+        );
+        const keepSavedBodyFat = Boolean(
+          hasSavedBodyFat &&
+          (saved.manualBodyFatProtected ||
+            saved.bodyFatManualCleared ||
+            (savedBodyFatAt && incomingBodyFatAt && Date.parse(savedBodyFatAt) >= Date.parse(incomingBodyFatAt)) ||
+            (savedBodyFatAt && !incomingBodyFatAt)),
+        );
+
+        if (!useIncoming && !backfillSleep && !useDatedSteps && !useDatedWeight && !useDatedBodyFat) {
+          skippedCount++;
+          breakdown.appleDaily.skipped++;
+          continue;
+        }
         const next: Record<string, unknown> = useIncoming ? { ...saved, ...metrics, date } : { ...saved };
         if (useDatedSteps) {
           next.steps = metrics.steps;
@@ -1349,9 +1682,47 @@ export class Store {
         } else {
           delete next.stepsSampledAt;
         }
+
+        if (useDatedWeight) {
+          next.weightKg = metrics.weightKg;
+          next.weightMeasuredAt = incomingWeightAt;
+          if (metrics.weightDate != null) next.weightDate = metrics.weightDate;
+          if (metrics.syncedWeightValue != null) next.syncedWeightValue = metrics.syncedWeightValue;
+        } else if (keepSavedWeight && existing) {
+          if (saved.weightKg !== undefined) next.weightKg = saved.weightKg;
+          else delete next.weightKg;
+          if (savedWeightAt) next.weightMeasuredAt = savedWeightAt;
+          if (saved.weightDate !== undefined) next.weightDate = saved.weightDate;
+          if (saved.syncedWeightValue !== undefined) next.syncedWeightValue = saved.syncedWeightValue;
+          if (saved.manualWeightProtected !== undefined) next.manualWeightProtected = saved.manualWeightProtected;
+          if (saved.weightManualCleared !== undefined) next.weightManualCleared = saved.weightManualCleared;
+        }
+
+        if (useDatedBodyFat) {
+          next.bodyFatPct = metrics.bodyFatPct;
+          next.bodyFatMeasuredAt = incomingBodyFatAt;
+          if (metrics.bodyFatDate != null) next.bodyFatDate = metrics.bodyFatDate;
+          if (metrics.syncedBodyFatValue != null) next.syncedBodyFatValue = metrics.syncedBodyFatValue;
+        } else if (keepSavedBodyFat && existing) {
+          if (saved.bodyFatPct !== undefined) next.bodyFatPct = saved.bodyFatPct;
+          else delete next.bodyFatPct;
+          if (savedBodyFatAt) next.bodyFatMeasuredAt = savedBodyFatAt;
+          if (saved.bodyFatDate !== undefined) next.bodyFatDate = saved.bodyFatDate;
+          if (saved.syncedBodyFatValue !== undefined) next.syncedBodyFatValue = saved.syncedBodyFatValue;
+          if (saved.manualBodyFatProtected !== undefined) next.manualBodyFatProtected = saved.manualBodyFatProtected;
+          if (saved.bodyFatManualCleared !== undefined) next.bodyFatManualCleared = saved.bodyFatManualCleared;
+        }
+
         const samples = (useIncoming || backfillSleep) && observations.length > 0 ? observations : currentObservations;
         if (samples.length) next.syncedSleepObservations = samples;
         stmtUpsertDaily.run(userId, date, useIncoming ? updatedAt ?? now : existing!.updated_at, JSON.stringify(next));
+        if (existed) {
+          updatedCount++;
+          breakdown.appleDaily.updated++;
+        } else {
+          importedCount++;
+          breakdown.appleDaily.imported++;
+        }
       }
 
       // Restore appleHealthWorkouts
@@ -1412,13 +1783,27 @@ export class Store {
           const useIncomingWorkout = newerBackupRecord(receivedAt, existing.received_at);
           if (useIncomingWorkout) {
             stmtUpdateApple.run(endedAt, receivedAt, JSON.stringify({ ...workoutPayload, ...identity, annotation }), userId, existing.id);
+            updatedCount++;
+            breakdown.appleWorkouts.updated++;
           } else if (annotation !== previousAnnotation) {
             stmtUpdateApple.run(existing.ended_at, existing.received_at, JSON.stringify({ ...previous, annotation }), userId, existing.id);
+            updatedCount++;
+            breakdown.appleWorkouts.updated++;
+          } else {
+            skippedCount++;
+            breakdown.appleWorkouts.skipped++;
           }
         } else {
           const id = inputId && !stmtAppleIdInUse.get(inputId) ? inputId : randomUUID();
           const data = JSON.stringify({ ...workoutPayload, ...identity, annotation: incomingAnnotation });
           stmtInsertApple.run(id, userId, identityKey, endedAt, receivedAt ?? now, data);
+          if (priorAppleIdentities.has(identityKey)) {
+            updatedCount++;
+            breakdown.appleWorkouts.updated++;
+          } else {
+            importedCount++;
+            breakdown.appleWorkouts.imported++;
+          }
         }
         // #175 (P1): Remove any matching deleted tombstone so future Apple Health updates are not silently dropped.
         stmtClearAppleDeleted.run(userId, identityKey);
@@ -1430,6 +1815,8 @@ export class Store {
         strategy,
         exportedAt: typeof parsedObj.exportedAt === "string" ? parsedObj.exportedAt : null,
         counts,
+        breakdown,
+        statisticsPreferencesRestored: Boolean(validStatsPrefs && (breakdown.statisticsPreferences.imported + breakdown.statisticsPreferences.updated > 0)),
         photos: {
           total: validProgressPhotos.length,
           imported: photosImported,

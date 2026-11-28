@@ -224,6 +224,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     hardSets: number;
     tonnageKg: number;
     durationSeconds: number;
+    timedSessions: number;
     load: number;
   }>();
   const exercisePeriodProgress = new Map<string, {
@@ -268,7 +269,8 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     const { weightKg: workoutBodyWeightKg, isReference: workoutWeightIsRef } = resolveWeightOnDate(workout.date);
     const workoutExMap = new Map<string, { name: string; muscle: string; best1RM: number; workSets: number; volume: number }>();
     allTrainingDates.add(workout.date);
-    const durSec = workoutDurationSeconds(workout) ?? 0;
+    const rawDurSec = workoutDurationSeconds(workout);
+    const durSec = rawDurSec ?? 0;
     const inPeriod = workout.date >= displayStart && workout.date <= through;
     const inPrevPeriod = workout.date >= prevPeriodStart && workout.date <= prevPeriodEnd;
 
@@ -292,6 +294,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
           hardSets: 0,
           tonnageKg: 0,
           durationSeconds: 0,
+          timedSessions: 0,
           load: 0,
         };
         weeklyBuckets.set(weekIdx, weekEntry);
@@ -299,6 +302,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       weekEntry.sessions++;
       weekEntry.days.add(workout.date);
       weekEntry.durationSeconds += durSec;
+      if (rawDurSec != null) weekEntry.timedSessions = (weekEntry.timedSessions ?? 0) + 1;
     } else if (inPrevPeriod) {
       prevSessions++;
       prevTrainingDays.add(workout.date);
@@ -831,6 +835,9 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       hardSets: w.hardSets,
       tonnageKg: Math.round(w.tonnageKg),
       durationMinutes: Math.round(w.durationSeconds / 60),
+      // #284: Expose exact accumulated seconds and timedSessions count so CSV export never rounds to minutes * 60
+      durationSeconds: w.durationSeconds,
+      timedSessions: w.timedSessions ?? 0,
       load: Math.round(w.load),
     }));
 
@@ -1279,11 +1286,18 @@ function resolveHrMax(birthDate: string | null, asOfDate: string) {
   return age != null && age >= 18 && age <= 81 ? Math.round(208 - 0.7 * age) : null;
 }
 
+function resolveAnalyticsWorkoutSource(item: { id: string; captureMethod?: string }): "demo" | "manual" | "device" {
+  if (item.id.startsWith("demo_")) return "demo";
+  if (item.id.startsWith("manual:") || item.captureMethod === "manual") return "manual";
+  return "device";
+}
+
 function computeAppleWorkoutBucket(
   entries: ReturnType<typeof projectAppleTraining>["entries"],
   hrMax: number | null,
   asOfDate: string,
-  recentLimit = 60,
+  // #283: Return complete period list (up to 1000) instead of truncating at 60 so expand-all and CSV export match totalCount
+  recentLimit = 1000,
 ) {
   let totalDurationSeconds = 0;
   let totalCaloriesKcal = 0;
@@ -1373,23 +1387,27 @@ function computeAppleWorkoutBucket(
   const recent = [...entries]
     .sort((a, b) => b.endedAt.localeCompare(a.endedAt))
     .slice(0, recentLimit)
-    .map((item) => ({
-      id: item.id,
-      date: item.date,
-      startedAt: item.startedAt,
-      endedAt: item.endedAt,
-      title: item.activity.title,
-      activityType: item.activityType,
-      captureMethod: item.captureMethod,
-      isDemo: item.id.startsWith("demo_"),
-      durationSeconds: item.durationSeconds,
-      durationKind: item.durationKind,
-      activeEnergyKcal: item.activeEnergyKcal,
-      distanceMeters: item.distanceMeters,
-      heartRate: item.heartRate,
-      annotation: item.annotation,
-      manualWorkoutId: item.manualWorkoutId,
-    }));
+    .map((item) => {
+      const source = resolveAnalyticsWorkoutSource(item);
+      return {
+        id: item.id,
+        date: item.date,
+        startedAt: item.startedAt,
+        endedAt: item.endedAt,
+        title: item.activity.title,
+        activityType: item.activityType,
+        source,
+        captureMethod: item.captureMethod,
+        isDemo: source === "demo",
+        durationSeconds: item.durationSeconds,
+        durationKind: item.durationKind,
+        activeEnergyKcal: item.activeEnergyKcal,
+        distanceMeters: item.distanceMeters,
+        heartRate: item.heartRate,
+        annotation: item.annotation,
+        manualWorkoutId: item.manualWorkoutId,
+      };
+    });
 
   const zoneTotalCount = zones.reduce((s, z) => s + z.count, 0);
   const zoneTotalSec = zones.reduce((s, z) => s + z.durationSeconds, 0);
@@ -1507,6 +1525,7 @@ function computeAppleWorkoutBucket(
     paceTrendsBySport,
     byActivity,
     recent,
+    truncatedCount: Math.max(0, entries.length - recent.length),
   };
 }
 
@@ -1578,7 +1597,8 @@ function summarizeAppleWorkouts(
       receivedAt: workout.endedAt ?? workout.startedAt,
       activityType,
       environment: workout.cardioMeta?.environment ?? "unknown",
-      captureMethod: "workout",
+      // #281: Mark synthetic manual cardio rows explicitly as "manual" so real-device filters never misclassify them
+      captureMethod: "manual",
       durationSeconds: durSec,
       durationKind: "workout_active",
       activeEnergyKcal: workout.cardioMeta?.estimatedKcal ?? undefined,
@@ -1595,13 +1615,17 @@ function summarizeAppleWorkouts(
   }
   const mergedEntries = syntheticManualEntries.length ? [...entries, ...syntheticManualEntries] : entries;
   const allStats = computeAppleWorkoutBucket(mergedEntries, hrMax, asOfDate);
-  const realDeviceEntries = mergedEntries.filter((item) => !item.id.startsWith("demo_"));
+  // #281: Separate true Apple device uploads from manual web cardio and demo entries
+  const realDeviceEntries = mergedEntries.filter((item) => resolveAnalyticsWorkoutSource(item) === "device");
+  const manualCount = mergedEntries.filter((item) => resolveAnalyticsWorkoutSource(item) === "manual").length;
+  const demoCount = mergedEntries.filter((item) => resolveAnalyticsWorkoutSource(item) === "demo").length;
   const realDeviceStats = computeAppleWorkoutBucket(realDeviceEntries, hrMax, asOfDate);
 
   return {
     ...allStats,
     realDeviceCount: realDeviceEntries.length,
-    demoCount: mergedEntries.length - realDeviceEntries.length,
+    manualCount,
+    demoCount,
     realDeviceStats,
   };
 }

@@ -1643,7 +1643,9 @@ test("Pre-launch: full JSON backup restore, web password change, and MCP/API tok
     assert.equal(previewBody.counts.customExercises, 1);
     assert.equal(previewBody.counts.measurements, 1);
     assert.equal(previewBody.counts.exerciseNotes, 1);
-    assert.equal(previewBody.diff.toImport, 2);
+    // #227: Total preview/commit counts include auxiliary tables (2 records + 1 measurement + 1 exerciseNote = 4)
+    assert.equal(previewBody.diff.toImport, 4);
+    assert.equal(previewBody.breakdown.records.toImport, 2);
 
     const commitRes = await call("/api/web/restore-backup", {
       token: targetUser.token,
@@ -1652,7 +1654,8 @@ test("Pre-launch: full JSON backup restore, web password change, and MCP/API tok
     });
     assert.equal(commitRes.status, 200);
     const commitBody = (await commitRes.json()) as any;
-    assert.equal(commitBody.imported, 2);
+    assert.equal(commitBody.imported, 4);
+    assert.equal(commitBody.breakdown.records.imported, 2);
 
     const restoredWorkouts = store.list(targetUser.userId, "workout");
     assert.equal(restoredWorkouts.length, 1);

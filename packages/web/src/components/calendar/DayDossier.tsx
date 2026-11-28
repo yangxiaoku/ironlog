@@ -246,7 +246,7 @@ export function DayDossier({
   const sortedDiets = [...diets].sort((a, b) => (mealOrder[a.data.meal] ?? 9) - (mealOrder[b.data.meal] ?? 9));
 
   const handleCompleteDiet = async () => {
-    if (completingDiet) return;
+    if (completingDiet || actionsLocked) return;
     setCompletingDiet(true);
     try {
       await apiFetch("/api/web/nutrition-day", { method: "PUT", body: { date, opId: crypto.randomUUID() } });
@@ -260,6 +260,7 @@ export function DayDossier({
   };
 
   const handleShiftDay = async () => {
+    if (actionsLocked) return;
     const toDate = shiftDateStr(date, 1);
     try {
       await apiFetch("/api/web/schedule/shift", {
@@ -312,6 +313,7 @@ export function DayDossier({
   };
 
   const handleSetRest = async () => {
+    if (actionsLocked) return;
     try {
       let baseVersion = typeof daySched?.override?.version === "number" ? daySched.override.version : null;
       if (baseVersion === null) {
@@ -330,6 +332,7 @@ export function DayDossier({
   };
 
   const handleClearSched = async () => {
+    if (actionsLocked) return;
     try {
       const ver = typeof daySched?.override?.version === "number" ? daySched.override.version : undefined;
       const qs = ver !== undefined ? `?baseVersion=${encodeURIComponent(String(ver))}` : "";
@@ -434,7 +437,7 @@ export function DayDossier({
               <Icon name="workout" size={15} /> 训练明细
             </h3>
             {!isFuture ? (
-              <button type="button" className="quiet" onClick={() => openWorkoutEditor(undefined, goals, { date })}>
+              <button type="button" className="quiet" disabled={actionsLocked} onClick={() => openWorkoutEditor(undefined, goals, { date })}>
                 <Icon name="plus" size={14} /> 补录训练
               </button>
             ) : null}
@@ -534,17 +537,18 @@ export function DayDossier({
                 <button
                   type="button"
                   className="primary-button"
+                  disabled={actionsLocked}
                   onClick={() => openRoutinePreview({ id: date, source: "scheduled", date })}
                 >
                   {date === todayKey ? "开始训练" : "动作与 PR"}
                 </button>
-                <button type="button" className="secondary-button" onClick={() => openDayScheduler(date)}>
+                <button type="button" className="secondary-button" disabled={actionsLocked} onClick={() => openDayScheduler(date)}>
                   调整排期
                 </button>
-                <button type="button" className="quiet" onClick={() => void handleShiftDay()}>
+                <button type="button" className="quiet" disabled={actionsLocked} onClick={() => void handleShiftDay()}>
                   顺延+1
                 </button>
-                <button type="button" className="quiet" onClick={() => void handleSetRest()}>
+                <button type="button" className="quiet" disabled={actionsLocked} onClick={() => void handleSetRest()}>
                   设休息
                 </button>
               </div>
@@ -556,7 +560,7 @@ export function DayDossier({
               <h3>
                 <Icon name="plan" size={15} /> {isRest ? "休息日 · 主动恢复" : "训练排期"}
               </h3>
-              <button type="button" className="secondary-button" onClick={() => openDayScheduler(date)}>
+              <button type="button" className="secondary-button" disabled={actionsLocked} onClick={() => openDayScheduler(date)}>
                 <Icon name="plus" size={14} /> 排训练
               </button>
             </header>
@@ -565,7 +569,7 @@ export function DayDossier({
             </p>
             {daySched?.override ? (
               <div className="hero-drawer-actions">
-                <button type="button" className="quiet" onClick={() => void handleClearSched()}>
+                <button type="button" className="quiet" disabled={actionsLocked} onClick={() => void handleClearSched()}>
                   恢复默认顺排
                 </button>
               </div>
@@ -578,7 +582,7 @@ export function DayDossier({
             <h3>
               <Icon name="workout" size={15} /> 训练记录
             </h3>
-            <button type="button" className="quiet" onClick={() => openWorkoutEditor(undefined, goals, { date })}>
+            <button type="button" className="quiet" disabled={actionsLocked} onClick={() => openWorkoutEditor(undefined, goals, { date })}>
               <Icon name="plus" size={14} /> 补录训练
             </button>
           </header>
@@ -597,7 +601,7 @@ export function DayDossier({
               {nutritionComplete ? (
                 <span className="tile-badge">全天完整</span>
               ) : !isFuture ? (
-                <button type="button" className="quiet" disabled={completingDiet} onClick={() => void handleCompleteDiet()}>
+                <button type="button" className="quiet" disabled={completingDiet || actionsLocked} onClick={() => void handleCompleteDiet()}>
                   标记完整
                 </button>
               ) : null}
@@ -665,7 +669,7 @@ export function DayDossier({
             <Icon name="weight" size={15} /> 当日体重
           </span>
           {weightRecord ? (
-            <button type="button" className="quiet" onClick={() => openWeightEditor({ record: weightRecord })}>
+            <button type="button" className="quiet" disabled={actionsLocked} onClick={() => openWeightEditor({ record: weightRecord })}>
               <b>{fmt(weightRecord.data.weight, 2)} kg</b>
               {weightRecord.data.bodyFat != null ? ` · 体脂 ${fmt(weightRecord.data.bodyFat)}%` : ""}{" "}
               <Icon name="chevron" size={13} />
@@ -674,6 +678,7 @@ export function DayDossier({
             <button
               type="button"
               className="quiet"
+              disabled={actionsLocked}
               onClick={() =>
                 openWeightEditor({
                   date,
@@ -684,7 +689,7 @@ export function DayDossier({
               <Icon name="heart" size={14} /> 转入 Apple {fmt(appleDaily.weightKg, 2)} kg
             </button>
           ) : (
-            <button type="button" className="secondary-button dossier-quick-btn" onClick={() => openWeightEditor({ date })}>
+            <button type="button" className="secondary-button dossier-quick-btn" disabled={actionsLocked} onClick={() => openWeightEditor({ date })}>
               <Icon name="plus" size={14} /> 记体重
             </button>
           )}
@@ -740,6 +745,8 @@ export function CalendarDayModal({
 
   const [date, setDate] = useState(initialDate);
   const [loading, setLoading] = useState(true);
+  const [coreError, setCoreError] = useState("");
+  const [coreRetryNonce, setCoreRetryNonce] = useState(0);
   const [appleLoading, setAppleLoading] = useState(false);
   const [appleError, setAppleError] = useState("");
   const [appleRetryNonce, setAppleRetryNonce] = useState(0);
@@ -753,26 +760,31 @@ export function CalendarDayModal({
     let active = true;
     const todayKey = today();
     setLoading(true);
+    setCoreError("");
     void (async () => {
       try {
+        const force = coreRetryNonce > 0;
         const [workouts, diets, weights, nutritionDays, profileRes, schedRes, dayDetail] =
           await Promise.all([
-            cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
-            cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
-            cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }).catch(() => []),
+            cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId, force }),
+            cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId, force }),
+            cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId, force }).catch(() => []),
             cachedApiFetch<Array<RecordEnvelope<{ date: string; complete?: boolean; fingerprint?: string }>>>("/api/records/nutritionDay", {
               epoch: dataEpoch,
               userId,
+              force,
             }).catch(() => []),
-            cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
+            cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId, force }).catch(() => null),
             cachedApiFetch<{ days: ScheduleDayEntry[] }>(`/api/web/schedule?from=${date}&through=${date}`, {
               epoch: dataEpoch,
               userId,
+              force,
             }).catch(() => null),
             date >= todayKey
               ? cachedApiFetch<DayScheduleDetail>(`/api/web/schedule/${encodeURIComponent(date)}`, {
                   epoch: dataEpoch,
                   userId,
+                  force,
                 }).catch(() => null)
               : Promise.resolve(null),
           ]);
@@ -806,6 +818,10 @@ export function CalendarDayModal({
           schedSummary: schedRes?.days?.find((d) => d.date === date),
           catalogueMap: catMap,
         });
+      } catch (err) {
+        if (active) {
+          setCoreError((err as Error)?.message || "读取当日数据失败");
+        }
       } finally {
         if (active) setLoading(false);
       }
@@ -813,7 +829,7 @@ export function CalendarDayModal({
     return () => {
       active = false;
     };
-  }, [date, appleHealthConnected, dataEpoch, userId]);
+  }, [date, appleHealthConnected, dataEpoch, userId, coreRetryNonce]);
 
   useEffect(() => {
     let active = true;
@@ -858,6 +874,32 @@ export function CalendarDayModal({
     onDateChange?.(nextDate);
   };
 
+  // #258 (P1): On date-switch load error (or stale coreData), NEVER expose previous date's write controls; show target date + retry!
+  if (coreError && (!coreData || coreData.date !== date)) {
+    return (
+      <div className="cal-dossier in-modal">
+        <div className="dossier-day-stepper">
+          <button type="button" className="quiet day-step-btn" onClick={() => handleStep(shiftDateStr(date, -1))}>
+            <Icon name="back" size={14} /> 前一天
+          </button>
+          <span className="dossier-step-date">
+            <strong>{shortDate(date)}</strong>
+          </span>
+          <button type="button" className="quiet day-step-btn" onClick={() => handleStep(shiftDateStr(date, 1))}>
+            后一天 <Icon name="chevron" size={14} />
+          </button>
+        </div>
+        <div className="empty" role="alert" style={{ padding: "18px 0" }}>
+          <strong>{shortDate(date)} 当日明细读取失败</strong>
+          <p className="muted">{coreError}</p>
+          <button type="button" className="primary-button" onClick={() => setCoreRetryNonce((n) => n + 1)}>
+            重试读取 {shortDate(date)}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (loading && (!coreData || coreData.date !== date)) {
     return (
       <div className="cal-dossier in-modal">
@@ -891,7 +933,7 @@ export function CalendarDayModal({
       onRetryApple={() => setAppleRetryNonce((n) => n + 1)}
       inModal
       loading={loading}
-      switchingDate={coreData.date !== date}
+      switchingDate={coreData.date !== date || Boolean(coreError)}
       onStepDate={handleStep}
     />
   );

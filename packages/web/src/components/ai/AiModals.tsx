@@ -232,10 +232,22 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
   const [error, setError] = useState("");
   const [parsing, setParsing] = useState(false);
   const [saving, setSaving] = useState(false);
+  // #252: Track input version & parse sequence so editing description invalidates stale in-flight or displayed previews
+  const inputVersionRef = useRef(0);
+  const [inputVersion, setInputVersion] = useState(0);
+  const [parsedInputVersion, setParsedInputVersion] = useState<number | null>(null);
+  const parseSeqRef = useRef(0);
+  const parseAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
   useEffect(() => () => {
     mountedRef.current = false;
+    parseAbortRef.current?.abort();
   }, []);
+
+  const bumpInputVersion = () => {
+    inputVersionRef.current += 1;
+    setInputVersion(inputVersionRef.current);
+  };
 
   if (loading) {
     return (
@@ -246,10 +258,17 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
   }
   if (!status?.ready) return <div className="dialog-form ai-modal"><AiUnconfiguredBox /></div>;
 
+  const previewStale = Boolean(foods && parsedInputVersion != null && parsedInputVersion !== inputVersion);
+
   const parseDiet = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = promptText.trim();
     if (!text || parsing) return;
+    parseAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    parseAbortRef.current = ctrl;
+    const seq = ++parseSeqRef.current;
+    const reqInputVer = inputVersionRef.current;
     setError("");
     setParsing(true);
     try {
@@ -258,11 +277,14 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
         {
           method: "POST",
           timeout: 125_000,
+          signal: ctrl.signal,
           body: { text, date, meal },
         },
       );
-      if (!mountedRef.current) return;
-      const items = (res.foods ?? []).map((f) => ({
+      if (!mountedRef.current || ctrl.signal.aborted || seq !== parseSeqRef.current) return;
+      // #252: Discard response if user edited prompt/date/meal while request was in flight
+      if (reqInputVer !== inputVersionRef.current) return;
+      const incoming = (res.foods ?? []).map((f) => ({
         _recordId: safeUuid(),
         _opId: safeUuid(),
         _opFingerprint: "",
@@ -277,12 +299,22 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
         fat: Math.max(0, Number(f.fat) || 0),
         raw: f,
       }));
-      if (!items.length) throw new Error("未能从描述中识别出食物，请补充克数或份量后再试");
-      setFoods(items);
+      if (!incoming.length) throw new Error("未能从描述中识别出食物，请补充克数或份量后再试");
+      // #254: Preserve already-saved rows in the current batch and avoid duplicating them as new pending items
+      setFoods((prev) => {
+        const savedRows = (prev ?? []).filter((r) => r._saved);
+        if (!savedRows.length) return incoming;
+        const savedNames = new Set(savedRows.map((r) => r.name.trim().toLowerCase()));
+        const freshPending = incoming.filter((item) => !savedNames.has(item.name.trim().toLowerCase()));
+        return [...savedRows, ...freshPending];
+      });
+      setParsedInputVersion(reqInputVer);
     } catch (err) {
-      if (mountedRef.current) setError((err as Error)?.message || "饮食识别失败");
+      if (mountedRef.current && !ctrl.signal.aborted && seq === parseSeqRef.current) {
+        setError((err as Error)?.message || "饮食识别失败");
+      }
     } finally {
-      if (mountedRef.current) setParsing(false);
+      if (mountedRef.current && seq === parseSeqRef.current) setParsing(false);
     }
   };
 
@@ -405,11 +437,26 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
       <div className="fields">
         <label className="field">
           <span>日期</span>
-          <input type="date" min="1902-01-01" max={today()} value={date} onChange={(e) => setDate(e.target.value)} />
+          <input
+            type="date"
+            min="1902-01-01"
+            max={today()}
+            value={date}
+            onChange={(e) => {
+              setDate(e.target.value);
+              bumpInputVersion();
+            }}
+          />
         </label>
         <label className="field">
           <span>餐次</span>
-          <select value={meal} onChange={(e) => setMeal(e.target.value as MealKey)}>
+          <select
+            value={meal}
+            onChange={(e) => {
+              setMeal(e.target.value as MealKey);
+              bumpInputVersion();
+            }}
+          >
             {(Object.entries(MEALS) as Array<[MealKey, string]>).map(([k, label]) => (
               <option key={k} value={k}>
                 {label}
@@ -420,7 +467,15 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
       </div>
       <div className="ai-presets">
         {DIET_CHIPS.map((c) => (
-          <button key={c} type="button" className="ai-chip" onClick={() => setPromptText(c)}>
+          <button
+            key={c}
+            type="button"
+            className="ai-chip"
+            onClick={() => {
+              setPromptText(c);
+              bumpInputVersion();
+            }}
+          >
             {c}
           </button>
         ))}
@@ -431,17 +486,26 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
           rows={3}
           maxLength={2000}
           value={promptText}
-          onChange={(e) => setPromptText(e.target.value)}
+          onChange={(e) => {
+            setPromptText(e.target.value);
+            bumpInputVersion();
+          }}
           placeholder="例如：中午吃了150g鸡胸肉配200g米饭和炒青菜，下午喝了一杯冰美式…"
           required
         />
       </label>
 
+      {previewStale ? (
+        <p className="form-error" role="status">
+          描述、日期或餐次已更改，当前预览来自旧输入。请点击「重新识别」后再确认写入。
+        </p>
+      ) : null}
+
       {foods ? (
         <div id="ai-diet-preview" className="ai-preview-list">
           <div className="ai-preview-head">
             <strong>请核对识别结果并勾选写入</strong>
-            <small className="muted">可直接修改名称与克数</small>
+            <small className="muted">可直接修改名称、热量与三大营养素（已入库行已锁定）</small>
           </div>
           {foods.map((item, idx) => (
             <div key={item._recordId} className="ai-food-card">
@@ -450,6 +514,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
                   type="checkbox"
                   className="switch"
                   checked={item.include}
+                  disabled={Boolean(item._saved)}
                   onChange={(e) => {
                     const checked = e.target.checked;
                     setFoods((prev) => prev?.map((row, i) => (i === idx ? { ...row, include: checked } : row)) ?? null);
@@ -471,7 +536,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
               </label>
               {item._saved ? (
                 <p className="muted" style={{ margin: "2px 0 4px", fontSize: 12 }}>
-                  ✓ 已保存（v{item._baseVersion}）
+                  ✓ 已保存（v{item._baseVersion} · 已锁定，如需修改请在饮食列表编辑）
                 </p>
               ) : item._conflict ? (
                 <p className="form-error" role="status" style={{ margin: "2px 0 6px", fontSize: 12 }}>
@@ -494,6 +559,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
                       min={0}
                       max={maxVal}
                       step="any"
+                      disabled={Boolean(item._saved)}
                       value={item[field]}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.nativeEvent.isComposing) e.preventDefault();
@@ -517,7 +583,7 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
       </p>
 
       <footer className="dialog-foot">
-        <button type="submit" className={foods ? "secondary-button" : "primary-button"} disabled={parsing || saving}>
+        <button type="submit" className={foods && !previewStale ? "secondary-button" : "primary-button"} disabled={parsing || saving}>
           {parsing ? "正在识别估算…" : foods ? "重新识别" : "识别饮食与热量"}
         </button>
         {foods ? (
@@ -525,10 +591,10 @@ export function AiDietModal({ initialDate }: { initialDate?: string }) {
             type="button"
             className="primary-button"
             id="ai-diet-save"
-            disabled={saving || parsing || selectedCount === 0}
+            disabled={saving || parsing || previewStale || selectedCount === 0}
             onClick={() => void confirmSave()}
           >
-            {saving ? "写入中…" : `确认写入记录 (${selectedCount} 项)`}
+            {saving ? "写入中…" : `确认写入待保存记录 (${selectedCount} 项)`}
           </button>
         ) : null}
       </footer>
@@ -562,8 +628,12 @@ export function AiWorkoutModal({
   const [parsing, setParsing] = useState(false);
   const [saving, setSaving] = useState(false);
   const mountedRef = useRef(true);
+  // #251 (P1): Declare all hooks BEFORE early returns so loading -> ready never violates Rules of Hooks (React #310)
+  const directSaveRef = useRef<{ fingerprint: string; opId: string; id: string } | null>(null);
+  const parseAbortRef = useRef<AbortController | null>(null);
   useEffect(() => () => {
     mountedRef.current = false;
+    parseAbortRef.current?.abort();
   }, []);
 
   if (loading) {
@@ -574,10 +644,6 @@ export function AiWorkoutModal({
     );
   }
   if (!status?.ready) return <div className="dialog-form ai-modal"><AiUnconfiguredBox /></div>;
-
-  const directSaveRef = useRef<{ fingerprint: string; opId: string; id: string } | null>(null);
-  const parseAbortRef = useRef<AbortController | null>(null);
-  useEffect(() => () => { parseAbortRef.current?.abort(); }, []);
 
   const parseWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -729,7 +795,15 @@ const PLAN_PRESETS = [
   "减脂期保留力量：每周5天推拉腿分化+核心",
 ];
 
-export function AiPlanModal({ activePlanId }: { activePlanId?: string | null }) {
+export function AiPlanModal({
+  activePlanId,
+  activePlanVersion,
+  activePlanName,
+}: {
+  activePlanId?: string | null;
+  activePlanVersion?: number | null;
+  activePlanName?: string | null;
+}) {
   const { status, loading } = useAiStatus();
   const closeAllModals = useUiStore((s) => s.closeAllModals);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -741,6 +815,8 @@ export function AiPlanModal({ activePlanId }: { activePlanId?: string | null }) 
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const mountedRef = useRef(true);
+  // #256: Bind stable opId per prompt/parent snapshot so retrying after lost 503 receipt never creates duplicate drafts
+  const pendingPlanOpRef = useRef<{ fingerprint: string; opId: string } | null>(null);
   useEffect(() => () => {
     mountedRef.current = false;
   }, []);
@@ -760,13 +836,27 @@ export function AiPlanModal({ activePlanId }: { activePlanId?: string | null }) 
     if (!text || busy) return;
     setError("");
     setBusy(true);
+    const reqPayload = {
+      text,
+      ...(refine && activePlanId
+        ? {
+            parentId: activePlanId,
+            ...(typeof activePlanVersion === "number" && activePlanVersion > 0 ? { parentVersion: activePlanVersion } : {}),
+          }
+        : {}),
+    };
+    const fp = JSON.stringify(reqPayload);
+    if (!pendingPlanOpRef.current || pendingPlanOpRef.current.fingerprint !== fp) {
+      pendingPlanOpRef.current = { fingerprint: fp, opId: safeUuid() };
+    }
     try {
       const res = await apiFetch<{ record?: { id: string } }>("/api/ai/plan", {
         method: "POST",
         timeout: 125_000,
-        body: { text, ...(refine && activePlanId ? { parentId: activePlanId } : {}) },
+        body: { ...reqPayload, opId: pendingPlanOpRef.current.opId },
       });
       if (!mountedRef.current) return;
+      pendingPlanOpRef.current = null;
       bumpDataEpoch();
       closeAllModals();
       openPlanSection("drafts");
@@ -794,7 +884,10 @@ export function AiPlanModal({ activePlanId }: { activePlanId?: string | null }) 
       {activePlanId ? (
         <label className="toggle-row">
           <input type="checkbox" className="switch" checked={refine} onChange={(e) => setRefine(e.target.checked)} />
-          <span>基于当前正在执行的训练计划进行微调迭代</span>
+          <span>
+            基于当前生效计划进行微调迭代
+            {activePlanName ? `（${activePlanName}${activePlanVersion ? ` · v${activePlanVersion}` : ""}）` : ""}
+          </span>
         </label>
       ) : null}
       <label className="field">

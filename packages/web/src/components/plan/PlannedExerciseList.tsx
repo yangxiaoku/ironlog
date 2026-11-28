@@ -203,12 +203,14 @@ export function PlannedExerciseList({
   items,
   catalogueMap,
   prMap,
+  scopeKey,
   onChange,
   onRegisterExercise,
 }: {
   items: PlannedExercise[];
   catalogueMap: Map<string, CatalogueExercise>;
   prMap: Map<string, ExercisePrInfo>;
+  scopeKey?: string;
   onChange: (next: PlannedExercise[]) => void;
   onRegisterExercise: (ex: CatalogueExercise) => void;
 }) {
@@ -220,6 +222,11 @@ export function PlannedExerciseList({
   const [searching, setSearching] = useState(false);
   const [customPool, setCustomPool] = useState<CatalogueExercise[]>([]);
   const searchSeqRef = useRef(0);
+
+  // #277: Clear any pending backup exercise selection whenever switching routine tab / scope
+  useEffect(() => {
+    setBackupTargetIndex(-1);
+  }, [scopeKey]);
 
   useEffect(() => {
     let active = true;

@@ -654,6 +654,10 @@ interface NormalizedRow {
   seconds: number;
   rir: number | null;
   completed: boolean;
+  endedAt?: string | null;
+  durationUnknown?: boolean;
+  setCompletedAt?: string | null;
+  sessionOnly?: boolean;
   notes: string;
 }
 
@@ -760,7 +764,15 @@ function buildNormalizedRows(
       const dateStr = col(row, "日期");
       const parsedDate = parseDateAndIso(dateStr);
       const exName = col(row, "动作").trim();
-      if (!parsedDate || !exName) {
+      const setTypeCell = col(row, "组类型").trim().toLowerCase();
+      const recordTypeCell = col(row, "记录类型", "record_type").trim().toLowerCase();
+      const isSessionOnly =
+        !exName &&
+        (recordTypeCell === "session" ||
+          recordTypeCell === "session_only" ||
+          setTypeCell === "场次记录" ||
+          setTypeCell === "session_only");
+      if (!parsedDate || (!exName && !isSessionOnly)) {
         invalidRowNumbers.push(csvLineNo);
         continue;
       }
@@ -775,6 +787,9 @@ function buildNormalizedRows(
       }
       const startedAt = parsedStart?.iso ?? parsedDate.iso;
       const hasReliableStartTime = hasExplicitClockTime(startRaw || dateStr);
+      const endRaw = col(row, "结束时间", "end_time", "ended_at").trim();
+      const parsedEnd = endRaw ? parseDateAndIso(endRaw) : null;
+      const endedAt = parsedEnd?.iso ?? null;
       const sourceSessionId = col(row, "训练id", "workout_id", "session_id").trim() || null;
       const exerciseRowId = col(row, "动作行id", "exercise_row_id", "exercise_entry_id").trim() || null;
       const modeHint = parseModeHint(col(row, "动作模式", "exercise_mode", "mode"));
@@ -783,9 +798,28 @@ function buildNormalizedRows(
       const rawMult = numVal(col(row, "容量系数", "volume_multiplier"), decimalSep);
       const volumeMultiplierHint = rawMult >= 0.5 && rawMult <= 4 ? rawMult : undefined;
       const title = col(row, "训练标题").trim() || "导入训练";
+      const rawDurSecCell = col(row, "计时(秒)", "训练时长(秒)", "duration_seconds").trim();
+      const rawDurSec = rawDurSecCell !== "" ? numVal(rawDurSecCell, decimalSep) : NaN;
       const rawMinsCell = col(row, "时长(分钟)");
       const rawMins = rawMinsCell.trim() ? numVal(rawMinsCell, decimalSep) : 0;
       const mins = Number.isFinite(rawMins) && rawMins >= 0 && rawMins <= 1440 ? rawMins : 0;
+      // #263: Preserve exact seconds from 训练时长(秒) (including 2-second workouts) before falling back to rounded minutes
+      const durationSeconds =
+        Number.isFinite(rawDurSec) && rawDurSec >= 0 && rawDurSec <= 86400
+          ? Math.round(rawDurSec)
+          : mins > 0
+            ? Math.round(mins * 60)
+            : 0;
+      const durUnknownRaw = col(row, "时长未知", "duration_unknown").trim().toLowerCase();
+      const durationUnknown =
+        durUnknownRaw === "是" || durUnknownRaw === "true" || durUnknownRaw === "1"
+          ? true
+          : durUnknownRaw === "否" || durUnknownRaw === "false" || durUnknownRaw === "0"
+            ? false
+            : undefined;
+      const setCompletedRaw = col(row, "组完成时间", "completed_at").trim();
+      const parsedSetCompleted = setCompletedRaw ? parseDateAndIso(setCompletedRaw) : null;
+      const setCompletedAt = parsedSetCompleted?.iso ?? null;
       const feelingRaw = col(row, "体感").trim().toLowerCase();
       const doneRaw = col(row, "已完成").trim().toLowerCase();
       const supersetGroup = col(row, "超级组").trim().slice(0, 16) || null;
@@ -826,10 +860,13 @@ function buildNormalizedRows(
       const rawWeightVal = rawWeightCell !== "" ? numVal(rawWeightCell, decimalSep) : undefined;
       const colKgCell = col(row, "重量(kg)").trim();
       const colKgVal = numVal(colKgCell, decimalSep);
+      // #264: Restore full-precision kg from 原始重量 when unit is explicitly kg, instead of reading rounded 重量(kg)
       const weightKg =
         rowWeightUnit === "lb" && rawWeightVal !== undefined
           ? lbsToKg(rawWeightVal)
-          : colKgVal;
+          : rowWeightUnit === "kg" && rawWeightVal !== undefined
+            ? rawWeightVal
+            : colKgVal;
       rows.push({
         sessionKey: `${baseKey}||#${tracker.seq}`,
         sourceSessionId,
@@ -837,7 +874,11 @@ function buildNormalizedRows(
         title,
         date: parsedDate.date,
         startedAt,
-        durationSeconds: mins > 0 ? Math.round(mins * 60) : 0,
+        endedAt,
+        durationSeconds,
+        ...(durationUnknown !== undefined ? { durationUnknown } : {}),
+        setCompletedAt,
+        ...(isSessionOnly ? { sessionOnly: true } : {}),
         feeling: FEELING_ALIASES[feelingRaw] ?? null,
         exerciseName: exName,
         ...(exerciseRowId ? { exerciseRowId } : {}),
@@ -1216,6 +1257,7 @@ function prepareImport(
       rows: NormalizedRow[];
     }> = [];
     for (const r of sRows) {
+      if (r.sessionOnly || !r.exerciseName) continue;
       const prev = blocks.at(-1);
       const hasRowIds = Boolean(r.exerciseRowId || prev?.exerciseRowId);
       const canMerge = Boolean(
@@ -1277,7 +1319,8 @@ function prepareImport(
           reps,
           seconds,
           completed: r.completed,
-          completedAt: first.startedAt,
+          // #265: Restore exact set completedAt when present; omit for legacy CSVs & uncompleted sets
+          ...(r.completed && r.setCompletedAt ? { completedAt: r.setCompletedAt } : {}),
           rir: r.rir,
         };
       });
@@ -1315,7 +1358,18 @@ function prepareImport(
       : 0;
     const startMs = Date.parse(first.startedAt);
     if (!Number.isFinite(startMs)) continue;
-    const endedAt = new Date(startMs + (durSec > 0 ? durSec * 1000 : 0)).toISOString();
+    // #263: Preserve real endedAt & paused timing when exported; compute endedAt from durSec only for legacy CSVs
+    const explicitEndMs = first.endedAt ? Date.parse(first.endedAt) : NaN;
+    const hasExplicitEnd = Number.isFinite(explicitEndMs) && explicitEndMs >= startMs;
+    const endedAt = hasExplicitEnd
+      ? first.endedAt!
+      : new Date(startMs + (durSec > 0 ? durSec * 1000 : 0)).toISOString();
+    const wallClockSec = hasExplicitEnd ? Math.round((explicitEndMs - startMs) / 1000) : durSec;
+    const isDurationUnknown = first.durationUnknown !== undefined ? first.durationUnknown : durSec <= 0;
+    const timing =
+      !isDurationUnknown && durSec > 0 && hasExplicitEnd && durSec !== wallClockSec
+        ? { elapsedSeconds: durSec, runningSince: null }
+        : undefined;
     const notes = [...new Set(sRows.map((r) => r.notes).filter(Boolean))].join("\n").slice(0, 4000);
 
     const parsedWo = workoutSchema.safeParse({
@@ -1323,7 +1377,8 @@ function prepareImport(
       date: first.date,
       startedAt: first.startedAt,
       endedAt,
-      durationUnknown: durSec <= 0,
+      ...(timing ? { timing } : {}),
+      durationUnknown: isDurationUnknown,
       status: "completed",
       notes,
       feeling: first.feeling,
@@ -1345,7 +1400,9 @@ function prepareImport(
     const titleKey = `${workoutData.date}||${workoutData.title.trim().toLowerCase()}`;
     const sigKey = `${workoutData.date}||${workoutData.exercises.map((e) => e.exerciseId).sort().join(",")}`;
     const sameDayExisting = existingByDate.get(workoutData.date) ?? [];
-    const sameContentRows = sameDayExisting.filter((ew) => ew.titleKey === titleKey || ew.sigKey === sigKey);
+    const sameContentRows = sameDayExisting.filter(
+      (ew) => ew.titleKey === titleKey || (workoutData.exercises.length > 0 && ew.sigKey === sigKey),
+    );
 
     let duplicateStatus: DuplicateStatus = "none";
     if (first.sourceSessionId && existingSourceIds.has(first.sourceSessionId)) {
@@ -1363,17 +1420,24 @@ function prepareImport(
       }
     }
 
+    // #267: Include resolved exercise snapshot (mode/muscle/equipment/volumeMultiplier) in stableKey so mode edits between preview and commit invalidate signature
     const stableKey = createHash("sha256")
       .update(
         JSON.stringify({
           date: workoutData.date,
           title: workoutData.title,
           startedAt: workoutData.startedAt,
+          endedAt: workoutData.endedAt,
+          durationUnknown: Boolean(workoutData.durationUnknown),
           sid: first.sourceSessionId,
           ex: workoutData.exercises.map((e) => [
             e.exerciseId,
             e.weightUnit ?? "kg",
-            e.sets.map((s) => [s.weight, s.reps, s.seconds, s.type]),
+            e.snapshot?.mode ?? "reps",
+            e.snapshot?.muscle ?? "",
+            e.snapshot?.equipment ?? "",
+            e.snapshot?.volumeMultiplier ?? 1,
+            e.sets.map((s) => [s.weight, s.reps, s.seconds, s.type, s.completed]),
           ]),
         }),
       )

@@ -544,10 +544,12 @@ export function AppleWorkoutDetailsModal({
   item,
   back = false,
   onOpenWorkout,
+  onDeleted,
 }: {
   item: AppleWorkoutAgendaItem;
   back?: boolean;
   onOpenWorkout?: (workoutId: string) => void;
+  onDeleted?: () => void;
 }) {
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const closeTopModal = useUiStore((s) => s.closeTopModal);
@@ -563,6 +565,21 @@ export function AppleWorkoutDetailsModal({
   const [notesDraft, setNotesDraft] = useState(item.annotation?.notes ?? "");
   const [savingNote, setSavingNote] = useState(false);
 
+  // #243: Restore committed annotation values when cancelling or re-opening the editor so cancelled text is never saved later
+  const resetAnnotationDrafts = () => {
+    setFeelingDraft(annotation?.feeling ?? null);
+    setDistanceDraft(annotation?.distanceKm ?? "");
+    setNotesDraft(annotation?.notes ?? "");
+  };
+
+  // #244: Only append "km" when the user entered a pure numeric distance; preserve free text like "坡度12 速度4.5" verbatim
+  const formatAnnotationDistance = (raw: string) => {
+    const clean = raw.trim();
+    if (/^\d+(?:\.\d+)?$/.test(clean)) return `手记距离 · ${clean} km`;
+    return `手记距离 / 坡度配速 · ${clean}`;
+  };
+
+  const isSyntheticManual = item.id.startsWith("manual:");
   const startDate = item.startedAt ? new Date(item.startedAt) : null;
   const endDate = item.endedAt ? new Date(item.endedAt) : null;
   const hasTimeWindow = Boolean(
@@ -656,12 +673,13 @@ export function AppleWorkoutDetailsModal({
   const handleDeleteAppleWorkout = () => {
     openConfirm({
       title: "删除 Apple 训练记录",
-      message: `确定要删除 ${item.date} 的「${item.title}」吗？此操作仅删除铁记内的同步档案，不会删除 iPhone 健康 App 里的原始记录。`,
+      message: `确定要删除 ${item.date} 的「${item.title}」吗？此操作会一并删除铁记内合并的同步副本（不影响 iPhone 健康 App 原始记录）。`,
       confirmLabel: "删除记录",
       onConfirm: async () => {
         await apiFetch(`/api/integrations/apple-health/workouts/${encodeURIComponent(item.id)}`, {
           method: "DELETE",
         });
+        onDeleted?.();
         bumpDataEpoch();
         closeTopModal();
         notify("已删除 Apple 训练记录");
@@ -697,7 +715,11 @@ export function AppleWorkoutDetailsModal({
           </div>
         ))}
       </div>
-      {editingNote ? (
+      {isSyntheticManual ? (
+        <p className="muted" style={{ fontSize: 12.5 }}>
+          此记录为铁记网页手录有氧，请在关联训练复盘中编辑备注、体感或删除。
+        </p>
+      ) : editingNote ? (
         <form className="report-notes" onSubmit={(e) => void handleSaveAnnotation(e)} style={{ display: "grid", gap: 10 }}>
           <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
             <legend style={{ fontSize: 12, color: "var(--muted)", marginBottom: 6 }}>本次体感</legend>
@@ -738,7 +760,14 @@ export function AppleWorkoutDetailsModal({
             />
           </label>
           <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button type="button" className="quiet" onClick={() => setEditingNote(false)}>
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => {
+                resetAnnotationDrafts();
+                setEditingNote(false);
+              }}
+            >
               取消
             </button>
             <button type="submit" className="primary-button" disabled={savingNote}>
@@ -750,13 +779,20 @@ export function AppleWorkoutDetailsModal({
         <section className="report-notes">
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <h3 style={{ margin: 0 }}>训练记录</h3>
-            <button type="button" className="quiet" onClick={() => setEditingNote(true)}>
+            <button
+              type="button"
+              className="quiet"
+              onClick={() => {
+                resetAnnotationDrafts();
+                setEditingNote(true);
+              }}
+            >
               编辑备注
             </button>
           </div>
           {annotation.notes ? <p>{annotation.notes}</p> : null}
           {annotation.feeling ? <p>体感 · {FEELINGS[annotation.feeling]}</p> : null}
-          {annotation.distanceKm ? <p>手记距离 · {annotation.distanceKm} km</p> : null}
+          {annotation.distanceKm ? <p>{formatAnnotationDistance(annotation.distanceKm)}</p> : null}
           {annotation.lapSeconds.length ? (
             <ol aria-label="计时分段">
               {annotation.lapSeconds.map((seconds, index) => <li key={index}>{formatClock(seconds)}</li>)}
@@ -768,15 +804,20 @@ export function AppleWorkoutDetailsModal({
           type="button"
           className="secondary-button"
           style={{ justifySelf: "start" }}
-          onClick={() => setEditingNote(true)}
+          onClick={() => {
+            resetAnnotationDrafts();
+            setEditingNote(true);
+          }}
         >
           <Icon name="plus" size={14} /> 写体感与备注
         </button>
       )}
       <footer className="dialog-foot has-remove">
-        <button type="button" className="danger" onClick={handleDeleteAppleWorkout}>
-          删除此条记录
-        </button>
+        {!isSyntheticManual ? (
+          <button type="button" className="danger" onClick={handleDeleteAppleWorkout}>
+            删除此条记录
+          </button>
+        ) : <span />}
         {item.manualWorkoutId && onOpenWorkout ? (
           <button type="button" className="secondary-button" onClick={() => onOpenWorkout(item.manualWorkoutId!)}>
             {back ? "返回训练复盘" : "查看关联训练"}

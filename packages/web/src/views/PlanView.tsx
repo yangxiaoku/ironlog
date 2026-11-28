@@ -499,14 +499,18 @@ export function PlanView() {
             <Icon name="upload" size={15} /> 导入计划
           </button>
           {aiReady && !(workoutPrefs.hiddenModules ?? []).includes("ai") ? (
-            <button type="button" className="secondary-button" onClick={() => openAiPlanModal(activePlan?.id)}>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => openAiPlanModal(activePlan?.id, activePlan?.version ?? null, planData?.name ?? null)}
+            >
               生成 AI 计划
             </button>
           ) : null}
           <button
             type="button"
             className="primary-button"
-            onClick={() => openPlanBuilderModal()}
+            onClick={() => openPlanBuilderModal(null, activePlan?.revision ?? 0)}
           >
             <Icon name="plus" size={16} /> 新建计划
           </button>
@@ -627,7 +631,15 @@ export function PlanView() {
                     <button
                       type="button"
                       className="secondary-button"
-                      onClick={() => openPlanBuilderModal({ id: activePlan.id, version: activePlan.version, data: planData })}
+                      onClick={() =>
+                        openPlanBuilderModal({
+                          id: activePlan.id,
+                          version: activePlan.version,
+                          data: planData,
+                          expectedRevision: activePlan.revision,
+                          isActiveSource: true,
+                        })
+                      }
                     >
                       编辑此计划
                     </button>

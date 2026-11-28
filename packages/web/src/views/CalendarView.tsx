@@ -304,28 +304,9 @@ export function CalendarView() {
     };
   }, [selectedDate, todayKey, dataEpoch, userId]);
 
-  if (baseLoading && !workouts.length && !diets.length && !schedDays.length) {
-    return (
-      <div className="empty loading" role="status">
-        正在加载训练日历…
-      </div>
-    );
-  }
-
-  if (error && !workouts.length && !diets.length) {
-    return (
-      <div className="empty">
-        <strong>日历数据加载失败</strong>
-        <p>{error}</p>
-        <button type="button" className="primary-button" onClick={bumpDataEpoch}>
-          重试
-        </button>
-      </div>
-    );
-  }
-
   const { beginning, days } = monthDays(month);
-  // R16 perf + #131/#132: Memoize date grouping, validate nutrition snapshot, and separate completed vs active drafts
+  // #257 (P1): Keep all hooks strictly above early loading/error returns so cold-cache mount never hits React #310.
+  // R16 perf + #131/#132/#259: Memoize date grouping, validate nutritionDay fingerprint, and separate completed vs active drafts.
   const {
     standaloneApple,
     showApple,
@@ -354,20 +335,30 @@ export function CalendarView() {
     const dByDate = groupByDate(diets, (r) => r.data?.date);
     const sByDate = new Map(schedDays.map((s) => [s.date, s]));
 
-    // #131: Validate nutritionDay snapshot against actual meal versions/ids (matches @ironlog/shared nutritionDayComplete)
+    // #131/#259: Validate nutritionDay fingerprint against current day's diet records (matches server nutritionDayComplete)
     const validComplete = new Set<string>();
     for (const nd of nutritionDays) {
       if (nd.deleted || !nd.data?.complete) continue;
       const dayMeals = dByDate.get(nd.data.date) ?? [];
       if (!dayMeals.length) continue;
-      const snap = (nd.data as { meals?: Array<{ id: string; version: number }> }).meals;
-      if (Array.isArray(snap)) {
-        const mealVerMap = new Map(dayMeals.map((m) => [m.id, m.version]));
-        if (snap.length === dayMeals.length && snap.every((s) => mealVerMap.get(s.id) === s.version)) {
+      const fp = (nd.data as { fingerprint?: string }).fingerprint;
+      if (typeof fp === "string") {
+        const expectedFp = JSON.stringify(
+          [...dayMeals]
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((r) => [r.id, r.data.date, r.data.meal, r.data.name, r.data.calories, r.data.protein, r.data.carbs, r.data.fat]),
+        );
+        if (fp === expectedFp) validComplete.add(nd.data.date);
+      } else {
+        const snap = (nd.data as { meals?: Array<{ id: string; version: number }> }).meals;
+        if (Array.isArray(snap)) {
+          const mealVerMap = new Map(dayMeals.map((m) => [m.id, m.version]));
+          if (snap.length === dayMeals.length && snap.every((s) => mealVerMap.get(s.id) === s.version)) {
+            validComplete.add(nd.data.date);
+          }
+        } else {
           validComplete.add(nd.data.date);
         }
-      } else {
-        validComplete.add(nd.data.date);
       }
     }
 
@@ -411,6 +402,26 @@ export function CalendarView() {
       futurePlannedCount: futPlanned,
     };
   }, [workouts, appleEntries, appleDailyMap, appleHealthConnected, diets, schedDays, nutritionDays, days, month, todayKey]);
+
+  if (baseLoading && !workouts.length && !diets.length && !schedDays.length) {
+    return (
+      <div className="empty loading" role="status">
+        正在加载训练日历…
+      </div>
+    );
+  }
+
+  if (error && !workouts.length && !diets.length) {
+    return (
+      <div className="empty">
+        <strong>日历数据加载失败</strong>
+        <p>{error}</p>
+        <button type="button" className="primary-button" onClick={bumpDataEpoch}>
+          重试
+        </button>
+      </div>
+    );
+  }
 
   const selWorkouts = workoutsByDate.get(selectedDate) ?? [];
   const selApple = appleByDate.get(selectedDate) ?? [];
@@ -630,7 +641,8 @@ export function CalendarView() {
                       ? "休息"
                       : "";
 
-              const kcalLabel = kcal > 0 ? fmt(kcal, 0) : "";
+              const hasDiet = cellDiets.length > 0;
+              const kcalLabel = hasDiet ? fmt(kcal, 0) : "";
 
               const cls = [
                 "cal-cell",
@@ -640,7 +652,7 @@ export function CalendarView() {
                 hasPlanned ? "has-planned" : "",
                 isManualPlan ? "has-manual-plan" : "",
                 isRestSched ? "is-rest-cell" : "",
-                kcal > 0 ? "has-diet" : "",
+                hasDiet ? "has-diet" : "",
                 dietDone ? "has-diet-complete" : "",
                 hasAppleDaily ? "has-apple-daily" : "",
                 isFuture ? "is-future-cell" : "",
@@ -652,7 +664,7 @@ export function CalendarView() {
               if (workoutCount) ariaParts.push(`训练 ${rawTrainTitle}`);
               else if (cellActiveDrafts.length > 0) ariaParts.push("进行中训练草稿");
               else if (hasPlanned) ariaParts.push(`排期 ${sched?.title ?? ""}`);
-              if (kcal > 0) ariaParts.push(`摄入 ${kcal} 千卡`);
+              if (hasDiet) ariaParts.push(`摄入 ${kcal} 千卡`);
               if (hasAppleDaily) ariaParts.push("体征已同步");
 
               return (
@@ -668,7 +680,7 @@ export function CalendarView() {
                     <span className="cal-day-num">{i + 1}</span>
                     <span className="cal-cell-leds" aria-hidden="true">
                       {workoutCount ? <i className="led-work" /> : hasPlanned ? <i className="led-plan" /> : null}
-                      {kcal > 0 ? <i className={`led-diet${dietDone ? " is-full" : ""}`} /> : null}
+                      {hasDiet ? <i className={`led-diet${dietDone ? " is-full" : ""}`} /> : null}
                       {hasAppleDaily ? <i className="led-apple" /> : null}
                     </span>
                   </span>

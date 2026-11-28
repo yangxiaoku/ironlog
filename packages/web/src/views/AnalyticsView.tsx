@@ -11,7 +11,7 @@ import { ANALYTICS_PERIODS, useAnalytics, type AnalyticsPeriod } from "../hooks/
 import { apiFetch } from "../lib/api";
 import { duration, fmt, shortDate, today } from "../lib/date";
 import { MUSCLES, type EquipmentKey, type MuscleKey, type ProfileGoals, type RecordEnvelope, type WeightData } from "../lib/domain";
-import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal } from "../lib/record-openers";
+import { openAppleDailyDetailsModal, openAppleWorkoutDetailsModal, openDeviceSetupModal, openWorkoutReport } from "../lib/record-openers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { PROFILE_VERSION_EVENT, WORKOUT_PREFS_EVENT, readWorkoutPreferences, writeWorkoutPreference } from "../lib/workout-helpers";
@@ -451,6 +451,9 @@ export function AnalyticsView() {
     );
   }
 
+  const isPeriodMismatch = data.through !== through || data.period !== period;
+  const exportBlocked = Boolean(loading || error || isPeriodMismatch);
+
   const loadingStrip = loading ? (
     <div
       role="status"
@@ -467,11 +470,17 @@ export function AnalyticsView() {
         fontSize: 12.5,
       }}
     >
-      <span>正在更新 {period} 天周期分析数据…</span>
+      <span>
+        正在更新截至 {shortDate(through)}（近 {period} 天）的分析数据…
+        {isPeriodMismatch ? `当前暂显示截至 ${shortDate(data.through)}（近 ${data.period} 天）的旧结果` : ""}
+      </span>
     </div>
   ) : error ? (
     <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10 }}>
-      <span>刷新数据分析失败：{error}</span>
+      <span>
+        刷新截至 {shortDate(through)}（近 {period} 天）失败：{error}
+        {isPeriodMismatch ? `（当前仍展示旧范围：截至 ${shortDate(data.through)}）` : ""}
+      </span>
       <button type="button" className="quiet" onClick={bumpDataEpoch}>重试</button>
     </div>
   ) : null;
@@ -532,14 +541,20 @@ export function AnalyticsView() {
     }
   }
 
+  const appleWeightDate = appleDaily?.latestBody?.weightKg?.date ?? data.through ?? today();
+
   const handleAdoptAppleWeight = async () => {
     if (userProfile.appleWeightKg == null || busyAction) return;
-    const targetDate = appleDaily?.latestBody?.weightKg?.date ?? data.through ?? today();
+    const targetDate = appleWeightDate;
     setBusyAction("adoptWeight");
     try {
       const existing = await apiFetch<RecordEnvelope<WeightData>>(
         `/api/web/records/weight/${encodeURIComponent(`weight_${targetDate}`)}?includeDeleted=1`,
       ).catch(() => null);
+      // #279: Never overwrite an existing manual bodyFat when adopting Apple weight, and NEVER pull bodyFat from a different date
+      const existingBodyFat = !existing?.deleted ? (existing?.data?.bodyFat ?? null) : null;
+      const sameDayApple = (appleDaily?.series ?? []).find((entry) => entry.date === targetDate);
+      const nextBodyFat = existingBodyFat != null ? existingBodyFat : (sameDayApple?.bodyFatPct ?? null);
       await apiFetch("/api/records", {
         method: "POST",
         body: {
@@ -551,15 +566,14 @@ export function AnalyticsView() {
           data: {
             date: targetDate,
             weight: userProfile.appleWeightKg,
-            bodyFat:
-              appleDaily?.latestBody?.bodyFatPct?.value ??
-              (!existing?.deleted ? existing?.data?.bodyFat : null) ??
-              null,
+            bodyFat: nextBodyFat,
           },
         },
       });
       bumpDataEpoch();
-      notify(`已同步 Apple 健康体重 ${fmt(userProfile.appleWeightKg, 2)} kg (${shortDate(targetDate)})`);
+      notify(
+        `已同步 ${shortDate(targetDate)} Apple 体重 ${fmt(userProfile.appleWeightKg, 2)} kg${existingBodyFat != null ? `（保留原手录体脂 ${fmt(existingBodyFat, 1)}%）` : ""}`,
+      );
     } catch (err) {
       notify((err as Error)?.message || "同步体重失败");
     } finally {
@@ -639,7 +653,21 @@ export function AnalyticsView() {
     });
   };
 
+  const workoutSourceLabel = (row: { id: string; source?: string; isDemo?: boolean; captureMethod?: string }, compact = false) => {
+    if (row.source === "demo" || row.isDemo) return "示例";
+    if (row.source === "manual" || row.id.startsWith("manual:") || row.captureMethod === "manual") {
+      return compact ? "手录" : "铁记手录";
+    }
+    if (row.captureMethod === "trigger") return "真机·触发";
+    return compact ? "真机" : "真机上传";
+  };
+
   const handleExportCsv = () => {
+    // #280: Prevent exporting stale range when new date/period is loading or failed to refresh
+    if (exportBlocked) {
+      notify(`当前所选截止日（${shortDate(through)}）尚未刷新成功，请先点击重试后再导出`);
+      return;
+    }
     const ad = appleDaily?.series ?? [];
     const ts = data.trainingSummary;
     const activeBucket =
@@ -699,6 +727,14 @@ export function AnalyticsView() {
       );
     }
     for (const wk of data.weeklyBreakdown ?? []) {
+      const wkWithSec = wk as typeof wk & { durationSeconds?: number; timedSessions?: number };
+      // #284: Use exact accumulated durationSeconds instead of rounded durationMinutes * 60
+      const exactSecCell =
+        wkWithSec.durationSeconds != null
+          ? wkWithSec.timedSessions === 0 && wkWithSec.durationSeconds === 0
+            ? ""
+            : wkWithSec.durationSeconds
+          : wk.durationMinutes * 60;
       lines.push(
         [
           "周训练明细",
@@ -706,7 +742,7 @@ export function AnalyticsView() {
           `第${wk.weekIndex}周 · ${wk.sessions}场 · ${wk.workSets}组 · ${wk.tonnageKg}kg`,
           "铁记周报",
           ...Array(20).fill(""),
-          wk.durationMinutes * 60,
+          exactSecCell,
         ]
           .map(csvCell)
           .join(","),
@@ -786,7 +822,7 @@ export function AnalyticsView() {
           "运动记录",
           w.date,
           w.title,
-          w.isDemo ? "示例" : w.captureMethod === "trigger" ? "真机·触发" : "真机上传",
+          workoutSourceLabel(w, false),
           "",
           "",
           "",
@@ -819,10 +855,19 @@ export function AnalyticsView() {
       "text/csv;charset=utf-8;",
       `铁记-健康训练分析报表-${data.through || today()}${filterTag}.csv`,
     );
-    notify("已导出健康与训练 CSV 报表");
+    notify(
+      aw.length > 0
+        ? `已导出健康与训练 CSV 报表（含 ${aw.length} 条运动记录）`
+        : "已导出健康与训练 CSV 报表",
+    );
   };
 
   const handleExportJson = () => {
+    // #280: Prevent exporting stale date range when new date/period is loading or failed to refresh
+    if (exportBlocked) {
+      notify(`当前所选截止日（${shortDate(through)}）尚未刷新成功，请先点击重试后再导出`);
+      return;
+    }
     const payload = {
       exportedAt: new Date().toISOString(),
       through: data.through,
@@ -887,6 +932,7 @@ export function AnalyticsView() {
   const visibleWorkouts = filteredWorkouts.slice(0, workoutsExpanded ? filteredWorkouts.length : 8);
   const visibleDaily = entriesDesc.slice(0, dailyExpanded ? entriesDesc.length : 10);
   const realDeviceCount = appleWorkouts?.realDeviceCount ?? 0;
+  const manualWorkoutCount = appleWorkouts?.manualCount ?? 0;
   const demoCount = appleWorkouts?.demoCount ?? 0;
   const onlyShortTriggers =
     appleWorkoutFilter === "device" &&
@@ -936,7 +982,7 @@ export function AnalyticsView() {
                   disabled={busyAction === "adoptWeight"}
                   onClick={() => void handleAdoptAppleWeight()}
                 >
-                  同步为 {fmt(userProfile.appleWeightKg, 2)} kg
+                  同步 {shortDate(appleWeightDate)} 为 {fmt(userProfile.appleWeightKg, 2)} kg
                 </button>
               </>
             ) : null}
@@ -2337,11 +2383,12 @@ export function AnalyticsView() {
                   </div>
                 </header>
                 {(() => {
+                  // #285: Include explicit 0 kcal / 0 g diet days via mealsCount > 0 instead of dropping zero-value logged days
                   const pts = nutrition.dailySeries
                     .filter((d) => {
-                      if (nutritionChartMetric === "calories") return d.calories > 0;
-                      if (nutritionChartMetric === "protein") return d.protein > 0;
-                      return typeof d.waterMl === "number" && d.waterMl > 0;
+                      if (nutritionChartMetric === "calories") return d.mealsCount > 0;
+                      if (nutritionChartMetric === "protein") return d.mealsCount > 0;
+                      return typeof d.waterMl === "number" && Number.isFinite(d.waterMl);
                     })
                     .map((d) => ({
                       date: d.date,
@@ -2768,21 +2815,37 @@ export function AnalyticsView() {
                 <div>
                   <h2>{hasApple ? "Apple 健康明细" : "训练汇总与数据导出"}</h2>
                   <p>
-                    {entriesDesc.length || (appleWorkouts?.totalCount ?? 0) > 0 || (data.trainingSummary?.sessions ?? 0) > 0
-                      ? `近 ${data.period} 天明细，支持导出 CSV / JSON 或打印`
-                      : hasApple
-                        ? "通过快捷指令同步后生成每日明细"
-                        : `近 ${data.period} 天训练汇总，支持导出 CSV / JSON 或打印`}
+                    {data.periodComparison?.currentRange
+                      ? `统计范围：${shortDate(data.periodComparison.currentRange.from)} – ${shortDate(data.periodComparison.currentRange.through)}（近 ${data.period} 天）`
+                      : `截至 ${shortDate(data.through)}（近 ${data.period} 天）`}
+                    {exportBlocked ? ` · 当前选择（截至 ${shortDate(through)}）待刷新` : " · 支持导出 CSV / JSON 或打印"}
                   </p>
                 </div>
                 <div className="apple-report-actions">
-                  <button type="button" className="secondary-button" onClick={handleExportCsv}>
-                    <Icon name="download" size={15} /> 导出 CSV
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={exportBlocked}
+                    title={exportBlocked ? `所选截止日 ${shortDate(through)} 尚未刷新完成` : undefined}
+                    onClick={handleExportCsv}
+                  >
+                    <Icon name="download" size={15} /> {exportBlocked ? "待刷新后导出 CSV" : "导出 CSV"}
                   </button>
-                  <button type="button" className="secondary-button" onClick={handleExportJson}>
-                    <Icon name="download" size={15} /> 导出 JSON
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={exportBlocked}
+                    title={exportBlocked ? `所选截止日 ${shortDate(through)} 尚未刷新完成` : undefined}
+                    onClick={handleExportJson}
+                  >
+                    <Icon name="download" size={15} /> {exportBlocked ? "待刷新后导出 JSON" : "导出 JSON"}
                   </button>
-                  <button type="button" className="secondary-button" onClick={() => window.print()}>
+                  <button
+                    type="button"
+                    className="secondary-button"
+                    disabled={exportBlocked}
+                    onClick={() => window.print()}
+                  >
                     <Icon name="print" size={15} /> 打印 / 存 PDF
                   </button>
                 </div>
@@ -3111,7 +3174,9 @@ export function AnalyticsView() {
                     <strong>Apple Watch 运动统计（{appleWorkoutFilter === "device" ? "仅真机" : `近 ${data.period} 天`}）</strong>
                     <div className="apple-report-subctrl">
                       <small>
-                        真机 {fmt(realDeviceCount, 0)} 场 · 示例 {fmt(demoCount, 0)} 场 · 关联力量{" "}
+                        真机 {fmt(realDeviceCount, 0)} 场
+                        {manualWorkoutCount > 0 ? ` · 手录 ${fmt(manualWorkoutCount, 0)} 场` : ""}
+                        {demoCount > 0 ? ` · 示例 ${fmt(demoCount, 0)} 场` : ""} · 关联力量{" "}
                         {fmt(activeWorkoutBucket?.linkedManualCount ?? 0, 0)} 场
                       </small>
                       <div className="segments">
@@ -3255,13 +3320,16 @@ export function AnalyticsView() {
                             </tr>
                           </thead>
                           <tbody>
-                            {visibleWorkouts.map((row) => (
+                            {visibleWorkouts.map((row) => {
+                              const isManualRow = row.source === "manual" || row.id.startsWith("manual:") || row.captureMethod === "manual";
+                              const isDemoRow = row.source === "demo" || Boolean(row.isDemo);
+                              return (
                               <tr key={row.id}>
                                 <td>{shortDate(row.date)}</td>
                                 <td>
                                   <b>{row.title}</b>{" "}
-                                  <span className={`apple-source-tag ${row.isDemo ? "is-demo" : "is-device"}`}>
-                                    {row.isDemo ? "示例" : row.captureMethod === "trigger" ? "真机·触发" : "真机"}
+                                  <span className={`apple-source-tag ${isDemoRow ? "is-demo" : isManualRow ? "is-manual" : "is-device"}`}>
+                                    {workoutSourceLabel(row, true)}
                                   </span>
                                 </td>
                                 <td>{duration(row.durationSeconds)}</td>
@@ -3282,7 +3350,13 @@ export function AnalyticsView() {
                                   <button
                                     type="button"
                                     className="quiet"
-                                    onClick={() =>
+                                    onClick={() => {
+                                      // #282: Manual web workouts open Ironlog WorkoutReportModal instead of Apple annotation modal
+                                      if (isManualRow) {
+                                        const targetId = row.manualWorkoutId || row.id.replace(/^manual:/, "");
+                                        openWorkoutReport({ workoutId: targetId });
+                                        return;
+                                      }
                                       openAppleWorkoutDetailsModal({
                                         id: row.id,
                                         title: row.title,
@@ -3296,23 +3370,32 @@ export function AnalyticsView() {
                                         distanceMeters: row.distanceMeters,
                                         heartRate: row.heartRate,
                                         annotation: row.annotation,
-                                      } as AppleWorkoutAgendaItem)
-                                    }
+                                      } as AppleWorkoutAgendaItem);
+                                    }}
                                   >
                                     查看 <Icon name="chevron" size={12} />
                                   </button>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
 
-                      {filteredWorkouts.length > 8 ? (
-                        <div className="apple-table-more">
-                          <button type="button" className="quiet" onClick={() => setWorkoutsExpanded((v) => !v)}>
-                            {workoutsExpanded ? "收起至最近 8 条" : `展开全部 ${filteredWorkouts.length} 条运动记录`}
-                          </button>
+                      {filteredWorkouts.length > 8 || (activeWorkoutBucket?.truncatedCount ?? 0) > 0 ? (
+                        <div className="apple-table-more" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+                          <small className="muted">
+                            已显示 {visibleWorkouts.length} / {activeWorkoutBucket?.totalCount ?? filteredWorkouts.length} 条
+                            {(activeWorkoutBucket?.truncatedCount ?? 0) > 0
+                              ? `（接口最多返回最近 ${filteredWorkouts.length} 条）`
+                              : ""}
+                          </small>
+                          {filteredWorkouts.length > 8 ? (
+                            <button type="button" className="quiet" onClick={() => setWorkoutsExpanded((v) => !v)}>
+                              {workoutsExpanded ? "收起至最近 8 条" : `展开全部 ${filteredWorkouts.length} 条运动记录`}
+                            </button>
+                          ) : null}
                         </div>
                       ) : null}
                     </>

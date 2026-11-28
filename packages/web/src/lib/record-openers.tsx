@@ -490,11 +490,21 @@ export function openTextLogModal({
   });
 }
 
-export function openAiPlanModal(activePlanId?: string | null): void {
+export function openAiPlanModal(
+  activePlanId?: string | null,
+  activePlanVersion?: number | null,
+  activePlanName?: string | null,
+): void {
   useUiStore.getState().openModal({
     title: "生成周期计划",
     wide: true,
-    content: <AiPlanModal activePlanId={activePlanId} />,
+    content: (
+      <AiPlanModal
+        activePlanId={activePlanId}
+        activePlanVersion={activePlanVersion}
+        activePlanName={activePlanName}
+      />
+    ),
   });
 }
 
@@ -594,6 +604,7 @@ export function openAppleWorkoutDetailsModal(
         item: AppleWorkoutAgendaItem;
         back?: (() => void) | null;
         onOpenWorkout?: (workoutId: string) => void;
+        onDeleted?: () => void;
       },
 ): void {
   const opts = "item" in arg ? arg : { item: arg };
@@ -606,6 +617,7 @@ export function openAppleWorkoutDetailsModal(
       <AppleWorkoutDetailsModal
         item={opts.item}
         back={Boolean(opts.back)}
+        onDeleted={opts.onDeleted}
         onOpenWorkout={
           opts.onOpenWorkout ??
           (opts.back
@@ -636,13 +648,25 @@ export function openOnboardingModal({
 }
 
 export function openPlanBuilderModal(
-  existingPlan: { id: string; version?: number; data: PlanData } | null = null,
+  existingPlan: {
+    id: string;
+    version?: number;
+    data: PlanData;
+    expectedRevision?: number;
+    isActiveSource?: boolean;
+  } | null = null,
+  expectedRevision?: number,
 ): void {
   useUiStore.getState().openModal({
     title: existingPlan ? `编辑计划：${existingPlan.data.name}` : "新建周期计划",
     wide: true,
     layout: "report",
-    content: <PlanBuilderModal existingPlan={existingPlan} />,
+    content: (
+      <PlanBuilderModal
+        existingPlan={existingPlan}
+        expectedRevision={existingPlan?.expectedRevision ?? expectedRevision}
+      />
+    ),
   });
 }
 
@@ -673,7 +697,10 @@ export function openPlanDraftModal(
         expectedRevision={expectedRevision}
         onEditDraft={() => {
           ui.closeTopModal();
-          openPlanBuilderModal({ id: record.id, version: record.version, data: record.data });
+          openPlanBuilderModal(
+            { id: record.id, version: record.version, data: record.data, expectedRevision },
+            expectedRevision,
+          );
         }}
       />
     ),

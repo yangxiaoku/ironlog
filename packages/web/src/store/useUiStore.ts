@@ -213,9 +213,10 @@ export const useUiStore = create<UiState>((set, get) => ({
       get().refreshPendingCount(userId);
       if (res.synced > 0) get().bumpDataEpoch();
       const unblockedRemaining = Math.max(0, res.remaining - res.blocked.length);
-      // #69: Bounded backoff auto-retry on transient 5xx/429/408 errors, isolated per account
+      const browserOnline = typeof navigator === "undefined" || navigator.onLine !== false;
+      // #69 & #248: Bounded backoff auto-retry on transient 5xx/429/408 errors AND transient network errors while navigator.onLine is true
       if (
-        res.transientFailure &&
+        (res.transientFailure || (res.stoppedOffline && browserOnline)) &&
         unblockedRemaining > 0 &&
         attempt < OFFLINE_RETRY_DELAYS_MS.length &&
         typeof window !== "undefined"
@@ -243,7 +244,11 @@ export const useUiStore = create<UiState>((set, get) => ({
       } else if (res.synced > 0) {
         get().notify(`已自动同步 ${res.synced} 条离线记录`);
       } else if (!silent && res.stoppedOffline) {
-        get().notify("网络仍不稳定，待恢复后继续自动同步");
+        get().notify(
+          browserOnline && unblockedRemaining > 0
+            ? `已联网但服务器暂不可达（剩 ${unblockedRemaining} 条待同步），将自动重试`
+            : "网络仍不稳定，待恢复后继续自动同步",
+        );
       } else if (!silent && res.authRequired) {
         get().notify("登录已过期，请重新登录后同步离线记录");
       } else if (!silent && res.remaining > 0) {

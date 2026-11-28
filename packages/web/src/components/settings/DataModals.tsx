@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BACKUP_JSON_LIMIT_LABEL, BACKUP_JSON_MAX_BYTES, BACKUP_REQUEST_TIMEOUT_MS } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 import { fmt } from "../../lib/date";
 import { safeUuid, type PlanData } from "../../lib/domain";
+import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
 
@@ -94,16 +95,33 @@ const MODE_LABELS: Record<string, string> = {
 
 const LAST_CSV_IMPORT_KEY = "ironlog_last_csv_import_summary";
 
-function readLastCsvSummary(): CsvCommitSummary | null {
+function lastCsvImportKeyForUser(userId: string): string {
+  return userId ? `${LAST_CSV_IMPORT_KEY}:${userId}` : "";
+}
+
+function readLastCsvSummary(userId: string): CsvCommitSummary | null {
+  if (!userId) return null;
   try {
-    const raw = sessionStorage.getItem(LAST_CSV_IMPORT_KEY);
+    sessionStorage.removeItem(LAST_CSV_IMPORT_KEY);
+    const raw = sessionStorage.getItem(lastCsvImportKeyForUser(userId));
     return raw ? (JSON.parse(raw) as CsvCommitSummary) : null;
   } catch {
     return null;
   }
 }
 
+function writeLastCsvSummary(userId: string, summary: CsvCommitSummary | null): void {
+  if (!userId) return;
+  try {
+    sessionStorage.removeItem(LAST_CSV_IMPORT_KEY);
+    const key = lastCsvImportKeyForUser(userId);
+    if (summary) sessionStorage.setItem(key, JSON.stringify(summary));
+    else sessionStorage.removeItem(key);
+  } catch {}
+}
+
 export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
+  const userId = useAuthStore((s) => s.userId);
   const closeAllModals = useUiStore((s) => s.closeAllModals);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
@@ -118,7 +136,12 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
   const [allowPartialImport, setAllowPartialImport] = useState(false);
   const [expandedSamples, setExpandedSamples] = useState<Record<number, boolean>>({});
   const [commitResult, setCommitResult] = useState<CsvCommitSummary | null>(null);
-  const [lastSummary] = useState<CsvCommitSummary | null>(() => readLastCsvSummary());
+  const [lastSummary, setLastSummary] = useState<CsvCommitSummary | null>(() => readLastCsvSummary(userId));
+
+  // #268: Always re-bind cached CSV import summary to the currently signed-in account
+  useEffect(() => {
+    setLastSummary(readLastCsvSummary(userId));
+  }, [userId]);
 
   // #220: Separate file read sequence from preview sequence and hold latest options in refs
   const fileReadReqRef = useRef(0);
@@ -207,6 +230,7 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
       setError(`第 ${validated.preview.unclosedQuoteLine} 行存在未闭合引号，请修复文件或勾选「忽略截断并部分导入」。`);
       return;
     }
+    const commitUserId = userId;
     setCommitting(true);
     setError("");
     try {
@@ -225,14 +249,15 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
           },
         },
       );
+      // #268: Guard against late responses arriving after logout/account switch
+      if (!commitUserId || useAuthStore.getState().userId !== commitUserId) return;
       const summary: CsvCommitSummary = {
         ...res,
         sourceLabel: validated.sourceLabel,
         completedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
       };
-      try {
-        sessionStorage.setItem(LAST_CSV_IMPORT_KEY, JSON.stringify(summary));
-      } catch {}
+      writeLastCsvSummary(commitUserId, summary);
+      setLastSummary(summary);
       setCommitResult(summary);
       bumpDataEpoch();
       onSuccess?.();
@@ -320,10 +345,23 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
       {lastSummary ? (
         <details style={{ fontSize: 12 }}>
           <summary className="muted" style={{ cursor: "pointer" }}>
-            查看上次 CSV 导入摘要（{lastSummary.completedAt} · 写入 {lastSummary.importedWorkouts} 场）
+            查看上次 CSV 导入摘要（{lastSummary.completedAt} · 写入 {lastSummary.importedWorkouts} 场 · 保留至当前标签会话结束）
           </summary>
-          <div className="muted" style={{ marginTop: 6, paddingLeft: 8 }}>
-            来源：{lastSummary.sourceLabel} · 写入 {lastSummary.importedWorkouts} 场 / {lastSummary.importedSets} 组 · 跳过重复 {lastSummary.skippedDuplicates + lastSummary.skippedSuspectedDuplicates} 场 · 无效行 {lastSummary.skippedRows} 行 · 新建动作 {lastSummary.createdCustomExercises} 个
+          <div className="muted" style={{ marginTop: 6, paddingLeft: 8, display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+            <span>
+              来源：{lastSummary.sourceLabel} · 写入 {lastSummary.importedWorkouts} 场 / {lastSummary.importedSets} 组 · 跳过重复 {lastSummary.skippedDuplicates + lastSummary.skippedSuspectedDuplicates} 场 · 无效行 {lastSummary.skippedRows} 行 · 新建动作 {lastSummary.createdCustomExercises} 个
+            </span>
+            <button
+              type="button"
+              className="micro-chip"
+              onClick={() => {
+                writeLastCsvSummary(userId, null);
+                setLastSummary(null);
+                notify("已清除本机上次导入摘要");
+              }}
+            >
+              清除摘要
+            </button>
           </div>
         </details>
       ) : null}
@@ -598,6 +636,17 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
 interface BackupPreviewRes {
   strategy: "merge" | "replace";
   exportedAt?: string;
+  stateToken?: string;
+  activePlanChange?: {
+    action: "none" | "keep" | "activate" | "switch" | "deactivate";
+    current: { id: string; name: string; version: number; revision: number } | null;
+    incoming: { id: string; name: string; version: number } | null;
+  };
+  statisticsPreferences?: {
+    included: boolean;
+    missingInBackup: boolean;
+    willResetToDefault: boolean;
+  };
   counts?: {
     workouts?: number;
     diets?: number;
@@ -629,31 +678,57 @@ interface BackupPreviewRes {
       exerciseNotes: number;
       appleDaily: number;
       appleWorkouts: number;
+      activePlan?: number;
       total: number;
     };
   };
 }
 
+function formatBackupTimeWithTz(iso?: string | null): string {
+  if (!iso) return "铁记全量备份";
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return `备份时间：${iso}`;
+  const d = new Date(ms);
+  const offsetMin = -d.getTimezoneOffset();
+  const sign = offsetMin >= 0 ? "+" : "-";
+  const absMin = Math.abs(offsetMin);
+  const hh = String(Math.floor(absMin / 60)).padStart(2, "0");
+  const mm = String(absMin % 60).padStart(2, "0");
+  const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `备份时间：${local} (UTC${sign}${hh}:${mm})`;
+}
+
 export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
-  const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const closeTopModal = useUiStore((s) => s.closeTopModal);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
+  const currentUserId = useAuthStore((s) => s.userId);
 
   const [fileName, setFileName] = useState("");
+  const [sourceLabel, setSourceLabel] = useState("粘贴内容");
   const [rawText, setRawText] = useState("");
   const [strategy, setStrategy] = useState<"merge" | "replace">("merge");
   const strategyRef = useRef(strategy);
   const previewRequest = useRef(0);
-  const [validated, setValidated] = useState<{ backup: unknown; preview: BackupPreviewRes; opId: string } | null>(null);
+  // #228: Track whether this modal instance is still mounted so late restore responses never close a subsequently opened modal
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  const [validated, setValidated] = useState<{ backup: unknown; preview: BackupPreviewRes; opId: string; source: string } | null>(null);
   const [armedReplace, setArmedReplace] = useState(false);
   const [error, setError] = useState("");
   const [previewing, setPreviewing] = useState(false);
   const [committing, setCommitting] = useState(false);
   const preview = validated?.preview;
 
-  const runPreview = async (txt: string, nextStrategy: "merge" | "replace") => {
+  const runPreview = async (txt: string, nextStrategy: "merge" | "replace", nextSource?: string) => {
     const request = ++previewRequest.current;
     const clean = txt.trim();
+    const resolvedSource = nextSource ?? sourceLabel;
     setError("");
     setArmedReplace(false);
     setValidated(null);
@@ -675,11 +750,15 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
         timeout: BACKUP_REQUEST_TIMEOUT_MS,
         body: { backup: parsed, mode: "preview", strategy: nextStrategy },
       });
-      if (request === previewRequest.current) setValidated({ backup: parsed, preview: res, opId: safeUuid() });
+      if (request === previewRequest.current && mountedRef.current) {
+        setValidated({ backup: parsed, preview: res, opId: safeUuid(), source: resolvedSource });
+      }
     } catch (err) {
-      if (request === previewRequest.current) setError((err as Error)?.message || "预览恢复失败");
+      if (request === previewRequest.current && mountedRef.current) {
+        setError((err as Error)?.message || "预览恢复失败");
+      }
     } finally {
-      if (request === previewRequest.current) setPreviewing(false);
+      if (request === previewRequest.current && mountedRef.current) setPreviewing(false);
     }
   };
 
@@ -689,6 +768,8 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       setArmedReplace(true);
       return;
     }
+    const snapshot = validated;
+    const targetUserId = currentUserId;
     setCommitting(true);
     setError("");
     try {
@@ -700,28 +781,53 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       }>("/api/web/restore-backup", {
         method: "POST",
         timeout: BACKUP_REQUEST_TIMEOUT_MS,
-        body: { backup: validated.backup, mode: "commit", strategy, opId: validated.opId },
+        body: {
+          backup: snapshot.backup,
+          mode: "commit",
+          strategy,
+          opId: snapshot.opId,
+          ...(snapshot.preview.stateToken ? { expectedStateToken: snapshot.preview.stateToken } : {}),
+        },
       });
+      if (targetUserId && useAuthStore.getState().userId !== targetUserId) return;
       bumpDataEpoch();
-      closeAllModals();
+      // #228: Only close this modal if it is still mounted; never close a newer modal opened after user cancelled
+      if (mountedRef.current) {
+        closeTopModal();
+      }
       onSuccess?.();
       const capWarn = res.photos?.skippedCapacity
         ? `（照片达 60 张上限，跳过 ${res.photos.skippedCapacity} 张）`
         : "";
-      notify(`全量备份恢复完成：新增 ${res.imported} 项，更新 ${res.updated} 项${capWarn}`);
+      notify(`全量备份恢复完成（${snapshot.source}）：新增 ${res.imported} 项，更新 ${res.updated} 项${capWarn}`);
     } catch (err) {
-      setError((err as Error)?.message || "恢复备份失败");
+      if (!mountedRef.current) {
+        notify((err as Error)?.message || "后台恢复备份失败");
+        return;
+      }
+      const apiErr = err as Error & { status?: number };
       setCommitting(false);
+      // #223: On state drift 409, disarm replace confirmation and refresh preview so user sees the latest deletion scope
+      if (apiErr.status === 409) {
+        setArmedReplace(false);
+        await runPreview(rawText, strategy, snapshot.source);
+        if (mountedRef.current) {
+          setError(apiErr.message || "预览后账号数据已发生变化，已重新计算覆盖范围，请核对后再确认");
+        }
+        return;
+      }
+      setError(apiErr.message || "恢复备份失败");
     }
   };
 
   const c = preview?.counts ?? {};
   const d = preview?.diff ?? {};
+  const apc = preview?.activePlanChange;
 
   return (
     <div className="dialog-form csv-import-box">
       <p className="muted">
-        支持一键恢复由「导出全量 JSON」生成的备份文件（包含训练记录、饮食、体重、训练计划、自定义动作、身体围度、动作备忘与 Apple 健康同步数据）。
+        支持一键恢复由「导出全量 JSON」生成的备份文件（包含训练记录、饮食、体重、训练计划、统计偏好、自定义动作、身体围度、动作备忘与 Apple 健康同步数据）。
       </p>
       <label className="csv-file-drop">
         <input
@@ -741,12 +847,13 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
               return;
             }
             setFileName(`已加载：${file.name}`);
+            setSourceLabel(file.name);
             setError("");
             setPreviewing(true);
             void file.text().then((txt) => {
               if (request !== previewRequest.current) return;
               setRawText(txt);
-              void runPreview(txt, strategyRef.current);
+              void runPreview(txt, strategyRef.current, file.name);
             }).catch(() => {
               if (request !== previewRequest.current) return;
               setPreviewing(false);
@@ -767,6 +874,9 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
         onChange={(e) => {
           ++previewRequest.current;
           setRawText(e.target.value);
+          // #229: Clear stale loaded filename as soon as user pastes or edits JSON directly
+          setFileName(e.target.value.trim() ? "当前来源：粘贴 / 已编辑的 JSON 内容" : "");
+          setSourceLabel("粘贴 / 已编辑的 JSON 内容");
           setValidated(null);
           setPreviewing(false);
           setArmedReplace(false);
@@ -804,7 +914,8 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
           <div className="csv-preview-head">
             <span className="starter-tag">{preview.strategy === "replace" ? "策略：完整覆盖" : "策略：智能合并"}</span>
             <small>
-              {preview.exportedAt ? `备份时间：${preview.exportedAt.slice(0, 16).replace("T", " ")}` : "铁记全量备份"}
+              {validated?.source ? `来源：${validated.source} · ` : ""}
+              {formatBackupTimeWithTz(preview.exportedAt)}
             </small>
           </div>
           <div className="csv-preview-stats">
@@ -814,10 +925,20 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
             <div><span>计划/模板</span><strong>{(c.plans ?? 0) + (c.templates ?? 0)} <small>份</small></strong></div>
           </div>
           <p className="muted csv-custom-note">
-            将新增 <b>{d.toImport ?? 0}</b> 项 · 更新 <b>{d.toUpdate ?? 0}</b> 项 · 保留现有 <b>{d.unchanged ?? 0}</b> 项
+            预计新增 <b>{d.toImport ?? 0}</b> 项 · 更新 <b>{d.toUpdate ?? 0}</b> 项 · 保留现有 <b>{d.unchanged ?? 0}</b> 项
             {c.progressPhotos ? ` · 体态照片 ${c.progressPhotos} 张` : ""}
             {c.appleDaily || c.appleWorkouts ? ` · 含 Apple 健康 ${c.appleDaily ?? 0} 天 / ${c.appleWorkouts ?? 0} 场训练` : ""}
+            {preview.statisticsPreferences?.missingInBackup ? " · 旧版备份不含统计偏好（将保留当前端设置）" : ""}
           </p>
+          {apc && apc.action !== "none" && apc.action !== "keep" ? (
+            <p className={apc.action === "deactivate" ? "form-error" : "muted csv-custom-note"} role={apc.action === "deactivate" ? "alert" : undefined} style={{ marginTop: 6 }}>
+              {apc.action === "deactivate"
+                ? `生效计划变更：当前生效计划「${apc.current?.name ?? "当前计划"}」将在覆盖恢复后被停用（备份为未启用状态）。`
+                : apc.action === "switch"
+                  ? `生效计划变更：将从「${apc.current?.name ?? "当前计划"}」切换为「${apc.incoming?.name ?? "备份计划"}」。`
+                  : `生效计划变更：将启用备份中的计划「${apc.incoming?.name ?? "备份计划"}」。`}
+            </p>
+          ) : null}
           {preview.strategy === "replace" && (d.toDelete ?? 0) > 0 && d.deletions ? (
             <p className="form-error" role="alert" style={{ marginTop: 6 }}>
               完整覆盖将永久清除当前账号独有的 <b>{d.deletions.total}</b> 项数据：
@@ -828,9 +949,15 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
                 d.deletions.exerciseNotes ? `动作备忘 ${d.deletions.exerciseNotes} 条` : "",
                 d.deletions.appleDaily ? `Apple 日常 ${d.deletions.appleDaily} 天` : "",
                 d.deletions.appleWorkouts ? `Apple 训练 ${d.deletions.appleWorkouts} 场` : "",
+                d.deletions.activePlan ? `停用当前生效计划 1 项` : "",
               ]
                 .filter(Boolean)
                 .join("、")}
+            </p>
+          ) : null}
+          {armedReplace ? (
+            <p className="form-error" role="status" style={{ marginTop: 6 }}>
+              二次确认：即将用「{validated?.source}」（{formatBackupTimeWithTz(preview.exportedAt)}）执行完整覆盖，再次点击下方按钮生效。
             </p>
           ) : null}
           {preview.photos && preview.photos.skippedCapacity > 0 ? (
@@ -843,8 +970,8 @@ export function BackupRestoreModal({ onSuccess }: { onSuccess?: () => void }) {
       ) : null}
 
       <footer>
-        <button type="button" className="quiet" onClick={closeAllModals}>
-          取消
+        <button type="button" className="quiet" onClick={closeTopModal}>
+          {committing ? "后台继续" : "取消"}
         </button>
         <button
           type="button"

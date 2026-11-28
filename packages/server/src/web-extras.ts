@@ -123,9 +123,8 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
         if (weightKg > 0 && s.reps > 0) {
           volume += weightKg * s.reps * mult;
         }
-        const effectiveReps =
-          s.rir != null && Number.isFinite(s.rir) && s.rir >= 0 && s.rir <= 4 ? s.reps + s.rir : s.reps;
-        const est = weightKg > 0 && effectiveReps > 0 ? estimatedOneRepMax(weightKg, Math.min(effectiveReps, 12)) : 0;
+        // #231: Use completed reps (<=12) for estimated1rm identically to workout report PRs
+        const est = weightKg > 0 && s.reps > 0 && s.reps <= 12 ? estimatedOneRepMax(weightKg, s.reps) : 0;
         if (est > best1rm) best1rm = est;
         if (
           topWeight === null ||
@@ -146,7 +145,7 @@ export function getExerciseHistory(store: Store, userId: string, exerciseId: str
         weightUnit: rowUnit,
         topWeight: topWeight !== null ? round2(topWeight) : null,
         topReps,
-        estimated1rm: best1rm > 0 ? round1(best1rm) : null,
+        estimated1rm: best1rm > 0 ? round2(best1rm) : null,
         bestSeconds,
         workSets: validSets.length,
         volume: Math.round(volume),
@@ -741,6 +740,11 @@ export function buildWebCsv(
       "主肌群",
       "器械",
       "容量系数",
+      "结束时间",
+      "计时(秒)",
+      "时长未知",
+      "组完成时间",
+      "记录类型",
     ];
     const rows: unknown[][] = [];
     const workouts = store
@@ -756,6 +760,10 @@ export function buildWebCsv(
       const secs = workoutDurationSeconds(w);
       const mins = secs != null ? round1(secs / 60) : "";
       const feeling = w.feeling ? (FEELING_LABELS[w.feeling] ?? w.feeling) : "";
+      const endedAt = w.endedAt ?? "";
+      const durationSecCell = secs != null ? Math.round(secs) : "";
+      const durationUnknownCell = w.durationUnknown ? "true" : "false";
+      let emittedSets = 0;
       w.exercises.forEach((ex, exIdx) => {
         const meta = ex.snapshot ?? catalogue?.get(ex.exerciseId);
         const name = meta?.name ?? ex.exerciseId;
@@ -764,6 +772,7 @@ export function buildWebCsv(
         const unit: "kg" | "lb" = ex.weightUnit === "lb" ? "lb" : "kg";
         const rowId = ex.id || `${workoutId}_ex_${exIdx + 1}`;
         ex.sets.forEach((s, idx) => {
+          emittedSets++;
           const weightKg = round2(toKg(s.weight, unit));
           const isWork = isValidWorkSet(s, mode);
           const vol = isWork && mode === "reps" && weightKg > 0 && s.reps > 0
@@ -793,9 +802,47 @@ export function buildWebCsv(
             meta?.muscle ?? "",
             meta?.equipment ?? "",
             mult,
+            endedAt,
+            durationSecCell,
+            durationUnknownCell,
+            s.completed && s.completedAt ? s.completedAt : "",
+            "set",
           ]);
         });
       });
+      // #266: Emit a recognizable session-only row for completed workouts that have 0 sets
+      if (emittedSets === 0) {
+        rows.push([
+          w.date,
+          w.title,
+          mins,
+          feeling,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          0,
+          w.startedAt,
+          workoutId,
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          "",
+          endedAt,
+          durationSecCell,
+          durationUnknownCell,
+          "",
+          "session",
+        ]);
+      }
     }
     return { filename, content: encodeCsvRows(headers, rows) };
   }

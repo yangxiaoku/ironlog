@@ -51,9 +51,46 @@ export interface FitExportWorkoutInput {
   durationUnknown?: boolean;
   activeCaloriesKcal?: number | null;
   totalWorkJoules?: number | null;
+  distanceMeters?: number | null;
+  cardioMeta?: {
+    activityType?: string | null;
+    environment?: "indoor" | "outdoor" | "unknown" | null;
+    distanceMeters?: number | null;
+  } | null;
   exercises?: Workout["exercises"];
   totalSets?: number;
   totalVolumeKg?: number;
+}
+
+function resolveFitSport(input: FitExportWorkoutInput): { sport: number; subSport: number } {
+  const act = (input.cardioMeta?.activityType ?? "").toLowerCase().replace(/[\s_-]+/g, "");
+  const env = input.cardioMeta?.environment ?? "unknown";
+  const indoor = env === "indoor";
+  const hasStrengthWork = Boolean(
+    input.exercises?.some(
+      (ex) =>
+        (ex.snapshot?.muscle ?? "") !== "cardio" &&
+        ex.sets.some((s) => s.completed && s.type !== "warmup" && s.reps > 0),
+    ),
+  );
+  if (act && !hasStrengthWork) {
+    if (act === "running" || act === "run" || act === "treadmill" || act === "indoorrunning" || act === "outdoorrunning") {
+      return { sport: 1, subSport: indoor || act === "treadmill" || act === "indoorrunning" ? 45 : 0 };
+    }
+    if (act === "cycling" || act === "bike" || act === "indoorcycling" || act === "outdoorcycling") {
+      return { sport: 2, subSport: indoor || act === "indoorcycling" ? 6 : 0 };
+    }
+    if (act === "walking" || act === "walk") return { sport: 11, subSport: 0 };
+    if (act === "swimming" || act === "swim") return { sport: 5, subSport: indoor ? 17 : 18 };
+    if (act === "rowing" || act === "indoorrowing") return { sport: 15, subSport: indoor || act === "indoorrowing" ? 14 : 0 };
+    if (act === "hiking" || act === "hike") return { sport: 17, subSport: 0 };
+    if (act === "elliptical") return { sport: 4, subSport: 15 };
+    if (act === "stairstepper" || act === "stairclimbing" || act === "stairs") return { sport: 4, subSport: 16 };
+    if (act === "hiit" || act === "highintensityintervaltraining") return { sport: 62, subSport: 0 };
+    if (act === "yoga") return { sport: 10, subSport: 43 };
+    return { sport: 0, subSport: 0 };
+  }
+  return { sport: 10, subSport: 20 }; // training / strength_training
 }
 
 export function resolveFitDurationSeconds(input: FitExportWorkoutInput): number | null {
@@ -90,16 +127,33 @@ const IRONLOG_DEV_APP_ID = [
  * Refuses to fabricate duration, calorie, or work measurements when missing.
  */
 export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
-  const durationSec = resolveFitDurationSeconds(input);
-  if (durationSec === null) {
+  const timerDurationSec = resolveFitDurationSeconds(input);
+  if (timerDurationSec === null) {
     throw new Error("训练缺少有效时长，无法生成符合实际记录的 .fit 文件；请先补充训练时长或改用 CSV/JSON 导出");
   }
-  const startIso = input.startedAt ?? `${input.date}T12:00:00Z`;
-  const startTs = toFitTimestamp(startIso);
-  const endTs = startTs + durationSec;
+  // #236: Never fabricate a noon UTC start time when actual startedAt is missing/unparseable
+  if (!input.startedAt || !Number.isFinite(Date.parse(input.startedAt))) {
+    throw new Error("训练缺少实际开始时间，无法生成符合实际记录的 .fit 文件；请刷新完整记录后重试");
+  }
+  const startMs = Date.parse(input.startedAt);
+  const startTs = toFitTimestamp(input.startedAt);
+  // #269: Preserve real wall-clock elapsed duration & endedAt when paused, while keeping active timerDurationSec separate
+  const endMs = input.endedAt ? Date.parse(input.endedAt) : NaN;
+  const wallClockSec =
+    Number.isFinite(endMs) && endMs > startMs ? Math.round((endMs - startMs) / 1000) : null;
+  const elapsedDurationSec = wallClockSec !== null ? Math.max(timerDurationSec, wallClockSec) : timerDurationSec;
+  const endTs = startTs + elapsedDurationSec;
 
-  let totalVolumeKg = input.totalVolumeKg ?? 0;
-  if (input.exercises?.length) {
+  const { sport, subSport } = resolveFitSport(input);
+  const rawDistanceMeters = input.distanceMeters ?? input.cardioMeta?.distanceMeters ?? null;
+  const measuredDistanceCm =
+    typeof rawDistanceMeters === "number" && Number.isFinite(rawDistanceMeters) && rawDistanceMeters > 0
+      ? Math.min(0xfffffffe, Math.round(rawDistanceMeters * 100))
+      : null;
+
+  // #270: Trust explicit catalogue-resolved totalVolumeKg when supplied (so legacy snapshot-less assisted exercises are never miscounted as reps volume)
+  let totalVolumeKg = typeof input.totalVolumeKg === "number" && Number.isFinite(input.totalVolumeKg) ? input.totalVolumeKg : 0;
+  if (input.totalVolumeKg === undefined && input.exercises?.length) {
     totalVolumeKg = 0;
     for (const ex of input.exercises) {
       // #123 (P1): Only count reps-mode lifts toward totalVolumeKg (never assisted counterbalance weight).
@@ -197,32 +251,38 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   pushU32(records, endTs);
   records.push(0, 4);
 
-  // 2.5) Local 6 -> Global 19 (lap): required by Garmin FIT Activity File specification (#183)
-  const durationMs = Math.min(0xfffffffe, durationSec * 1000);
+  // 2.5) Local 6 -> Global 19 (lap): required by Garmin FIT Activity File specification (#183, #237, #269)
+  const elapsedMs = Math.min(0xfffffffe, elapsedDurationSec * 1000);
+  const timerMs = Math.min(0xfffffffe, timerDurationSec * 1000);
+  const lapFields: Array<[number, number, number]> = [
+    [253, 4, 0x86], // timestamp
+    [2, 4, 0x86],   // start_time
+    [7, 4, 0x86],   // total_elapsed_time
+    [8, 4, 0x86],   // total_timer_time
+    [0, 1, 0x00],   // event (9 = lap)
+    [1, 1, 0x00],   // event_type (1 = stop)
+    [25, 1, 0x00],  // sport
+    [39, 1, 0x00],  // sub_sport
+  ];
+  if (measuredDistanceCm !== null) lapFields.push([9, 4, 0x86]); // total_distance (cm, scale 100)
   records.push(
     0x46, 0x00, 0x00,
     19, 0x00, // global msg 19 (lap)
-    0x08,
-    253, 4, 0x86, // timestamp
-    2, 4, 0x86,   // start_time
-    7, 4, 0x86,   // total_elapsed_time
-    8, 4, 0x86,   // total_timer_time
-    0, 1, 0x00,   // event (9 = lap)
-    1, 1, 0x00,   // event_type (1 = stop)
-    25, 1, 0x00,  // sport (10 = training)
-    39, 1, 0x00,  // sub_sport (20 = strength_training)
+    lapFields.length,
+    ...lapFields.flat(),
   );
   records.push(0x06);
   pushU32(records, endTs);
   pushU32(records, startTs);
-  pushU32(records, durationMs);
-  pushU32(records, durationMs);
-  records.push(9, 1, 10, 20);
+  pushU32(records, elapsedMs);
+  pushU32(records, timerMs);
+  records.push(9, 1, sport, subSport);
+  if (measuredDistanceCm !== null) pushU32(records, measuredDistanceCm);
 
   // 3) Local 2 -> Global 18 (session):
   // Standard fields: timestamp(253), start_time(2), total_elapsed_time(7), total_timer_time(8),
   // event(0=9 lap), event_type(1=1 stop), sport(5), sub_sport(6), num_laps(26=1)
-  // Plus ONLY genuinely measured total_calories(11) / total_work(48) if supplied,
+  // Plus ONLY genuinely measured total_distance(9), total_calories(11) / total_work(48) if supplied,
   // plus FIT 2.0 developer field 0 (total_volume_kg) when totalVolumeKg > 0.
   const sessionStdFields: Array<[number, number, number]> = [
     [253, 4, 0x86],
@@ -235,6 +295,7 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
     [6, 1, 0x00],
     [26, 2, 0x84],
   ];
+  if (measuredDistanceCm !== null) sessionStdFields.push([9, 4, 0x86]);
   if (measuredCalories !== null) sessionStdFields.push([11, 2, 0x84]);
   if (measuredWorkJoules !== null) sessionStdFields.push([48, 4, 0x86]);
 
@@ -255,12 +316,13 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   records.push(0x02);
   pushU32(records, endTs);
   pushU32(records, startTs);
-  pushU32(records, durationMs);
-  pushU32(records, durationMs);
+  pushU32(records, elapsedMs);
+  pushU32(records, timerMs);
   records.push(9, 1); // event: lap, event_type: stop
-  records.push(10); // sport: training
-  records.push(20); // sub_sport: strength_training
+  records.push(sport);
+  records.push(subSport);
   pushU16(records, 1); // num_laps: 1
+  if (measuredDistanceCm !== null) pushU32(records, measuredDistanceCm);
   if (measuredCalories !== null) pushU16(records, measuredCalories);
   if (measuredWorkJoules !== null) pushU32(records, measuredWorkJoules);
   if (hasVolumeDevField) pushU32(records, Math.min(0xfffffffe, Math.round(totalVolumeKg * 10)));
@@ -280,7 +342,7 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   );
   records.push(0x03);
   pushU32(records, endTs);
-  pushU32(records, durationMs);
+  pushU32(records, timerMs);
   pushU16(records, 1);
   records.push(0, 26, 1);
 

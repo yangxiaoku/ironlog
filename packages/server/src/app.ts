@@ -1190,10 +1190,17 @@ export function createApp(
   });
   app.post("/api/ai/plan", async (c) => {
     const input = textInput
-      .extend({ parentId: z.string().optional() })
+      .extend({
+        parentId: z.string().optional(),
+        parentVersion: z.number().int().positive().optional(),
+        opId: mutationSchema.shape.opId.optional(),
+      })
       .parse(await c.req.json());
     return c.json(
-      await ai.plan(c.get("userId"), input.text, input.parentId),
+      await ai.plan(c.get("userId"), input.text, input.parentId, {
+        parentVersion: input.parentVersion,
+        opId: input.opId,
+      }),
       201,
     );
   });
@@ -1292,6 +1299,8 @@ export function createApp(
       mode: z.enum(["preview", "commit"]).default("preview"),
       strategy: z.enum(["merge", "replace"]).default("merge"),
       opId: z.string().regex(/^[a-zA-Z0-9_-]{1,100}$/).optional(),
+      expectedStateToken: z.string().min(8).max(128).optional(),
+      expectedAccountStateSignature: z.string().min(8).max(128).optional(),
     }).parse(await c.req.json());
     if (input.strategy === "replace" && input.mode === "commit") {
       requireInteractiveAuth(c);
@@ -1300,6 +1309,7 @@ export function createApp(
       mode: input.mode,
       strategy: input.strategy,
       opId: input.opId,
+      expectedStateToken: input.expectedStateToken ?? input.expectedAccountStateSignature,
     }));
   });
   app.post("/api/web/password", async (c) => {

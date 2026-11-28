@@ -511,7 +511,23 @@ export function WorkoutEditorModal({
   }, []);
 
   const [activeExIdx, setActiveExIdx] = useState(0);
-  const isBackfillMode = isBackfillWorkoutDate(date, todayStr, isHistoricalEdit);
+  // #262: Anchor live vs backfill intent at mount (not wall-clock midnight rollover); only enter backfill if started on a past date or user explicitly picks a past date.
+  const [mountTodayStr] = useState(todayStr);
+  const [isBackfillMode, setIsBackfillMode] = useState(() =>
+    isBackfillWorkoutDate(initialSnapshot.date, todayStr, isHistoricalEdit),
+  );
+  useEffect(() => {
+    if (isHistoricalEdit) {
+      setIsBackfillMode(false);
+      return;
+    }
+    // Only switch into backfill if user selects a date earlier than when this session was opened
+    if (date < mountTodayStr) {
+      setIsBackfillMode(true);
+    } else if (date === mountTodayStr || date >= todayStr) {
+      setIsBackfillMode(false);
+    }
+  }, [date, mountTodayStr, todayStr, isHistoricalEdit]);
   const [viewMode, setViewMode] = useState<"single" | "all">(() =>
     isHistoricalEdit ||
     isBackfillWorkoutDate(initialSnapshot.date, todayStr, isHistoricalEdit) ||
@@ -597,7 +613,12 @@ export function WorkoutEditorModal({
   const [durationEdited, setDurationEdited] = useState(false);
   const [manualDurationMin, setManualDurationMin] = useState<string>(() => {
     if (!isHistoricalEdit || record?.data.durationUnknown) return "";
-    const secs = elapsedAt(initialSnapshot.timing, Date.now());
+    const timingSecs = elapsedAt(initialSnapshot.timing, Date.now());
+    const spanSecs =
+      record?.data.startedAt && record?.data.endedAt
+        ? Math.max(0, Math.round((Date.parse(record.data.endedAt) - Date.parse(record.data.startedAt)) / 1000))
+        : 0;
+    const secs = timingSecs > 0 ? timingSecs : spanSecs;
     return secs > 0 ? String(Math.max(1, Math.round(secs / 60))) : "";
   });
   const [undoDeletedSet, setUndoDeletedSet] = useState<{
@@ -1746,8 +1767,8 @@ export function WorkoutEditorModal({
     const nowDate = new Date();
     const nowMs = nowDate.getTime();
     const nowIso = nowDate.toISOString();
-    const cleanStartedAt = normalizeIsoTimestamp(sessionStart, nowIso) ?? nowIso;
-    const startMs = Date.parse(cleanStartedAt);
+    let cleanStartedAt = normalizeIsoTimestamp(sessionStart, nowIso) ?? nowIso;
+    let startMs = Date.parse(cleanStartedAt);
 
     const pausedRaw = pauseAt(timing, nowMs);
     const parsedManualMin = manualDurationMin.trim() === "" ? null : Number(manualDurationMin);
@@ -1757,17 +1778,43 @@ export function WorkoutEditorModal({
       Number.isFinite(parsedManualMin) &&
       parsedManualMin > 0 &&
       parsedManualMin <= 720;
-    const rawElapsed = hasManualDuration ? Math.round(parsedManualMin * 60) : Number(pausedRaw.elapsedSeconds);
+    const origSpanSec =
+      curRec?.data.startedAt && curRec?.data.endedAt
+        ? Math.max(0, Math.round((Date.parse(curRec.data.endedAt) - Date.parse(curRec.data.startedAt)) / 1000))
+        : 0;
+    const rawElapsed = hasManualDuration
+      ? Math.round(parsedManualMin * 60)
+      : Number(pausedRaw.elapsedSeconds) > 0
+        ? Number(pausedRaw.elapsedSeconds)
+        : isHistoricalEdit && !hadTiming
+          ? origSpanSec
+          : Number(pausedRaw.elapsedSeconds);
     const pausedTiming: WorkoutTiming = {
       elapsedSeconds: Number.isFinite(rawElapsed) ? Math.max(0, Math.round(rawElapsed)) : 0,
       runningSince: normalizeIsoTimestamp(pausedRaw.runningSince, null as unknown as string) ?? null,
     };
 
+    // #261: When changing date on a historical completed workout without editing duration, shift startedAt & endedAt together by the exact day delta so exact duration (e.g. 47 min) is never zeroed out!
+    const dateDeltaMs =
+      isHistoricalEdit && curRec && cleanDate !== curRec.data.date
+        ? Date.parse(`${cleanDate}T00:00:00Z`) - Date.parse(`${curRec.data.date}T00:00:00Z`)
+        : 0;
+    if (dateDeltaMs !== 0 && Number.isFinite(dateDeltaMs) && Number.isFinite(startMs)) {
+      startMs += dateDeltaMs;
+      cleanStartedAt = new Date(startMs).toISOString();
+    }
+
     let endedAt: string | null = null;
     if (targetStatus === "completed") {
-      if (!hasManualDuration && isHistoricalEdit && curRec && cleanDate === curRec.data.date) {
-        // Preserve original endedAt verbatim (including null or exact seconds) when user didn't touch duration (#26)
-        endedAt = curRec.data.endedAt ?? null;
+      if (!hasManualDuration && isHistoricalEdit && curRec) {
+        if (curRec.data.endedAt) {
+          const origEndMs = Date.parse(curRec.data.endedAt);
+          endedAt = Number.isFinite(origEndMs)
+            ? new Date(Math.max(startMs, origEndMs + dateDeltaMs)).toISOString()
+            : curRec.data.endedAt;
+        } else {
+          endedAt = null;
+        }
       } else {
         const candidateEndedAt = hasManualDuration
           ? new Date(startMs + pausedTiming.elapsedSeconds * 1000).toISOString()

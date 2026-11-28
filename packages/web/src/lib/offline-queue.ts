@@ -67,18 +67,104 @@ export function clearQueue(storage: QueueStorage | null | undefined, userId: str
   } catch {}
 }
 
-export function clearFailedMutations(storage: QueueStorage | null | undefined, userId: string): number {
+export interface ClearFailedResult {
+  removed: number;
+  remainingPending: number;
+  remainingBlocked: number;
+  storageError: boolean;
+}
+
+export function clearFailedMutationsByIds(
+  storage: QueueStorage | null | undefined,
+  userId: string,
+  targetOpIds?: string[],
+): ClearFailedResult {
   const key = queueStorageKey(userId);
-  if (!storage || !key) return 0;
+  if (!storage || !key) {
+    return { removed: 0, remainingPending: 0, remainingBlocked: 0, storageError: true };
+  }
   try {
     const current = loadQueue(storage, userId);
-    const kept = current.filter((item) => !item.failure);
+    const targetSet = targetOpIds ? new Set(targetOpIds) : null;
+    const kept = current.filter((item) => {
+      if (!item.failure) return true;
+      if (targetSet && !targetSet.has(item.opId)) return true;
+      return false;
+    });
     const removed = current.length - kept.length;
     if (removed > 0) writeQueue(storage, userId, kept);
-    return removed;
+    const remainingBlocked = kept.filter((item) => Boolean(item.failure)).length;
+    return {
+      removed,
+      remainingPending: kept.length - remainingBlocked,
+      remainingBlocked,
+      storageError: false,
+    };
   } catch {
-    return 0;
+    const fallback = readQueue(storage, userId);
+    const remainingBlocked = fallback.filter((item) => Boolean(item.failure)).length;
+    return {
+      removed: 0,
+      remainingPending: fallback.length - remainingBlocked,
+      remainingBlocked,
+      storageError: true,
+    };
   }
+}
+
+export function clearFailedMutations(
+  storage: QueueStorage | null | undefined,
+  userId: string,
+  targetOpIds?: string[],
+): number {
+  return clearFailedMutationsByIds(storage, userId, targetOpIds).removed;
+}
+
+function recordCoalesceKey(item: Pick<OfflineMutation, "path" | "method" | "body">): string | null {
+  if (item.path !== "/api/records" || (item.method ?? "POST").toUpperCase() !== "POST") return null;
+  const body = item.body as { kind?: unknown; id?: unknown; deleted?: unknown } | null;
+  if (!body || typeof body !== "object") return null;
+  if (body.kind === "weight" && typeof body.id === "string" && body.id && body.deleted !== true) {
+    return `weight:${body.id}`;
+  }
+  return null;
+}
+
+export function findPendingRecordMutation(
+  storage: QueueStorage | null | undefined,
+  userId: string,
+  kind: string,
+  id: string,
+): OfflineMutation | null {
+  const items = readQueue(storage, userId);
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]!;
+    if (item.failure || item.path !== "/api/records") continue;
+    const body = item.body as { kind?: unknown; id?: unknown; deleted?: unknown } | null;
+    if (body && body.kind === kind && body.id === id && body.deleted !== true) {
+      return item;
+    }
+  }
+  return null;
+}
+
+export function removePendingRecordMutation(
+  storage: QueueStorage | null | undefined,
+  userId: string,
+  kind: string,
+  id: string,
+): void {
+  const key = queueStorageKey(userId);
+  if (!storage || !key) return;
+  try {
+    const current = loadQueue(storage, userId);
+    const next = current.filter((item) => {
+      if (item.failure || item.path !== "/api/records") return true;
+      const body = item.body as { kind?: unknown; id?: unknown; deleted?: unknown } | null;
+      return !(body && body.kind === kind && body.id === id && body.deleted !== true);
+    });
+    if (next.length !== current.length) writeQueue(storage, userId, next);
+  } catch {}
 }
 
 export function enqueueMutation(
@@ -88,12 +174,35 @@ export function enqueueMutation(
 ): number | null {
   if (!item?.opId || !item?.path) return null;
   try {
-    const list = loadQueue(storage, userId).filter((existing) => existing.opId !== item.opId);
+    const coalesceKey = recordCoalesceKey(item);
+    const existingList = loadQueue(storage, userId);
+    let preservedBaseVersion: number | undefined;
+    const list = existingList.filter((existing) => {
+      if (existing.opId === item.opId) return false;
+      // #246: Coalesce unsent offline edits to the same weight record on the same device while preserving the original observed baseVersion
+      if (coalesceKey && !existing.failure && recordCoalesceKey(existing) === coalesceKey) {
+        const existingBody = existing.body as { baseVersion?: unknown } | null;
+        if (typeof existingBody?.baseVersion === "number" && preservedBaseVersion === undefined) {
+          preservedBaseVersion = existingBody.baseVersion;
+        }
+        return false;
+      }
+      return true;
+    });
+    let nextBody = item.body;
+    if (
+      preservedBaseVersion !== undefined &&
+      nextBody &&
+      typeof nextBody === "object" &&
+      !Array.isArray(nextBody)
+    ) {
+      nextBody = { ...(nextBody as Record<string, unknown>), baseVersion: preservedBaseVersion };
+    }
     list.push({
       opId: item.opId,
       path: item.path,
       method: item.method ?? "POST",
-      body: item.body,
+      body: nextBody,
       label: item.label ?? "记录",
       queuedAt: item.queuedAt ?? new Date().toISOString(),
     });

@@ -58,7 +58,8 @@ function performances(mode: Exercise["mode"], sets: Array<Set & { _unit?: "kg" |
     if (set.weight <= 0 || set.reps <= 0) continue;
     const wKg = weightToKg(set.weight, set._unit);
     if (!hasWeight || wKg > maxWeight) { maxWeight = wKg; hasWeight = true; }
-    if (set.reps <= 10) {
+    // #231: Align 1RM rep cap (<=12, completed reps only) with exercise history
+    if (set.reps <= 12) {
       const est = estimatedOneRepMax(wKg, set.reps);
       if (!has1rm || est > max1rm) { max1rm = est; has1rm = true; }
     }
@@ -80,6 +81,7 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
   const catalogue = store.catalogueMap(userId, true);
   const rows = trainingRows(workout, catalogue);
   const relevant = new Set(rows.map(key));
+  const activeRelevant = new Set(rows.filter((r) => r.working.length > 0 || r.completed.length > 0).map(key));
   const searchIds = new Set(rows.map(({ exerciseId }) => exerciseId));
   const targetTimeMs = Date.parse(workout.endedAt ?? workout.startedAt);
   const baseline = new Map<string, Scores>();
@@ -89,13 +91,26 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
     const sessionMs = Date.parse(session.endedAt ?? session.startedAt) || 0;
     if (entry.id === id || session.status !== "completed" || session.date > workout.date ||
       (session.date === workout.date && sessionMs >= targetTimeMs)) continue;
-    // #81: Match planId + routineId together so identical routine IDs across different plans never cross-compare.
-    const sameRoutine =
-      workout.planId && workout.routineId
-        ? session.planId === workout.planId && session.routineId === workout.routineId
-        : !workout.planId && workout.routineId
-          ? !session.planId && session.routineId === workout.routineId
-          : !session.planId && !session.routineId && session.title.trim() === workout.title.trim();
+    // #81 & #230: Match planId + routineId when linked; for unlinked free workouts require exercise/mode overlap (or matching cardio activity)
+    let sameRoutine = false;
+    if (workout.planId && workout.routineId) {
+      sameRoutine = session.planId === workout.planId && session.routineId === workout.routineId;
+    } else if (!workout.planId && workout.routineId) {
+      sameRoutine = !session.planId && session.routineId === workout.routineId;
+    } else if (!session.planId && !session.routineId && session.title.trim() === workout.title.trim()) {
+      if (activeRelevant.size > 0) {
+        sameRoutine = session.exercises.some((sRow) => {
+          const ex = sRow.snapshot ?? catalogue.get(sRow.exerciseId);
+          const mode = ex?.mode ?? (sRow.sets.some((set) => set.seconds > 0) && sRow.sets.every((set) => set.reps === 0) ? "timed" : "reps");
+          if (!activeRelevant.has(`${sRow.exerciseId}:${mode}`)) return false;
+          return sRow.sets.some((set) => isValidWorkSet({ ...set, type: "normal" }, ex?.mode));
+        });
+      } else if (workout.cardioMeta?.activityType) {
+        sameRoutine = session.cardioMeta?.activityType === workout.cardioMeta.activityType;
+      } else {
+        sameRoutine = session.exercises.length === 0;
+      }
+    }
     if (sameRoutine && (
       !prevEntry ||
       session.date > prevEntry.workout.date ||
@@ -185,6 +200,9 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
 
   return {
     id, title: workout.title, date: workout.date, feeling: workout.feeling, notes: workout.notes,
+    startedAt: workout.startedAt,
+    endedAt: workout.endedAt ?? null,
+    durationUnknown: Boolean(workout.durationUnknown),
     planId: workout.planId ?? null,
     routineId: workout.routineId ?? null,
     cardioMeta: workout.cardioMeta ?? null,

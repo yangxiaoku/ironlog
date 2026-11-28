@@ -84,11 +84,25 @@ const cardioKinds: [RegExp, string][] = [
   [/\b(jump rope|skipping rope)\b|跳绳/i, "jumprope"],
   [/\bhiit\b|高强度间歇/i, "highintensityintervaltraining"],
 ];
-type TrainingKind = { family: Family; cardio: Set<string> };
+type TrainingKind = { family: Family; families: Set<Family>; cardio: Set<string> };
 
-function trainingKind(exercises: (Exercise | null | undefined)[]): TrainingKind {
+function trainingKind(
+  exercises: (Exercise | null | undefined)[],
+  cardioMeta?: Workout["cardioMeta"] | null,
+): TrainingKind {
   const families = new Set<Family>();
   const cardio = new Set<string>();
+  // #239: Prefer structured cardioMeta.activityType over exercise-name regex when present
+  if (cardioMeta?.activityType) {
+    const metaAct = identifyActivity({
+      activityType: cardioMeta.activityType,
+      environment: cardioMeta.environment ?? "unknown",
+    });
+    if (metaAct.family === "cardio") {
+      families.add("cardio");
+      cardio.add(metaAct.key);
+    }
+  }
   for (const exercise of exercises) {
     if (!exercise) { families.add("other"); continue; }
     const category = getExerciseCategory(exercise);
@@ -101,13 +115,23 @@ function trainingKind(exercises: (Exercise | null | undefined)[]): TrainingKind 
       if (type) cardio.add(type);
     } else families.add("other");
   }
-  return { family: families.size === 1 ? [...families][0]! : "other", cardio };
+  return { family: families.size === 1 ? [...families][0]! : "other", families, cardio };
 }
 
-function compatible(activity: Activity, planned: TrainingKind, allowGenericCardio: boolean) {
-  if (activity.family === "other" || planned.family !== activity.family) return false;
+function compatible(
+  activity: Activity,
+  planned: TrainingKind,
+  allowGenericCardio: boolean,
+  allowMixed = false,
+) {
+  if (activity.family === "other") return false;
+  const familyMatch = planned.family === activity.family || (allowMixed && planned.families.has(activity.family));
+  if (!familyMatch) return false;
   if (activity.family === "resistance") return true;
-  return planned.cardio.size > 0 ? planned.cardio.size === 1 && planned.cardio.has(activity.key) : allowGenericCardio;
+  if (planned.cardio.size > 0) {
+    return allowMixed ? planned.cardio.has(activity.key) : planned.cardio.size === 1 && planned.cardio.has(activity.key);
+  }
+  return allowGenericCardio;
 }
 
 type Uploaded = AppleWorkoutData & { id: string; date: string; activity: Activity };
@@ -138,7 +162,7 @@ function adjacentDays(date: string): string[] {
 
 function nearSameDayResistance(
   appleWorkout: { startedAt: string; endedAt: string | null },
-  manualWorkout: { startedAt: string; endedAt: string | null },
+  manualWorkout: Pick<Workout, "startedAt" | "endedAt" | "timing" | "durationUnknown" | "exercises">,
 ) {
   if (!appleWorkout.endedAt || !manualWorkout.endedAt) return false;
   const startA = Date.parse(appleWorkout.startedAt), endA = Date.parse(appleWorkout.endedAt);
@@ -154,9 +178,24 @@ function nearSameDayResistance(
   if (shared > 0) {
     return shared >= MIN_PARTIAL_OVERLAP_MS || shared >= 0.25 * Math.min(durA, durB);
   }
-  // Post-workout backfill only: manual session logged in Ironlog within 30 min AFTER Watch ended.
-  // Never merge a Watch workout that started after a manual session already finished.
-  return startB >= endA && startB - endA <= SAME_DAY_RESISTANCE_MAX_POST_LOG_GAP_MS;
+  // #240: Non-overlapping sessions — NEVER merge a separate live-timed Ironlog workout that started after Watch finished.
+  // Only allow post-workout backfill matching when there is no real live-clocked session evidence.
+  if (startB < endA || startB - endA > SAME_DAY_RESISTANCE_MAX_POST_LOG_GAP_MS) {
+    return false;
+  }
+  if (manualWorkout.durationUnknown) return true;
+  const hasLiveTimer = Boolean(manualWorkout.timing && manualWorkout.timing.elapsedSeconds >= 5 * 60);
+  if (hasLiveTimer) return false;
+  const completedTimes = manualWorkout.exercises
+    .flatMap((ex) => ex.sets.map((s) => (s.completed && s.completedAt ? Date.parse(s.completedAt) : NaN)))
+    .filter((ms) => Number.isFinite(ms) && ms >= endA);
+  if (completedTimes.length >= 2) {
+    const spanMs = Math.max(...completedTimes) - Math.min(...completedTimes);
+    if (spanMs >= 5 * 60_000) return false;
+  }
+  // A full-length separate workout (>= 20 min and >= 75% of Watch duration) with zero overlap is a distinct session
+  if (durB >= 20 * 60_000 && durB >= 0.75 * durA) return false;
+  return true;
 }
 
 function sameSourceWorkout(a: Uploaded, b: Uploaded) {
@@ -234,15 +273,19 @@ export function projectAppleTraining(
   knownExercises?: ReadonlyMap<string, Exercise>,
   knownWorkouts?: readonly { id: string; workout: Workout }[],
 ) {
-  const records = knownWorkouts
-    ? knownWorkouts.filter(({ workout }) => workout.status === "completed" && workout.date <= through)
+  // #242: Include +1 day lookahead so cross-midnight Watch workouts (e.g. 00:02 next day) that pair with
+  // a manual workout anchored on `through` (e.g. 23:55) are matched consistently in single-day and multi-day queries.
+  const lookaheadThrough = localDate(startOf(through) + DAY);
+  const allManualRecords = knownWorkouts
+    ? knownWorkouts.filter(({ workout }) => workout.status === "completed" && workout.date <= lookaheadThrough)
     : store.list(userId, "workout").flatMap(({ id, data }) => {
         const workout = data as Workout;
-        if (workout.status !== "completed" || workout.date > through) return [];
+        if (workout.status !== "completed" || workout.date > lookaheadThrough) return [];
         return [{ id, workout }];
       });
+  const records = allManualRecords.filter(({ workout }) => workout.date <= through);
   const completionHistory: PlanCompletion[] = records.map(({ workout }) => workout);
-  const uploads = canonicalUploads(store, userId, through);
+  const uploads = canonicalUploads(store, userId, lookaheadThrough);
   const agenda: AppleAgendaItem[] = [];
   if (!uploads.length) return { entries: agenda, completionHistory };
   const catalogue = knownExercises ?? store.catalogueMap(userId, true);
@@ -262,7 +305,7 @@ export function projectAppleTraining(
     return kind;
   };
   const byDay = new Map<string, Manual[]>();
-  for (const record of records) {
+  for (const record of allManualRecords) {
     if (!byDay.has(record.workout.date)) byDay.set(record.workout.date, []);
     const performed = record.workout.exercises.flatMap((row) => {
       const known = catalogue.get(row.exerciseId);
@@ -272,15 +315,16 @@ export function projectAppleTraining(
       return [{ id: row.exerciseId, englishName: "", aliases: [], instructions: [], mistakes: [],
         secondaryMuscles: [], custom: true, ...row.snapshot }];
     });
-    byDay.get(record.workout.date)!.push({ ...record, kind: trainingKind(performed) });
+    byDay.get(record.workout.date)!.push({ ...record, kind: trainingKind(performed, record.workout.cardioMeta) });
   }
   const possible = new Map<string, Manual[]>();
   const useCount = new Map<string, number>();
   for (const row of uploads) {
     // Check adjacent dates so cross-midnight sessions (e.g. manual 23:59 vs Watch 00:01) still pair strictly.
     const candidates = adjacentDays(row.date).flatMap((d) => byDay.get(d) ?? []);
+    // #238 & #239: Allow mixed-modality sessions (e.g. treadmill warmup + bench press) and structured cardioMeta matching
     const joined = candidates.filter((record) =>
-      compatible(row.activity, record.kind, false) && overlapping(row, record.workout));
+      compatible(row.activity, record.kind, false, true) && overlapping(row, record.workout));
     possible.set(row.id, joined);
     for (const item of joined) useCount.set(item.id, (useCount.get(item.id) ?? 0) + 1);
   }
@@ -302,7 +346,7 @@ export function projectAppleTraining(
     const candidates = adjacentDays(row.date).flatMap((d) => byDay.get(d) ?? []);
     const joined = candidates.filter((record) =>
       !pairedManualIds.has(record.id) &&
-      record.kind.family === "resistance" &&
+      record.kind.families.has("resistance") &&
       nearSameDayResistance(row, record.workout));
     fallbackPossible.set(row.id, joined);
     for (const item of joined) fallbackUseCount.set(item.id, (fallbackUseCount.get(item.id) ?? 0) + 1);
@@ -318,6 +362,8 @@ export function projectAppleTraining(
   for (const row of uploads) {
     const manual = manualByUploadId.get(row.id) ?? null;
     const effectiveDate = manual ? manual.workout.date : row.date;
+    // #242: Filter to user's requested `through` date AFTER cross-midnight manual pairing resolves effectiveDate
+    if (effectiveDate > through) continue;
     const override = overridesByDate.get(effectiveDate);
     const activation = planHistory.find((plan) => !!plan.updatedAt && plan.updatedAt <= row.startedAt);
     let matchedPlan: ApplePlanMatch | null = null;

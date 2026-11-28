@@ -3,7 +3,13 @@ import { apiFetch } from "../../lib/api";
 import { fmt, today } from "../../lib/date";
 import { shiftDateStr, type RecordEnvelope, type WeightData } from "../../lib/domain";
 import { triggerHaptic } from "../../lib/haptics-audio";
-import { enqueueMutation, getOfflineStorage, isNetworkError } from "../../lib/offline-queue";
+import {
+  enqueueMutation,
+  findPendingRecordMutation,
+  getOfflineStorage,
+  isNetworkError,
+  removePendingRecordMutation,
+} from "../../lib/offline-queue";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -36,6 +42,12 @@ export function WeightEditorModal({
   );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pendingLocalWeight, setPendingLocalWeight] = useState<{
+    weight: number;
+    bodyFat: number | null;
+    baseVersion: number;
+    queuedAt?: string;
+  } | null>(null);
   const resolvedVersionsRef = useRef<Map<string, number>>(new Map());
   const resolvedExistingRef = useRef<Map<string, RecordEnvelope<WeightData>>>(new Map());
   const weightDirtyRef = useRef(false);
@@ -56,18 +68,38 @@ export function WeightEditorModal({
   };
 
   useEffect(() => {
-    if (record) return;
     let active = true;
     const targetDate = date;
-    const weightId = `weight_${targetDate}`;
+    const weightId = record?.id ?? `weight_${targetDate}`;
+    // #246 & R25 UX: Inspect unsent local offline queue entry for the same date before/alongside server fetch
+    const pendingMut = userId ? findPendingRecordMutation(getOfflineStorage(), userId, "weight", weightId) : null;
+    const pendingBody = pendingMut?.body as { baseVersion?: number; data?: WeightData } | undefined;
+    if (pendingBody?.data && typeof pendingBody.data.weight === "number") {
+      const localInfo = {
+        weight: pendingBody.data.weight,
+        bodyFat: pendingBody.data.bodyFat ?? null,
+        baseVersion: typeof pendingBody.baseVersion === "number" ? pendingBody.baseVersion : (record?.version ?? 0),
+        queuedAt: pendingMut?.queuedAt,
+      };
+      setPendingLocalWeight(localInfo);
+      resolvedVersionsRef.current.set(targetDate, localInfo.baseVersion);
+      if (!weightDirtyRef.current) setWeight(String(localInfo.weight));
+      if (!bodyFatDirtyRef.current) setBodyFat(localInfo.bodyFat != null ? String(localInfo.bodyFat) : "");
+    } else {
+      setPendingLocalWeight(null);
+    }
+
+    if (record) return;
     void apiFetch<RecordEnvelope<WeightData>>(
       `/api/web/records/weight/${encodeURIComponent(weightId)}?includeDeleted=1`,
     )
       .then((existing) => {
         if (!active) return;
-        resolvedVersionsRef.current.set(targetDate, existing.version);
+        if (!pendingBody?.data) {
+          resolvedVersionsRef.current.set(targetDate, existing.version);
+        }
         resolvedExistingRef.current.set(targetDate, existing);
-        if (!existing.deleted && existing.data) {
+        if (!pendingBody?.data && !existing.deleted && existing.data) {
           // #76: Merge each field independently so editing weight before slow fetch resolves preserves existing bodyFat.
           if (!weightDirtyRef.current) {
             setWeight(String(existing.data.weight));
@@ -75,21 +107,23 @@ export function WeightEditorModal({
           if (!bodyFatDirtyRef.current) {
             setBodyFat(existing.data.bodyFat != null ? String(existing.data.bodyFat) : "");
           }
-        } else {
+        } else if (!pendingBody?.data) {
           if (!bodyFatDirtyRef.current) setBodyFat("");
         }
       })
       .catch(() => {
         if (!active) return;
-        resolvedVersionsRef.current.set(targetDate, 0);
-        resolvedExistingRef.current.delete(targetDate);
-        // #190: On 404 (no record for targetDate), ensure stale auto-loaded bodyFat is cleared
-        if (!bodyFatDirtyRef.current) setBodyFat("");
+        if (!pendingBody?.data) {
+          resolvedVersionsRef.current.set(targetDate, 0);
+          resolvedExistingRef.current.delete(targetDate);
+          // #190: On 404 (no record for targetDate), ensure stale auto-loaded bodyFat is cleared
+          if (!bodyFatDirtyRef.current) setBodyFat("");
+        }
       });
     return () => {
       active = false;
     };
-  }, [record, date]);
+  }, [record, date, userId]);
 
   const stepWeight = (delta: number) => {
     triggerHaptic("light");
@@ -152,6 +186,10 @@ export function WeightEditorModal({
 
     try {
       await apiFetch("/api/records", { method: "POST", body: payload });
+      if (userId) {
+        removePendingRecordMutation(getOfflineStorage(), userId, "weight", payload.id);
+        refreshPendingCount(userId);
+      }
       triggerHaptic("success");
       bumpDataEpoch();
       closeAllModals();
@@ -171,7 +209,7 @@ export function WeightEditorModal({
         }
         refreshPendingCount(userId);
         closeAllModals();
-        notify("离线状态：体重已暂存本地");
+        notify(pendingLocalWeight ? "离线状态：已更新本机待同步体重" : "离线状态：体重已暂存本地");
         return;
       }
       setError((err as Error)?.message || "保存失败");
@@ -210,6 +248,13 @@ export function WeightEditorModal({
 
   return (
     <form className="dialog-form modern-weight-form" onSubmit={(e) => void handleSubmit(e)}>
+      {pendingLocalWeight ? (
+        <div className="notice-banner" role="status" style={{ fontSize: 12.5 }}>
+          本机有 {date} 待同步体重：<strong>{fmt(pendingLocalWeight.weight, 2)} kg</strong>
+          {pendingLocalWeight.bodyFat != null ? ` · 体脂 ${fmt(pendingLocalWeight.bodyFat)}%` : ""}
+          （尚未上传，本次保存将更新该待同步记录）
+        </div>
+      ) : null}
       <div className="date-quick-strip">
         <div className="date-pill-group">
           <button

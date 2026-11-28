@@ -651,11 +651,57 @@ export class AppleHealth {
     return this.db.transaction(() => {
       const row = this.stmtGetWorkoutById.get(userId, id) as { identityKey: string; data: string } | undefined;
       if (!row) throw new DomainError("找不到对应的 Apple 训练", 404);
-      this.stmtInsertDeletedIdentity.run(userId, row.identityKey, new Date().toISOString());
-      this.stmtClearWorkoutReceipts.run(userId, id);
-      this.stmtUnlinkEventWorkout.run(id);
-      this.stmtDeleteWorkout.run(userId, id);
-      return { ok: true as const };
+      const primary = JSON.parse(row.data) as AppleWorkoutData;
+      const primaryKey = canonicalAppleActivityType(primary.activityType);
+      const primaryStart = Date.parse(primary.startedAt);
+      const primaryEnd = Date.parse(primary.endedAt);
+      const primaryDur = primaryEnd - primaryStart;
+
+      // #241: Also delete & tombstone companion merged rows (e.g. hidden Shortcut trigger or deduped upload for the same session)
+      const allRows = this.db
+        .prepare("SELECT id, identity_key AS identityKey, data FROM apple_health_workouts WHERE user_id = ?")
+        .all(userId) as Array<{ id: string; identityKey: string; data: string }>;
+      const targets: Array<{ id: string; identityKey: string }> = [{ id, identityKey: row.identityKey }];
+      for (const other of allRows) {
+        if (other.id === id) continue;
+        let otherData: AppleWorkoutData;
+        try {
+          otherData = JSON.parse(other.data) as AppleWorkoutData;
+        } catch {
+          continue;
+        }
+        if (canonicalAppleActivityType(otherData.activityType) !== primaryKey) continue;
+        if (
+          otherData.environment !== primary.environment &&
+          otherData.environment !== "unknown" &&
+          primary.environment !== "unknown"
+        ) {
+          continue;
+        }
+        const otherStart = Date.parse(otherData.startedAt);
+        const otherEnd = Date.parse(otherData.endedAt);
+        const otherDur = otherEnd - otherStart;
+        if (!Number.isFinite(otherStart) || !Number.isFinite(otherEnd) || otherDur <= 0 || primaryDur <= 0) continue;
+        if (Math.abs(otherStart - primaryStart) > 120_000 || Math.abs(otherEnd - primaryEnd) > 120_000) continue;
+        const shared = Math.min(primaryEnd, otherEnd) - Math.max(primaryStart, otherStart);
+        if (shared < 0.8 * Math.min(primaryDur, otherDur) || shared < 0.55 * Math.max(primaryDur, otherDur)) continue;
+        const isTriggerPair = otherData.captureMethod !== primary.captureMethod;
+        const isDedupedDirect =
+          otherData.captureMethod === primary.captureMethod &&
+          (!otherData.externalWorkoutId || !primary.externalWorkoutId);
+        if (isTriggerPair || isDedupedDirect) {
+          targets.push({ id: other.id, identityKey: other.identityKey });
+        }
+      }
+
+      const deletedAt = new Date().toISOString();
+      for (const target of targets) {
+        this.stmtInsertDeletedIdentity.run(userId, target.identityKey, deletedAt);
+        this.stmtClearWorkoutReceipts.run(userId, target.id);
+        this.stmtUnlinkEventWorkout.run(target.id);
+        this.stmtDeleteWorkout.run(userId, target.id);
+      }
+      return { ok: true as const, deletedCount: targets.length };
     }).immediate();
   }
 

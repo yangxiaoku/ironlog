@@ -167,6 +167,42 @@ export function App() {
     });
   }, [userId, offlineBoot]);
 
+  // #250: Refresh pending sync badge & data when another same-origin tab updates or clears this account's offline queue
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") return;
+    const targetKey = `ironlog-offline-queue:${userId}`;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== targetKey) return;
+      const ui = useUiStore.getState();
+      const prevCount = ui.pendingSyncCount;
+      ui.refreshPendingCount(userId);
+      const nextCount = readQueue(getOfflineStorage(), userId).length;
+      if (nextCount < prevCount) {
+        ui.bumpDataEpoch();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [userId]);
+
+  // #250: Refresh pending sync badge & data when another same-origin tab updates or clears this account's offline queue
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") return;
+    const targetKey = `ironlog-offline-queue:${userId}`;
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.key !== targetKey) return;
+      const ui = useUiStore.getState();
+      const prevCount = ui.pendingSyncCount;
+      ui.refreshPendingCount(userId);
+      const nextCount = readQueue(getOfflineStorage(), userId).length;
+      if (nextCount < prevCount) {
+        ui.bumpDataEpoch();
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, [userId]);
+
   useEffect(() => {
     if (!userId) return;
     let active = true;
@@ -286,7 +322,15 @@ export function App() {
           </Suspense>
         </ViewErrorBoundary>
       </AppShell>
-      <ModalHost />
+      <ViewErrorBoundary
+        resetKey={`modal:${userId}:${dataEpoch}`}
+        onGoHome={() => {
+          useUiStore.getState().closeAllModals();
+          navigate("overview");
+        }}
+      >
+        <ModalHost />
+      </ViewErrorBoundary>
       <ToastHost />
     </>
   );

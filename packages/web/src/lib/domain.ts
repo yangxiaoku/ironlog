@@ -369,6 +369,9 @@ export interface WorkoutReportResponse {
   date: string;
   feeling?: FeelingKey | null;
   notes?: string | null;
+  startedAt?: string | null;
+  endedAt?: string | null;
+  durationUnknown?: boolean;
   planId?: string | null;
   routineId?: string | null;
   cardioMeta?: WorkoutData["cardioMeta"] | null;

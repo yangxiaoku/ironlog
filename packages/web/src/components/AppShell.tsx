@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { triggerHaptic } from "../lib/haptics-audio";
-import { clearFailedMutations, getOfflineStorage, readQueue } from "../lib/offline-queue";
+import { clearFailedMutationsByIds, getOfflineStorage, readQueue } from "../lib/offline-queue";
 import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../lib/workout-helpers";
 import { prefetchWorkspace } from "../lib/prefetch";
 import { openCommandPalette } from "../lib/record-openers";
@@ -334,19 +334,38 @@ export function AppShell({ children }: { children: ReactNode }) {
                   void syncOfflineQueue(userId, { silent: false }).then(() => {
                     const blocked = readQueue(getOfflineStorage(), userId).filter((item) => item.failure);
                     if (!blocked.length) return;
-                    const firstMsg = blocked[0]?.failure?.message || "数据版本冲突";
+                    // #247: Freeze the exact opIds shown in this confirmation dialog so newly arriving conflicts are never silently wiped
+                    const confirmedOpIds = blocked.map((item) => item.opId);
+                    const detailLines = blocked
+                      .slice(0, 4)
+                      .map((item, idx) => `${idx + 1}. ${item.label || "离线记录"}：${item.failure?.message || "数据版本冲突"}`);
+                    if (blocked.length > 4) {
+                      detailLines.push(`…另有 ${blocked.length - 4} 条冲突记录`);
+                    }
                     openConfirm({
                       title: `${blocked.length} 条离线记录冲突或被拒绝`,
-                      message: `错误详情：${firstMsg}。可保留并在服务端手动补录后清理这些冲突项。`,
-                      confirmLabel: "仅清空冲突条目",
+                      message: `${detailLines.join("；")}。确认后将仅清理本次展示的 ${confirmedOpIds.length} 条冲突项，不影响其他待同步或新增冲突记录。`,
+                      confirmLabel: "清空冲突条目",
                       onConfirm: () => {
-                        const removed = clearFailedMutations(getOfflineStorage(), userId);
-                        const remaining = readQueue(getOfflineStorage(), userId).length;
+                        // #249: Report storage write failures and separate remaining blocked vs normal pending counts accurately
+                        const res = clearFailedMutationsByIds(getOfflineStorage(), userId, confirmedOpIds);
                         refreshPendingCount(userId);
+                        if (res.storageError) {
+                          notify(
+                            `本机存储拒绝修改离线队列，仍有 ${res.remainingBlocked} 条冲突记录保留在本机，请稍后重试`,
+                          );
+                          return;
+                        }
+                        if (res.remainingBlocked > 0) {
+                          notify(
+                            `已清理 ${res.removed} 条已确认冲突，仍有 ${res.remainingBlocked} 条新增冲突待核对${res.remainingPending > 0 ? `，保留 ${res.remainingPending} 条待同步记录` : ""}`,
+                          );
+                          return;
+                        }
                         notify(
-                          remaining > 0
-                            ? `已清理 ${removed} 条冲突记录，保留 ${remaining} 条正常待同步记录`
-                            : "已清理冲突的离线记录",
+                          res.remainingPending > 0
+                            ? `已清理 ${res.removed} 条冲突记录，保留 ${res.remainingPending} 条正常待同步记录`
+                            : `已清理 ${res.removed} 条冲突的离线记录`,
                         );
                       },
                     });

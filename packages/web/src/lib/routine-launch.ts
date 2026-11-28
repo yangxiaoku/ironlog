@@ -3,7 +3,7 @@ import { applyDeloadToTarget, buildWarmupSetsPlan, readWorkoutPreferences, type 
 
 export interface RoutineLaunchExerciseRow {
   exerciseId: string;
-  targetIndex?: number;
+  targetIndex?: number | null;
   restSeconds: number;
   supersetGroup?: string | null;
   weightUnit?: WeightUnit;

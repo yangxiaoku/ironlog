@@ -207,9 +207,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   clearUser() {
+    const prevUserId = get().userId;
     writeCachedAccountMeta(null);
     invalidateQueryCache();
     resetLocalWorkoutPreferences();
+    // #268: Clear session-scoped import summary on logout / account switch
+    try {
+      sessionStorage.removeItem("ironlog_last_csv_import_summary");
+      if (prevUserId) sessionStorage.removeItem(`ironlog_last_csv_import_summary:${prevUserId}`);
+    } catch {}
     useUiStore.getState().closeModalSilent();
     set({
       demo: false,

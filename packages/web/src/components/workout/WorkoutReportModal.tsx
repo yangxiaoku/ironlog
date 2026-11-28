@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { encodeWorkoutToFit } from "@ironlog/shared";
 import { apiFetch } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
@@ -35,9 +35,27 @@ function formatSetValue(
   mode: ExerciseMode,
   unit: "kg" | "lb" = "kg",
 ): string {
-  if (mode === "timed") return `${fmt(set.seconds)} 秒`;
+  // #232: Show weight alongside seconds for weighted timed exercises (e.g. weighted plank 20 kg · 65 秒)
+  if (mode === "timed") {
+    return set.weight > 0 ? `${fmt(set.weight)} ${unit} · ${fmt(set.seconds)} 秒` : `${fmt(set.seconds)} 秒`;
+  }
   if (mode === "assisted") return `辅助 ${fmt(set.weight)} ${unit} × ${set.reps}`;
   return set.weight ? `${fmt(set.weight)} ${unit} × ${set.reps}` : `${fmt(set.reps)} 次`;
+}
+
+function formatCardioPace(durationSeconds: number | null, distanceMeters: number | null | undefined, activityType?: string): { label: string; value: string } | null {
+  if (!durationSeconds || durationSeconds <= 0 || !distanceMeters || distanceMeters <= 0) return null;
+  const km = distanceMeters / 1000;
+  if (km <= 0.01) return null;
+  const act = (activityType ?? "").toLowerCase();
+  if (act.includes("cycl") || act.includes("bike")) {
+    const kmh = km / (durationSeconds / 3600);
+    return { label: "平均速度", value: `${fmt(kmh, 1)} km/h` };
+  }
+  const secPerKm = Math.round(durationSeconds / km);
+  const mins = Math.floor(secPerKm / 60);
+  const secs = secPerKm % 60;
+  return { label: "平均配速", value: `${mins}'${String(secs).padStart(2, "0")}"/km` };
 }
 
 export function WorkoutReportModal({
@@ -58,6 +76,7 @@ export function WorkoutReportModal({
   const closeAllModals = useUiStore((s) => s.closeAllModals);
   const openConfirm = useUiStore((s) => s.openConfirm);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const dataEpoch = useUiStore((s) => s.dataEpoch);
   const notify = useUiStore((s) => s.notify);
   const aiReady = useAuthStore((s) => s.aiReady);
 
@@ -66,12 +85,15 @@ export function WorkoutReportModal({
   const [checkingApple, setCheckingApple] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [reportRetryNonce, setReportRetryNonce] = useState(0);
   const [busyAction, setBusyAction] = useState("");
   const [copied, setCopied] = useState(false);
   const [syncArmed, setSyncArmed] = useState(false);
   const [syncedRoutineName, setSyncedRoutineName] = useState("");
   const [savedTemplate, setSavedTemplate] = useState(false);
   const [moreActionsOpen, setMoreActionsOpen] = useState(false);
+  // #234: Keep stable tplId + opId across retries if save-as-template response is lost (503)
+  const pendingTemplateRef = useRef<{ workoutId: string; tplId: string; opId: string } | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -81,6 +103,7 @@ export function WorkoutReportModal({
     setSyncArmed(false);
     setSyncedRoutineName("");
     setSavedTemplate(false);
+    pendingTemplateRef.current = null;
     void apiFetch<WorkoutReportResponse>(`/api/web/workout-report/${encodeURIComponent(workoutId)}`)
       .then((res) => {
         if (!active) return;
@@ -106,7 +129,7 @@ export function WorkoutReportModal({
     return () => {
       active = false;
     };
-  }, [workoutId]);
+  }, [workoutId, reportRetryNonce]);
 
   const refreshAppleAgenda = useCallback(
     async (reportDate: string, targetId: string, opts?: { notifyFound?: boolean }) => {
@@ -116,18 +139,35 @@ export function WorkoutReportModal({
           `/api/integrations/apple-health/agenda?from=${encodeURIComponent(reportDate)}&through=${encodeURIComponent(reportDate)}`,
         );
         const linked = items.find((item) => item.manualWorkoutId === targetId) ?? null;
-        if (linked) {
-          setAppleItem(linked);
-          if (opts?.notifyFound) {
-            bumpDataEpoch();
-            notify("已同步 Apple Watch 心率与消耗");
-          }
+        // #245: Always sync appleItem including clearing to null when a linked Apple workout was deleted
+        setAppleItem(linked);
+        if (linked && opts?.notifyFound) {
+          bumpDataEpoch();
+          notify("已同步 Apple Watch 心率与消耗");
         }
       } catch {}
       setCheckingApple(false);
     },
     [bumpDataEpoch, notify],
   );
+
+  // #245: Refresh linked Apple workout whenever global dataEpoch changes (e.g. after deleting linked Apple record)
+  useEffect(() => {
+    if (!report?.date || !report.id) return;
+    let active = true;
+    void apiFetch<AppleWorkoutAgendaItem[]>(
+      `/api/integrations/apple-health/agenda?from=${encodeURIComponent(report.date)}&through=${encodeURIComponent(report.date)}`,
+    )
+      .then((items) => {
+        if (!active) return;
+        const linked = items.find((item) => item.manualWorkoutId === report.id) ?? null;
+        setAppleItem(linked);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [dataEpoch, report?.date, report?.id]);
 
   useEffect(() => {
     if (!report || appleItem || report.date !== today()) return;
@@ -186,14 +226,30 @@ export function WorkoutReportModal({
     return (
       <div className="dialog-form">
         <p className="form-error" role="alert">{error || "找不到训练记录"}</p>
+        <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setReportRetryNonce((n) => n + 1)}
+          >
+            <Icon name="refresh" size={14} /> 重试加载
+          </button>
+        </div>
       </div>
     );
   }
 
+  const cardioDistanceMeters = report.cardioMeta?.distanceMeters ?? null;
+  const cardioPace = formatCardioPace(report.duration, cardioDistanceMeters, report.cardioMeta?.activityType);
+
   const handleCopy = async () => {
+    const cardioSummary =
+      cardioDistanceMeters && cardioDistanceMeters > 0
+        ? ` / ${fmt(cardioDistanceMeters / 1000, 2)} km${cardioPace ? ` (${cardioPace.value})` : ""}`
+        : "";
     const lines = [
       `${report.title} · ${report.date}`,
-      `${duration(report.duration)} / ${fmt(report.sets)} 有效工作组 / ${fmt(report.volume, 2)} kg`,
+      `${duration(report.duration)}${cardioSummary} / ${fmt(report.sets)} 有效工作组 / ${fmt(report.volume, 2)} kg`,
       ...report.exercises.map(
         (row) =>
           `${row.supersetGroup ? `[超级组${row.supersetGroup}] ` : ""}${row.name}　${row.completed
@@ -297,15 +353,28 @@ export function WorkoutReportModal({
     if (!report) return;
     setBusyAction("fit");
     try {
-      const full = await fetchFullRecord().catch(() => null);
-      const startIso = full?.data.startedAt ?? `${report.date}T12:00:00Z`;
-      const endIso = full?.data.endedAt ?? null;
+      let full: RecordEnvelope<WorkoutData> | null = record ?? null;
+      if (!full) {
+        try {
+          full = await fetchFullRecord();
+        } catch {
+          full = null;
+        }
+      }
+      // #236: Never fabricate a noon UTC start time when full record fetch fails and report has no trusted startedAt
+      const startIso = full?.data.startedAt ?? report.startedAt ?? null;
+      const endIso = full?.data.endedAt ?? report.endedAt ?? null;
+      const isDurationUnknown = Boolean(full?.data.durationUnknown ?? report.durationUnknown);
+      if (!startIso || !Number.isFinite(Date.parse(startIso))) {
+        notify("读取完整训练记录失败，缺少实际开始时间，无法生成准确的 .fit 文件；请稍后重试");
+        return;
+      }
       const inferredDuration =
         report.duration ??
-        (!full?.data.durationUnknown && startIso && endIso && Date.parse(endIso) > Date.parse(startIso)
+        (!isDurationUnknown && startIso && endIso && Date.parse(endIso) > Date.parse(startIso)
           ? Math.round((Date.parse(endIso) - Date.parse(startIso)) / 1000)
           : null);
-      if (full?.data.durationUnknown || !inferredDuration || inferredDuration <= 0) {
+      if (isDurationUnknown || !inferredDuration || inferredDuration <= 0) {
         notify("本场训练时长未知，无法生成符合实际记录的 .fit 文件；请先补充训练时长或改用 CSV/JSON 导出");
         return;
       }
@@ -315,8 +384,9 @@ export function WorkoutReportModal({
         startedAt: startIso,
         endedAt: endIso,
         durationSeconds: inferredDuration,
-        durationUnknown: Boolean(full?.data.durationUnknown),
+        durationUnknown: isDurationUnknown,
         activeCaloriesKcal: appleItem?.activeEnergyKcal ?? null,
+        cardioMeta: full?.data.cardioMeta ?? report.cardioMeta ?? null,
         exercises: full?.data.exercises as Parameters<typeof encodeWorkoutToFit>[0]["exercises"],
         totalSets: report.sets,
         totalVolumeKg: report.volume,
@@ -341,8 +411,17 @@ export function WorkoutReportModal({
     setBusyAction("template");
     try {
       const full = await fetchFullRecord();
+      // #233: Reuse catalogue-resolved mode from report when legacy workout exercises have no snapshot
+      const reportModeByRowId = new Map(report.exercises.map((e) => [e.id, e.mode]));
+      const reportModeByExId = new Map(report.exercises.map((e) => [e.exerciseId, e.mode]));
       const plannedExercises = full.data.exercises.map((row) => {
-        const mode = row.snapshot?.mode ?? "reps";
+        const inferredTimed =
+          row.sets.some((s) => s.seconds > 0) && row.sets.every((s) => s.reps === 0);
+        const mode: ExerciseMode =
+          row.snapshot?.mode ??
+          reportModeByRowId.get(row.id) ??
+          reportModeByExId.get(row.exerciseId) ??
+          (inferredTimed ? "timed" : "reps");
         const workSets = row.sets.filter((s) => s.type !== "warmup");
         const pool = workSets.length ? workSets : row.sets;
         const maxWeight = Math.max(...pool.map((s) => s.weight || 0), 0);
@@ -361,7 +440,7 @@ export function WorkoutReportModal({
           seconds: mode === "timed" ? Math.max(1, maxSec) : 0,
           restSeconds: row.restSeconds ?? 90,
           targetRir: 2,
-          progression: "double",
+          progression: mode === "timed" ? "manual" : "double",
           increment: rowUnit === "lb" ? 5 : 2.5,
           backupExerciseId: null,
           supersetGroup: row.supersetGroup ?? null,
@@ -372,12 +451,20 @@ export function WorkoutReportModal({
         notify("本场没有动作可存为模板");
         return;
       }
-      const tplId = `tpl_${safeUuid().slice(0, 12)}`;
+      // #234: Reuse the exact same tplId + opId across retries if the first save succeeded on server but response was lost
+      if (!pendingTemplateRef.current || pendingTemplateRef.current.workoutId !== report.id) {
+        pendingTemplateRef.current = {
+          workoutId: report.id,
+          tplId: `tpl_${safeUuid().slice(0, 12)}`,
+          opId: safeUuid(),
+        };
+      }
+      const { tplId, opId } = pendingTemplateRef.current;
       const tplName = full.data.title || "自定义训练模板";
       await apiFetch("/api/records", {
         method: "POST",
         body: {
-          opId: safeUuid(),
+          opId,
           id: tplId,
           kind: "template",
           baseVersion: 0,
@@ -385,6 +472,7 @@ export function WorkoutReportModal({
           data: { id: tplId, name: tplName, exercises: plannedExercises },
         },
       });
+      pendingTemplateRef.current = null;
       triggerHaptic("success");
       setSavedTemplate(true);
       bumpDataEpoch();
@@ -449,6 +537,7 @@ export function WorkoutReportModal({
               openAppleWorkoutDetailsModal({
                 item: appleItem,
                 back: () => useUiStore.getState().closeTopModal(),
+                onDeleted: () => setAppleItem(null),
               })
             }
           />
@@ -487,18 +576,36 @@ export function WorkoutReportModal({
           <span>训练时长</span>
           <strong>{duration(report.duration)}</strong>
         </div>
-        <div>
-          <span>有效工作组</span>
-          <strong>
-            <MatrixText value={fmt(report.sets)} /> <small>组</small>
-          </strong>
-        </div>
-        <div>
-          <span>训练容量</span>
-          <strong>
-            {fmt(report.volume, 2)} <small>kg</small>
-          </strong>
-        </div>
+        {cardioDistanceMeters != null && cardioDistanceMeters > 0 ? (
+          <div>
+            <span>有氧距离</span>
+            <strong>
+              {fmt(cardioDistanceMeters / 1000, 2)} <small>km</small>
+            </strong>
+          </div>
+        ) : null}
+        {cardioPace ? (
+          <div>
+            <span>{cardioPace.label}</span>
+            <strong>{cardioPace.value}</strong>
+          </div>
+        ) : null}
+        {!(cardioDistanceMeters != null && cardioDistanceMeters > 0 && report.volume === 0) ? (
+          <>
+            <div>
+              <span>有效工作组</span>
+              <strong>
+                <MatrixText value={fmt(report.sets)} /> <small>组</small>
+              </strong>
+            </div>
+            <div>
+              <span>训练容量</span>
+              <strong>
+                {fmt(report.volume, 2)} <small>kg</small>
+              </strong>
+            </div>
+          </>
+        ) : null}
       </div>
 
       {cmp ? (
