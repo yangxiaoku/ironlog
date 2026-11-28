@@ -239,7 +239,14 @@ export function createApp(
     if (error instanceof AnnotationConflictError)
       return c.json({ error: error.message, current: error.current }, 409);
     if (error instanceof ScheduleConflictError)
-      return c.json({ error: error.message, conflictTarget: error.conflictTarget, fromVersion: error.fromVersion }, 409);
+      return c.json({
+        error: error.message,
+        conflictTarget: error.conflictTarget,
+        fromVersion: error.fromVersion,
+        planRevision: error.planRevision,
+        fromRoutineId: error.fromRoutineId,
+        fromTitle: error.fromTitle,
+      }, 409);
     if (error instanceof DomainError)
       return c.json({ error: error.message }, error.status);
     if (error instanceof SyntaxError)
@@ -639,8 +646,9 @@ export function createApp(
     const date = z.iso.date().parse(c.req.query("date"));
     const userId = c.get("userId");
     const current = store.get(userId, "nutritionDay", "nutritionDay_" + date);
-    return c.json({ complete: !current?.deleted && nutritionDayComplete(current?.data as NutritionDay | undefined,
-      store.list(userId, "diet")) });
+    const complete = !current?.deleted && nutritionDayComplete(current?.data as NutritionDay | undefined,
+      store.list(userId, "diet"));
+    return c.json({ complete, version: current?.version ?? 0 });
   });
   app.put("/api/web/nutrition-day", async (c) => {
     const { date, opId } = z.object({ date: z.iso.date(), opId: mutationSchema.shape.opId }).parse(await c.req.json());
@@ -651,29 +659,52 @@ export function createApp(
       const meals = store.list(userId, "diet").filter((record) => (record.data as Diet).date === date);
       if (!meals.length) throw new DomainError("这一天还没有饮食记录");
       const record = store.get(userId, "nutritionDay", id);
-      if (record && !record.deleted && nutritionDayComplete(record.data as NutritionDay, meals)) return { complete: true };
-      store.mutate(userId, { kind: "nutritionDay", id, opId, baseVersion: record?.version ?? 0,
+      if (record && !record.deleted && nutritionDayComplete(record.data as NutritionDay, meals)) {
+        return { complete: true, version: record.version };
+      }
+      const res = store.mutate(userId, { kind: "nutritionDay", id, opId, baseVersion: record?.version ?? 0,
         deleted: false, data: { date, complete: true, fingerprint: nutritionFingerprint(date, meals) } });
-      return { complete: true };
+      return { complete: true, version: res.record?.version ?? (record?.version ?? 0) + 1 };
     }).immediate());
   });
   app.delete("/api/web/nutrition-day", (c) => {
     const date = z.iso.date().parse(c.req.query("date"));
+    const rawOpId = c.req.query("opId");
+    const opId = rawOpId ? mutationSchema.shape.opId.parse(rawOpId) : undefined;
+    const rawVer = c.req.query("expectedVersion") ?? c.req.query("baseVersion");
+    const expectedVersion = rawVer != null && rawVer !== "" ? z.coerce.number().int().min(0).parse(rawVer) : undefined;
     const userId = c.get("userId");
     return c.json(db.transaction(() => {
       const id = "nutritionDay_" + date;
-      const record = store.get(userId, "nutritionDay", id);
-      if (record && !record.deleted) {
-        store.mutate(userId, {
-          kind: "nutritionDay",
-          id,
-          opId: crypto.randomUUID(),
-          baseVersion: record.version,
-          deleted: true,
-          data: record.data,
-        });
+      // #147: Replay idempotent DELETE opId without deleting a newer confirmation from another device
+      if (opId) {
+        const existingOp = db.prepare("SELECT result FROM operations WHERE user_id = ? AND op_id = ?").get(userId, opId) as
+          | { result: string }
+          | undefined;
+        if (existingOp) {
+          const latest = store.get(userId, "nutritionDay", id);
+          return { complete: false, version: latest?.version ?? 0, replayed: true };
+        }
       }
-      return { complete: false };
+      const record = store.get(userId, "nutritionDay", id);
+      if (!record || record.deleted) {
+        if (expectedVersion !== undefined && record && record.version > expectedVersion) {
+          throw new DomainError("饮食完成标记状态已变化，请刷新核对", 409);
+        }
+        return { complete: false, version: record?.version ?? 0 };
+      }
+      if (expectedVersion !== undefined && record.version !== expectedVersion) {
+        throw new DomainError("该日饮食已被其他设备重新确认，请刷新核对后再取消", 409);
+      }
+      const res = store.mutate(userId, {
+        kind: "nutritionDay",
+        id,
+        opId: opId ?? crypto.randomUUID(),
+        baseVersion: record.version,
+        deleted: true,
+        data: record.data,
+      });
+      return { complete: false, version: res.record?.version ?? record.version + 1 };
     }).immediate());
   });
   app.get("/api/web/profile", (c) => {
@@ -876,8 +907,9 @@ export function createApp(
     }).immediate());
   });
 
-  // 3.3 Webhook config & test delivery
+  // 3.3 Webhook config & test delivery (#172: require interactive session, not scoped API token)
   app.put("/api/web/profile/webhook", async (c) => {
+    requireInteractiveAuth(c);
     const parsed = webhookConfigSchema.parse(await c.req.json());
     if (parsed.enabled || parsed.url.trim()) {
       const check = validateWebhookTarget(parsed, webhookPolicy);
@@ -904,8 +936,10 @@ export function createApp(
     }).immediate());
   });
   app.post("/api/web/webhook/test", async (c) => {
-    const body = await c.req.json().catch(() => null);
+    requireInteractiveAuth(c);
     const userId = c.get("userId");
+    browser.limit("webhook:test:" + userId, 20);
+    const body = await c.req.json().catch(() => null);
     const existing = store.get(userId, "profile", "settings");
     const profile = profileSchema.parse(existing?.deleted ? {} : existing?.data ?? {});
     const cfg = body ? webhookConfigSchema.parse(body) : (profile.webhookConfig ?? webhookConfigSchema.parse({}));
@@ -950,12 +984,17 @@ export function createApp(
     const { origin, rpId } = resolveOriginAndRp(c);
     return c.json(browser.verifyPasskeyRegistration(c.get("userId"), input, origin, rpId), 201);
   });
-  app.get(`${apple}/tokens`, (c) => c.json(health.devices(c.get("userId"))));
+  app.get(`${apple}/tokens`, (c) => {
+    requireInteractiveAuth(c);
+    return c.json(health.devices(c.get("userId")));
+  });
   app.post(`${apple}/tokens`, async (c) => {
+    requireInteractiveAuth(c);
     const { label } = z.object({ label: z.string().trim().min(1).max(80) }).parse(await c.req.json());
     return c.json(health.issue(c.get("userId"), label), 201);
   });
   app.delete(`${apple}/tokens/:id`, (c) => {
+    requireInteractiveAuth(c);
     health.revoke(c.get("userId"), c.req.param("id"));
     return c.json({ ok: true });
   });

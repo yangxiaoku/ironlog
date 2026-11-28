@@ -239,7 +239,7 @@ export class Store {
        FROM body_measurements WHERE user_id=? ORDER BY date DESC`,
     );
     this.stmtExportProgressPhotos = db.prepare(
-      `SELECT id, date, pose, mime, image_data AS imageData, note, created_at AS createdAt
+      `SELECT id, date, pose, mime, image_data AS imageData, thumbnail_data AS thumbnailData, source_key AS sourceKey, note, created_at AS createdAt
        FROM progress_photos WHERE user_id=? ORDER BY date DESC, created_at DESC`,
     );
     this.stmtExportAppleDaily = db.prepare("SELECT date, updated_at AS updatedAt, data FROM apple_health_daily WHERE user_id=? ORDER BY date DESC");
@@ -590,6 +590,8 @@ export class Store {
       pose: "front" | "side" | "back" | "free";
       mime: string;
       imageData: string;
+      thumbnailData: string | null;
+      sourceKey: string | null;
       note: string;
       createdAt: string;
     }[];
@@ -1165,6 +1167,8 @@ export class Store {
           "UPDATE apple_health_events SET workout_id = NULL WHERE device_id IN (SELECT id FROM apple_health_devices WHERE user_id = ?)",
         ).run(userId);
         this.db.prepare("DELETE FROM apple_health_receipts WHERE user_id = ?").run(userId);
+        // #175 (P1): Clear deleted Apple workout tombstones on replace restore so restored workouts can be updated later.
+        this.db.prepare("DELETE FROM apple_health_deleted WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM apple_health_workouts WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM apple_health_daily WHERE user_id = ?").run(userId);
         this.db.prepare("DELETE FROM body_measurements WHERE user_id = ?").run(userId);
@@ -1356,6 +1360,7 @@ export class Store {
       const stmtAppleIdInUse = this.db.prepare("SELECT 1 FROM apple_health_workouts WHERE id = ?");
       const stmtInsertApple = this.db.prepare("INSERT INTO apple_health_workouts VALUES (?, ?, ?, ?, ?, ?)");
       const stmtUpdateApple = this.db.prepare("UPDATE apple_health_workouts SET ended_at = ?, received_at = ?, data = ? WHERE user_id = ? AND id = ?");
+      const stmtClearAppleDeleted = this.db.prepare("DELETE FROM apple_health_deleted WHERE user_id = ? AND identity_key = ?");
       for (const w of validAppleWorkouts) {
         const inputId = typeof w.id === "string" ? w.id.trim() : "";
         const endedAt = backupInstant(w.endedAt)!;
@@ -1415,6 +1420,8 @@ export class Store {
           const data = JSON.stringify({ ...workoutPayload, ...identity, annotation: incomingAnnotation });
           stmtInsertApple.run(id, userId, identityKey, endedAt, receivedAt ?? now, data);
         }
+        // #175 (P1): Remove any matching deleted tombstone so future Apple Health updates are not silently dropped.
+        stmtClearAppleDeleted.run(userId, identityKey);
       }
 
       this.listCache.clear();

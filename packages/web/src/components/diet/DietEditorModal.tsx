@@ -48,20 +48,30 @@ function quickFoodsStorageKey(userId: string): string {
 }
 
 function parseBaselineFromName(rawName: string): { baseName: string; baseGrams: number; unit: string; hasUnit: boolean } {
-  const m = rawName.trim().match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*(g|克|ml|毫升)\s*$/i);
+  const m = rawName
+    .trim()
+    .match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*(g|克|ml|毫升|勺|个|颗|片|根|碗|杯|份|瓶|袋|盒|块|支|条)\s*$/i);
   if (m) {
-    const grams = Number(m[2]);
-    if (Number.isFinite(grams) && grams > 0) {
-      const unitRaw = m[3]!.toLowerCase();
+    const qty = Number(m[2]);
+    if (Number.isFinite(qty) && qty > 0) {
+      const unitRaw = m[3]!;
+      const lower = unitRaw.toLowerCase();
+      const unit = lower === "g" || lower === "克" ? "g" : lower === "ml" || lower === "毫升" ? "ml" : unitRaw;
       return {
         baseName: m[1]!.trim(),
-        baseGrams: grams,
-        unit: unitRaw === "ml" || unitRaw === "毫升" ? "ml" : "g",
+        baseGrams: qty,
+        unit,
         hasUnit: true,
       };
     }
   }
-  return { baseName: rawName.trim(), baseGrams: 100, unit: "g", hasUnit: false };
+  return { baseName: rawName.trim(), baseGrams: 1, unit: "份", hasUnit: false };
+}
+
+function scalerLabelForUnit(unit: string): string {
+  if (unit === "g") return "实际克数";
+  if (unit === "ml") return "实际毫升";
+  return `实际份量（${unit}）`;
 }
 
 function readLocalQuickFoods(userId: string): QuickFoodItem[] {
@@ -187,26 +197,23 @@ export function DietEditorModal({
     }
   };
 
-  const handleSaveCurrentQuickFood = () => {
+  const persistQuickFoodWithCalories = (kcalValue: number) => {
     const cleanName = name.trim();
-    if (!cleanName || savingQuickFood) {
-      setError("请先填写食物名称和营养素后再收藏");
-      return;
-    }
     const parsed = parseBaselineFromName(cleanName);
     const typedGrams = scaleBase ? Number(gramsInput) : NaN;
     const rawGrams = parsed.hasUnit
       ? parsed.baseGrams
-      : Number.isFinite(typedGrams) && typedGrams >= 0.1
+      : scaleBase && Number.isFinite(typedGrams) && typedGrams >= 0.1
         ? typedGrams
         : parsed.baseGrams;
+    const unit = parsed.hasUnit ? parsed.unit : scaleBase?.unit ?? parsed.unit;
     const baseGrams = Math.max(0.1, Math.min(10000, Math.round(rawGrams * 10) / 10));
     const item: QuickFoodItem = {
       id: `qf_${Date.now().toString(36)}`,
       name: parsed.baseName || cleanName,
       baseGrams,
-      unit: parsed.unit,
-      calories: Math.max(0, Number(calories) || 0),
+      unit,
+      calories: Math.max(0, kcalValue),
       protein: Math.max(0, Number(protein) || 0),
       carbs: Math.max(0, Number(carbs) || 0),
       fat: Math.max(0, Number(fat) || 0),
@@ -223,6 +230,39 @@ export function DietEditorModal({
     });
     setGramsInput(String(item.baseGrams));
     void mutateQuickFoodsRemote(nextList, { upsert: item }, `已收藏「${item.name}」(${item.baseGrams}${item.unit})`);
+  };
+
+  const handleSaveCurrentQuickFood = () => {
+    const cleanName = name.trim();
+    if (!cleanName || savingQuickFood) {
+      setError("请先填写食物名称和营养素后再收藏");
+      return;
+    }
+    // #151: Never silently save blank calories as 0 kcal; require explicit calories or confirm using estimatedKcal
+    if (!calories.trim()) {
+      if (estimatedKcal > 0) {
+        openConfirm({
+          title: "热量尚未填写",
+          message: `当前热量留空，是否按三大营养素估算值（${estimatedKcal} kcal）填入并收藏「${cleanName}」？`,
+          confirmLabel: `使用 ${estimatedKcal} kcal 收藏`,
+          onConfirm: () => {
+            setCalories(String(estimatedKcal));
+            setError("");
+            persistQuickFoodWithCalories(estimatedKcal);
+          },
+        });
+      } else {
+        setError("请先填写热量后再收藏（若确为零热量饮品，请显式输入 0）");
+      }
+      return;
+    }
+    const parsedCal = Number(calories);
+    if (!Number.isFinite(parsedCal) || parsedCal < 0) {
+      setError("请输入有效的热量数值后再收藏");
+      return;
+    }
+    setError("");
+    persistQuickFoodWithCalories(parsedCal);
   };
 
   const pNum = Math.max(0, Number(protein) || 0);
@@ -242,8 +282,18 @@ export function DietEditorModal({
   const formRef = useRef<HTMLFormElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
 
+  // #149: Validate active scaler portion so entering 0 / blank cannot submit stale previous scaled weight & calories
+  const parsedScaleQty = Number(gramsInput);
+  const scaleInvalid = Boolean(
+    scaleBase && (!gramsInput.trim() || !Number.isFinite(parsedScaleQty) || parsedScaleQty < 0.1 || parsedScaleQty > 10000),
+  );
+
   const submitDiet = async (keepOpen: boolean) => {
     if (saving) return;
+    if (scaleInvalid && scaleBase) {
+      setError(`请输入有效的${scalerLabelForUnit(scaleBase.unit)}（0.1–10000 ${scaleBase.unit}）`);
+      return;
+    }
     if (formRef.current && !formRef.current.reportValidity()) {
       return;
     }
@@ -553,27 +603,46 @@ export function DietEditorModal({
       {scaleBase ? (
         <div className="diet-scaler-bar">
           <label className="diet-scaler-input">
-            <span>实际克数</span>
+            <span>{scalerLabelForUnit(scaleBase.unit)}</span>
             <input
               type="number"
               inputMode="decimal"
-              min={0}
+              min={0.1}
               max={10000}
               step="any"
-              aria-label="食物克数换算"
+              aria-label={`${scalerLabelForUnit(scaleBase.unit)}换算`}
+              aria-invalid={scaleInvalid}
               value={gramsInput}
               onFocus={(e) => e.currentTarget.select()}
               onChange={(e) => {
                 const raw = e.target.value;
                 setGramsInput(raw);
                 const val = Number(raw);
-                if (Number.isFinite(val) && val >= 0.1 && val <= 10000) {
+                if (raw.trim() && Number.isFinite(val) && val >= 0.1 && val <= 10000) {
+                  setError("");
                   applyScaledGrams(scaleBase, val, false);
                 }
               }}
             />
             <small>{scaleBase.unit}（基准 {scaleBase.baseGrams}{scaleBase.unit}）</small>
           </label>
+          {scaleInvalid ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+              <small className="form-error" role="alert" style={{ margin: 0 }}>
+                份量需在 0.1–10000 {scaleBase.unit} 之间，当前不会保存
+              </small>
+              <button
+                type="button"
+                className="micro-chip"
+                onClick={() => {
+                  setError("");
+                  applyScaledGrams(scaleBase, scaleBase.baseGrams);
+                }}
+              >
+                恢复 {scaleBase.baseGrams}{scaleBase.unit}
+              </button>
+            </div>
+          ) : null}
           <div className="diet-scaler-mults">
             {[0.5, 1, 1.5, 2].map((mult) => (
               <button
@@ -582,6 +651,7 @@ export function DietEditorModal({
                 className="micro-chip"
                 onClick={() => {
                   triggerHaptic("light");
+                  setError("");
                   applyScaledGrams(scaleBase, scaleBase.baseGrams * mult);
                 }}
               >
@@ -804,13 +874,13 @@ export function DietEditorModal({
             <button
               type="button"
               className="secondary-button"
-              disabled={saving}
+              disabled={saving || scaleInvalid}
               onClick={() => void submitDiet(true)}
             >
               保存并继续
             </button>
           ) : null}
-          <button type="submit" className="primary-button" disabled={saving}>
+          <button type="submit" className="primary-button" disabled={saving || scaleInvalid}>
             {saving ? "保存中…" : record ? "保存修改" : "保存饮食"}
           </button>
         </div>

@@ -88,10 +88,12 @@ export function hasUsedStreakFreezeInMonth(
   freezeLog: readonly StreakFreezeEntry[] = [],
 ): boolean {
   const monthPrefix = targetDate.slice(0, 7);
-  if (freezeLog.some((entry) => entry.usedAt.startsWith(monthPrefix))) {
+  // #202: Only count freeze events that occurred on or before targetDate!
+  if (freezeLog.some((entry) => entry.usedAt <= targetDate && entry.usedAt.startsWith(monthPrefix))) {
     return true;
   }
-  // Legacy fallback: only inspect weeks that have no recorded `usedAt` date in freezeLog.
+  // Legacy fallback: only inspect weeks that have NO recorded `usedAt` in freezeLog at all
+  // (weeks logged after targetDate are known to have happened in the future and must be excluded).
   const loggedWeeks = new Set(freezeLog.map((entry) => entry.weekKey));
   const legacyWeeks = new Set(frozenWeeks.filter((wk) => !loggedWeeks.has(wk)));
   if (legacyWeeks.size === 0) return false;
@@ -109,12 +111,18 @@ export function computeWeeklyStreak(
   frozenWeeks: readonly string[] = [],
   freezeLog: readonly StreakFreezeEntry[] = [],
 ) {
-  const frozenSet = new Set<string>([...frozenWeeks, ...freezeLog.map((entry) => entry.weekKey)]);
+  const currentWeekKey = isoWeekKey(todayDate);
+  // #202: Exclude freeze events whose consumption date (`usedAt`) is strictly after `todayDate`.
+  const loggedWeeks = new Set(freezeLog.map((entry) => entry.weekKey));
+  const eligibleLogged = freezeLog
+    .filter((entry) => entry.usedAt <= todayDate)
+    .map((entry) => entry.weekKey);
+  const eligibleLegacy = frozenWeeks.filter((wk) => !loggedWeeks.has(wk) && wk <= currentWeekKey);
+  const frozenSet = new Set<string>([...eligibleLegacy, ...eligibleLogged]);
   const activeWeeks = new Set<string>();
   for (const d of activityDays) {
     if (d <= todayDate) activeWeeks.add(isoWeekKey(d));
   }
-  const currentWeekKey = isoWeekKey(todayDate);
   const prevWeekKey = isoWeekKey(shiftDay(todayDate, -7));
 
   let cursorDate = activeWeeks.has(currentWeekKey) || frozenSet.has(currentWeekKey)
@@ -337,7 +345,7 @@ export function getWebStatistics(store: Store, userId: string, query: z.infer<ty
     : profile.calorieEstimate?.asOf === through ? estimateEnergy(profile.calorieEstimate.inputs, through) : null;
   const appleDailySummary = summarizeDailyHealth(
     listDailyHealth(store.db, userId, from, through),
-    { heightCm: profile.energyProfile?.heightCm ?? null, sex: profile.energyProfile?.sex === "female" ? "female" : "male", through },
+    { heightCm: profile.energyProfile?.heightCm ?? null, sex: profile.energyProfile?.sex ?? undefined, through },
   );
   const throughMs = Date.parse(through + "T00:00:00Z");
   const muscleStatus = TRACKED_MUSCLES.map((key) => {

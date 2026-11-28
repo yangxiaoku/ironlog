@@ -268,11 +268,20 @@ function parseMeasuredDate(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
   if (!trimmed || MISSING_TOKENS.has(trimmed.toLowerCase())) return undefined;
-  if (ISO_DATE_RE.test(trimmed)) return trimmed;
-  const directMs = Date.parse(trimmed);
-  if (Number.isFinite(directMs)) return localDate(directMs);
+  if (ISO_DATE_RE.test(trimmed)) {
+    const [y, m, d] = trimmed.split("-").map(Number);
+    const check = new Date(Date.UTC(y!, m! - 1, d!));
+    if (check.getUTCFullYear() !== y || check.getUTCMonth() !== m! - 1 || check.getUTCDate() !== d) return undefined;
+    return trimmed;
+  }
+  // #177 (P1): Route naive timestamps through parseFlexibleInstant (+08:00) before Date.parse so TZ=UTC servers do not shift by 8h.
   const flex = parseFlexibleInstant(trimmed);
-  return flex ? localDate(Date.parse(flex)) : undefined;
+  if (flex) return localDate(Date.parse(flex));
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) {
+    const directMs = Date.parse(trimmed);
+    if (Number.isFinite(directMs)) return localDate(directMs);
+  }
+  return undefined;
 }
 
 type Interval = [number, number];
@@ -374,10 +383,16 @@ function parseSleepDurationMinutes(raw: unknown): number | null {
 }
 
 function parseSleepStamp(raw: string): number {
-  const direct = Date.parse(raw.trim());
-  if (Number.isFinite(direct)) return direct;
-  const flex = parseFlexibleInstant(raw);
-  return flex ? Date.parse(flex) : NaN;
+  const trimmed = raw.trim();
+  if (!trimmed) return NaN;
+  // #177 (P1): Always parse via parseFlexibleInstant first so naive timestamps use explicit UTC+8 regardless of TZ=UTC.
+  const flex = parseFlexibleInstant(trimmed);
+  if (flex) return Date.parse(flex);
+  if (/(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed)) {
+    const direct = Date.parse(trimmed);
+    if (Number.isFinite(direct)) return direct;
+  }
+  return NaN;
 }
 
 /**
@@ -566,13 +581,18 @@ export function timedSleepProfile(entry: DailyHealthSnapshot) {
   const hasGenericAsleep = asleep.some(({ stage }) => stage === "asleep");
   const validTimedStages = stageTotal > staged + 1 ? null : timedStages;
 
-  // Include duration-only stage samples only when timed observations are stage-specific
-  // (no generic catch-all "asleep" window that could overlap with untimed stages).
+  // #185: Include duration-only stage samples ONLY when timed observations are stage-specific
+  // AND that specific stage has NO timed intervals (prevents double-counting when timed data later arrives).
   const untimedByStage: Record<"core" | "deep" | "rem", number> = { core: 0, deep: 0, rem: 0 };
   const untimedStages: ("core" | "deep" | "rem")[] = [];
   if (!hasGenericAsleep && validTimedStages) {
     for (const item of allObs) {
-      if (!("interval" in item) && (item.stage === "core" || item.stage === "deep" || item.stage === "rem") && item.minutes > 0) {
+      if (
+        !("interval" in item) &&
+        (item.stage === "core" || item.stage === "deep" || item.stage === "rem") &&
+        item.minutes > 0 &&
+        validTimedStages[item.stage] == null
+      ) {
         untimedByStage[item.stage] += item.minutes;
       }
     }
@@ -588,11 +608,30 @@ export function timedSleepProfile(entry: DailyHealthSnapshot) {
         rem: (validTimedStages.rem ?? 0) + Math.round(untimedByStage.rem) || null,
       }
     : null;
+  // #187: Compute verifiable timed inBed/awake from timed observations only so efficiency uses a single consistent scope
+  const timedInBedIntervals = allObs
+    .filter((o): o is Extract<SleepObservation, { interval: Interval }> => "interval" in o && o.stage === "inBed")
+    .map((o) => o.interval);
+  const timedAwakeIntervals = allObs
+    .filter((o): o is Extract<SleepObservation, { interval: Interval }> => "interval" in o && o.stage === "awake")
+    .map((o) => o.interval);
+  const timedInBedMinutes = timedInBedIntervals.length ? mergeIntervalsMinutes(timedInBedIntervals) : null;
+  const timedAwakeMinutes = timedAwakeIntervals.length ? mergeIntervalsMinutes(timedAwakeIntervals) : null;
+  const hasUntimedInBedOrAwake = allObs.some((o) => !("interval" in o) && (o.stage === "inBed" || o.stage === "awake") && o.minutes > 0);
+  const totalAsleep = timedMinutes + untimedExtra;
+  let efficiencyPct: number | null = null;
+  if (totalAsleep > 0 && untimedExtra === 0 && !hasUntimedInBedOrAwake && (timedInBedMinutes || timedAwakeMinutes)) {
+    const windowMin = Math.max(totalAsleep, timedInBedMinutes || totalAsleep + (timedAwakeMinutes ?? 0));
+    efficiencyPct = Math.min(100, Math.round((totalAsleep / windowMin) * 100));
+  }
   return {
-    minutes: timedMinutes + untimedExtra,
+    minutes: totalAsleep,
     window: main ? { startAt: new Date(main.start).toISOString(), endAt: new Date(main.end).toISOString() } : null,
     stages,
     untimedStages,
+    inBedMinutes: timedInBedMinutes,
+    awakeMinutes: timedAwakeMinutes,
+    efficiencyPct,
   };
 }
 
@@ -630,13 +669,29 @@ function summarizeSleep(observations: SleepObservation[], date?: string): SleepS
     }
   }
 
-  const deepMin = mergeIntervalsMinutes(buckets.deep) + Math.round(fallbackMinutes.deep);
-  const remMin = mergeIntervalsMinutes(buckets.rem) + Math.round(fallbackMinutes.rem);
-  const coreMin = mergeIntervalsMinutes(buckets.core) + Math.round(fallbackMinutes.core);
-  const awakeMin = mergeIntervalsMinutes(buckets.awake) + Math.round(fallbackMinutes.awake);
-  const inBedMin = mergeIntervalsMinutes(buckets.inBed) + Math.round(fallbackMinutes.inBed);
+  const timedDeep = mergeIntervalsMinutes(buckets.deep);
+  const timedRem = mergeIntervalsMinutes(buckets.rem);
+  const timedCore = mergeIntervalsMinutes(buckets.core);
+  const timedAwake = mergeIntervalsMinutes(buckets.awake);
+  const timedInBed = mergeIntervalsMinutes(buckets.inBed);
+  const hasGenericTimedAsleep = buckets.asleep.length > 0;
+  // #185: Do not add untimed stage durations on top of timed observations of the same stage or generic asleep
+  const effFallbackDeep = !hasGenericTimedAsleep && buckets.deep.length === 0 ? fallbackMinutes.deep : 0;
+  const effFallbackRem = !hasGenericTimedAsleep && buckets.rem.length === 0 ? fallbackMinutes.rem : 0;
+  const effFallbackCore = !hasGenericTimedAsleep && buckets.core.length === 0 ? fallbackMinutes.core : 0;
+  const effFallbackAsleep = buckets.asleep.length === 0 && buckets.deep.length === 0 && buckets.rem.length === 0 && buckets.core.length === 0
+    ? fallbackMinutes.asleep
+    : 0;
+  const effFallbackAwake = buckets.awake.length === 0 ? fallbackMinutes.awake : 0;
+  const effFallbackInBed = buckets.inBed.length === 0 ? fallbackMinutes.inBed : 0;
+
+  const deepMin = timedDeep + Math.round(effFallbackDeep);
+  const remMin = timedRem + Math.round(effFallbackRem);
+  const coreMin = timedCore + Math.round(effFallbackCore);
+  const awakeMin = timedAwake + Math.round(effFallbackAwake);
+  const inBedMin = timedInBed + Math.round(effFallbackInBed);
   const asleepIntervals = [...buckets.deep, ...buckets.rem, ...buckets.core, ...buckets.asleep];
-  const fallbackAsleep = fallbackMinutes.deep + fallbackMinutes.rem + fallbackMinutes.core + fallbackMinutes.asleep;
+  const fallbackAsleep = effFallbackDeep + effFallbackRem + effFallbackCore + effFallbackAsleep;
   const asleepMin = mergeIntervalsMinutes(asleepIntervals) + Math.round(fallbackAsleep);
   if (asleepMin <= 0 && awakeMin <= 0 && inBedMin <= 0 && !Number.isFinite(earliest)) return {};
 
@@ -647,7 +702,14 @@ function summarizeSleep(observations: SleepObservation[], date?: string): SleepS
   if (coreMin > 0) out.sleepCoreMinutes = coreMin;
   if (awakeMin > 0) out.sleepAwakeMinutes = awakeMin;
   if (inBedMin > 0) out.sleepInBedMinutes = inBedMin;
-  if (asleepMin > 0 && (inBedMin > 0 || awakeMin > 0)) {
+  const hasTimedAsleep = asleepIntervals.length > 0;
+  const hasUntimedAsleep = fallbackAsleep > 0;
+  const hasTimedDenom = buckets.inBed.length > 0 || buckets.awake.length > 0;
+  const hasUntimedDenom = effFallbackInBed > 0 || effFallbackAwake > 0;
+  // #187: Only calculate efficiency when asleep and inBed/awake share the same observation scope (both timed or both untimed)
+  const compatibleScopes = (hasTimedAsleep && !hasUntimedAsleep && hasTimedDenom && !hasUntimedDenom) ||
+    (!hasTimedAsleep && hasUntimedAsleep && !hasTimedDenom && hasUntimedDenom);
+  if (asleepMin > 0 && (inBedMin > 0 || awakeMin > 0) && compatibleScopes) {
     const windowMin = Math.max(asleepMin, inBedMin || asleepMin + awakeMin);
     out.sleepEfficiencyPct = Math.min(100, Math.round((asleepMin / windowMin) * 100));
   }
@@ -682,14 +744,18 @@ function mergeSleepObservationLists(
 ): SleepObservation[] {
   if (!existingObs?.length) return incomingObs;
   const timedMap = new Map<string, SleepObservation>();
+  const timedStagesPresent = new Set<SleepStage>();
   for (const obs of [...existingObs, ...incomingObs]) {
     if ("interval" in obs) {
       timedMap.set(`${obs.stage}:${obs.interval[0]}:${obs.interval[1]}`, obs);
+      timedStagesPresent.add(obs.stage);
     }
   }
   const stages: SleepStage[] = ["deep", "rem", "core", "asleep", "awake", "inBed"];
   const untimedMerged: SleepObservation[] = [];
   for (const stage of stages) {
+    // #185: If timed observations now exist for this stage, supersede legacy untimed fallback for the same stage
+    if (timedStagesPresent.has(stage)) continue;
     const prevSum = existingObs
       .filter((o): o is Extract<SleepObservation, { minutes: number }> => !("interval" in o) && o.stage === stage)
       .reduce((sum, o) => sum + o.minutes, 0);
@@ -1179,7 +1245,7 @@ export function upsertDailyHealth(
         (next as unknown as Record<string, unknown>)[k] = value;
       }
     }
-    if (next.sleepMinutes && (next.sleepInBedMinutes || next.sleepAwakeMinutes)) {
+    if (!hasAuthoritativeSleepSamples && next.sleepMinutes && (next.sleepInBedMinutes || next.sleepAwakeMinutes)) {
       const windowMin = Math.max(next.sleepMinutes, next.sleepInBedMinutes || next.sleepMinutes + (next.sleepAwakeMinutes ?? 0));
       next.sleepEfficiencyPct = Math.min(100, Math.round((next.sleepMinutes / windowMin) * 100));
     }
@@ -1213,14 +1279,25 @@ export function upsertDailyHealth(
       incomingBf: number | undefined,
       incomingBfAt: string | undefined,
     ) => {
+      // #191: When weight arrives after bodyFat on the same day, backfill the already-stored same-day bodyFat
+      const fallbackBf =
+        incomingBf === undefined &&
+        incomingW !== undefined &&
+        existingRow?.bodyFatPct != null &&
+        (existingRow.bodyFatDate ?? targetDay) === targetDay
+          ? existingRow.bodyFatPct
+          : undefined;
+      const effectiveBf = incomingBf ?? fallbackBf;
+      const effectiveBfAt = incomingBf !== undefined ? incomingBfAt : existingRow?.bodyFatMeasuredAt;
+
       const res = maybeSyncWeightRecord({
         store,
         userId,
         targetDate: targetDay,
         weightKg: incomingW,
         weightAt: incomingWAt,
-        bodyFatPct: incomingBf,
-        bodyFatAt: incomingBfAt,
+        bodyFatPct: effectiveBf,
+        bodyFatAt: effectiveBfAt,
         prevSyncedWeight: existingRow?.syncedWeightValue,
         prevSyncedWeightAt: existingRow?.syncedWeightAt,
         prevSyncedBodyFat: existingRow?.syncedBodyFatValue,
@@ -1231,9 +1308,9 @@ export function upsertDailyHealth(
         if (incomingWAt) mergedRow.syncedWeightAt = incomingWAt;
         weightSynced = true;
       }
-      if (res.syncedBodyFat && incomingBf !== undefined) {
-        mergedRow.syncedBodyFatValue = incomingBf;
-        if (incomingBfAt) mergedRow.syncedBodyFatAt = incomingBfAt;
+      if (res.syncedBodyFat && effectiveBf !== undefined) {
+        mergedRow.syncedBodyFatValue = effectiveBf;
+        if (effectiveBfAt) mergedRow.syncedBodyFatAt = effectiveBfAt;
       }
       return mergedRow;
     };
@@ -1250,6 +1327,7 @@ export function upsertDailyHealth(
       );
     }
 
+    const touchedDays = new Map<string, DailyHealthSnapshot>();
     for (const [day, patch] of historical) {
       const existingHist = readRow(store.db, userId, day);
       let mergedHist = computeMerged(existingHist, day, patch, day === weightDate && !threeDaySync ? replace : false);
@@ -1258,12 +1336,44 @@ export function upsertDailyHealth(
       if (patch.weightKg !== undefined || dayBf !== undefined) {
         mergedHist = syncDayWeight(day, existingHist, mergedHist, patch.weightKg, patch.weightMeasuredAt, dayBf, dayBfAt);
       }
-      writeRow(store.db, userId, day, mergedHist);
+      touchedDays.set(day, mergedHist);
     }
     if (!threeDaySync || Object.values(parsed).some((value) => value !== undefined)) {
-      writeRow(store.db, userId, date, mergedMain);
+      touchedDays.set(date, mergedMain);
     }
-    return { ok: true, dryRun: false, date, daily: publicDailySnapshot(mergedMain), weightSynced };
+
+    // #184: Deduplicate cross-midnight sleep observations across adjacent dates when a prior late-night segment
+    // is re-uploaded together with the overnight sleep and reassigned to the wake-up date.
+    for (const [day, snap] of [...touchedDays.entries()]) {
+      const timedOnDay = (snap.syncedSleepObservations ?? []).filter(
+        (o): o is Extract<SleepObservation, { interval: Interval }> => "interval" in o,
+      );
+      if (!timedOnDay.length) continue;
+      const movedKeys = new Set(timedOnDay.map((o) => `${o.stage}:${o.interval[0]}:${o.interval[1]}`));
+      const prevDay = shiftIsoDate(day, -1);
+      const prevRow = touchedDays.get(prevDay) ?? readRow(store.db, userId, prevDay);
+      if (!prevRow?.syncedSleepObservations?.length) continue;
+      const filteredPrevObs = prevRow.syncedSleepObservations.filter(
+        (o) => !("interval" in o) || !movedKeys.has(`${o.stage}:${o.interval[0]}:${o.interval[1]}`),
+      );
+      if (filteredPrevObs.length !== prevRow.syncedSleepObservations.length) {
+        const cleanedPrev: DailyHealthSnapshot = { ...prevRow, updatedAt: nowIso };
+        for (const key of SLEEP_SUMMARY_KEYS) delete cleanedPrev[key];
+        if (filteredPrevObs.length > 0) {
+          cleanedPrev.syncedSleepObservations = filteredPrevObs;
+          Object.assign(cleanedPrev, summarizeSleep(filteredPrevObs));
+        } else {
+          delete cleanedPrev.syncedSleepObservations;
+        }
+        touchedDays.set(prevDay, cleanedPrev);
+      }
+    }
+
+    for (const [day, snap] of touchedDays) {
+      writeRow(store.db, userId, day, snap);
+    }
+    const finalMain = touchedDays.get(date) ?? mergedMain;
+    return { ok: true, dryRun: false, date, daily: publicDailySnapshot(finalMain), weightSynced };
   }).immediate();
 }
 
@@ -1295,7 +1405,17 @@ export function publicDailySnapshot(snapshot: DailyHealthSnapshot): DailyHealthS
       else delete rest.sleepDeepMinutes;
       if (timed.stages.rem != null) rest.sleepRemMinutes = timed.stages.rem;
       else delete rest.sleepRemMinutes;
+    } else {
+      // #186: Clear conflicting stages in public daily snapshot just like sleep-report does
+      delete rest.sleepCoreMinutes;
+      delete rest.sleepDeepMinutes;
+      delete rest.sleepRemMinutes;
     }
+    if (timed.inBedMinutes != null) rest.sleepInBedMinutes = timed.inBedMinutes;
+    if (timed.awakeMinutes != null) rest.sleepAwakeMinutes = timed.awakeMinutes;
+    // #187: Always expose consistent efficiency derived from verifiable same-scope asleep & inBed/awake
+    if (timed.efficiencyPct != null) rest.sleepEfficiencyPct = timed.efficiencyPct;
+    else delete rest.sleepEfficiencyPct;
   }
   return rest;
 }
@@ -1319,13 +1439,42 @@ export function alignSleepSnapshots(snapshots: DailyHealthSnapshot[]): DailyHeal
   const moved = new Map<string, { observations: SleepObservation[]; source: DailyHealthSnapshot }>();
 
   const withSleep = (snapshot: DailyHealthSnapshot, observations: SleepObservation[]) => {
-    const next = { ...snapshot, syncedSleepObservations: observations };
+    const next = { ...snapshot };
     for (const key of SLEEP_SUMMARY_KEYS) delete next[key];
-    return Object.assign(next, summarizeSleep(observations));
+    if (observations.length > 0) {
+      next.syncedSleepObservations = observations;
+      Object.assign(next, summarizeSleep(observations));
+    } else {
+      delete next.syncedSleepObservations;
+    }
+    return next;
   };
 
+  // #184: Deduplicate timed sleep observations that appear on both a date and its next date
+  // (e.g., pre-midnight segment previously saved on D-1 and later re-uploaded into D's overnight sleep).
+  const allDatesAsc = [...byDate.keys()].sort();
+  for (let i = 0; i < allDatesAsc.length; i++) {
+    const d = allDatesAsc[i]!;
+    const nextDate = shiftIsoDate(d, 1);
+    const curSnap = byDate.get(d);
+    const nextSnap = byDate.get(nextDate);
+    if (!curSnap?.syncedSleepObservations?.length || !nextSnap?.syncedSleepObservations?.length) continue;
+    const nextTimedKeys = new Set(
+      nextSnap.syncedSleepObservations
+        .filter((o): o is Extract<SleepObservation, { interval: Interval }> => "interval" in o)
+        .map((o) => `${o.stage}:${o.interval[0]}:${o.interval[1]}`),
+    );
+    if (!nextTimedKeys.size) continue;
+    const remainingObs = curSnap.syncedSleepObservations.filter(
+      (o) => !("interval" in o) || !nextTimedKeys.has(`${o.stage}:${o.interval[0]}:${o.interval[1]}`),
+    );
+    if (remainingObs.length !== curSnap.syncedSleepObservations.length) {
+      byDate.set(d, withSleep(curSnap, remainingObs));
+    }
+  }
+
   // Old uploads could assign a night to the date when its awake or in-bed sample ended.
-  for (const snapshot of snapshots) {
+  for (const snapshot of [...byDate.values()]) {
     const groups = splitTimedSleepByDate(snapshot.syncedSleepObservations ?? []);
     let movedSleep = false;
     for (const [date, observations] of groups) {

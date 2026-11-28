@@ -258,13 +258,17 @@ function InnerOverlayDialog({
       (focusable ?? el).focus({ preventScroll: true });
     }
     const onKeyDown = (e: KeyboardEvent) => {
+      // #164: Never hijack Escape/Tab when a foreground confirm dialog is open or this overlay is hidden/inert
+      const uiState = useUiStore.getState();
+      if (uiState.confirm || uiState.modals.at(-1)?.layout !== "workout") return;
+      if (!el || el.offsetParent === null || el.closest("[aria-hidden='true'], [inert]")) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         onCloseRef.current();
         return;
       }
-      if (e.key !== "Tab" || !el) return;
+      if (e.key !== "Tab") return;
       const nodes = Array.from(
         el.querySelectorAll<HTMLElement>(
           'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -588,7 +592,8 @@ export function WorkoutEditorModal({
       : (record?.version ?? 0),
   );
   const pendingSaveOpRef = useRef<{ sig: string; body: Record<string, unknown> } | null>(null);
-  const unitOriginRef = useRef<Map<string, { unit: WeightUnit; weight: number }>>(new Map());
+  // #165: Store convertedWeight alongside origin so manual edits after kg->lb conversion aren't wiped on switch-back
+  const unitOriginRef = useRef<Map<string, { unit: WeightUnit; weight: number; convertedWeight: number }>>(new Map());
   const [durationEdited, setDurationEdited] = useState(false);
   const [manualDurationMin, setManualDurationMin] = useState<string>(() => {
     if (!isHistoricalEdit || record?.data.durationUnknown) return "";
@@ -669,7 +674,8 @@ export function WorkoutEditorModal({
       (!isHistoricalEdit && finishPanelOpen),
   );
   useEffect(() => {
-    if (!hasAnyInnerOverlay) {
+    // #164: Only register innerOverlayDismiss when the workout modal is the top-most modal
+    if (!hasAnyInnerOverlay || !isWorkoutTop) {
       setInnerOverlayDismiss(null);
       return;
     }
@@ -684,6 +690,7 @@ export function WorkoutEditorModal({
     return () => setInnerOverlayDismiss(null);
   }, [
     hasAnyInnerOverlay,
+    isWorkoutTop,
     historyModalEx,
     coachExIdx,
     mergeRoutineOpen,
@@ -1048,8 +1055,19 @@ export function WorkoutEditorModal({
         setRefDatesByExId(nextDates);
         setRefUnitsByExId(nextUnits);
 
-        // Auto-prefill working sets with last session's exact per-set weight & reps on fresh open
-        if (!isHistoricalEdit && !record && !restoredFromDraftRef.current && autoPrefillLast && !prefs.deloadMode) {
+        // #165: Auto-prefill ONLY empty free-workout rows; never overwrite plan/deload/repeat-workout prescribed targets
+        const seedTargetSnapshot = seed?.targetSnapshot as { isDeload?: boolean } | null | undefined;
+        const hasPrescribedPlanOrDeload = Boolean(
+          seed?.planId || seed?.routineId || seedTargetSnapshot?.isDeload,
+        );
+        if (
+          !isHistoricalEdit &&
+          !record &&
+          !restoredFromDraftRef.current &&
+          autoPrefillLast &&
+          !prefs.deloadMode &&
+          !hasPrescribedPlanOrDeload
+        ) {
           setExercises((prev) => {
             let changed = false;
             const next = prev.map((row) => {
@@ -1057,11 +1075,19 @@ export function WorkoutEditorModal({
                 return row;
               }
               if (row.sets.some((s) => s.completed)) return row;
+              // #165: Skip rows that already carry explicit non-zero working weight/seconds targets (e.g. "再练一次")
+              const rowIsTimed = row.snapshot?.mode === "timed";
+              const hasExplicitTarget = row.sets.some(
+                (s) => s.type !== "warmup" && (rowIsTimed ? s.seconds > 0 : s.weight > 0),
+              );
+              if (hasExplicitTarget) {
+                autoPrefilledExIdsRef.current.add(row.id);
+                return row;
+              }
               const refList = nextRefs.get(row.exerciseId);
               const validList = refList?.filter((r): r is NonNullable<typeof r> => Boolean(r)) ?? [];
               if (!validList.length) return row;
               autoPrefilledExIdsRef.current.add(row.id);
-              const rowIsTimed = row.snapshot?.mode === "timed";
               const rowUnit: WeightUnit = row.weightUnit ?? "kg";
               const refUnit: WeightUnit = nextUnits.get(row.exerciseId) ?? "kg";
               let workIdx = 0;
@@ -1687,8 +1713,13 @@ export function WorkoutEditorModal({
       return;
     }
     const isBarbell = row.snapshot?.equipment === "barbell";
-    const firstWorkWeight = row.sets.find((s) => s.type !== "warmup" && s.weight > 0)?.weight ?? 60;
-    const planned = buildWarmupSetsPlan(firstWorkWeight, isBarbell, barWeight, enabledPlates, warmupScheme);
+    const rowUnit: WeightUnit = row.weightUnit ?? "kg";
+    const defaultWorkWeight = rowUnit === "lb" ? 135 : 60;
+    const firstWorkWeight = row.sets.find((s) => s.type !== "warmup" && s.weight > 0)?.weight ?? defaultWorkWeight;
+    // #169: Use 45 lb barbell & lb plate increments for lb exercises instead of 20 kg / kg plates
+    const effectiveBar = rowUnit === "lb" ? 45 : barWeight;
+    const effectivePlates = rowUnit === "lb" ? [45, 35, 25, 10, 5, 2.5] : enabledPlates;
+    const planned = buildWarmupSetsPlan(firstWorkWeight, isBarbell, effectiveBar, effectivePlates, warmupScheme);
     const warmups: WorkoutSet[] = planned.map((step) => ({
       id: newId(),
       type: "warmup",
@@ -2130,14 +2161,13 @@ export function WorkoutEditorModal({
           if (!(s.weight > 0)) return s;
           const originKey = `${ex.id}:${s.id}`;
           const origin = unitOriginRef.current.get(originKey);
-          if (!origin) {
-            unitOriginRef.current.set(originKey, { unit: prevUnit, weight: s.weight });
-          } else if (origin.unit === nextUnit) {
-            // Exact lossless round-trip restoration (e.g. 61.23 kg -> lb -> 61.23 kg, #28)
+          // #165: Restore exact lossless origin ONLY if the user did NOT manually edit the converted weight
+          if (origin && origin.unit === nextUnit && Math.abs(s.weight - origin.convertedWeight) < 1e-6) {
             return { ...s, weight: origin.weight };
           }
           const weightKg = weightToKg(s.weight, prevUnit);
           const exactNext = round2(kgToUnit(weightKg, nextUnit));
+          unitOriginRef.current.set(originKey, { unit: prevUnit, weight: s.weight, convertedWeight: exactNext });
           return { ...s, weight: exactNext };
         });
         return { ...ex, weightUnit: nextUnit, sets: convertedSets };
@@ -2916,7 +2946,9 @@ export function WorkoutEditorModal({
                 <button
                   type="button"
                   className="secondary-button"
-                  onClick={() =>
+                  onClick={() => {
+                    // #164: Close inner menu before opening stacked AI adapt modal
+                    setOpenMenu(false);
                     openAiAdaptWorkoutModal({
                       ensureSavedWorkout: ensureSavedDraft,
                       onApplied: (updated) => {
@@ -2929,8 +2961,8 @@ export function WorkoutEditorModal({
                         bumpDataEpoch();
                         notify("已应用训中调整");
                       },
-                    })
-                  }
+                    });
+                  }}
                 >
                   <Icon name="bolt" size={15} /> 智能训中调整
                 </button>
@@ -3039,7 +3071,7 @@ export function WorkoutEditorModal({
                   placeholder={
                     date < todayStr
                       ? `留空则按计时（建议填约 ${Math.max(10, totalSets * 3)} 分钟）`
-                      : `当前计时约 ${Math.max(1, Math.round(elapsedSeconds / 60))} 分钟`
+                      : `当前计时约 ${Math.max(1, Math.round(elapsedAt(timing, Date.now()) / 60))} 分钟`
                   }
                 />
               </label>

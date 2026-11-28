@@ -636,8 +636,12 @@ export class ScheduleConflictError extends DomainError {
       title: string;
       notes: string;
       version: number;
+      routineId?: string | null;
     },
     public readonly fromVersion: number,
+    public readonly planRevision = 0,
+    public readonly fromRoutineId: string | null = null,
+    public readonly fromTitle = "",
   ) {
     super(message, 409);
   }
@@ -649,11 +653,16 @@ export const scheduleShiftInput = z.object({
   overwrite: z.boolean().optional().default(false),
   expectedFromVersion: z.number().int().min(0).optional(),
   expectedToVersion: z.number().int().min(0).optional(),
+  expectedPlanRevision: z.number().int().min(0).optional(),
+  expectedFromRoutineId: z.string().nullable().optional(),
+  expectedToRoutineId: z.string().nullable().optional(),
 });
 
 export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer<typeof scheduleShiftInput>) {
   if (input.fromDate === input.toDate) throw new DomainError("请选择不同的目标日期");
   return store.db.transaction(() => {
+    const activePlan = store.activePlan(userId);
+    const curPlanRevision = activePlan?.revision ?? 0;
     const source = getWebScheduleDay(store, userId, input.fromDate);
     if (!source.day.routine || (source.day.status !== "scheduled" && source.day.status !== "projected")) {
       throw new DomainError("这一天还没有可顺延的排期训练");
@@ -662,6 +671,16 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
     const targetOverride = store.get(userId, "scheduledDay", "schedule_" + input.toDate);
     const curFromVersion = fromOverride?.version ?? 0;
     const curToVersion = targetOverride?.version ?? 0;
+    // #134 (P1): Verify plan revision & projected routine identity so stale overwrite confirmations cannot shift a newly activated plan.
+    if (input.expectedPlanRevision !== undefined && curPlanRevision !== input.expectedPlanRevision) {
+      throw new DomainError("生效训练计划已变更，请刷新日历后重新确认顺延", 409);
+    }
+    if (
+      input.expectedFromRoutineId !== undefined &&
+      (source.day.routineId ?? null) !== input.expectedFromRoutineId
+    ) {
+      throw new DomainError("原日期排期训练已变更，请刷新后重试", 409);
+    }
     // #125 (P1): Deleted schedule tombstones appear as null (version 0) to clients; allow expectedVersion === 0 to match deleted tombstones.
     const fromVersionMatches =
       input.expectedFromVersion === undefined ||
@@ -679,6 +698,12 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
     }
 
     const targetDetail = getWebScheduleDay(store, userId, input.toDate);
+    if (
+      input.expectedToRoutineId !== undefined &&
+      (targetDetail.day.routineId ?? null) !== input.expectedToRoutineId
+    ) {
+      throw new DomainError("目标日期排期训练已变更，请刷新后重试", 409);
+    }
     const targetHasManualWorkout = Boolean(
       targetOverride && !targetOverride.deleted && (targetOverride.data as ScheduledDay).mode === "workout",
     );
@@ -696,8 +721,12 @@ export function shiftWebScheduleDay(store: Store, userId: string, input: z.infer
           title: targetDetail.day.title || "训练",
           notes: targetDetail.day.notes || "",
           version: curToVersion,
+          routineId: targetDetail.day.routineId ?? null,
         },
         curFromVersion,
+        curPlanRevision,
+        source.day.routineId ?? null,
+        source.day.title || "",
       );
     }
 
@@ -857,18 +886,30 @@ export function syncWorkoutRoutineToActivePlan(
             ? oldMatch.weight
             : kgToUnit(weightToKg(oldMatch.weight, oldUnit), nextUnit)
           : null;
+      // #181 (P1): Preserve increment === 0, clamp converted lb increment to [0.5, 20], and preserve setsMax & deloadMissThreshold.
       const syncedIncrement =
         oldMatch?.increment != null
-          ? oldUnit === nextUnit
-            ? oldMatch.increment
-            : Math.max(0.5, Math.round(kgToUnit(weightToKg(oldMatch.increment, oldUnit), nextUnit) * 2) / 2)
+          ? oldMatch.increment === 0
+            ? 0
+            : oldUnit === nextUnit
+              ? Math.min(20, oldMatch.increment)
+              : Math.min(20, Math.max(0.5, Math.round(kgToUnit(weightToKg(oldMatch.increment, oldUnit), nextUnit) * 2) / 2))
           : nextUnit === "lb"
             ? 5
             : 2.5;
+      const syncedSetsMax =
+        oldMatch?.setsMax != null
+          ? Math.min(20, Math.max(setsCount, Math.round(oldMatch.setsMax)))
+          : undefined;
+      const syncedDeloadMiss =
+        oldMatch?.deloadMissThreshold != null
+          ? Math.min(5, Math.max(2, Math.round(oldMatch.deloadMissThreshold)))
+          : undefined;
 
       return plannedExerciseSchema.parse({
         exerciseId: row.exerciseId,
         sets: setsCount,
+        ...(syncedSetsMax !== undefined ? { setsMax: syncedSetsMax } : {}),
         repsMin: timed ? 1 : (oldMatch?.repsMin ?? 8),
         repsMax: timed ? 1 : (oldMatch ? Math.max(oldMatch.repsMin, oldMatch.repsMax) : 12),
         weight: syncedWeight,
@@ -877,6 +918,7 @@ export function syncWorkoutRoutineToActivePlan(
         targetRir: oldMatch?.targetRir ?? 2,
         progression: oldMatch?.progression ?? (timed ? "manual" : "double"),
         increment: syncedIncrement,
+        ...(syncedDeloadMiss !== undefined ? { deloadMissThreshold: syncedDeloadMiss } : {}),
         backupExerciseId: oldMatch?.backupExerciseId &&
           oldMatch.backupExerciseId !== row.exerciseId &&
           cat.has(oldMatch.backupExerciseId)

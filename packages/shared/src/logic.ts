@@ -206,7 +206,7 @@ export function nextTarget(
           set.type !== "warmup" &&
           set.type !== "drop" &&
           set.type !== "rest_pause" &&
-          set.reps > 0,
+          (mode === "timed" ? set.seconds > 0 : set.reps > 0),
       )
       .map((set) => ({ ...set, weight: toTargetWeight(set.weight) })) ??
     [];

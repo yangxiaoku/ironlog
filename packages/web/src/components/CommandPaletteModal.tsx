@@ -17,6 +17,7 @@ import {
   openWorkoutEditor,
 } from "../lib/record-openers";
 import { DESTINATIONS, type ViewId } from "../lib/routes";
+import { readWorkoutPreferences } from "../lib/workout-helpers";
 import { useAuthStore } from "../store/useAuthStore";
 import { useUiStore } from "../store/useUiStore";
 import { Icon, type IconName } from "./Icon";
@@ -160,11 +161,11 @@ export function CommandPaletteModal() {
         keywords: "1rm calc plate barbell 计算器 配片 杠铃",
         icon: "bolt",
         run: () => {
-          closeAllModals();
+          useUiStore.getState().closeTopModal();
           openStrengthCalcModal();
         },
       },
-      ...(userId && aiReady
+      ...(userId && aiReady && !(readWorkoutPreferences().hiddenModules ?? []).includes("ai")
         ? [
             {
               id: "act:ai-workout",
@@ -253,7 +254,7 @@ export function CommandPaletteModal() {
         icon: theme === "dark" ? "sun" : "moon",
         run: () => {
           toggleTheme();
-          closeAllModals();
+          useUiStore.getState().closeTopModal();
         },
       },
     ];
@@ -297,7 +298,7 @@ export function CommandPaletteModal() {
       keywords: ex.id,
       icon: "exercises",
       run: () => {
-        closeAllModals();
+        useUiStore.getState().closeTopModal();
         openExerciseDetailModal(ex.id, ex.name);
       },
     }));

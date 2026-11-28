@@ -1,6 +1,9 @@
-import { localDate } from "@ironlog/shared";
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { apiFetch } from "../lib/api";
+
+function localDateCn(ms: number): string {
+  return new Date((Number.isFinite(ms) ? ms : Date.now()) + 8 * 3600_000).toISOString().slice(0, 10);
+}
 import { buildAppleHubActionUrl, isAppleMobileDevice } from "../lib/apple-fitness";
 import {
   CARDIO_SESSION_EVENT,
@@ -90,6 +93,7 @@ function emitWorkoutDraftChange() {
 export function LiveWorkoutBar() {
   const userId = useAuthStore((s) => s.userId);
   const modals = useUiStore((s) => s.modals);
+  const dataEpoch = useUiStore((s) => s.dataEpoch);
   const notify = useUiStore((s) => s.notify);
   const openConfirm = useUiStore((s) => s.openConfirm);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
@@ -152,12 +156,12 @@ export function LiveWorkoutBar() {
       window.removeEventListener("pageshow", refresh);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [userId, hasWorkoutOpen, hasCardioOpen, modals.length]);
+  }, [userId, hasWorkoutOpen, hasCardioOpen, modals.length, dataEpoch]);
 
   const hasActiveRest = Boolean(draft?.rest && draft.rest.pausedLeftMs == null);
   const hasRunningClock = Boolean(
     (userId && !hasWorkoutOpen && (draft?.timing?.runningSince || hasActiveRest)) ||
-      (userId && !hasCardioOpen && cardioSession),
+      (userId && !hasCardioOpen && cardioSession && cardioSession.timing?.runningSince),
   );
 
   useEffect(() => {
@@ -182,8 +186,8 @@ export function LiveWorkoutBar() {
       checking = true;
       lastCheckedAt = Date.now();
       try {
-        const from = localDate(Date.parse(session.startedAt));
-        const through = localDate(Math.max(Date.now(), Date.parse(session.appleSyncRequestedAt)));
+        const from = localDateCn(Date.parse(session.startedAt));
+        const through = localDateCn(Math.max(Date.now(), Date.parse(session.appleSyncRequestedAt)));
         const rows = await apiFetch<Array<Parameters<typeof matchesCardioAppleWorkout>[1] & { id: string }>>(
           `/api/integrations/apple-health/agenda?from=${from}&through=${through}`,
           { accountId: userId },

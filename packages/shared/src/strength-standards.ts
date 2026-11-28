@@ -101,8 +101,10 @@ function resolveBestLift(
 export function evaluateStrengthStandards(
   best1RMById: ReadonlyMap<string, number> | Record<string, number>,
   bodyweightKg: number | null | undefined,
-  sex: "male" | "female" = "male",
+  sex?: "male" | "female" | null,
 ): StrengthStandardEntry[] {
+  // #183: Never default unknown/missing sex to male strength standards
+  if (sex !== "male" && sex !== "female") return [];
   const bw = Number(bodyweightKg);
   if (!Number.isFinite(bw) || bw < 30 || bw > 250) return [];
   const table = sex === "female" ? FEMALE_THRESHOLDS : MALE_THRESHOLDS;

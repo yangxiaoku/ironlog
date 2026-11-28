@@ -327,6 +327,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                 disabled={flushingQueue}
                 onClick={() => {
                   if (flushingQueue) return;
+                  if (!online || (typeof navigator !== "undefined" && navigator.onLine === false)) {
+                    notify("当前处于离线状态，恢复网络后将自动同步待上传记录");
+                    return;
+                  }
                   void syncOfflineQueue(userId, { silent: false }).then(() => {
                     const blocked = readQueue(getOfflineStorage(), userId).filter((item) => item.failure);
                     if (!blocked.length) return;

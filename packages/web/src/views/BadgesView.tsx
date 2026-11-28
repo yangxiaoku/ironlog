@@ -5,7 +5,9 @@ import { DotMeter } from "../components/Meters";
 import {
   BADGE_TIER_LABELS,
   filterVisibleBadges,
+  formatBadgeProgressPct,
   getPinnedBadges,
+  pinnedBadgesKey,
   type BadgeSummary,
 } from "../lib/badges";
 import { fmt } from "../lib/date";
@@ -25,15 +27,25 @@ export function BadgesView() {
   const [error, setError] = useState("");
   const [category, setCategory] = useState("");
   const [status, setStatus] = useState<"all" | "unlocked" | "chasing">("all");
+  const [includeUnstartedChasing, setIncludeUnstartedChasing] = useState(false);
   const [query, setQuery] = useState("");
   const [pinnedIds, setPinnedIds] = useState<string[]>(() => getPinnedBadges(userId));
   const lastUserRef = useRef(userId);
 
   useEffect(() => {
     setPinnedIds(getPinnedBadges(userId));
+    const key = pinnedBadgesKey(userId);
     const onPinnedChange = () => setPinnedIds(getPinnedBadges(userId));
+    // #204: Sync badge pinning across browser tabs/windows via native storage event
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === null || ev.key === key) setPinnedIds(getPinnedBadges(userId));
+    };
     window.addEventListener("ironlog-pinned-badges-change", onPinnedChange);
-    return () => window.removeEventListener("ironlog-pinned-badges-change", onPinnedChange);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("ironlog-pinned-badges-change", onPinnedChange);
+      window.removeEventListener("storage", onStorage);
+    };
   }, [userId, dataEpoch]);
 
   useEffect(() => {
@@ -98,7 +110,9 @@ export function BadgesView() {
       let items = badges.filter((item) => item.category === cat.key);
       if (status === "unlocked") items = items.filter((item) => item.unlocked);
       else if (status === "chasing") {
-        items = items.filter((item) => !item.unlocked).sort((a, b) => b.progress - a.progress);
+        items = items
+          .filter((item) => !item.unlocked && (includeUnstartedChasing || item.progress > 0))
+          .sort((a, b) => b.progress - a.progress);
       }
       if (q) {
         items = items.filter((item) =>
@@ -201,7 +215,7 @@ export function BadgesView() {
                 </summary>
                 <div className="badge-grid">
                   {items.map((badge) => {
-                    const pct = Math.round(badge.progress * 100);
+                    const pctText = formatBadgeProgressPct(badge);
                     const pinned = badge.unlocked && pinnedSet.has(badge.id);
                     const statusText = badge.unlocked
                       ? `${badge.unlockedAt ? `${badge.unlockedAt.slice(5).replace("-", "/")} ` : ""}已点亮`
@@ -212,7 +226,7 @@ export function BadgesView() {
                         key={badge.id}
                         type="button"
                         className={`badge-card${badge.unlocked ? " is-unlocked" : " is-locked"}${pinned ? " is-pinned" : ""}`}
-                        onClick={() => openBadgeDetailModal(badge, setPinnedIds)}
+                        onClick={() => openBadgeDetailModal(badge, setPinnedIds, badges)}
                       >
                         <div className="badge-card-top">
                           <span className="badge-tier">{BADGE_TIER_LABELS[badge.tier] ?? ""}</span>
@@ -236,7 +250,7 @@ export function BadgesView() {
                           <DotMeter ratio={badge.progress} count={10} />
                           <span>
                             {statusText}
-                            {badge.unlocked ? "" : ` · ${pct}%`}
+                            {badge.unlocked ? "" : ` · ${pctText}`}
                           </span>
                         </div>
                       </button>
@@ -248,11 +262,32 @@ export function BadgesView() {
           })
         ) : (
           <div className="empty">
-            <strong>没有匹配的成就徽章</strong>
-            <p>试试切换筛选状态或更换关键词。</p>
+            <strong>{status === "chasing" && !includeUnstartedChasing ? "当前没有已有进展的冲刺徽章" : "没有匹配的成就徽章"}</strong>
+            <p>{status === "chasing" && !includeUnstartedChasing ? "可以展开全部待解锁（含 0% 未开始）或切回全部徽章。" : "试试切换筛选状态或更换关键词。"}</p>
+            {status === "chasing" && !includeUnstartedChasing ? (
+              <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap", marginTop: 8 }}>
+                <button type="button" className="secondary-button" onClick={() => setIncludeUnstartedChasing(true)}>
+                  查看全部待解锁（含 0%）
+                </button>
+                <button type="button" className="quiet" onClick={() => setStatus("all")}>
+                  返回全部徽章
+                </button>
+              </div>
+            ) : null}
           </div>
         )}
       </div>
+      {status === "chasing" && sections.length > 0 ? (
+        <div style={{ textAlign: "center", marginTop: 12 }}>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => setIncludeUnstartedChasing((v) => !v)}
+          >
+            {includeUnstartedChasing ? "仅看已有进展的冲刺项" : "显示全部待解锁（含 0% 未开始）"}
+          </button>
+        </div>
+      ) : null}
     </>
   );
 }

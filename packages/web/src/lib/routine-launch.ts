@@ -47,13 +47,17 @@ export function buildWorkoutSeedFromRoutine(
   const prefs = opts?.prefs ?? readWorkoutPreferences();
   const makeId = opts?.makeId ?? defaultUuid;
 
+  const LB_PLATES = [45, 35, 25, 10, 5, 2.5];
   const exercises: WorkoutExercise[] = result.exercises.map((row) => {
+    const unit = row.weightUnit ?? "kg";
+    // #169: Use 5 lb step & 45 lb barbell for lb exercises instead of kg settings
+    const stepForUnit = unit === "lb" ? 5 : prefs.weightStepKg;
     const scaled = prefs.deloadMode
       ? applyDeloadToTarget(
           row.sets,
           row.weight,
           row.snapshot.mode as ExerciseMode,
-          prefs.weightStepKg,
+          stepForUnit,
           prefs.deloadWeightPct,
           prefs.deloadSetsPct,
         )
@@ -73,9 +77,9 @@ export function buildWorkoutSeedFromRoutine(
       row.autoWarmup && row.snapshot.mode === "reps" && scaled.weight > 0
         ? buildWarmupSetsPlan(
             scaled.weight,
-            row.snapshot.equipment === "barbell" && (row.weightUnit ?? "kg") === "kg",
-            prefs.barWeight,
-            prefs.enabledPlates,
+            row.snapshot.equipment === "barbell",
+            unit === "lb" ? 45 : prefs.barWeight,
+            unit === "lb" ? LB_PLATES : prefs.enabledPlates,
             prefs.warmupScheme,
           ).map((step) => ({
             id: makeId(),

@@ -70,7 +70,8 @@ export class Auth {
       { user_id: string; expires_at: string | null; scope?: string } | undefined;
     if (!row || (row.expires_at && row.expires_at <= new Date().toISOString()))
       throw new DomainError("登录已失效，请重新登录", 401);
-    return { userId: row.user_id, scope: row.scope === "api" ? "api" : "session" };
+    // #171 (P1): Fail-closed — only explicit 'session' scope grants interactive session privileges.
+    return { userId: row.user_id, scope: row.scope === "session" ? "session" : "api" };
   }
 
   identify(token: string) {

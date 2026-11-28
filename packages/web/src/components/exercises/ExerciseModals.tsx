@@ -69,6 +69,8 @@ function ExDetailSparkline({
     return { x: Number(x.toFixed(1)), y: Number(y.toFixed(1)) };
   });
   const unit = timed ? "秒" : "kg";
+  const firstVal = pts[0]!.value;
+  const lastVal = pts.at(-1)!.value;
   const chartTitle = timed ? "最长保持趋势" : assisted ? "辅助重量走势（越低越强）" : "估算 1RM 走势";
   const chartAria = timed ? "时长走势图" : assisted ? "辅助重量走势图" : "估算1RM走势图";
 
@@ -77,10 +79,10 @@ function ExDetailSparkline({
       <div className="ex-chart-head">
         <span>{chartTitle}</span>
         <small>
-          {fmt(min)} → {fmt(max)} {unit}
+          {fmt(firstVal)} → {fmt(lastVal)} {unit}
         </small>
       </div>
-      <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" role="img" aria-label={chartAria}>
+      <svg viewBox={`0 0 ${w} ${h}`} role="img" aria-label={chartAria}>
         <polyline
           fill="none"
           stroke="currentColor"
@@ -124,7 +126,9 @@ export function ExerciseDetailModal({
   const [exercise, setExercise] = useState<CatalogueExercise | null>(customRecord?.data ?? null);
   const [resolvedCustomRec, setResolvedCustomRec] = useState<RecordEnvelope<CatalogueExercise> | null>(customRecord ?? null);
   const [hist, setHist] = useState<ExerciseHistoryResponse | null>(null);
-  const [favRec, setFavRec] = useState<RecordEnvelope<FavoriteData> | null>(null);
+  const [historyLoadError, setHistoryLoadError] = useState(false);
+  const [historyReloadNonce, setHistoryReloadNonce] = useState(0);
+  const [favRecs, setFavRecs] = useState<Array<RecordEnvelope<FavoriteData>>>([]);
   const [noteInput, setNoteInput] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [togglingFav, setTogglingFav] = useState(false);
@@ -135,15 +139,20 @@ export function ExerciseDetailModal({
     let active = true;
     setLoading(true);
     setError("");
+    setHistoryLoadError(false);
     void (async () => {
       try {
-        const [exRes, histRes, favsRes, customsRes] = await Promise.all([
+        const [exRes, histResult, favsRes, customsRes] = await Promise.all([
           customRecord
             ? Promise.resolve({ exercise: customRecord.data })
             : apiFetch<{ exercise: CatalogueExercise }>(`/api/catalogue/exercises/${encodeURIComponent(exerciseId)}`, {
                 token: "",
               }).catch(() => null),
-          userId ? apiFetch<ExerciseHistoryResponse>(`/api/web/exercise-history/${encodeURIComponent(exerciseId)}`).catch(() => null) : Promise.resolve(null),
+          userId
+            ? apiFetch<ExerciseHistoryResponse>(`/api/web/exercise-history/${encodeURIComponent(exerciseId)}`)
+                .then((data) => ({ ok: true as const, data }))
+                .catch(() => ({ ok: false as const, data: null }))
+            : Promise.resolve({ ok: true as const, data: null }),
           userId ? apiFetch<Array<RecordEnvelope<FavoriteData>>>("/api/records/favorite").catch(() => []) : Promise.resolve([]),
           !customRecord && userId ? apiFetch<Array<RecordEnvelope<CatalogueExercise>>>("/api/records/exercise").catch(() => []) : Promise.resolve([]),
         ]);
@@ -157,10 +166,13 @@ export function ExerciseDetailModal({
         setResolvedCustomRec(foundCustom);
         setExercise(resolved);
         onResolvedTitle?.(resolved.name);
-        setHist(histRes);
-        setNoteInput(histRes?.note ?? "");
-        const matchedFav = favsRes.find((r) => !r.deleted && r.data?.exerciseId === resolved.id) ?? null;
-        setFavRec(matchedFav);
+        setHist(histResult.data);
+        setHistoryLoadError(Boolean(userId && !histResult.ok));
+        if (histResult.ok) {
+          setNoteInput(histResult.data?.note ?? "");
+        }
+        const matchedFavs = favsRes.filter((r) => !r.deleted && r.data?.exerciseId === resolved.id);
+        setFavRecs(matchedFavs);
       } catch (err) {
         if (active) setError((err as Error)?.message || "加载动作详情失败");
       } finally {
@@ -170,7 +182,7 @@ export function ExerciseDetailModal({
     return () => {
       active = false;
     };
-  }, [exerciseId, customRecord, userId, onResolvedTitle]);
+  }, [exerciseId, customRecord, userId, onResolvedTitle, historyReloadNonce]);
 
   if (loading) {
     return (
@@ -209,29 +221,33 @@ export function ExerciseDetailModal({
   );
   const best1rm = sessions.reduce((m, r) => (r.estimated1rm != null && r.estimated1rm > m ? r.estimated1rm : m), 0);
   const bestHold = sessions.reduce((m, r) => (r.bestSeconds != null && r.bestSeconds > m ? r.bestSeconds : m), 0);
-  const isFav = Boolean(favRec);
+  const isFav = favRecs.length > 0;
 
   const handleToggleFav = async () => {
     if (!userId || togglingFav) return;
     triggerHaptic("light");
     setTogglingFav(true);
     try {
-      if (favRec) {
-        await apiFetch("/api/records", {
-          method: "POST",
-          body: {
-            opId: crypto.randomUUID(),
-            id: favRec.id,
-            kind: "favorite",
-            baseVersion: favRec.version,
-            deleted: true,
-            data: favRec.data,
-          },
-        });
-        setFavRec(null);
+      if (favRecs.length) {
+        await Promise.all(
+          favRecs.map((rec) =>
+            apiFetch("/api/records", {
+              method: "POST",
+              body: {
+                opId: crypto.randomUUID(),
+                id: rec.id,
+                kind: "favorite",
+                baseVersion: rec.version,
+                deleted: true,
+                data: rec.data,
+              },
+            }),
+          ),
+        );
+        setFavRecs([]);
         notify("已取消收藏");
       } else {
-        const id = `fav_${crypto.randomUUID().slice(0, 12)}`;
+        const id = `fav_${exercise.id}`;
         const res = await apiFetch<{ record?: RecordEnvelope<FavoriteData> }>("/api/records", {
           method: "POST",
           body: {
@@ -243,7 +259,7 @@ export function ExerciseDetailModal({
             data: { exerciseId: exercise.id },
           },
         });
-        setFavRec(
+        setFavRecs([
           res.record ?? {
             id,
             kind: "favorite",
@@ -252,7 +268,7 @@ export function ExerciseDetailModal({
             updatedAt: new Date().toISOString(),
             data: { exerciseId: exercise.id },
           },
-        );
+        ]);
         notify("已加入收藏");
       }
       bumpDataEpoch();
@@ -264,7 +280,7 @@ export function ExerciseDetailModal({
   };
 
   const handleSaveNote = async () => {
-    if (!userId || savingNote) return;
+    if (!userId || savingNote || historyLoadError) return;
     setSavingNote(true);
     try {
       await apiFetch(`/api/web/exercise-notes/${encodeURIComponent(exercise.id)}`, {
@@ -403,16 +419,35 @@ export function ExerciseDetailModal({
 
           <ExDetailSparkline sessions={sessions} timed={timed} assisted={assisted} />
 
+          {historyLoadError ? (
+            <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "10px 0" }}>
+              <span>历史记录与备忘加载失败，已锁定备忘编辑以免误删原文。</span>
+              <button
+                type="button"
+                className="micro-chip"
+                onClick={() => setHistoryReloadNonce((n) => n + 1)}
+              >
+                重试加载
+              </button>
+            </div>
+          ) : null}
+
           <div className="ex-detail-note">
             <input
               type="text"
               maxLength={500}
+              disabled={historyLoadError}
               value={noteInput}
               onChange={(e) => setNoteInput(e.target.value)}
-              placeholder="记下座椅档位、握距或发力要点…"
+              placeholder={historyLoadError ? "备忘加载失败，请先点击重试加载" : "记下座椅档位、握距或发力要点…"}
               aria-label="动作个人备忘"
             />
-            <button type="button" className="secondary-button" disabled={savingNote} onClick={() => void handleSaveNote()}>
+            <button
+              type="button"
+              className="secondary-button"
+              disabled={savingNote || historyLoadError}
+              onClick={() => void handleSaveNote()}
+            >
               {savingNote ? "保存中…" : "保存备忘"}
             </button>
           </div>
@@ -543,7 +578,7 @@ export function CustomExerciseModal({
 }: {
   existing?: RecordEnvelope<CatalogueExercise> | null;
 }) {
-  const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const closeTopModal = useUiStore((s) => s.closeTopModal);
   const openConfirm = useUiStore((s) => s.openConfirm);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const notify = useUiStore((s) => s.notify);
@@ -577,7 +612,7 @@ export function CustomExerciseModal({
           },
         });
         bumpDataEpoch();
-        closeAllModals();
+        closeTopModal();
         notify("已删除自定义动作");
       },
     });
@@ -621,7 +656,7 @@ export function CustomExerciseModal({
         },
       });
       bumpDataEpoch();
-      closeAllModals();
+      closeTopModal();
       notify(existing ? `已更新自定义动作「${cleanName}」` : `已创建自定义动作「${cleanName}」`);
     } catch (err) {
       setError((err as Error)?.message || "保存自定义动作失败");
@@ -702,7 +737,7 @@ export function CustomExerciseModal({
             删除动作
           </button>
         ) : (
-          <button type="button" className="quiet" onClick={closeAllModals}>
+          <button type="button" className="quiet" onClick={closeTopModal}>
             取消
           </button>
         )}

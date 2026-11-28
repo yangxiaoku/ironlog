@@ -244,6 +244,7 @@ function parseDemoAdapt(payload: {
       snapshot?: { name?: string; mode?: string };
       exerciseId: string;
       restSeconds: number;
+      weightUnit?: "kg" | "lb";
       openSets: { weight: number; reps: number; seconds?: number }[];
     }[];
   };
@@ -272,24 +273,49 @@ function parseDemoAdapt(payload: {
     }
 
     if (isPush && mode !== "timed") {
-      const bump = firstOpen.weight > 0 ? firstOpen.weight + 2.5 : firstOpen.weight;
+      // #182 (P1): Handle assisted mode inversely (less assistance = harder) and omit reps when firstOpen.reps < 1.
+      const step = (row.weightUnit ?? "kg") === "lb" ? 5 : 2.5;
+      const unitLbl = row.weightUnit ?? "kg";
+      const nextWeight =
+        mode === "assisted"
+          ? firstOpen.weight > 0
+            ? Math.max(0, Math.round((firstOpen.weight - step) * 2) / 2)
+            : 0
+          : firstOpen.weight > 0
+            ? Math.round((firstOpen.weight + step) * 2) / 2
+            : firstOpen.weight;
       return {
         exerciseRowId: row.exerciseRowId,
-        reason: "体感充沛，对未完成组微调递增 +2.5 kg 冲击上限",
+        reason:
+          mode === "assisted"
+            ? `体感充沛，将辅助配重下调 -${step} ${unitLbl} 提高动作强度`
+            : `体感充沛，对未完成组微调递增 +${step} ${unitLbl} 冲击上限`,
         patch: {
-          weight: bump,
-          reps: firstOpen.reps,
+          weight: nextWeight,
+          weightUnit: row.weightUnit ?? "kg",
+          ...(firstOpen.reps >= 1 ? { reps: firstOpen.reps } : {}),
         },
       };
     }
 
     if (isFatigue && mode !== "timed") {
-      const easedWeight = firstOpen.weight > 5 ? Math.max(2.5, Math.round((firstOpen.weight * 0.9) / 2.5) * 2.5) : firstOpen.weight;
+      const step = (row.weightUnit ?? "kg") === "lb" ? 5 : 2.5;
+      const unitLbl = row.weightUnit ?? "kg";
+      const easedWeight =
+        mode === "assisted"
+          ? Math.max(step, Math.round(((firstOpen.weight || 0) * 1.15) / step) * step, Math.round(((firstOpen.weight || 0) + step) * 2) / 2)
+          : firstOpen.weight > step * 2
+            ? Math.max(step, Math.round((firstOpen.weight * 0.9) / step) * step)
+            : firstOpen.weight;
       return {
         exerciseRowId: row.exerciseRowId,
-        reason: "保留已完成的刺激量，余下未完成组小幅降载约 10% 保证技术标准",
+        reason:
+          mode === "assisted"
+            ? `保留已完成刺激量，增加辅助配重至 ${easedWeight} ${unitLbl} 降低实际负重保证技术标准`
+            : "保留已完成的刺激量，余下未完成组小幅降载约 10% 保证技术标准",
         patch: {
           weight: easedWeight,
+          weightUnit: row.weightUnit ?? "kg",
           remainingSets: Math.max(1, remainingCount - (remainingCount > 2 ? 1 : 0)),
         },
       };

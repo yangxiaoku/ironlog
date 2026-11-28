@@ -32,6 +32,7 @@ import {
   triggerHaptic,
 } from "../../lib/haptics-audio";
 import { WORKOUT_PREFS_EVENT, readWorkoutPreferences } from "../../lib/workout-helpers";
+import { enqueueMutation, getOfflineStorage, isNetworkError } from "../../lib/offline-queue";
 import { useAuthStore } from "../../store/useAuthStore";
 import { useUiStore } from "../../store/useUiStore";
 import { Icon } from "../Icon";
@@ -52,6 +53,7 @@ export function CardioSessionModal({
   const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
+  const refreshPendingCount = useUiStore((s) => s.refreshPendingCount);
   const setInnerOverlayDismiss = useUiStore((s) => s.setInnerOverlayDismiss);
 
   const [session, setSession] = useState<LiveCardioSession | null>(() => readCardioSession(userId));
@@ -123,6 +125,8 @@ export function CardioSessionModal({
     return () => wake.stop();
   }, [Boolean(session?.timing.runningSince)]);
 
+  const running = Boolean(session?.timing.runningSince);
+
   useEffect(() => {
     if (!userId || typeof window === "undefined") return;
     const syncSession = () => {
@@ -130,7 +134,6 @@ export function CardioSessionModal({
       setNowMs(Date.now());
     };
     syncSession();
-    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
     const onVisible = () => {
       if (document.visibilityState === "visible") syncSession();
     };
@@ -139,13 +142,20 @@ export function CardioSessionModal({
     window.addEventListener("pageshow", syncSession);
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      window.clearInterval(timer);
       window.removeEventListener(CARDIO_SESSION_EVENT, syncSession);
       window.removeEventListener("focus", syncSession);
       window.removeEventListener("pageshow", syncSession);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [userId]);
+
+  // R16: Only run stopwatch tick interval while actively running; stop timer when paused
+  useEffect(() => {
+    if (!running || typeof window === "undefined") return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 250);
+    return () => window.clearInterval(timer);
+  }, [running]);
 
   const closeSheet = () => {
     setActiveSheet("none");
@@ -335,6 +345,26 @@ export function CardioSessionModal({
         closeTopModal();
       }
     } catch (err) {
+      if (isNetworkError(err) && userId) {
+        const payloadToQueue = finished.pendingSave?.payload ?? desiredBody;
+        const queuedOpId = finished.pendingSave?.opId ?? desiredBody.opId;
+        const queued = enqueueMutation(getOfflineStorage(), userId, {
+          opId: queuedOpId,
+          path: "/api/records",
+          method: "POST",
+          body: payloadToQueue,
+          label: `有氧：${session.label}`,
+        });
+        if (queued != null) {
+          if (readCardioSession(userId)?.id === session.id) clearCardioSession(userId);
+          refreshPendingCount(userId);
+          triggerHaptic("success");
+          setActiveSheet("none");
+          notify(`离线状态：已暂存「${session.label}」，恢复网络后自动同步`);
+          closeTopModal();
+          return;
+        }
+      }
       notify((err as Error)?.message || "保存有氧记录失败，可核对后重试");
     } finally {
       savingRef.current = false;

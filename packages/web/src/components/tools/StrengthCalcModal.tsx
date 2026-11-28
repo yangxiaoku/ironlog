@@ -34,7 +34,7 @@ const PCT_ZONES: ReadonlyArray<readonly [number, string, number]> = [
 ];
 
 export function StrengthCalcModal() {
-  const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const closeTopModal = useUiStore((s) => s.closeTopModal);
 
   const [unit, setUnit] = useState<"kg" | "lb">("kg");
   const [weightInput, setWeightInput] = useState("80");
@@ -366,7 +366,7 @@ export function StrengthCalcModal() {
       </section>
 
       <footer>
-        <button type="button" className="primary-button" onClick={closeAllModals}>
+        <button type="button" className="primary-button" onClick={closeTopModal}>
           完成
         </button>
       </footer>

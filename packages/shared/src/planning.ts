@@ -324,7 +324,9 @@ export function evaluateExerciseProgression(
   let consecutiveMisses = 0;
   if (item.progression !== "manual" && mode !== "timed") {
     for (const entry of recentSameExercise) {
-      const work = entry.row.sets.filter((set) => isValidWorkSet(set, mode));
+      const work = entry.row.sets.filter(
+        (set) => set.type !== "drop" && set.type !== "rest_pause" && isValidWorkSet(set, mode),
+      );
       const missed = work.length < item.sets || work.some((set) => set.reps < item.repsMin);
       if (missed) consecutiveMisses++;
       else break;
@@ -610,11 +612,19 @@ export function projectScheduleRange(params: {
     rotationIndex = prevIdx >= 0 ? (prevIdx + 1) % plan.routines.length : 0;
   }
 
-  // Build candidate date list
-  const dates: string[] = [];
-  for (let d = params.from; d <= params.through; d = addDaysIso(d, 1)) dates.push(d);
+  // #179 (P1): Always project rotation plans over full ISO weeks starting from todayDate through the end of
+  // the week containing params.through so calendar range queries and single-day queries produce identical slots & routine pointers.
+  const weekSunday = (iso: string) => addDaysIso(weekMonday(iso), 6);
+  const fullFrom = params.from < params.todayDate ? params.from : params.todayDate;
+  const fullThrough =
+    plan && plan.schedule === "rotation"
+      ? (weekSunday(params.through) > params.through ? weekSunday(params.through) : params.through)
+      : params.through;
 
-  // Pre-compute planned slots per ISO week for rotation plans
+  const dates: string[] = [];
+  for (let d = fullFrom; d <= fullThrough; d = addDaysIso(d, 1)) dates.push(d);
+
+  // Pre-compute planned slots per ISO week for rotation plans using complete Mon..Sun weeks
   const rotationSlots = new Set<string>();
   if (plan && plan.schedule === "rotation") {
     const targetPerWeek = Math.max(1, Math.min(7, params.daysPerWeek ?? Math.min(4, Math.max(3, plan.routines.length))));
@@ -809,7 +819,7 @@ export function projectScheduleRange(params: {
       routine: null,
       workoutsCount: 0,
     };
-  });
+  }).filter((day) => day.date >= params.from && day.date <= params.through);
 }
 
 /**
@@ -950,7 +960,12 @@ export function resolveRoutineWithTelemetry(params: {
   return {
     exercises,
     summary: {
-      progressionCount: exercises.filter((e) => e.progression.status === "progress_weight" || e.progression.status === "progress_reps").length,
+      progressionCount: exercises.filter(
+        (e) =>
+          e.progression.status === "progress_weight" ||
+          e.progression.status === "progress_reps" ||
+          e.progression.status === "progress_sets",
+      ).length,
       deloadCount: exercises.filter((e) => e.progression.status === "plateau_deload").length,
       prOpportunityCount: exercises.filter((e) => e.pr && e.pr.kind !== "baseline").length,
       estimatedMinutes: estimateRoutineMinutes(params.routine),

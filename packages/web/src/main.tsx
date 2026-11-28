@@ -3,9 +3,6 @@ import { createRoot } from "react-dom/client";
 import { registerSW } from "virtual:pwa-register";
 import "./styles";
 import { App, setPwaUpdateRunner } from "./App";
-import { readCardioSession } from "./lib/cardio-session";
-import { findLocalWorkoutDraft } from "./lib/domain";
-import { useAuthStore } from "./store/useAuthStore";
 import { useUiStore } from "./store/useUiStore";
 
 // Ensure crypto.randomUUID works in non-HTTPS LAN / VPS origins (e.g. mobile Safari over HTTP)
@@ -31,20 +28,10 @@ if (typeof globalThis.crypto !== "undefined" && typeof globalThis.crypto.randomU
 if (typeof navigator !== "undefined" && "serviceWorker" in navigator) {
   const updateSW = registerSW({
     immediate: true,
+    // #163: With registerType: "prompt", onNeedRefresh surfaces the non-disruptive banner until the user confirms
     onNeedRefresh() {
       setPwaUpdateRunner(() => void updateSW(true));
-      const ui = useUiStore.getState();
-      const uid = useAuthStore.getState().userId;
-      const hasActiveSession = Boolean(
-        ui.modals.length > 0 ||
-          ui.confirm ||
-          (uid && (findLocalWorkoutDraft(uid) || readCardioSession(uid))),
-      );
-      if (hasActiveSession) {
-        ui.setPwaUpdateReady(true);
-      } else {
-        ui.setPwaUpdateReady(true);
-      }
+      useUiStore.getState().setPwaUpdateReady(true);
     },
     onRegisteredSW(_url, registration) {
       if (!registration || typeof document === "undefined") return;

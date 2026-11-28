@@ -109,30 +109,36 @@ export function WeightView() {
   const earliestWeightDate = records.at(-1)?.data.date ?? shiftDateStr(todayKey, -29);
   const rangeStart = chartRange === 0 ? earliestWeightDate : shiftDateStr(todayKey, -(chartRange - 1));
   const { recentWithAvg, change30d } = useMemo(() => {
+    // #192: Include 6 extra lookback days before rangeStart when computing 7-day rolling average
+    // so the same date displays an identical 7d average across 30/90/180d chart ranges.
+    const lookbackStart = shiftDateStr(rangeStart, -6);
     const byDay = new Map<string, WeightData>();
     for (const r of records) {
-      if (r.data.date >= rangeStart && r.data.date <= todayKey && !byDay.has(r.data.date)) {
+      if (r.data.date >= lookbackStart && r.data.date <= todayKey && !byDay.has(r.data.date)) {
         byDay.set(r.data.date, r.data);
       }
     }
-    const asc = [...byDay.values()].reverse();
-    const diff =
-      asc.length > 1 ? Math.round((asc.at(-1)!.weight - asc[0]!.weight) * 100) / 100 : null;
+    const ascAll = [...byDay.values()].reverse();
     let left = 0;
     let winSum = 0;
-    const withAvg = asc.map((row, idx) => {
+    const allWithAvg = ascAll.map((row, idx) => {
       winSum += row.weight;
       const winStart = shiftDateStr(row.date, -6);
-      while (left <= idx && (asc[left]?.date ?? "") < winStart) {
-        winSum -= asc[left++]?.weight ?? 0;
+      while (left <= idx && (ascAll[left]?.date ?? "") < winStart) {
+        winSum -= ascAll[left++]?.weight ?? 0;
       }
+      const sampleCount = Math.max(1, idx - left + 1);
       return {
         date: row.date,
         weight: row.weight,
-        average: Math.round((winSum / Math.max(1, idx - left + 1)) * 100) / 100,
+        average: Math.round((winSum / sampleCount) * 100) / 100,
+        avgSamples: sampleCount,
       };
     });
-    return { recentWithAvg: withAvg, change30d: diff };
+    const visible = allWithAvg.filter((row) => row.date >= rangeStart);
+    const diff =
+      visible.length > 1 ? Math.round((visible.at(-1)!.weight - visible[0]!.weight) * 100) / 100 : null;
+    return { recentWithAvg: visible, change30d: diff };
   }, [records, rangeStart, todayKey]);
 
   const byMonth = useMemo(() => {
@@ -146,21 +152,29 @@ export function WeightView() {
     return map;
   }, [records, shownWeights]);
 
-  // Body ratios WHR / WHtR
-  const { whr, whtr, ascMeasures } = useMemo(() => {
+  // Body ratios WHR / WHtR (#193: same-day paired waist+hip for WHR; #194: unrounded WHtR threshold + precision near 0.50)
+  const { whr, whrDate, whrUnpaired, whtr, ascMeasures } = useMemo(() => {
     const asc = [...measurements].reverse();
-    let latestWaist: number | null = null;
-    let latestHip: number | null = null;
+    let latestWaist: { value: number; date: string } | null = null;
+    let latestHip: { value: number; date: string } | null = null;
+    let pairedWhr: { value: number; date: string } | null = null;
     for (const row of asc) {
-      if (row.waistCm != null) latestWaist = row.waistCm;
-      if (row.hipCm != null) latestHip = row.hipCm;
+      if (row.waistCm != null) latestWaist = { value: row.waistCm, date: row.date };
+      if (row.hipCm != null) latestHip = { value: row.hipCm, date: row.date };
+      if (row.waistCm != null && row.hipCm != null && row.hipCm > 0) {
+        pairedWhr = { value: row.waistCm / row.hipCm, date: row.date };
+      }
     }
     return {
-      whr: latestWaist && latestHip ? latestWaist / latestHip : null,
-      whtr: latestWaist && heightCm ? latestWaist / heightCm : null,
+      whr: pairedWhr?.value ?? null,
+      whrDate: pairedWhr?.date ?? null,
+      whrUnpaired: !pairedWhr && latestWaist && latestHip ? { waistDate: latestWaist.date, hipDate: latestHip.date } : null,
+      whtr: latestWaist && heightCm ? latestWaist.value / heightCm : null,
       ascMeasures: asc,
     };
   }, [measurements, heightCm]);
+
+  const formatWhtr = (ratio: number) => (Math.abs(ratio - 0.5) < 0.01 ? ratio.toFixed(3) : ratio.toFixed(2));
 
   const measurementsPanel = (
     <section className="panel measurements-panel" aria-label="身体围度档案">
@@ -180,16 +194,21 @@ export function WeightView() {
 
       {measurements.length ? (
         <>
-          {whr || whtr ? (
+          {whr || whtr || whrUnpaired ? (
             <div className="measure-ratios">
               {whr ? (
-                <span className="measure-ratio-chip">
+                <span className="measure-ratio-chip" title={whrDate ? `同日测量：${whrDate}` : undefined}>
                   腰臀比 WHR <b>{whr.toFixed(2)}</b>
+                  {whrDate ? <small>{shortDate(whrDate)}</small> : null}
+                </span>
+              ) : whrUnpaired ? (
+                <span className="measure-ratio-chip" title="腰围与臀围来自不同日期，建议同日测量后计算腰臀比">
+                  腰臀比 WHR <small>缺同日配对（腰 {shortDate(whrUnpaired.waistDate)} / 臀 {shortDate(whrUnpaired.hipDate)}）</small>
                 </span>
               ) : null}
               {whtr ? (
                 <span className={`measure-ratio-chip${whtr < 0.5 ? " is-good" : " is-warn"}`}>
-                  腰高比 WHtR <b>{whtr.toFixed(2)}</b>
+                  腰高比 WHtR <b>{formatWhtr(whtr)}</b>
                   <small>{whtr < 0.5 ? "健康区间" : "偏高"}</small>
                 </span>
               ) : null}

@@ -54,8 +54,18 @@ export function filterVisibleBadges(summary: BadgeSummary, appleHealthConnected 
   };
 }
 
-function pinnedBadgesKey(userId: string): string {
+export function pinnedBadgesKey(userId: string): string {
   return `ironlog-pinned-badges:${userId || "anon"}`;
+}
+
+export function formatBadgeProgressPct(badge: Pick<BadgeItem, "unlocked" | "progress">): string {
+  if (badge.unlocked) return "100%";
+  const pct = Math.max(0, Math.min(99.9, badge.progress * 100));
+  if (pct >= 99) {
+    const floored = Math.floor(pct * 10) / 10;
+    return `${Math.min(99.9, floored)}%`;
+  }
+  return `${Math.min(99, Math.round(pct))}%`;
 }
 
 export function getPinnedBadges(userId: string, storage: Storage | undefined = typeof localStorage !== "undefined" ? localStorage : undefined): string[] {
@@ -68,20 +78,42 @@ export function getPinnedBadges(userId: string, storage: Storage | undefined = t
   }
 }
 
+export function togglePinnedBadgeResult(
+  userId: string,
+  badgeId: string,
+  options?: { replaceId?: string; storage?: Storage },
+): { ok: boolean; pinned: string[]; replacedId: string | null } {
+  const storage = options?.storage ?? (typeof localStorage !== "undefined" ? localStorage : undefined);
+  const cur = getPinnedBadges(userId, storage);
+  const idx = cur.indexOf(badgeId);
+  let next: string[];
+  let replacedId: string | null = null;
+  if (idx >= 0) {
+    next = cur.filter((id) => id !== badgeId);
+  } else if (cur.length >= 3) {
+    const toRemove = options?.replaceId && cur.includes(options.replaceId) ? options.replaceId : cur[0]!;
+    replacedId = toRemove;
+    next = [...cur.filter((id) => id !== toRemove), badgeId];
+  } else {
+    next = [...cur, badgeId];
+  }
+  if (!storage) {
+    return { ok: false, pinned: cur, replacedId: null };
+  }
+  try {
+    storage.setItem(pinnedBadgesKey(userId), JSON.stringify(next));
+    return { ok: true, pinned: next, replacedId };
+  } catch {
+    return { ok: false, pinned: cur, replacedId: null };
+  }
+}
+
 export function togglePinnedBadge(
   userId: string,
   badgeId: string,
   storage: Storage | undefined = typeof localStorage !== "undefined" ? localStorage : undefined,
 ): string[] {
-  const cur = getPinnedBadges(userId, storage);
-  const idx = cur.indexOf(badgeId);
-  const next = idx >= 0 ? cur.filter((id) => id !== badgeId) : [...cur.slice(-2), badgeId];
-  if (storage) {
-    try {
-      storage.setItem(pinnedBadgesKey(userId), JSON.stringify(next));
-    } catch {}
-  }
-  return next;
+  return togglePinnedBadgeResult(userId, badgeId, { storage }).pinned;
 }
 
 export function selectOverviewBadges(summary: BadgeSummary, pinnedIds: string[]): BadgeItem[] {

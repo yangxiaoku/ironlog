@@ -736,6 +736,11 @@ export function buildWebCsv(
       "训练ID",
       "重量单位",
       "原始重量",
+      "动作行ID",
+      "动作模式",
+      "主肌群",
+      "器械",
+      "容量系数",
     ];
     const rows: unknown[][] = [];
     const workouts = store
@@ -751,12 +756,13 @@ export function buildWebCsv(
       const secs = workoutDurationSeconds(w);
       const mins = secs != null ? round1(secs / 60) : "";
       const feeling = w.feeling ? (FEELING_LABELS[w.feeling] ?? w.feeling) : "";
-      for (const ex of w.exercises) {
+      w.exercises.forEach((ex, exIdx) => {
         const meta = ex.snapshot ?? catalogue?.get(ex.exerciseId);
         const name = meta?.name ?? ex.exerciseId;
         const mult = meta?.volumeMultiplier ?? 1;
         const mode = meta?.mode ?? "reps";
         const unit: "kg" | "lb" = ex.weightUnit === "lb" ? "lb" : "kg";
+        const rowId = ex.id || `${workoutId}_ex_${exIdx + 1}`;
         ex.sets.forEach((s, idx) => {
           const weightKg = round2(toKg(s.weight, unit));
           const isWork = isValidWorkSet(s, mode);
@@ -782,9 +788,14 @@ export function buildWebCsv(
             workoutId,
             unit,
             s.weight,
+            rowId,
+            mode,
+            meta?.muscle ?? "",
+            meta?.equipment ?? "",
+            mult,
           ]);
         });
-      }
+      });
     }
     return { filename, content: encodeCsvRows(headers, rows) };
   }

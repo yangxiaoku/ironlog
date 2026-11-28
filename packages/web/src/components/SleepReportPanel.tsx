@@ -39,12 +39,14 @@ function exportSleepReport(report: SleepReport) {
 
 export function SleepReportPanel({ report }: { report: SleepReport }) {
   const { current, previous, series, timing, averageChangeMinutes, referenceMinutes } = report;
+  const latestRecordedIdx = series.map(({ minutes }) => minutes != null).lastIndexOf(true);
   const [pageSize, setPageSize] = useState<7 | 14>(PAGE_SIZE);
   const [page, setPage] = useState(() => {
-    const latest = series.map(({ minutes }) => minutes != null).lastIndexOf(true);
-    return latest < 0 ? 0 : Math.floor((series.length - 1 - latest) / PAGE_SIZE);
+    return latestRecordedIdx < 0 ? 0 : Math.floor((series.length - 1 - latestRecordedIdx) / PAGE_SIZE);
   });
-  const [selectedDate, setSelectedDate] = useState<string>();
+  const [selectedDate, setSelectedDate] = useState<string | undefined>(() =>
+    latestRecordedIdx >= 0 ? series[latestRecordedIdx]?.date : undefined,
+  );
   const totalPages = Math.max(1, Math.ceil(series.length / pageSize));
   const safePage = Math.min(page, totalPages - 1);
   const endIndex = series.length - safePage * pageSize;
@@ -52,12 +54,24 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
   const day = visibleDays.find(({ date }) => date === selectedDate)
     ?? visibleDays.filter(({ minutes }) => minutes != null).at(-1)
     ?? visibleDays.at(-1);
+  const latestRecordedPage = latestRecordedIdx < 0 ? 0 : Math.floor((series.length - 1 - latestRecordedIdx) / pageSize);
   const axisMax = Math.max(10, Math.ceil(Math.max(...series.map(({ minutes }) => minutes ?? 0)) / 60)) * 60;
   const ticks = [0, 4 * 60, referenceMinutes, axisMax];
   const fromLabel = shortDate(visibleDays[0]?.date ?? "");
   const throughLabel = shortDate(visibleDays.at(-1)?.date ?? "");
   const referenceHours = referenceMinutes / 60;
   const sameYear = current.from.slice(0, 4) === current.through.slice(0, 4);
+
+  const togglePageSize = () => {
+    const nextSize: 7 | 14 = pageSize === 7 ? 14 : 7;
+    // #188: Compute new page containing the currently selected date so switching 7/14 days never jumps away from data
+    const anchorDate = day?.date ?? selectedDate;
+    const anchorIdx = anchorDate ? series.findIndex((item) => item.date === anchorDate) : -1;
+    const nextPage = anchorIdx >= 0 ? Math.floor((series.length - 1 - anchorIdx) / nextSize) : 0;
+    setPageSize(nextSize);
+    setPage(nextPage);
+    if (anchorDate) setSelectedDate(anchorDate);
+  };
 
   return (
     <section className="panel sleep-report" aria-labelledby="sleep-report-heading">
@@ -72,8 +86,13 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
           </p>
         </div>
         {current.recordedDays > 0 ? (
-          <button type="button" className="secondary-button" onClick={() => exportSleepReport(report)}>
-            <Icon name="download" size={15} /> 导出 CSV
+          <button
+            type="button"
+            className="secondary-button"
+            title={`导出完整 ${current.days} 天睡眠数据（${current.from} 至 ${current.through}）`}
+            onClick={() => exportSleepReport(report)}
+          >
+            <Icon name="download" size={15} /> 导出全期 {current.days} 天 CSV
           </button>
         ) : null}
       </header>
@@ -123,25 +142,48 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
                   <button
                     type="button"
                     className="quiet"
-                    onClick={() => {
-                      setPageSize((s) => (s === 7 ? 14 : 7));
-                      setPage(0);
-                    }}
+                    onClick={togglePageSize}
                   >
                     {pageSize}天/页
                   </button>
                 ) : null}
-                <button type="button" className="quiet" aria-label="查看前一周"
-                  disabled={endIndex <= pageSize} onClick={() => setPage(safePage + 1)}>‹</button>
+                <button
+                  type="button"
+                  className="quiet"
+                  aria-label={`查看前 ${pageSize} 天（上一页）`}
+                  disabled={endIndex <= pageSize}
+                  onClick={() => setPage(safePage + 1)}
+                >
+                  ‹
+                </button>
                 <span aria-live="polite">
                   {fromLabel} – {throughLabel}
                   {totalPages > 1 ? ` (${totalPages - safePage}/${totalPages})` : ""}
                 </span>
-                <button type="button" className="quiet" aria-label="查看后一周"
-                  disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>›</button>
+                <button
+                  type="button"
+                  className="quiet"
+                  aria-label={`查看后 ${pageSize} 天（下一页）`}
+                  disabled={safePage === 0}
+                  onClick={() => setPage(safePage - 1)}
+                >
+                  ›
+                </button>
+                {latestRecordedIdx >= 0 && safePage !== latestRecordedPage ? (
+                  <button
+                    type="button"
+                    className="quiet"
+                    onClick={() => {
+                      setPage(latestRecordedPage);
+                      setSelectedDate(series[latestRecordedIdx]?.date);
+                    }}
+                  >
+                    最近记录
+                  </button>
+                ) : null}
                 {safePage > 0 ? (
                   <button type="button" className="quiet" onClick={() => setPage(0)}>
-                    最新
+                    最新页
                   </button>
                 ) : null}
               </div>
@@ -154,16 +196,26 @@ export function SleepReportPanel({ report }: { report: SleepReport }) {
                       style={{ bottom: `${(minutes / axisMax) * 100}%` }}><span>{minutes / 60} 时</span></div>
                   ))}
                 </div>
-                <div className="sleep-chart-columns">
-                  {visibleDays.map((item) => (
-                    <button key={item.date} type="button" className={`sleep-chart-day${item.minutes == null ? " is-missing" : ""}`}
-                      aria-pressed={item.date === day?.date} aria-label={`${item.date}，${daySummary(item)}`}
-                      onClick={() => setSelectedDate(item.date)}>
-                      <span className="sleep-chart-bar" aria-hidden="true"
-                        style={item.minutes == null ? undefined : { height: `${(item.minutes / axisMax) * 100}%` }} />
-                      <span className="sleep-chart-label" aria-hidden="true">{shortDate(item.date)}</span>
-                    </button>
-                  ))}
+                <div className={`sleep-chart-columns${pageSize === 14 ? " is-dense" : ""}`}>
+                  {visibleDays.map((item, idx) => {
+                    // #189: In 14-day view, thin out axis labels (every 3rd day + endpoints) so labels never collide at 320 px
+                    const showLabel =
+                      pageSize <= 7 ||
+                      idx === 0 ||
+                      idx === visibleDays.length - 1 ||
+                      idx % 3 === 0;
+                    return (
+                      <button key={item.date} type="button" className={`sleep-chart-day${item.minutes == null ? " is-missing" : ""}`}
+                        aria-pressed={item.date === day?.date} aria-label={`${item.date}，${daySummary(item)}`}
+                        onClick={() => setSelectedDate(item.date)}>
+                        <span className="sleep-chart-bar" aria-hidden="true"
+                          style={item.minutes == null ? undefined : { height: `${(item.minutes / axisMax) * 100}%` }} />
+                        <span className="sleep-chart-label" aria-hidden="true">
+                          {showLabel ? (pageSize === 14 ? item.date.slice(8).replace(/^0/, "") + "日" : shortDate(item.date)) : ""}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </div>

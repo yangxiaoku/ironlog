@@ -43,6 +43,13 @@ export function WeightEditorModal({
 
   const handleDateSelect = (nextDate: string) => {
     if (nextDate === date) return;
+    // #190: Clear auto-loaded values from the previous date so switching to an unlogged date never leaks stale bodyFat
+    if (!weightDirtyRef.current) {
+      setWeight(defaultWeight != null ? String(defaultWeight) : "");
+    }
+    if (!bodyFatDirtyRef.current) {
+      setBodyFat("");
+    }
     weightDirtyRef.current = false;
     bodyFatDirtyRef.current = false;
     setDate(nextDate);
@@ -68,10 +75,16 @@ export function WeightEditorModal({
           if (!bodyFatDirtyRef.current) {
             setBodyFat(existing.data.bodyFat != null ? String(existing.data.bodyFat) : "");
           }
+        } else {
+          if (!bodyFatDirtyRef.current) setBodyFat("");
         }
       })
       .catch(() => {
-        if (active) resolvedVersionsRef.current.set(targetDate, 0);
+        if (!active) return;
+        resolvedVersionsRef.current.set(targetDate, 0);
+        resolvedExistingRef.current.delete(targetDate);
+        // #190: On 404 (no record for targetDate), ensure stale auto-loaded bodyFat is cleared
+        if (!bodyFatDirtyRef.current) setBodyFat("");
       });
     return () => {
       active = false;
@@ -251,6 +264,7 @@ export function WeightEditorModal({
         <div className="scale-display">
           <input
             type="number"
+            aria-label="体重，千克"
             inputMode="decimal"
             min={1}
             max={500}
@@ -273,7 +287,13 @@ export function WeightEditorModal({
 
         <div className="scale-stepper-row">
           {[-1, -0.5, -0.1, 0.1, 0.5, 1].map((d) => (
-            <button key={d} type="button" className="scale-stepper-btn" onClick={() => stepWeight(d)}>
+            <button
+              key={d}
+              type="button"
+              className="scale-stepper-btn"
+              aria-label={`体重${d > 0 ? "增加" : "减少"} ${Math.abs(d)} 千克`}
+              onClick={() => stepWeight(d)}
+            >
               {d > 0 ? `+${d}` : d}
             </button>
           ))}
@@ -285,6 +305,7 @@ export function WeightEditorModal({
         <div className="bodyfat-body">
           <input
             type="number"
+            aria-label="体脂率，百分比"
             inputMode="decimal"
             min={1}
             max={75}
@@ -302,6 +323,7 @@ export function WeightEditorModal({
                 key={d}
                 type="button"
                 className="micro-chip"
+                aria-label={`体脂率${d > 0 ? "增加" : "减少"} ${Math.abs(d)} 个百分点`}
                 onClick={() => {
                   triggerHaptic("light");
                   bodyFatDirtyRef.current = true;

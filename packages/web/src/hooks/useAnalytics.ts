@@ -100,7 +100,12 @@ interface AnalyticsResponse {
   };
   yearInReview?: {
     year: number;
+    from?: string;
+    through?: string;
     sessions: number;
+    manualSessions?: number;
+    appleOnlySessions?: number;
+    linkedAppleSessions?: number;
     activeDays: number;
     totalMinutes: number;
     totalTonnageKg: number;
@@ -285,6 +290,13 @@ interface AnalyticsResponse {
       thighCm: number | null;
       hipCm: number | null;
     };
+    latestDates?: {
+      waistCm: string | null;
+      chestCm: string | null;
+      armCm: string | null;
+      thighCm: string | null;
+      hipCm: string | null;
+    };
     deltas: {
       waistCm: number | null;
       chestCm: number | null;
@@ -292,8 +304,18 @@ interface AnalyticsResponse {
       thighCm: number | null;
       hipCm: number | null;
     };
+    deltaRanges?: {
+      waistCm: { from: string; to: string } | null;
+      chestCm: { from: string; to: string } | null;
+      armCm: { from: string; to: string } | null;
+      thighCm: { from: string; to: string } | null;
+      hipCm: { from: string; to: string } | null;
+    };
     whr: number | null;
+    whrDate?: string | null;
+    whrUnpairedDates?: { waistDate: string; hipDate: string } | null;
     whtr: number | null;
+    whtrStatus?: "healthy" | "elevated" | null;
     avgE1rmPct: number | null;
     recompSignal: {
       status: "optimal" | "caution" | "neutral";

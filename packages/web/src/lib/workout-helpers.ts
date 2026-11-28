@@ -956,7 +956,7 @@ function runBoundedPlateDp(
   plateLimits: readonly number[],
   maxPlates = PLATE_MAX_COUNT,
 ): { bestU: number; plates: number[] } {
-  // Expand available single-side plates (capped by pair inventory) and run 0/1 knapsack minimizing plate count.
+  // #168: 0/1 knapsack with 2D per-item choice matrix so finite platePairs inventory can NEVER be exceeded.
   const expanded: Array<{ unit: number; idx: number }> = [];
   for (let i = 0; i < plateUnits.length; i++) {
     const cap = Math.max(0, Math.min(maxPlates, plateLimits[i] ?? maxPlates));
@@ -965,21 +965,21 @@ function runBoundedPlateDp(
       expanded.push({ unit: plateUnits[i]!, idx: i });
     }
   }
-  const dpCount = new Uint8Array(maxUnits + 1).fill(255);
-  const dpPrevU = new Int16Array(maxUnits + 1).fill(-1);
-  const dpPicked = new Int16Array(maxUnits + 1).fill(-1);
+  const stride = maxUnits + 1;
+  const dpCount = new Uint8Array(stride).fill(255);
+  const took = new Uint8Array(expanded.length * stride);
   dpCount[0] = 0;
 
   for (let e = 0; e < expanded.length; e++) {
     const item = expanded[e]!;
+    const rowOffset = e * stride;
     for (let u = maxUnits; u >= item.unit; u--) {
       const prev = dpCount[u - item.unit]!;
       if (prev === 255) continue;
       const cand = prev + 1;
       if (cand <= maxPlates && cand < dpCount[u]!) {
         dpCount[u] = cand;
-        dpPrevU[u] = u - item.unit;
-        dpPicked[u] = item.idx;
+        took[rowOffset + u] = 1;
       }
     }
   }
@@ -994,11 +994,12 @@ function runBoundedPlateDp(
 
   const pickedIdx: number[] = [];
   let cur = bestU;
-  while (cur > 0) {
-    const idx = dpPicked[cur]!;
-    if (idx < 0) break;
-    pickedIdx.push(idx);
-    cur = dpPrevU[cur]!;
+  for (let e = expanded.length - 1; e >= 0 && cur > 0; e--) {
+    if (took[e * stride + cur] === 1) {
+      const item = expanded[e]!;
+      pickedIdx.push(item.idx);
+      cur -= item.unit;
+    }
   }
   return { bestU, plates: pickedIdx };
 }

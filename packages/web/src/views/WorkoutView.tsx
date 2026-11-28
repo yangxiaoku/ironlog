@@ -109,22 +109,71 @@ export function WorkoutView() {
     [userId, activeWorkouts.length, dataEpoch],
   );
 
+  // #144: Build fallback exercise lookup from trainedItems + catalogue so migrated workouts lacking snapshots match Chinese search & muscle filters
+  const [fallbackCatMap, setFallbackCatMap] = useState<Map<string, { name: string; muscle: MuscleKey }>>(new Map());
+  const trainedById = useMemo(() => {
+    const map = new Map<string, { name: string; muscle: MuscleKey }>();
+    for (const item of trainedItems) {
+      map.set(item.id, { name: item.name, muscle: item.muscle });
+    }
+    return map;
+  }, [trainedItems]);
+
+  useEffect(() => {
+    const missingIds = [
+      ...new Set(
+        records
+          .filter((r) => r.data.status === "completed")
+          .flatMap((r) => r.data.exercises ?? [])
+          .filter((ex) => !ex.snapshot?.name || !ex.snapshot?.muscle)
+          .map((ex) => ex.exerciseId)
+          .filter((id) => id && !trainedById.has(id)),
+      ),
+    ];
+    if (!missingIds.length) return;
+    let active = true;
+    void import("../lib/catalogue")
+      .then((m) => m.resolveCatalogueMap(missingIds))
+      .then((catMap) => {
+        if (!active) return;
+        const next = new Map<string, { name: string; muscle: MuscleKey }>();
+        for (const [id, ex] of catMap) {
+          next.set(id, { name: ex.name, muscle: ex.muscle });
+        }
+        setFallbackCatMap(next);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [records, trainedById]);
+
+  const resolveExMeta = (ex: NonNullable<WorkoutData["exercises"]>[number]) => {
+    const fb = trainedById.get(ex.exerciseId) ?? fallbackCatMap.get(ex.exerciseId);
+    return {
+      name: ex.snapshot?.name ?? fb?.name ?? ex.exerciseId,
+      muscle: ex.snapshot?.muscle ?? fb?.muscle,
+    };
+  };
+
   const completed = useMemo(() => {
     const q = query.trim().toLowerCase();
     return records
       .filter((r) => r.data.status === "completed")
       .filter((r) => {
-        if (muscle && !(r.data.exercises ?? []).some((ex) => ex.snapshot?.muscle === muscle)) return false;
+        const metas = (r.data.exercises ?? []).map(resolveExMeta);
+        if (muscle && !metas.some((m) => m.muscle === muscle)) return false;
         if (!q) return true;
         const hay = [
           r.data.title,
           r.data.notes,
-          ...(r.data.exercises ?? []).flatMap((ex) => [ex.snapshot?.name, ex.exerciseId]),
+          ...metas.map((m) => m.name),
+          ...(r.data.exercises ?? []).map((ex) => ex.exerciseId),
         ];
         return hay.some((t) => String(t ?? "").toLowerCase().includes(q));
       })
       .sort((a, b) => b.data.date.localeCompare(a.data.date) || Date.parse(b.data.startedAt) - Date.parse(a.data.startedAt));
-  }, [records, query, muscle]);
+  }, [records, query, muscle, trainedById, fallbackCatMap]);
 
   const byMonth = useMemo(() => {
     const map = new Map<string, Map<string, Array<RecordEnvelope<WorkoutData>>>>();
@@ -317,6 +366,8 @@ export function WorkoutView() {
                         try {
                           localStorage.removeItem(localDraft.key);
                         } catch {}
+                        // #164: Broadcast draft removal so LiveWorkoutBar immediately clears without ghost timer
+                        window.dispatchEvent(new Event("ironlog-workout-draft-change"));
                         bumpDataEpoch();
                         notify("已丢弃本机训练草稿");
                       },
@@ -607,7 +658,7 @@ export function WorkoutView() {
                       const { sets, volume } = summarizeWorkoutRecord(rec.data);
                       const sec = workoutSeconds(rec.data);
                       const exNames = (rec.data.exercises ?? [])
-                        .map((ex) => ex.snapshot?.name)
+                        .map((ex) => resolveExMeta(ex).name)
                         .filter((n): n is string => Boolean(n));
                       return (
                         <button

@@ -31,7 +31,8 @@ export default defineConfig({
     ironlogCssUrls(),
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // #163: Use prompt mode without skipWaiting/clientsClaim so active workouts are never force-reloaded
+      registerType: "prompt",
       includeAssets: ["icon-192.png", "icon-512.png"],
       manifest: {
         name: "铁记 · 训练工作台",
@@ -48,8 +49,6 @@ export default defineConfig({
         ],
       },
       workbox: {
-        skipWaiting: true,
-        clientsClaim: true,
         cleanupOutdatedCaches: true,
         globPatterns: ["**/*.{js,css,html,webmanifest}", "icon-*.png"],
         navigateFallback: "/app/index.html",
@@ -87,8 +86,11 @@ export default defineConfig({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: {
-          "vendor-react": ["react", "react-dom", "zustand"],
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](?:react|react-dom|scheduler|zustand)[\\/]/.test(id)) {
+            return "vendor-react";
+          }
+          return undefined;
         },
       },
     },

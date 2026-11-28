@@ -17,7 +17,8 @@ export function openDatabase(path: string): Database.Database {
     );
     CREATE TABLE IF NOT EXISTS tokens (
       hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
-      label TEXT NOT NULL, expires_at TEXT, created_at TEXT NOT NULL
+      label TEXT NOT NULL, expires_at TEXT, created_at TEXT NOT NULL,
+      scope TEXT NOT NULL DEFAULT 'api'
     );
     CREATE INDEX IF NOT EXISTS tokens_user ON tokens(user_id);
     CREATE TABLE IF NOT EXISTS web_credentials (
@@ -169,8 +170,9 @@ export function openDatabase(path: string): Database.Database {
   ensureColumn("apple_health_events", "launch_group_id", "TEXT");
   ensureColumn("progress_photos", "thumbnail_data", "TEXT");
   ensureColumn("progress_photos", "source_key", "TEXT");
-  ensureColumn("tokens", "scope", "TEXT NOT NULL DEFAULT 'session'");
+  ensureColumn("tokens", "scope", "TEXT NOT NULL DEFAULT 'api'");
   db.exec(`
+    UPDATE tokens SET scope = 'api' WHERE expires_at IS NULL AND scope <> 'api';
     UPDATE active_plans SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;
     UPDATE plan_activations SET cycle_started_at = updated_at WHERE cycle_started_at IS NULL;
     INSERT OR IGNORE INTO plan_activations (user_id, plan_id, version, revision, updated_at, cycle_started_at)

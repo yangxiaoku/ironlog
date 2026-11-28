@@ -190,9 +190,14 @@ export class AiService {
     );
     if (!response.ok)
       throw new DomainError(`模型请求失败，状态码 ${response.status}`, 503);
-    const body = (await response.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
+    // #182 (P1): Parse response text safely so upstream HTML/non-JSON 200 gateways return 503 instead of 400.
+    const rawText = await response.text();
+    let body: { choices?: { message?: { content?: string } }[] };
+    try {
+      body = JSON.parse(rawText) as { choices?: { message?: { content?: string } }[] };
+    } catch {
+      throw new DomainError("模型上游返回了非 JSON 响应，请稍后重试", 503);
+    }
     const content = body.choices?.[0]?.message?.content;
     if (!content) throw new DomainError("模型返回了空结果，请重试", 503);
     return extractJsonObject(content);
@@ -378,7 +383,7 @@ export class AiService {
     const profile = profileSchema.parse(profileRecord?.deleted ? {} : profileRecord?.data ?? {});
     const usedIds = new Set(workout.exercises.map((row) => row.exerciseId));
     const raw = await this.complete(
-      '你是铁记训练中调整助手。根据用户今天的时间、器械和状态，提出对本次尚未完成训练组的调整。只返回 JSON {"summary":"简短说明","changes":[{"exerciseRowId":"提供的动作行ID","reason":"具体原因","patch":{"weight":40,"weightUnit":"kg","reps":8,"remainingSets":2,"restSeconds":90}}]}。最多六项，每个动作行最多一项。patch 只填写需要修改的字段，支持 exerciseId、weight、weightUnit、reps、seconds、remainingSets、restSeconds。每个动作行已提供 weightUnit（kg 或 lb），返回 patch.weight 时必须沿用该动作行的 weightUnit 并在 patch.weightUnit 中明确注明单位。remainingSets 为调整后剩余组数，0表示跳过余下组。exerciseId 必须来自提供的动作库，替换动作时明确新重量，计时动作提供seconds。完成的训练组是实际记录。根据输入中的openSets安排，保留实际完成内容。对缺少信息的情况在summary说明。',
+      '你是铁记训练中调整助手。根据用户今天的时间、器械和状态，提出对本次尚未完成训练组的调整。只返回 JSON {"summary":"简短说明","changes":[{"exerciseRowId":"提供的动作行ID","reason":"具体原因","patch":{"weight":40,"weightUnit":"kg","reps":8,"remainingSets":2,"restSeconds":90}}]}。最多六项，每个动作行最多一项。patch 只填写需要修改的字段，支持 exerciseId、weight、weightUnit、reps、seconds、remainingSets、restSeconds。每个动作行已提供 weightUnit（kg 或 lb），返回 patch.weight 时必须沿用该动作行的 weightUnit 并在 patch.weightUnit 中明确注明单位。特别注意：当 snapshot.mode 为 assisted（辅助引体/双杠等辅助动作）时，weight 代表辅助配重，数值越大越轻松（减载应增大 weight，加重冲刺应减小 weight）。remainingSets 为调整后剩余组数，0表示跳过余下组。exerciseId 必须来自提供的动作库，替换动作时明确新重量，计时动作提供seconds。完成的训练组是实际记录。根据输入中的openSets安排，保留实际完成内容。对缺少信息的情况在summary说明。',
       {
         request: text,
         date: workout.date,

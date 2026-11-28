@@ -113,17 +113,18 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
       }
     }
   }
+  // #183 (P2): Clamp uint16 to 0xFFFE (65534) and uint32 to 0xFFFFFFFE so values never collide with FIT INVALID sentinels.
   const measuredCalories =
     typeof input.activeCaloriesKcal === "number" &&
     Number.isFinite(input.activeCaloriesKcal) &&
     input.activeCaloriesKcal > 0
-      ? Math.min(65535, Math.round(input.activeCaloriesKcal))
+      ? Math.min(0xfffe, Math.round(input.activeCaloriesKcal))
       : null;
   const measuredWorkJoules =
     typeof input.totalWorkJoules === "number" &&
     Number.isFinite(input.totalWorkJoules) &&
     input.totalWorkJoules > 0
-      ? Math.round(input.totalWorkJoules)
+      ? Math.min(0xfffffffe, Math.round(input.totalWorkJoules))
       : null;
   const hasVolumeDevField = Number.isFinite(totalVolumeKg) && totalVolumeKg > 0;
 
@@ -196,8 +197,31 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   pushU32(records, endTs);
   records.push(0, 4);
 
+  // 2.5) Local 6 -> Global 19 (lap): required by Garmin FIT Activity File specification (#183)
+  const durationMs = Math.min(0xfffffffe, durationSec * 1000);
+  records.push(
+    0x46, 0x00, 0x00,
+    19, 0x00, // global msg 19 (lap)
+    0x08,
+    253, 4, 0x86, // timestamp
+    2, 4, 0x86,   // start_time
+    7, 4, 0x86,   // total_elapsed_time
+    8, 4, 0x86,   // total_timer_time
+    0, 1, 0x00,   // event (9 = lap)
+    1, 1, 0x00,   // event_type (1 = stop)
+    25, 1, 0x00,  // sport (10 = training)
+    39, 1, 0x00,  // sub_sport (20 = strength_training)
+  );
+  records.push(0x06);
+  pushU32(records, endTs);
+  pushU32(records, startTs);
+  pushU32(records, durationMs);
+  pushU32(records, durationMs);
+  records.push(9, 1, 10, 20);
+
   // 3) Local 2 -> Global 18 (session):
-  // Standard fields: timestamp(253), start_time(2), total_elapsed_time(7), total_timer_time(8), sport(5), sub_sport(6)
+  // Standard fields: timestamp(253), start_time(2), total_elapsed_time(7), total_timer_time(8),
+  // event(0=9 lap), event_type(1=1 stop), sport(5), sub_sport(6), num_laps(26=1)
   // Plus ONLY genuinely measured total_calories(11) / total_work(48) if supplied,
   // plus FIT 2.0 developer field 0 (total_volume_kg) when totalVolumeKg > 0.
   const sessionStdFields: Array<[number, number, number]> = [
@@ -205,8 +229,11 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
     [2, 4, 0x86],
     [7, 4, 0x86],
     [8, 4, 0x86],
+    [0, 1, 0x00],
+    [1, 1, 0x00],
     [5, 1, 0x00],
     [6, 1, 0x00],
+    [26, 2, 0x84],
   ];
   if (measuredCalories !== null) sessionStdFields.push([11, 2, 0x84]);
   if (measuredWorkJoules !== null) sessionStdFields.push([48, 4, 0x86]);
@@ -228,29 +255,34 @@ export function encodeWorkoutToFit(input: FitExportWorkoutInput): Uint8Array {
   records.push(0x02);
   pushU32(records, endTs);
   pushU32(records, startTs);
-  pushU32(records, durationSec * 1000);
-  pushU32(records, durationSec * 1000);
+  pushU32(records, durationMs);
+  pushU32(records, durationMs);
+  records.push(9, 1); // event: lap, event_type: stop
   records.push(10); // sport: training
   records.push(20); // sub_sport: strength_training
+  pushU16(records, 1); // num_laps: 1
   if (measuredCalories !== null) pushU16(records, measuredCalories);
   if (measuredWorkJoules !== null) pushU32(records, measuredWorkJoules);
-  if (hasVolumeDevField) pushU32(records, Math.round(totalVolumeKg * 10));
+  if (hasVolumeDevField) pushU32(records, Math.min(0xfffffffe, Math.round(totalVolumeKg * 10)));
 
-  // 4) Local 3 -> Global 34 (activity): timestamp(253 u32), total_timer_time(0 u32 ms), num_sessions(1 u16=1), type(2 enum=0 manual)
+  // 4) Local 3 -> Global 34 (activity): timestamp(253 u32), total_timer_time(0 u32 ms), num_sessions(1 u16=1),
+  // type(2 enum=0 manual), event(3 enum=26 activity), event_type(4 enum=1 stop)
   records.push(
     0x43, 0x00, 0x00,
     34, 0x00, // global msg 34 (activity)
-    0x04,
+    0x06,
     253, 4, 0x86,
     0, 4, 0x86,
     1, 2, 0x84,
     2, 1, 0x00,
+    3, 1, 0x00,
+    4, 1, 0x00,
   );
   records.push(0x03);
   pushU32(records, endTs);
-  pushU32(records, durationSec * 1000);
+  pushU32(records, durationMs);
   pushU16(records, 1);
-  records.push(0);
+  records.push(0, 26, 1);
 
   const dataBytes = new Uint8Array(records);
   const header = new Uint8Array(14);

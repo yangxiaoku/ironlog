@@ -172,7 +172,7 @@ test("3.3 FIT binary encoder produces valid .FIT header & CRC-16, and webhook en
   assert.equal(capturedSig, signWebhookPayload(capturedBody, "my-secret"));
 });
 
-test("3.4 one-time 6-digit pairing code and Passkey (WebAuthn ECDSA P-256) register & login end-to-end", async () => {
+test("3.4 one-time 8-char alphanumeric pairing code and Passkey (WebAuthn ECDSA P-256) register & login end-to-end", async () => {
   const { call } = makeFixture();
   const origin = "https://ironlog.example.com";
   const rpId = "ironlog.example.com";
@@ -181,7 +181,7 @@ test("3.4 one-time 6-digit pairing code and Passkey (WebAuthn ECDSA P-256) regis
   const pairRes = await call("/api/web/auth/pairing-code", { method: "POST" });
   assert.equal(pairRes.status, 201);
   const { code } = (await pairRes.json()) as { code: string; expiresAt: string };
-  assert.match(code, /^\d{6}$/);
+  assert.match(code, /^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$/);
 
   const loginRes = await call(`${origin}/auth/web/pairing-login`, {
     method: "POST",

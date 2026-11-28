@@ -3,7 +3,8 @@
   --bg: #000000; --surface: #0a0a0c; --inset: #111114; --raised: #1a1a1f;
   --ink: #ffffff; --muted: #8e8e93; --soft: #58585e;
   --edge: rgba(255, 255, 255, 0.20); --rule: rgba(255, 255, 255, 0.10);
-  --red: #d71921; --red-ink: #ff5a5f; --red-wash: rgba(215, 25, 33, 0.14); --white-button: #ffffff;
+  --line: var(--edge); --line-strong: var(--soft);
+  --red: #d71921; --accent: var(--red); --red-ink: #ff5a5f; --red-wash: rgba(215, 25, 33, 0.14); --white-button: #ffffff;
   --hero-base: #000000; --hero-ink: #ffffff; --hero-muted: #b0b0b6;
   --athlete: url("./athlete-halftone.jpg"); --plate: url("./plate-halftone.jpg");
   --food: url("./nutrition-halftone.jpg"); --equipment: url("./equipment-halftone.jpg");
@@ -19,7 +20,8 @@
   --bg: #f4f4f1; --surface: #ffffff; --inset: #ecece8; --raised: #e2e2dc;
   --ink: #0a0a0a; --muted: #525258; --soft: #6e6e75;
   --edge: rgba(10, 10, 10, 0.16); --rule: rgba(10, 10, 10, 0.08);
-  --red: #c92228; --red-ink: #b0181e; --red-wash: rgba(201, 34, 40, 0.10); --white-button: #0a0a0a;
+  --line: var(--edge); --line-strong: var(--soft);
+  --red: #c92228; --accent: var(--red); --red-ink: #b0181e; --red-wash: rgba(201, 34, 40, 0.10); --white-button: #0a0a0a;
   --hero-base: #ffffff; --hero-ink: #0a0a0a; --hero-muted: #4a4a50;
   --athlete: url("./athlete-halftone-light.jpg"); --plate: url("./plate-halftone-light.jpg");
   --food: url("./nutrition-halftone-light.jpg"); --equipment: url("./equipment-halftone-light.jpg");

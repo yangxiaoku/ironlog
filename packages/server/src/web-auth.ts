@@ -40,7 +40,19 @@ function parseClientDataJson(b64url: string): { type?: string; challenge?: strin
   return parsed as { type?: string; challenge?: string; origin?: string };
 }
 
-function decodeCborValue(buf: Buffer, offset: number): { value: unknown; next: number } {
+const CBOR_MAX_DEPTH = 16;
+const CBOR_MAX_NODES = 512;
+
+function decodeCborValue(
+  buf: Buffer,
+  offset: number,
+  depth = 0,
+  state: { nodes: number } = { nodes: 0 },
+): { value: unknown; next: number } {
+  // #173 (P1): Enforce strict recursion depth and node limits to prevent stack overflow DoS on crafted CBOR.
+  if (depth > CBOR_MAX_DEPTH || ++state.nodes > CBOR_MAX_NODES) {
+    throw new DomainError("通行密钥证明数据结构无效或嵌套过深", 400);
+  }
   if (offset >= buf.length) throw new DomainError("无效的通行密钥证明数据", 400);
   const initial = buf[offset]!;
   const major = initial >> 5;
@@ -82,9 +94,10 @@ function decodeCborValue(buf: Buffer, offset: number): { value: unknown; next: n
   }
   if (major === 4) {
     const len = readLen();
+    if (len > CBOR_MAX_NODES) throw new DomainError("通行密钥证明数据结构无效或嵌套过深", 400);
     const arr: unknown[] = [];
     for (let i = 0; i < len; i++) {
-      const item = decodeCborValue(buf, pos);
+      const item = decodeCborValue(buf, pos, depth + 1, state);
       arr.push(item.value);
       pos = item.next;
     }
@@ -92,11 +105,15 @@ function decodeCborValue(buf: Buffer, offset: number): { value: unknown; next: n
   }
   if (major === 5) {
     const len = readLen();
-    const map: Record<string, unknown> = {};
+    if (len > CBOR_MAX_NODES) throw new DomainError("通行密钥证明数据结构无效或嵌套过深", 400);
+    const map: Record<string, unknown> = Object.create(null);
     for (let i = 0; i < len; i++) {
-      const k = decodeCborValue(buf, pos);
-      const v = decodeCborValue(buf, k.next);
-      map[String(k.value)] = v.value;
+      const k = decodeCborValue(buf, pos, depth + 1, state);
+      const v = decodeCborValue(buf, k.next, depth + 1, state);
+      const key = String(k.value);
+      if (key !== "__proto__" && key !== "constructor" && key !== "prototype") {
+        map[key] = v.value;
+      }
       pos = v.next;
     }
     return { value: map, next: pos };
@@ -243,9 +260,10 @@ export class WebAuth {
     this.db.transaction(() => {
       this.stmtUpdateCred.run(newSalt, newHash, userId);
       this.stmtRevokeUserSessions.run(userId);
-      // #124 (P1): Also revoke unused pairing codes and API/session Bearer tokens upon password change.
+      // #124 & #172 (P1): Revoke unused pairing codes, API/session Bearer tokens, and Apple Health device tokens upon password change.
       this.db.prepare("DELETE FROM web_pairing_codes WHERE user_id = ? AND used_at IS NULL").run(userId);
       this.db.prepare("DELETE FROM tokens WHERE user_id = ?").run(userId);
+      this.db.prepare("DELETE FROM apple_health_devices WHERE user_id = ?").run(userId);
     }).immediate();
     return { userId };
   }
@@ -278,34 +296,62 @@ export class WebAuth {
       this.stmtRevokeSession.run(sessionDigest(session));
   }
 
-  // ===== 3.4 One-Time 6-Digit Device Pairing Codes (works over HTTP & HTTPS) =====
+  // ===== 3.4 One-Time 8-Char Alphanumeric Device Pairing Codes (works over HTTP & HTTPS) =====
   private readonly pairingTtlMs = 5 * 60_000;
+  private readonly pairingAlphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+  private readonly globalPairingFailures: number[] = [];
 
   issuePairingCode(userId: string): { code: string; expiresAt: string } {
     const now = Date.now();
     const expiresAt = new Date(now + this.pairingTtlMs).toISOString();
-    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-    const hash = sessionDigest(`pair:${code}`);
-    this.db.transaction(() => {
-      this.db.prepare("DELETE FROM web_pairing_codes WHERE expires_at <= ? OR used_at IS NOT NULL").run(new Date(now).toISOString());
+    const nowIso = new Date(now).toISOString();
+    const genCode = () => {
+      let out = "";
+      for (let i = 0; i < 8; i++) {
+        out += this.pairingAlphabet[randomInt(0, this.pairingAlphabet.length)]!;
+      }
+      return out;
+    };
+    return this.db.transaction(() => {
+      this.db.prepare("DELETE FROM web_pairing_codes WHERE expires_at <= ? OR used_at IS NOT NULL").run(nowIso);
       this.db.prepare("DELETE FROM web_pairing_codes WHERE user_id = ?").run(userId);
-      this.db
-        .prepare("INSERT INTO web_pairing_codes (code_hash, user_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)")
-        .run(hash, userId, expiresAt, new Date(now).toISOString());
+      // #176: 8-char high-entropy alphanumeric code with collision retry loop (prevents SQLITE_CONSTRAINT_PRIMARYKEY 500).
+      for (let attempt = 0; attempt < 8; attempt++) {
+        const code = genCode();
+        const hash = sessionDigest(`pair:${code}`);
+        const res = this.db
+          .prepare("INSERT OR IGNORE INTO web_pairing_codes (code_hash, user_id, expires_at, used_at, created_at) VALUES (?, ?, ?, NULL, ?)")
+          .run(hash, userId, expiresAt, nowIso);
+        if (res.changes === 1) {
+          return { code, expiresAt };
+        }
+      }
+      throw new DomainError("生成配对码繁忙，请稍后重试", 503);
     }).immediate();
-    return { code, expiresAt };
   }
 
   redeemPairingCode(rawCode: string): { userId: string } {
-    const code = rawCode.replace(/\s+/g, "");
-    if (!/^\d{6}$/.test(code)) throw new DomainError("请输入 6 位数字配对码", 400);
+    const now = Date.now();
+    // #176: Global brute-force circuit breaker (max 30 failed attempts per 5 minutes across all peers).
+    while (this.globalPairingFailures.length > 0 && now - this.globalPairingFailures[0]! > 5 * 60_000) {
+      this.globalPairingFailures.shift();
+    }
+    if (this.globalPairingFailures.length >= 30) {
+      throw new DomainError("配对码验证失败次数过多，请 5 分钟后再试", 429);
+    }
+    const code = rawCode.replace(/[\s-]+/g, "").toUpperCase();
+    if (!/^[0-9A-Z]{6,12}$/.test(code)) {
+      this.globalPairingFailures.push(now);
+      throw new DomainError("请输入有效的 8 位配对码", 400);
+    }
     const hash = sessionDigest(`pair:${code}`);
-    const nowIso = new Date().toISOString();
+    const nowIso = new Date(now).toISOString();
     return this.db.transaction(() => {
       const row = this.db
         .prepare("SELECT user_id AS userId, expires_at AS expiresAt, used_at AS usedAt FROM web_pairing_codes WHERE code_hash = ?")
         .get(hash) as { userId: string; expiresAt: string; usedAt: string | null } | undefined;
       if (!row || row.usedAt || row.expiresAt <= nowIso) {
+        this.globalPairingFailures.push(now);
         throw new DomainError("配对码无效或已过期，请重新生成", 401);
       }
       this.db.prepare("UPDATE web_pairing_codes SET used_at = ? WHERE code_hash = ?").run(nowIso, hash);
@@ -408,12 +454,20 @@ export class WebAuth {
       const rpId = expectedRpId ?? new URL(expectedOrigin).hostname;
       verifyAttestationObject(input.attestationObject, rpId, input.credentialId);
     }
-    // Validate that publicKeySpki parses cleanly as a SPKI DER public key
+    // #173 (P1): Enforce EC P-256 or RSA SPKI public keys so Ed25519 keys cannot crash login verifySignature("sha256", ...).
     const spkiBuf = Buffer.from(input.publicKeySpki, "base64url");
+    let pubKey: ReturnType<typeof createPublicKey>;
     try {
-      createPublicKey({ key: spkiBuf, format: "der", type: "spki" });
+      pubKey = createPublicKey({ key: spkiBuf, format: "der", type: "spki" });
     } catch {
       throw new DomainError("无效的通行密钥公钥格式", 400);
+    }
+    const keyType = pubKey.asymmetricKeyType;
+    const curve = pubKey.asymmetricKeyDetails?.namedCurve;
+    const isSupportedEc = keyType === "ec" && (curve === "prime256v1" || curve === "P-256");
+    const isSupportedRsa = keyType === "rsa";
+    if (!isSupportedEc && !isSupportedRsa) {
+      throw new DomainError("仅支持 EC P-256 或 RSA 算法的通行密钥公钥", 400);
     }
     const nowIso = new Date().toISOString();
     const cleanLabel = (input.label ?? "").trim().slice(0, 60) || "本机通行密钥";

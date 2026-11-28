@@ -43,6 +43,7 @@ export interface ApiFetchOptions {
   accountId?: string;
   timeout?: number;
   skipMutateHook?: boolean;
+  signal?: AbortSignal;
 }
 
 export async function apiFetch<T = unknown>(
@@ -54,6 +55,7 @@ export async function apiFetch<T = unknown>(
     accountId = apiHooks.getUserId?.() ?? "",
     timeout = 15000,
     skipMutateHook = false,
+    signal = undefined,
   }: ApiFetchOptions = {},
 ): Promise<T> {
   const headers: Record<string, string> = {};
@@ -61,13 +63,20 @@ export async function apiFetch<T = unknown>(
   if (accountId) headers["X-Ironlog-Account"] = accountId;
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
+  const timeoutSignal = AbortSignal.timeout(timeout);
+  const combinedSignal = signal
+    ? typeof AbortSignal.any === "function"
+      ? AbortSignal.any([signal, timeoutSignal])
+      : signal
+    : timeoutSignal;
+
   const response = await fetch(path, {
     method,
     credentials: "same-origin",
     headers,
     ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     cache: method === "GET" && path.startsWith("/api/catalogue/") ? "default" : "no-store",
-    signal: AbortSignal.timeout(timeout),
+    signal: combinedSignal,
   });
 
   const data = (await response.json().catch(() => undefined)) as

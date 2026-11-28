@@ -575,22 +575,30 @@ export function AiWorkoutModal({
   }
   if (!status?.ready) return <div className="dialog-form ai-modal"><AiUnconfiguredBox /></div>;
 
+  const directSaveRef = useRef<{ fingerprint: string; opId: string; id: string } | null>(null);
+  const parseAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => { parseAbortRef.current?.abort(); }, []);
+
   const parseWorkout = async (e: React.FormEvent) => {
     e.preventDefault();
     const text = promptText.trim();
     if (!text || parsing) return;
+    parseAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    parseAbortRef.current = ctrl;
     setError("");
     setParsing(true);
     try {
       const res = await apiFetch<{ workout: WorkoutData }>("/api/ai/parse-workout", {
         method: "POST",
         timeout: 125_000,
+        signal: ctrl.signal,
         body: { text, date },
       });
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || ctrl.signal.aborted) return;
       setParsed(res.workout);
     } catch (err) {
-      if (mountedRef.current) setError((err as Error)?.message || "训练文本解析失败");
+      if (mountedRef.current && !ctrl.signal.aborted) setError((err as Error)?.message || "训练文本解析失败");
     } finally {
       if (mountedRef.current) setParsing(false);
     }
@@ -600,19 +608,27 @@ export function AiWorkoutModal({
     if (!parsed || saving) return;
     setSaving(true);
     setError("");
+    // #169: Cache id + opId by payload fingerprint so retries after timeout/503 do not duplicate workouts
+    const payloadData = { ...parsed, date };
+    const fingerprint = JSON.stringify(payloadData);
+    if (!directSaveRef.current || directSaveRef.current.fingerprint !== fingerprint) {
+      directSaveRef.current = { fingerprint, opId: safeUuid(), id: safeUuid() };
+    }
+    const { opId, id } = directSaveRef.current;
     try {
       const res = await apiFetch<{ record: RecordEnvelope<WorkoutData> }>("/api/records", {
         method: "POST",
         body: {
-          opId: safeUuid(),
-          id: safeUuid(),
+          opId,
+          id,
           kind: "workout",
           baseVersion: 0,
           deleted: false,
-          data: { ...parsed, date },
+          data: payloadData,
         },
       });
       if (!mountedRef.current) return;
+      directSaveRef.current = null;
       bumpDataEpoch();
       notify("已写入训练记录");
       onSavedReport(res.record);
@@ -828,10 +844,14 @@ export interface WorkoutAdaptationProposal {
   changes: AdaptChangeProposal[];
 }
 
-function formatAdaptPatch(before: AdaptChangeProposal["before"], patch: AdaptChangeProposal["patch"]): string {
+function formatAdaptPatch(
+  before: AdaptChangeProposal["before"] & { weightUnit?: "kg" | "lb" },
+  patch: AdaptChangeProposal["patch"] & { weightUnit?: "kg" | "lb" },
+): string {
   const notes: string[] = [];
+  const unit = patch.weightUnit ?? before.weightUnit ?? "kg";
   if (patch.exerciseId && patch.exerciseId !== before.exerciseId) notes.push("更换动作");
-  if (patch.weight !== undefined) notes.push(`重量 → ${patch.weight} kg`);
+  if (patch.weight !== undefined) notes.push(`重量 → ${patch.weight} ${unit}`);
   if (patch.reps !== undefined) notes.push(`次数 → ${patch.reps} 次`);
   if (patch.seconds !== undefined) notes.push(`时长 → ${patch.seconds} 秒`);
   if (patch.remainingSets !== undefined) {
@@ -863,6 +883,30 @@ export function AiAdaptWorkoutModal({
   const [asking, setAsking] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState("");
+  const [waitSecs, setWaitSecs] = useState(0);
+
+  // #167: Guard unmount & abort in-flight AI requests so closing early never closes the underlying WorkoutEditorModal
+  const mountedRef = useRef(true);
+  const askAbortRef = useRef<AbortController | null>(null);
+  const applyAbortRef = useRef<AbortController | null>(null);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      askAbortRef.current?.abort();
+      applyAbortRef.current?.abort();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!asking) {
+      setWaitSecs(0);
+      return;
+    }
+    const started = Date.now();
+    const t = window.setInterval(() => setWaitSecs(Math.floor((Date.now() - started) / 1000)), 1000);
+    return () => window.clearInterval(t);
+  }, [asking]);
 
   if (loading) {
     return (
@@ -885,44 +929,65 @@ export function AiAdaptWorkoutModal({
       setError("请先填写当前状态或时间要求");
       return;
     }
+    askAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    askAbortRef.current = ctrl;
     setAsking(true);
     setError("");
     try {
       const saved = await ensureSavedWorkout();
+      if (!mountedRef.current || ctrl.signal.aborted) return;
       const res = await apiFetch<WorkoutAdaptationProposal>("/api/ai/adapt-workout", {
         method: "POST",
         timeout: 125_000,
+        signal: ctrl.signal,
         body: { workoutId: saved.id, text },
       });
+      if (!mountedRef.current || ctrl.signal.aborted) return;
       setProposal(res);
       setSelectedIds(new Set(res.changes.map((c) => c.exerciseRowId)));
     } catch (err) {
-      setError((err as Error)?.message || "获取 AI 调整建议失败");
+      if (mountedRef.current && !ctrl.signal.aborted) {
+        setError((err as Error)?.message || "获取 AI 调整建议失败");
+      }
     } finally {
-      setAsking(false);
+      if (mountedRef.current) setAsking(false);
     }
   };
 
+  const handleCancelAsk = () => {
+    askAbortRef.current?.abort();
+    setAsking(false);
+  };
+
   const handleApply = async () => {
-    if (!proposal) return;
+    if (!proposal || applying) return;
     const selectedRowIds = [...selectedIds];
     if (!selectedRowIds.length) {
       setError("请至少保留一项需要应用的调整");
       return;
     }
+    applyAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    applyAbortRef.current = ctrl;
     setApplying(true);
     setError("");
     try {
       const { record } = await apiFetch<{ record: RecordEnvelope<WorkoutData> }>("/api/ai/adapt-workout/apply", {
         method: "POST",
+        signal: ctrl.signal,
         body: { workoutId: proposal.workoutId, proposal, selectedRowIds },
       });
       onApplied(record);
-      closeTopModal();
+      if (mountedRef.current && !ctrl.signal.aborted) {
+        closeTopModal();
+      }
     } catch (err) {
-      setError((err as Error)?.message || "应用 AI 调整失败");
+      if (mountedRef.current && !ctrl.signal.aborted) {
+        setError((err as Error)?.message || "应用 AI 调整失败");
+      }
     } finally {
-      setApplying(false);
+      if (mountedRef.current) setApplying(false);
     }
   };
 

@@ -17,6 +17,7 @@ import {
   evaluateWeeklyMuscleDose,
   evaluateWeightChangeRate,
   estimatedOneRepMax,
+  goalsOn,
   isValidWorkSet,
   localDate,
   muscleNames,
@@ -152,12 +153,21 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     dailyLoadsMap.set(shiftDay(historyStart, i), 0);
   }
 
-  // Workouts
+  // #211: Sort workouts deterministically by date, actual start/end timestamp, then id so upload order never alters progress
   const workouts = store
     .list(userId, "workout")
     .map((record) => ({ id: record.id, workout: record.data as Workout }))
     .filter(({ workout }) => workout.status === "completed" && workout.date <= through)
-    .sort((a, b) => a.workout.date.localeCompare(b.workout.date));
+    .sort((a, b) => {
+      if (a.workout.date !== b.workout.date) return a.workout.date.localeCompare(b.workout.date);
+      const aStart = Date.parse(a.workout.startedAt) || 0;
+      const bStart = Date.parse(b.workout.startedAt) || 0;
+      if (aStart !== bStart) return aStart - bStart;
+      const aEnd = Date.parse(a.workout.endedAt ?? "") || 0;
+      const bEnd = Date.parse(b.workout.endedAt ?? "") || 0;
+      if (aEnd !== bEnd) return aEnd - bEnd;
+      return a.id.localeCompare(b.id);
+    });
 
   const muscleSetsPast7Days: Record<string, number> = {
     chest: 0,
@@ -294,6 +304,15 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       prevTrainingDays.add(workout.date);
       prevDurationSec += durSec;
     }
+
+    const workoutPeriodEx = new Map<string, {
+      name: string;
+      muscle: string;
+      mode: string;
+      workSets: number;
+      tonnageKg: number;
+      best1RM: number;
+    }>();
 
     for (const item of workout.exercises) {
       const exercise = item.snapshot ?? catalogue.get(item.exerciseId);
@@ -452,41 +471,52 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       }
 
       if (inPeriod && periodExSets > 0 && exercise) {
-        const prev = exercisePeriodProgress.get(item.exerciseId);
-        const rounded1RM = Math.round(periodExBest1RM * 10) / 10;
-        if (!prev) {
-          const sessions = new Set<string>([workoutId]);
-          exercisePeriodProgress.set(item.exerciseId, {
-            id: item.exerciseId,
-            name: exercise.name,
-            muscle: exercise.muscle ?? "other",
-            mode: exercise.mode ?? "reps",
-            sessions,
-            workSets: periodExSets,
-            tonnageKg: periodExTonnage,
-            firstDate: workout.date,
-            first1RM: rounded1RM,
-            lastDate: workout.date,
-            last1RM: rounded1RM,
-            best1RM: rounded1RM,
-          });
-        } else {
-          prev.sessions.add(workoutId);
-          prev.workSets += periodExSets;
-          prev.tonnageKg += periodExTonnage;
-          if (rounded1RM > 0) {
-            if (prev.first1RM === 0 || workout.date < prev.firstDate) {
-              prev.firstDate = workout.date;
-              prev.first1RM = rounded1RM;
-            }
-            if (workout.date > prev.lastDate) {
-              prev.lastDate = workout.date;
-              prev.last1RM = rounded1RM;
-            } else if (workout.date === prev.lastDate) {
-              prev.last1RM = Math.max(prev.last1RM, rounded1RM);
-            }
-            prev.best1RM = Math.max(prev.best1RM, rounded1RM);
+        const cur = workoutPeriodEx.get(item.exerciseId) ?? {
+          name: exercise.name,
+          muscle: exercise.muscle ?? "other",
+          mode: exercise.mode ?? "reps",
+          workSets: 0,
+          tonnageKg: 0,
+          best1RM: 0,
+        };
+        cur.workSets += periodExSets;
+        cur.tonnageKg += periodExTonnage;
+        cur.best1RM = Math.max(cur.best1RM, periodExBest1RM);
+        workoutPeriodEx.set(item.exerciseId, cur);
+      }
+    }
+
+    // #211: Update exercisePeriodProgress once per chronologically-sorted workout so first1RM/last1RM/best1RM are exact
+    for (const [exId, cur] of workoutPeriodEx) {
+      const rounded1RM = Math.round(cur.best1RM * 10) / 10;
+      const prev = exercisePeriodProgress.get(exId);
+      if (!prev) {
+        exercisePeriodProgress.set(exId, {
+          id: exId,
+          name: cur.name,
+          muscle: cur.muscle,
+          mode: cur.mode,
+          sessions: new Set<string>([workoutId]),
+          workSets: cur.workSets,
+          tonnageKg: cur.tonnageKg,
+          firstDate: workout.date,
+          first1RM: rounded1RM,
+          lastDate: workout.date,
+          last1RM: rounded1RM,
+          best1RM: rounded1RM,
+        });
+      } else {
+        prev.sessions.add(workoutId);
+        prev.workSets += cur.workSets;
+        prev.tonnageKg += cur.tonnageKg;
+        if (rounded1RM > 0) {
+          if (prev.first1RM === 0) {
+            prev.firstDate = workout.date;
+            prev.first1RM = rounded1RM;
           }
+          prev.lastDate = workout.date;
+          prev.last1RM = rounded1RM;
+          prev.best1RM = Math.max(prev.best1RM, rounded1RM);
         }
       }
     }
@@ -695,10 +725,13 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     if (act.date <= through) unifiedTrainingDates.add(act.date);
   }
 
+  // #210: Match each diet day against the calorie goal snapshot active on that date
+  const periodTargetCalories = goalsOn(profile, through)?.calories ?? profile.calories;
   const dailyMacrosArray = Array.from(dailyMacrosMap.entries()).map(([date, m]) => ({
     date,
     ...m,
     isTrainingDay: unifiedTrainingDates.has(date),
+    targetCalories: goalsOn(profile, date)?.calories ?? periodTargetCalories,
   }));
   const tdeeStart = shiftDay(through, 1 - Math.min(displayPeriod, 28));
   const tdeeWeights = recentWeights.filter(({ date }) => date >= tdeeStart);
@@ -714,7 +747,7 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const tdeeTrend = evaluateWeightChangeRate(tdeeWeights);
   const energyNutrition = evaluateNutritionEnergyBalance({
     dailyMacros: dailyMacrosArray,
-    targetCalories: profile.calories,
+    targetCalories: periodTargetCalories,
     tdeeObservation: firstWeighIn && lastWeighIn ? {
       from: firstWeighIn,
       through: lastWeighIn,
@@ -891,11 +924,17 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
     return null;
   };
   const periodMeasurements = measurementsAsc.filter((m) => m.date >= displayStart);
-  const deltaOf = (key: "waistCm" | "chestCm" | "armCm" | "thighCm" | "hipCm") => {
-    const pts = (periodMeasurements.length >= 2 ? periodMeasurements : measurementsAsc)
-      .map((m) => m[key])
-      .filter((v): v is number => typeof v === "number");
-    return pts.length >= 2 ? round1(pts.at(-1)! - pts[0]!) : null;
+  // #195: Filter per field strictly within the selected display period so adding an unrelated field never alters deltas
+  const fieldPeriodDelta = (key: "waistCm" | "chestCm" | "armCm" | "thighCm" | "hipCm") => {
+    const pts = periodMeasurements
+      .filter((m) => typeof m[key] === "number")
+      .map((m) => ({ date: m.date, value: m[key] as number }));
+    if (pts.length < 2) return { delta: null as number | null, from: null as string | null, to: null as string | null };
+    return {
+      delta: round1(pts.at(-1)!.value - pts[0]!.value),
+      from: pts[0]!.date,
+      to: pts.at(-1)!.date,
+    };
   };
   const waistLatest = latestNonNull("waistCm") ?? (appleDailySummary.bodyReport.waistCm != null ? { value: appleDailySummary.bodyReport.waistCm, date: through } : null);
   const hipLatest = latestNonNull("hipCm");
@@ -903,20 +942,54 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   const armLatest = latestNonNull("armCm");
   const thighLatest = latestNonNull("thighCm");
   const heightCm = profile.energyProfile?.heightCm ?? appleDailySummary.bodyReport.heightCm ?? null;
-  const waistDeltaCm = deltaOf("waistCm");
-  const armDeltaCm = deltaOf("armCm");
+  const waistDeltaInfo = fieldPeriodDelta("waistCm");
+  const chestDeltaInfo = fieldPeriodDelta("chestCm");
+  const armDeltaInfo = fieldPeriodDelta("armCm");
+  const thighDeltaInfo = fieldPeriodDelta("thighCm");
+  const hipDeltaInfo = fieldPeriodDelta("hipCm");
+  const waistDeltaCm = waistDeltaInfo.delta;
+  const armDeltaCm = armDeltaInfo.delta;
+
+  // #193: WHR requires same-day paired waist + hip measurement to avoid combining months-apart readings
+  let sameDayWhrRow: { date: string; waistCm: number; hipCm: number } | null = null;
+  for (let i = measurementsAsc.length - 1; i >= 0; i--) {
+    const m = measurementsAsc[i]!;
+    if (typeof m.waistCm === "number" && m.waistCm > 0 && typeof m.hipCm === "number" && m.hipCm > 0) {
+      sameDayWhrRow = { date: m.date, waistCm: m.waistCm, hipCm: m.hipCm };
+      break;
+    }
+  }
+  const whr = sameDayWhrRow ? round2(sameDayWhrRow.waistCm / sameDayWhrRow.hipCm) : null;
+  const whrDate = sameDayWhrRow?.date ?? null;
+  const whrUnpairedDates =
+    !sameDayWhrRow && waistLatest && hipLatest
+      ? { waistDate: waistLatest.date, hipDate: hipLatest.date }
+      : null;
+
+  // #194: Evaluate WHtR threshold strictly on the unrounded ratio and keep 3-decimal precision near 0.50
+  const rawWhtr = waistLatest && heightCm && heightCm > 0 ? waistLatest.value / heightCm : null;
+  const whtr = rawWhtr != null ? Math.round(rawWhtr * 1000) / 1000 : null;
+  const whtrStatus: "healthy" | "elevated" | null = rawWhtr != null ? (rawWhtr < 0.5 ? "healthy" : "elevated") : null;
+
   const trackedLifts = exerciseProgress.filter((e) => e.sessions >= 2 && e.first1RM > 0);
   const avgE1rmPct = trackedLifts.length
     ? round1((trackedLifts.reduce((s, e) => s + ((e.last1RM - e.first1RM) / e.first1RM) * 100, 0)) / trackedLifts.length)
     : null;
+  // #196: Do not assert "力量保持稳定" or "减脂保肌节奏稳健" when strength observations are absent
   let recompSignal: { status: "optimal" | "caution" | "neutral"; label: string; detail: string } | null = null;
   if (weightRateReport || waistDeltaCm != null || trackedLifts.length > 0) {
     const slope = weightRateReport?.weeklySlopeKg ?? 0;
-    if (slope < -0.1 && (avgE1rmPct == null || avgE1rmPct >= -2) && (waistDeltaCm == null || waistDeltaCm <= 0)) {
+    if (slope < -0.1 && avgE1rmPct != null && avgE1rmPct >= -2 && (waistDeltaCm == null || waistDeltaCm <= 0)) {
       recompSignal = {
         status: "optimal",
         label: "减脂保肌节奏稳健",
-        detail: `体重每周 ${fmtSign(slope)} kg，${waistDeltaCm != null ? `腰围变化 ${fmtSign(waistDeltaCm)} cm，` : ""}${avgE1rmPct != null ? `核心动作推算 1RM 变化 ${fmtSign(avgE1rmPct)}%` : "力量保持稳定"}。`,
+        detail: `体重每周 ${fmtSign(slope)} kg，${waistDeltaCm != null ? `周期内腰围变化 ${fmtSign(waistDeltaCm)} cm，` : "周期内暂无可对比腰围，"}核心动作推算 1RM 变化 ${fmtSign(avgE1rmPct)}%。`,
+      };
+    } else if (slope < -0.1 && avgE1rmPct == null) {
+      recompSignal = {
+        status: "neutral",
+        label: "体重下降（待补充力量对比）",
+        detail: `体重每周 ${fmtSign(slope)} kg${waistDeltaCm != null ? `，周期内腰围变化 ${fmtSign(waistDeltaCm)} cm` : "，周期内暂无可对比腰围"}；当前周期缺少同动作多次力量记录，暂无法判断力量与肌肉保留情况。`,
       };
     } else if (slope < -0.15 && avgE1rmPct != null && avgE1rmPct <= -4) {
       recompSignal = {
@@ -928,13 +1001,16 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       recompSignal = {
         status: "optimal",
         label: "干净增肌中",
-        detail: `体重稳步上行，臂围增加 +${armDeltaCm} cm 且腰围受控，围度分配健康。`,
+        detail: `体重稳步上行，周期内臂围增加 +${armDeltaCm} cm 且腰围受控，围度分配健康。`,
       };
     } else if (measurementsAsc.length > 0 || weightRateReport) {
       recompSignal = {
         status: "neutral",
-        label: "体态与力量平稳过渡",
-        detail: `继续保持规律称重、围度与力量记录，系统会持续对照肌肉与脂肪走向。`,
+        label: trackedLifts.length > 0 ? "体态与力量平稳过渡" : "体态趋势观察中（待补充力量记录）",
+        detail:
+          trackedLifts.length > 0
+            ? `继续保持规律称重、围度与力量记录，系统会持续对照肌肉与脂肪走向。`
+            : `已记录体重/围度趋势，补充同动作 2 次以上抗阻训练记录后即可联动评估力量与肌肉保留。`,
       };
     }
   }
@@ -948,15 +1024,32 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       thighCm: thighLatest?.value ?? null,
       hipCm: hipLatest?.value ?? null,
     },
+    latestDates: {
+      waistCm: waistLatest?.date ?? null,
+      chestCm: chestLatest?.date ?? null,
+      armCm: armLatest?.date ?? null,
+      thighCm: thighLatest?.date ?? null,
+      hipCm: hipLatest?.date ?? null,
+    },
     deltas: {
       waistCm: waistDeltaCm,
-      chestCm: deltaOf("chestCm"),
+      chestCm: chestDeltaInfo.delta,
       armCm: armDeltaCm,
-      thighCm: deltaOf("thighCm"),
-      hipCm: deltaOf("hipCm"),
+      thighCm: thighDeltaInfo.delta,
+      hipCm: hipDeltaInfo.delta,
     },
-    whr: waistLatest && hipLatest && hipLatest.value > 0 ? round2(waistLatest.value / hipLatest.value) : null,
-    whtr: waistLatest && heightCm && heightCm > 0 ? round2(waistLatest.value / heightCm) : null,
+    deltaRanges: {
+      waistCm: waistDeltaInfo.from && waistDeltaInfo.to ? { from: waistDeltaInfo.from, to: waistDeltaInfo.to } : null,
+      chestCm: chestDeltaInfo.from && chestDeltaInfo.to ? { from: chestDeltaInfo.from, to: chestDeltaInfo.to } : null,
+      armCm: armDeltaInfo.from && armDeltaInfo.to ? { from: armDeltaInfo.from, to: armDeltaInfo.to } : null,
+      thighCm: thighDeltaInfo.from && thighDeltaInfo.to ? { from: thighDeltaInfo.from, to: thighDeltaInfo.to } : null,
+      hipCm: hipDeltaInfo.from && hipDeltaInfo.to ? { from: hipDeltaInfo.from, to: hipDeltaInfo.to } : null,
+    },
+    whr,
+    whrDate,
+    whrUnpairedDates,
+    whtr,
+    whtrStatus,
     avgE1rmPct,
     recompSignal,
   };
@@ -1016,25 +1109,30 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
   for (const [exId, entry] of exercise1RMs) {
     best1RMMap.set(exId, entry.best1RM);
   }
-  const strengthStandards = evaluateStrengthStandards(best1RMMap, userWeightKg, userGender ?? "male");
+  // #183: Do not fabricate male-specific strength standards when user sex is unset.
+  const strengthStandards = userGender ? evaluateStrengthStandards(best1RMMap, userWeightKg, userGender) : [];
   const structuralBalance = evaluateStructuralBalance(best1RMMap);
 
   const reviewYear = through.slice(0, 4);
   const yearStart = `${reviewYear}-01-01`;
   const yearEnd = `${reviewYear}-12-31`;
+  const yearCutoff = yearEnd < through ? yearEnd : through;
   const yearActiveDays = new Set<string>();
   const yearExCounts = new Map<string, { name: string; sets: number }>();
-  let yearSessions = 0;
-  let yearMinutes = 0;
+  let yearManualSessions = 0;
+  let yearAppleOnlySessions = 0;
+  let yearLinkedAppleSessions = 0;
+  let yearDurationSeconds = 0;
   let yearTonnageKg = 0;
   let yearWorkSets = 0;
   let yearBestPr: { name: string; oneRepMaxKg: number; date: string } | null = null;
   for (const { workout } of workouts) {
-    if (workout.date < yearStart || workout.date > yearEnd) continue;
-    yearSessions++;
+    if (workout.date < yearStart || workout.date > yearCutoff) continue;
+    yearManualSessions++;
     yearActiveDays.add(workout.date);
     const durSec = workoutDurationSeconds(workout);
-    if (durSec != null && durSec > 0) yearMinutes += Math.round(durSec / 60);
+    // #213: Accumulate exact seconds across sessions and round once at output
+    if (durSec != null && durSec > 0) yearDurationSeconds += durSec;
     for (const row of workout.exercises) {
       const ex = row.snapshot ?? catalogue.get(row.exerciseId);
       const exName = ex?.name ?? row.exerciseId;
@@ -1055,15 +1153,33 @@ export function getWebAnalytics(store: Store, userId: string, query: z.infer<typ
       }
     }
   }
-  const yearCutoff = yearEnd < through ? yearEnd : through;
+  // #212: Merge standalone Apple Watch / Health sessions into Year in Review (linked ones count once)
+  for (const entry of appleActivities) {
+    if (entry.date < yearStart || entry.date > yearCutoff) continue;
+    if (entry.manualWorkoutId) {
+      yearLinkedAppleSessions++;
+      continue;
+    }
+    yearAppleOnlySessions++;
+    yearActiveDays.add(entry.date);
+    if (entry.durationSeconds != null && entry.durationSeconds > 0) {
+      yearDurationSeconds += entry.durationSeconds;
+    }
+  }
+  const yearSessions = yearManualSessions + yearAppleOnlySessions;
   const yearDietDays = new Set(
     store.list(userId, "diet").map((r) => (r.data as Diet).date).filter((d) => d >= yearStart && d <= yearCutoff),
   ).size;
   const yearInReview = {
     year: Number(reviewYear),
+    from: yearStart,
+    through: yearCutoff,
     sessions: yearSessions,
+    manualSessions: yearManualSessions,
+    appleOnlySessions: yearAppleOnlySessions,
+    linkedAppleSessions: yearLinkedAppleSessions,
     activeDays: yearActiveDays.size,
-    totalMinutes: yearMinutes,
+    totalMinutes: Math.round(yearDurationSeconds / 60),
     totalTonnageKg: Math.round(yearTonnageKg),
     totalWorkSets: yearWorkSets,
     dietDays: yearDietDays,
@@ -1413,12 +1529,20 @@ function summarizeAppleWorkouts(
   manualWorkouts: readonly { id: string; workout: Workout }[] = [],
 ) {
   const hrMax = resolveHrMax(birthDate, asOfDate);
-  // #77: Merge standalone manual cardio workouts into unified cardio analytics while deduplicating overlapping Apple workouts.
+  // #77 & #180 (P1): Only deduplicate manual cardio against Apple CARDIO workouts (never let Apple Watch strength
+  // workouts within +-15 min suppress a post-lift manual run/cycle), and require real time overlap or same activity.
   const linkedManualIds = new Set(entries.map((e) => e.manualWorkoutId).filter((id): id is string => Boolean(id)));
-  const appleTimeRanges = entries.map((e) => ({
-    startMs: Date.parse(e.startedAt),
-    endMs: Date.parse(e.endedAt),
-  }));
+  const isStrengthLikeApple = (activityType: string) => {
+    const key = activityType.toLowerCase();
+    return key.includes("strength") || key.includes("weight") || key.includes("core") || key.includes("yoga") || key.includes("pilates") || key.includes("flexibility");
+  };
+  const appleCardioRanges = entries
+    .filter((e) => !isStrengthLikeApple(e.activityType))
+    .map((e) => ({
+      activityType: e.activityType,
+      startMs: Date.parse(e.startedAt),
+      endMs: Date.parse(e.endedAt),
+    }));
   const syntheticManualEntries: ReturnType<typeof projectAppleTraining>["entries"] = [];
   for (const { id, workout } of manualWorkouts) {
     if (linkedManualIds.has(id)) continue;
@@ -1430,15 +1554,20 @@ function summarizeAppleWorkouts(
     if (durSec <= 0) continue;
     const wStartMs = Date.parse(workout.startedAt);
     const wEndMs = Date.parse(workout.endedAt ?? workout.startedAt);
-    const overlapsApple =
-      Number.isFinite(wStartMs) &&
-      Number.isFinite(wEndMs) &&
-      appleTimeRanges.some((a) => Number.isFinite(a.startMs) && Number.isFinite(a.endMs) && wStartMs <= a.endMs + 15 * 60_000 && wEndMs >= a.startMs - 15 * 60_000);
-    if (overlapsApple) continue;
     const activityType =
       workout.cardioMeta?.activityType ||
       workout.exercises[0]?.exerciseId.replace(/^cardio-/, "") ||
       "mixedCardio";
+    const overlapsAppleCardio =
+      Number.isFinite(wStartMs) &&
+      Number.isFinite(wEndMs) &&
+      appleCardioRanges.some((a) => {
+        if (!Number.isFinite(a.startMs) || !Number.isFinite(a.endMs)) return false;
+        const realOverlap = wStartMs < a.endMs && wEndMs > a.startMs;
+        if (realOverlap) return true;
+        return a.activityType === activityType && wStartMs <= a.endMs + 5 * 60_000 && wEndMs >= a.startMs - 5 * 60_000;
+      });
+    if (overlapsAppleCardio) continue;
     const distanceMeters = parseManualCardioDistanceMeters(workout) ?? undefined;
     syntheticManualEntries.push({
       schemaVersion: 1,

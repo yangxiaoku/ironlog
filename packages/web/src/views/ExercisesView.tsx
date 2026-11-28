@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MuscleBodyMap } from "../components/MuscleBodyMap";
 import { WorkspaceTabs } from "../components/WorkspaceTabs";
@@ -46,8 +46,13 @@ function matchesExerciseLocal(
     return false;
   }
   if (!q) return true;
-  const needle = q.toLowerCase();
-  return [ex.name, ex.englishName, ...(ex.aliases ?? [])].some((t) => String(t ?? "").toLowerCase().includes(needle));
+  // #156: Use the same whitespace-separated multi-token matching as cloud catalogue search
+  const tokens = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (!tokens.length) return true;
+  const fields = [ex.name, ex.englishName, ...(ex.aliases ?? [])]
+    .map((t) => String(t ?? "").toLowerCase())
+    .filter(Boolean);
+  return tokens.every((tok) => fields.some((f) => f.includes(tok)));
 }
 
 function prioritizeExact(items: DisplayExerciseItem[], rawQuery: string): DisplayExerciseItem[] {
@@ -90,6 +95,7 @@ export function ExercisesView() {
   const [favRecords, setFavRecords] = useState<Array<RecordEnvelope<FavoriteData>>>([]);
   const [customRecords, setCustomRecords] = useState<Array<RecordEnvelope<CatalogueExercise>>>([]);
   const [pendingFavIds, setPendingFavIds] = useState<Set<string>>(() => new Set());
+  const pendingFavOpRef = useRef<Map<string, { opId: string; id: string; deleted: boolean; baseVersion: number }>>(new Map());
   const composingRef = useRef(false);
   const seqRef = useRef(0);
   const itemsRef = useRef(items);
@@ -205,20 +211,30 @@ export function ExercisesView() {
             const customFavs = customList.filter(
               (ex) => favIds.has(ex.id) && matchesExerciseLocal(ex, debouncedQuery, muscle, equipmentFilter, mineSet),
             );
-            const builtinFavIds = [...favIds].filter((id) => !customIds.has(id)).slice(0, 100);
+            // #154: Chunk all builtin favorite IDs into batches of 100 so >100 favorites are all loaded & searchable
+            const allBuiltinFavIds = [...favIds].filter((id) => !customIds.has(id));
             let builtinFavs: DisplayExerciseItem[] = [];
-            if (builtinFavIds.length) {
-              const detailsKey = `catalogue:details:${[...builtinFavIds].sort().join(",")}`;
-              const details = await cachedApiFetch<{ items?: CatalogueExercise[] }>("/api/catalogue/exercises/details", {
-                method: "POST",
-                body: { ids: builtinFavIds },
-                token: "",
-                cacheKey: detailsKey,
-                userId: "public",
-                epoch: 0,
-              });
+            if (allBuiltinFavIds.length) {
+              const chunks: string[][] = [];
+              for (let i = 0; i < allBuiltinFavIds.length; i += 100) {
+                chunks.push(allBuiltinFavIds.slice(i, i + 100));
+              }
+              const chunkResults = await Promise.all(
+                chunks.map((chunk) => {
+                  const detailsKey = `catalogue:details:${[...chunk].sort().join(",")}`;
+                  return cachedApiFetch<{ items?: CatalogueExercise[] }>("/api/catalogue/exercises/details", {
+                    method: "POST",
+                    body: { ids: chunk },
+                    token: "",
+                    cacheKey: detailsKey,
+                    userId: "public",
+                    epoch: 0,
+                  });
+                }),
+              );
               if (seq !== seqRef.current) return;
-              builtinFavs = (details.items ?? [])
+              const mergedBuiltin = chunkResults.flatMap((res) => res.items ?? []);
+              builtinFavs = mergedBuiltin
                 .filter((ex) => matchesExerciseLocal(ex, debouncedQuery, muscle, equipmentFilter, mineSet))
                 .map((ex) => ({ ...ex, thumbnail: ex.illustration?.frames?.[0]?.path ?? null }));
             }
@@ -289,15 +305,31 @@ export function ExercisesView() {
     void fetchCatalogue(false, null);
   }, [fetchCatalogue]);
 
-  const favMap = new Map(favRecords.map((r) => [r.data.exerciseId, r]));
-  const customMap = new Map(customRecords.map((r) => [r.data.id, r]));
+  const favMap = useMemo(() => new Map(favRecords.map((r) => [r.data.exerciseId, r])), [favRecords]);
+  const customMap = useMemo(() => new Map(customRecords.map((r) => [r.data.id, r])), [customRecords]);
 
   const handleToggleFav = async (exerciseId: string) => {
     if (!userId || pendingFavIds.has(exerciseId)) return;
     triggerHaptic("light");
-    const existing = favMap.get(exerciseId);
+    const matchingExisting = favRecords.filter((r) => r.data.exerciseId === exerciseId);
+    const existing = matchingExisting[0];
     const removedItem = existing && scope === "favorites" ? items.find((ex) => ex.id === exerciseId) : undefined;
     setPendingFavIds((prev) => new Set(prev).add(exerciseId));
+
+    // #155: Use deterministic favorite ID `fav_${exerciseId}` and reuse opId on retry after lost receipt
+    const stableId = `fav_${exerciseId}`;
+    const prevPending = pendingFavOpRef.current.get(exerciseId);
+    const targetDeleted = Boolean(existing);
+    const opMeta =
+      prevPending && prevPending.deleted === targetDeleted && prevPending.baseVersion === (existing?.version ?? 0)
+        ? prevPending
+        : {
+            opId: crypto.randomUUID(),
+            id: existing?.id ?? stableId,
+            deleted: targetDeleted,
+            baseVersion: existing?.version ?? 0,
+          };
+    pendingFavOpRef.current.set(exerciseId, opMeta);
 
     // Optimistic update
     if (existing) {
@@ -307,7 +339,7 @@ export function ExercisesView() {
       }
     } else {
       const optimisticRec: RecordEnvelope<FavoriteData> = {
-        id: `fav_${crypto.randomUUID().slice(0, 12)}`,
+        id: opMeta.id,
         kind: "favorite",
         version: 0,
         deleted: false,
@@ -318,24 +350,44 @@ export function ExercisesView() {
     }
 
     try {
-      const res = await apiFetch<{ record?: RecordEnvelope<FavoriteData> }>("/api/records", {
-        method: "POST",
-        body: {
-          opId: crypto.randomUUID(),
-          id: existing?.id ?? `fav_${crypto.randomUUID().slice(0, 12)}`,
-          kind: "favorite",
-          baseVersion: existing?.version ?? 0,
-          deleted: Boolean(existing),
-          data: { exerciseId },
-        },
-      });
-      if (!existing && res.record) {
-        setFavRecords((prev) => prev.map((r) => (r.data.exerciseId === exerciseId ? res.record! : r)));
+      if (existing) {
+        // #155: Delete ALL matching favorite records (including any legacy duplicates) so unfavoriting once always clears star
+        await Promise.all(
+          matchingExisting.map((rec, idx) =>
+            apiFetch("/api/records", {
+              method: "POST",
+              body: {
+                opId: idx === 0 ? opMeta.opId : crypto.randomUUID(),
+                id: rec.id,
+                kind: "favorite",
+                baseVersion: rec.version,
+                deleted: true,
+                data: rec.data,
+              },
+            }),
+          ),
+        );
+      } else {
+        const res = await apiFetch<{ record?: RecordEnvelope<FavoriteData> }>("/api/records", {
+          method: "POST",
+          body: {
+            opId: opMeta.opId,
+            id: opMeta.id,
+            kind: "favorite",
+            baseVersion: opMeta.baseVersion,
+            deleted: false,
+            data: { exerciseId },
+          },
+        });
+        if (res.record) {
+          setFavRecords((prev) => prev.map((r) => (r.data.exerciseId === exerciseId ? res.record! : r)));
+        }
       }
+      pendingFavOpRef.current.delete(exerciseId);
       bumpDataEpoch();
     } catch (err) {
       if (existing) {
-        setFavRecords((prev) => [...prev, existing]);
+        setFavRecords((prev) => [...prev, ...matchingExisting]);
         if (removedItem && scope === "favorites") {
           setItems((prev) => [removedItem, ...prev]);
         }
@@ -352,7 +404,8 @@ export function ExercisesView() {
     }
   };
 
-  const isFiltered = Boolean(queryInput || muscle || equipmentFilter || scope !== "all");
+  // R15 UX: Clearing filters only clears search/muscle/equipment, preserving scope (favorites/trained/custom)
+  const isFiltered = Boolean(queryInput || muscle || equipmentFilter);
   const remaining = Math.max(0, total - items.length);
 
   return (
@@ -443,7 +496,6 @@ export function ExercisesView() {
             onClick={() => {
               setQueryInput("");
               setDebouncedQuery("");
-              setScope("all");
               setMuscle("");
               setEquipmentFilter("");
             }}
@@ -585,8 +637,10 @@ export function ExercisesView() {
                         <button
                           type="button"
                           className={`exercise-fav-btn${isFav ? " is-active" : ""}`}
-                          aria-label={isFav ? "取消收藏" : "收藏动作"}
+                          aria-label={`${isFav ? "取消收藏" : "收藏"} ${ex.name}`}
                           aria-pressed={isFav}
+                          aria-busy={pendingFavIds.has(ex.id)}
+                          disabled={pendingFavIds.has(ex.id)}
                           onClick={() => void handleToggleFav(ex.id)}
                         >
                           <Icon name={isFav ? "starFilled" : "star"} size={15} />

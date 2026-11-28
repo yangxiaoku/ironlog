@@ -201,6 +201,20 @@ export function LoadChart({
     setReadout("");
     setActiveIdx(null);
   }, [data.period, data.from, data.through, metric]);
+
+  // #170: Clear pointer dragging state even if pointerup/cancel occurs outside the SVG bounds
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stopDrag = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("pointerup", stopDrag);
+    window.addEventListener("pointercancel", stopDrag);
+    return () => {
+      window.removeEventListener("pointerup", stopDrag);
+      window.removeEventListener("pointercancel", stopDrag);
+    };
+  }, []);
   const width = compact ? 344 : 660;
   const height = 252;
   const left = 48;
@@ -351,6 +365,7 @@ export function LoadChart({
             aria-label={METRIC_LABELS[metric]}
             style={{ touchAction: "pan-y" }}
             onMouseLeave={() => {
+              draggingRef.current = false;
               setReadout("");
               setActiveIdx(null);
             }}
@@ -855,6 +870,20 @@ export function WeightChart({
     setReadout("");
     setActiveIdx(null);
   }, [from, to, rows.length, rows[0]?.date, rows.at(-1)?.date]);
+
+  // #170: Clear pointer dragging state even if pointerup/cancel occurs outside the SVG bounds
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stopDrag = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("pointerup", stopDrag);
+    window.addEventListener("pointercancel", stopDrag);
+    return () => {
+      window.removeEventListener("pointerup", stopDrag);
+      window.removeEventListener("pointercancel", stopDrag);
+    };
+  }, []);
   const width = compact ? 344 : wide ? 660 : showAverage ? 420 : 660;
   const height = 200;
   const left = 48;
@@ -934,6 +963,7 @@ export function WeightChart({
         aria-label={showAverage ? "称重与滚动平均，单位千克" : "称重趋势，单位千克"}
         style={{ touchAction: "pan-y" }}
         onMouseLeave={() => {
+          draggingRef.current = false;
           setReadout("");
           setActiveIdx(null);
         }}
@@ -952,8 +982,11 @@ export function WeightChart({
             }
           }
           const pt = primaryPoints[bestIdx]!;
+          const avgTxt = showAverage && typeof pt.row.average === "number"
+            ? ` · 7日均 ${fmt(pt.row.average, 2)} kg${typeof (pt.row as { avgSamples?: number }).avgSamples === "number" ? `（${(pt.row as { avgSamples?: number }).avgSamples}次）` : ""}`
+            : "";
           setActiveIdx(bestIdx);
-          setReadout(`${shortDate(pt.row.date)} · 称重 ${fmt(pt.row.weight, 2)} kg`);
+          setReadout(`${shortDate(pt.row.date)} · 称重 ${fmt(pt.row.weight, 2)} kg${avgTxt}`);
         }}
         onPointerMove={(e) => {
           if (!draggingRef.current && e.pointerType !== "mouse") return;
@@ -970,8 +1003,11 @@ export function WeightChart({
             }
           }
           const pt = primaryPoints[bestIdx]!;
+          const avgTxt = showAverage && typeof pt.row.average === "number"
+            ? ` · 7日均 ${fmt(pt.row.average, 2)} kg${typeof (pt.row as { avgSamples?: number }).avgSamples === "number" ? `（${(pt.row as { avgSamples?: number }).avgSamples}次）` : ""}`
+            : "";
           setActiveIdx(bestIdx);
-          setReadout(`${shortDate(pt.row.date)} · 称重 ${fmt(pt.row.weight, 2)} kg`);
+          setReadout(`${shortDate(pt.row.date)} · 称重 ${fmt(pt.row.weight, 2)} kg${avgTxt}`);
         }}
         onPointerUp={() => {
           draggingRef.current = false;

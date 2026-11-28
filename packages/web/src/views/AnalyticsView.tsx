@@ -62,7 +62,7 @@ function formatHumanCorrelation(c: { label: string; r: number; sampleDays: numbe
 function pickAvailableChartMetric<K extends string>(
   series: AppleDailyEntry[],
   metricsMap: Record<K, { label: string; unit: string; digits: number }>,
-  requestedKey: K,
+  requestedKey: K | null,
   fallbackKey: K,
 ): K {
   if (requestedKey && metricsMap[requestedKey]) {
@@ -96,6 +96,19 @@ function SimpleTrendChart({
   useEffect(() => {
     setActiveIdx(null);
   }, [pointsKey]);
+
+  // #170: Clear draggingRef if pointer releases outside the SVG
+  useEffect(() => {
+    const clearDrag = () => {
+      draggingRef.current = false;
+    };
+    window.addEventListener("pointerup", clearDrag);
+    window.addEventListener("pointercancel", clearDrag);
+    return () => {
+      window.removeEventListener("pointerup", clearDrag);
+      window.removeEventListener("pointercancel", clearDrag);
+    };
+  }, []);
 
   if (points.length === 0) {
     return (
@@ -134,11 +147,20 @@ function SimpleTrendChart({
   const span = Math.max(0.5, rawMax - rawMin);
   const lo = rawMin - span * 0.16;
   const hi = rawMax + span * 0.16;
-  const getX = (i: number) => padL + (i / (points.length - 1)) * chartW;
+  // #152: Position points proportionally to actual calendar timestamps so gaps are not visually compressed
+  const timestamps = points.map((p) => Date.parse(`${p.date}T00:00:00Z`));
+  const tMin = timestamps[0] ?? 0;
+  const tMax = timestamps.at(-1) ?? 0;
+  const tSpan = tMax - tMin;
+  const getX = (i: number) =>
+    tSpan > 0 && Number.isFinite(timestamps[i])
+      ? padL + (((timestamps[i]! - tMin) / tSpan) * chartW)
+      : padL + (i / (points.length - 1)) * chartW;
   const getY = (v: number) => padT + chartH - ((v - lo) / (hi - lo)) * chartH;
   const poly = points.map((p, i) => `${getX(i).toFixed(1)},${getY(p.value).toFixed(1)}`).join(" ");
   const baseBottomY = padT + chartH;
   const areaPoly = `${getX(0).toFixed(1)},${baseBottomY} ${poly} ${getX(points.length - 1).toFixed(1)},${baseBottomY}`;
+  const isFlatLine = Math.abs(rawMax - rawMin) < 1e-6;
 
   const activeTip =
     activeIdx != null && points[activeIdx]
@@ -149,8 +171,16 @@ function SimpleTrendChart({
     const rect = svgEl.getBoundingClientRect();
     if (rect.width <= 0) return null;
     const svgX = ((clientX - rect.left) / rect.width) * width;
-    const ratio = Math.max(0, Math.min(1, (svgX - padL) / Math.max(1, chartW)));
-    return Math.round(ratio * (points.length - 1));
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < points.length; i++) {
+      const dist = Math.abs(getX(i) - svgX);
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
   };
 
   return (
@@ -195,6 +225,9 @@ function SimpleTrendChart({
         onPointerCancel={() => {
           draggingRef.current = false;
         }}
+        onMouseLeave={() => {
+          draggingRef.current = false;
+        }}
       >
         <defs>
           <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
@@ -204,13 +237,17 @@ function SimpleTrendChart({
         </defs>
         <line x1={padL} y1={getY(rawMax)} x2={width - padR} y2={getY(rawMax)} stroke="var(--edge)" strokeDasharray="3 3" />
         <line x1={padL} y1={getY(avg)} x2={width - padR} y2={getY(avg)} stroke="var(--muted)" strokeDasharray="4 3" opacity={0.65} />
-        <line x1={padL} y1={getY(rawMin)} x2={width - padR} y2={getY(rawMin)} stroke="var(--edge)" strokeDasharray="3 3" />
+        {!isFlatLine ? (
+          <line x1={padL} y1={getY(rawMin)} x2={width - padR} y2={getY(rawMin)} stroke="var(--edge)" strokeDasharray="3 3" />
+        ) : null}
         <text x={padL - 6} y={getY(rawMax) + 4} fontSize={11} textAnchor="end" fill="var(--muted)">
           {fmt(rawMax, digits)}
         </text>
-        <text x={padL - 6} y={getY(rawMin) + 4} fontSize={11} textAnchor="end" fill="var(--muted)">
-          {fmt(rawMin, digits)}
-        </text>
+        {!isFlatLine ? (
+          <text x={padL - 6} y={getY(rawMin) + 4} fontSize={11} textAnchor="end" fill="var(--muted)">
+            {fmt(rawMin, digits)}
+          </text>
+        ) : null}
         <text x={width - padR - 2} y={getY(avg) - 5} fontSize={11} textAnchor="end" fill="var(--muted)">
           均值 {fmt(avg, digits)}
         </text>
@@ -307,12 +344,28 @@ export function AnalyticsView() {
   const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
 
-  const [period, setPeriod] = useState<AnalyticsPeriod>(30);
-  const [through, setThrough] = useState<string>(() => today());
+  const [initialHandoff] = useState<{ through?: string; days?: number } | null>(() => {
+    try {
+      const raw = sessionStorage.getItem("ironlog_analytics_handoff");
+      if (!raw) return null;
+      sessionStorage.removeItem("ironlog_analytics_handoff");
+      return JSON.parse(raw) as { through?: string; days?: number };
+    } catch {
+      return null;
+    }
+  });
+  const [period, setPeriod] = useState<AnalyticsPeriod>(() => {
+    const d = initialHandoff?.days;
+    if (d && (ANALYTICS_PERIODS as readonly number[]).includes(d)) return d as AnalyticsPeriod;
+    return 30;
+  });
+  const [through, setThrough] = useState<string>(() =>
+    initialHandoff?.through && /^\d{4}-\d{2}-\d{2}$/.test(initialHandoff.through) ? initialHandoff.through : today(),
+  );
   const [section, setSection] = useState<AnalyticsSection>("load");
   const [reportCategory, setReportCategory] = useState<ReportCategory>("all");
-  const [appleBodyChart, setAppleBodyChart] = useState<BodyChartKey>("weightKg");
-  const [appleRecoveryChart, setAppleRecoveryChart] = useState<RecoveryChartKey>("restingHeartRateBpm");
+  const [appleBodyChart, setAppleBodyChart] = useState<BodyChartKey | null>(null);
+  const [appleRecoveryChart, setAppleRecoveryChart] = useState<RecoveryChartKey | null>(null);
   const [cardioPaceSport, setCardioPaceSport] = useState<"run" | "cycle" | "walk">("run");
   const [appleWorkoutFilter, setAppleWorkoutFilter] = useState<"all" | "device">("all");
   const [workoutsExpanded, setWorkoutsExpanded] = useState(false);
@@ -2356,21 +2409,22 @@ export function AnalyticsView() {
                   <div className="measurement-kpi-grid">
                     {(
                       [
-                        ["腰围", data.bodyMeasurements.latest.waistCm, data.bodyMeasurements.deltas.waistCm],
-                        ["胸围", data.bodyMeasurements.latest.chestCm, data.bodyMeasurements.deltas.chestCm],
-                        ["臂围", data.bodyMeasurements.latest.armCm, data.bodyMeasurements.deltas.armCm],
-                        ["腿围", data.bodyMeasurements.latest.thighCm, data.bodyMeasurements.deltas.thighCm],
-                        ["臀围", data.bodyMeasurements.latest.hipCm, data.bodyMeasurements.deltas.hipCm],
+                        ["腰围", data.bodyMeasurements.latest.waistCm, data.bodyMeasurements.deltas.waistCm, data.bodyMeasurements.latestDates?.waistCm, data.bodyMeasurements.deltaRanges?.waistCm],
+                        ["胸围", data.bodyMeasurements.latest.chestCm, data.bodyMeasurements.deltas.chestCm, data.bodyMeasurements.latestDates?.chestCm, data.bodyMeasurements.deltaRanges?.chestCm],
+                        ["臂围", data.bodyMeasurements.latest.armCm, data.bodyMeasurements.deltas.armCm, data.bodyMeasurements.latestDates?.armCm, data.bodyMeasurements.deltaRanges?.armCm],
+                        ["腿围", data.bodyMeasurements.latest.thighCm, data.bodyMeasurements.deltas.thighCm, data.bodyMeasurements.latestDates?.thighCm, data.bodyMeasurements.deltaRanges?.thighCm],
+                        ["臀围", data.bodyMeasurements.latest.hipCm, data.bodyMeasurements.deltas.hipCm, data.bodyMeasurements.latestDates?.hipCm, data.bodyMeasurements.deltaRanges?.hipCm],
                       ] as const
-                    ).map(([lbl, val, delta]) =>
+                    ).map(([lbl, val, delta, itemDate, range]) =>
                       val != null ? (
                         <div key={lbl} className="measurement-kpi-item">
                           <span>{lbl}</span>
                           <strong>{fmt(val, 1)} cm</strong>
+                          {itemDate ? <small className="muted">测量日 {shortDate(itemDate)}</small> : null}
                           {delta != null && delta !== 0 ? (
                             <small>
                               变化 {delta > 0 ? "+" : ""}
-                              {fmt(delta, 1)} cm
+                              {fmt(delta, 1)} cm{range ? ` (${shortDate(range.from)}–${shortDate(range.to)})` : ""}
                             </small>
                           ) : null}
                         </div>
@@ -2379,14 +2433,36 @@ export function AnalyticsView() {
                     {data.bodyMeasurements.whtr != null ? (
                       <div className="measurement-kpi-item">
                         <span>腰身高比 WHtR</span>
-                        <strong>{fmt(data.bodyMeasurements.whtr, 2)}</strong>
-                        <small>{data.bodyMeasurements.whtr < 0.5 ? "健康范围 (<0.50)" : "偏高 (建议 <0.50)"}</small>
+                        <strong>
+                          {Math.abs(data.bodyMeasurements.whtr - 0.5) < 0.01
+                            ? data.bodyMeasurements.whtr.toFixed(3)
+                            : fmt(data.bodyMeasurements.whtr, 2)}
+                        </strong>
+                        <small>
+                          {(data.bodyMeasurements.whtrStatus
+                            ? data.bodyMeasurements.whtrStatus === "healthy"
+                            : data.bodyMeasurements.whtr < 0.5)
+                            ? "健康范围 (<0.50)"
+                            : "偏高 (建议 <0.50)"}
+                        </small>
                       </div>
                     ) : null}
                     {data.bodyMeasurements.whr != null ? (
                       <div className="measurement-kpi-item">
                         <span>腰臀比 WHR</span>
                         <strong>{fmt(data.bodyMeasurements.whr, 2)}</strong>
+                        {data.bodyMeasurements.whrDate ? (
+                          <small className="muted">同日测量 {shortDate(data.bodyMeasurements.whrDate)}</small>
+                        ) : null}
+                      </div>
+                    ) : data.bodyMeasurements.whrUnpairedDates ? (
+                      <div className="measurement-kpi-item">
+                        <span>腰臀比 WHR</span>
+                        <strong>—</strong>
+                        <small className="muted">
+                          缺同日配对（腰 {shortDate(data.bodyMeasurements.whrUnpairedDates.waistDate)} / 臀{" "}
+                          {shortDate(data.bodyMeasurements.whrUnpairedDates.hipDate)}）
+                        </small>
                       </div>
                     ) : null}
                   </div>
@@ -2630,8 +2706,22 @@ export function AnalyticsView() {
               <section className="panel analytics-panel panel-year-review" id="panel-year-review">
                 <header className="panel-head">
                   <div>
-                    <h2>{data.yearInReview.year} 年度训练回顾</h2>
-                    <p>累计出勤、总吨位、最常练动作与年度巅峰 PR 一览</p>
+                    <h2>
+                      {data.yearInReview.year} 年度训练回顾
+                      {data.yearInReview.through ? (
+                        <small className="muted" style={{ fontWeight: 400, marginLeft: 8, fontSize: 13 }}>
+                          ({shortDate(data.yearInReview.from ?? `${data.yearInReview.year}-01-01`)} – {shortDate(data.yearInReview.through)})
+                        </small>
+                      ) : null}
+                    </h2>
+                    <p>
+                      累计出勤、总吨位、最常练动作与年度巅峰 PR 一览
+                      {(data.yearInReview.appleOnlySessions ?? 0) > 0 || (data.yearInReview.linkedAppleSessions ?? 0) > 0
+                        ? ` · 铁记 ${data.yearInReview.manualSessions ?? 0} 次` +
+                          ((data.yearInReview.appleOnlySessions ?? 0) > 0 ? ` + Apple 独立 ${data.yearInReview.appleOnlySessions} 次` : "") +
+                          ((data.yearInReview.linkedAppleSessions ?? 0) > 0 ? `（含关联 ${data.yearInReview.linkedAppleSessions} 次）` : "")
+                        : ""}
+                    </p>
                   </div>
                 </header>
                 <div className="year-review-kpis">

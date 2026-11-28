@@ -32,18 +32,75 @@ export function exportPlanAsJson(plan: PlanData | null | undefined, notify: (msg
   notify(`已导出计划「${plan.name ?? "训练计划"}」JSON 文件`);
 }
 
+interface CsvSampleSet {
+  exercise: string;
+  mode: string;
+  rawWeightText: string;
+  rawUnit: string;
+  parsedWeight: number;
+  parsedUnit: "kg" | "lb";
+  reps: number;
+  seconds: number;
+}
+
 interface CsvPreviewRes {
   formatLabel: string;
+  previewSignature?: string;
+  detectedDecimalSeparator?: "." | ",";
+  ambiguousDecimal?: boolean;
+  unclosedQuoteLine?: number | null;
+  skippedRows?: number;
   matchedExercises: number;
   totalWorkouts: number;
   importableWorkouts: number;
   duplicateWorkouts: number;
+  willSkipDuplicates?: number;
   suspectedDuplicateWorkouts?: number;
   totalSets: number;
   customExercisesToCreate?: string[];
+  customExerciseDetails?: Array<{ name: string; mode: string; muscle: string; equipment: string }>;
   warnings?: string[];
-  sampleWorkouts?: Array<{ date: string; title: string; exercises: string[]; sets: number }>;
+  sampleWorkouts?: Array<{
+    date: string;
+    title: string;
+    exercises: string[];
+    sets: number;
+    sampleSets?: CsvSampleSet[];
+  }>;
   suspectedWorkouts?: Array<{ date: string; title: string; exercises: string[]; sets: number }>;
+}
+
+interface CsvCommitSummary {
+  formatLabel: string;
+  importedWorkouts: number;
+  importedSets: number;
+  skippedDuplicates: number;
+  skippedSuspectedDuplicates: number;
+  skippedRows: number;
+  createdCustomExercises: number;
+  createdCustomExerciseNames?: string[];
+  warnings?: string[];
+  replayed?: boolean;
+  sourceLabel: string;
+  completedAt: string;
+}
+
+const MODE_LABELS: Record<string, string> = {
+  reps: "负重次数",
+  timed: "计时",
+  bodyweight: "自重",
+  assisted: "配重辅助",
+};
+
+const LAST_CSV_IMPORT_KEY = "ironlog_last_csv_import_summary";
+
+function readLastCsvSummary(): CsvCommitSummary | null {
+  try {
+    const raw = sessionStorage.getItem(LAST_CSV_IMPORT_KEY);
+    return raw ? (JSON.parse(raw) as CsvCommitSummary) : null;
+  } catch {
+    return null;
+  }
 }
 
 export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
@@ -52,16 +109,34 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
   const notify = useUiStore((s) => s.notify);
 
   const [loadedFileName, setLoadedFileName] = useState("");
+  const [readingFileName, setReadingFileName] = useState<string | null>(null);
   const [editedAfterLoad, setEditedAfterLoad] = useState(false);
   const [csvText, setCsvText] = useState("");
   const [skipDuplicates, setSkipDuplicates] = useState(true);
   const [includeSuspected, setIncludeSuspected] = useState(false);
+  const [decimalFormat, setDecimalFormat] = useState<"auto" | "dot" | "comma">("auto");
+  const [allowPartialImport, setAllowPartialImport] = useState(false);
+  const [expandedSamples, setExpandedSamples] = useState<Record<number, boolean>>({});
+  const [commitResult, setCommitResult] = useState<CsvCommitSummary | null>(null);
+  const [lastSummary] = useState<CsvCommitSummary | null>(() => readLastCsvSummary());
+
+  // #220: Separate file read sequence from preview sequence and hold latest options in refs
+  const fileReadReqRef = useRef(0);
   const previewReqRef = useRef(0);
+  const skipDuplicatesRef = useRef(skipDuplicates);
+  const includeSuspectedRef = useRef(includeSuspected);
+  const decimalFormatRef = useRef(decimalFormat);
+  skipDuplicatesRef.current = skipDuplicates;
+  includeSuspectedRef.current = includeSuspected;
+  decimalFormatRef.current = decimalFormat;
+
   const [validated, setValidated] = useState<{
     csv: string;
     skipDuplicates: boolean;
     includeSuspected: boolean;
+    decimalFormat: "auto" | "dot" | "comma";
     sourceLabel: string;
+    opId: string;
     preview: CsvPreviewRes;
   } | null>(null);
   const [error, setError] = useState("");
@@ -78,13 +153,16 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
   const runPreview = async (
     rawCsv: string,
     skip: boolean,
-    includeSusp = includeSuspected,
+    includeSusp = includeSuspectedRef.current,
+    decFmt: "auto" | "dot" | "comma" = decimalFormatRef.current,
     sourceLabel = currentSourceLabel,
   ) => {
     const reqId = ++previewReqRef.current;
     const csv = rawCsv.trim();
     setError("");
     setValidated(null);
+    setAllowPartialImport(false);
+    setExpandedSamples({});
     if (!csv) {
       setPreviewing(false);
       return;
@@ -93,11 +171,25 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
     try {
       const res = await apiFetch<CsvPreviewRes>("/api/web/import-csv/preview", {
         method: "POST",
-        body: { csv, skipDuplicates: skip, includeSuspectedDuplicates: includeSusp },
+        body: {
+          csv,
+          skipDuplicates: skip,
+          includeSuspectedDuplicates: includeSusp,
+          decimalFormat: decFmt,
+        },
       });
-      // #90: Discard stale preview responses if input/options changed while request was in flight.
+      // #90 / #220: Discard stale preview responses if input/options changed while request was in flight.
       if (reqId !== previewReqRef.current) return;
-      setValidated({ csv, skipDuplicates: skip, includeSuspected: includeSusp, sourceLabel, preview: res });
+      setValidated({
+        csv,
+        skipDuplicates: skip,
+        includeSuspected: includeSusp,
+        decimalFormat: decFmt,
+        sourceLabel,
+        // #221: Bind one stable opId per validated preview snapshot so 503 retries are idempotent
+        opId: `csv_${safeUuid()}`,
+        preview: res,
+      });
     } catch (err) {
       if (reqId !== previewReqRef.current) return;
       setValidated(null);
@@ -108,13 +200,17 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
   };
 
   const commitImport = async () => {
-    // #90: Commit strictly from the exact snapshot shown in preview.
-    if (!validated || previewing || committing) return;
+    // #90 / #220: Commit strictly from the exact snapshot shown in preview and never while reading a file.
+    if (!validated || previewing || committing || readingFileName) return;
     if (validated.preview.importableWorkouts <= 0) return;
+    if (validated.preview.unclosedQuoteLine != null && !allowPartialImport) {
+      setError(`第 ${validated.preview.unclosedQuoteLine} 行存在未闭合引号，请修复文件或勾选「忽略截断并部分导入」。`);
+      return;
+    }
     setCommitting(true);
     setError("");
     try {
-      const res = await apiFetch<{ formatLabel: string; importedWorkouts: number; importedSets: number }>(
+      const res = await apiFetch<Omit<CsvCommitSummary, "sourceLabel" | "completedAt">>(
         "/api/web/import-csv/commit",
         {
           method: "POST",
@@ -122,24 +218,116 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
             csv: validated.csv,
             skipDuplicates: validated.skipDuplicates,
             includeSuspectedDuplicates: validated.includeSuspected,
+            decimalFormat: validated.decimalFormat,
+            allowPartialImport,
+            expectedPreviewSignature: validated.preview.previewSignature,
+            opId: validated.opId,
           },
         },
       );
+      const summary: CsvCommitSummary = {
+        ...res,
+        sourceLabel: validated.sourceLabel,
+        completedAt: new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      };
+      try {
+        sessionStorage.setItem(LAST_CSV_IMPORT_KEY, JSON.stringify(summary));
+      } catch {}
+      setCommitResult(summary);
       bumpDataEpoch();
-      closeAllModals();
       onSuccess?.();
-      notify(`已从 ${res.formatLabel} 导入 ${res.importedWorkouts} 场训练（共 ${res.importedSets} 组）`);
+      notify(
+        `已从 ${res.formatLabel} 导入 ${res.importedWorkouts} 场训练（共 ${res.importedSets} 组）${res.replayed ? "（已复用同次提交回执）" : ""}`,
+      );
     } catch (err) {
-      setError((err as Error)?.message || "导入失败");
+      const msg = (err as Error)?.message || "导入失败";
+      setError(msg);
+      if (msg.includes("预览范围不一致") || msg.includes("已发生变化")) {
+        void runPreview(
+          validated.csv,
+          validated.skipDuplicates,
+          validated.includeSuspected,
+          validated.decimalFormat,
+          validated.sourceLabel,
+        );
+      }
+    } finally {
       setCommitting(false);
     }
   };
 
+  if (commitResult) {
+    const skippedTotal = commitResult.skippedDuplicates + commitResult.skippedSuspectedDuplicates;
+    return (
+      <div className="dialog-form csv-import-box">
+        <div className="csv-preview-box">
+          <div className="csv-preview-head">
+            <span className="starter-tag">导入完成：{commitResult.formatLabel}</span>
+            <small>来源：{commitResult.sourceLabel} · {commitResult.completedAt}</small>
+          </div>
+          <div className="csv-preview-stats">
+            <div><span>已写入</span><strong>{commitResult.importedWorkouts} <small>场</small></strong></div>
+            <div><span>导入组数</span><strong>{commitResult.importedSets} <small>组</small></strong></div>
+            <div><span>重复跳过</span><strong>{skippedTotal} <small>场</small></strong></div>
+            <div><span>新增动作</span><strong>{commitResult.createdCustomExercises} <small>个</small></strong></div>
+          </div>
+          {commitResult.skippedRows > 0 ? (
+            <p className="muted csv-warn-note">有 {commitResult.skippedRows} 行因日期或动作名无效被跳过。</p>
+          ) : null}
+          {commitResult.createdCustomExerciseNames?.length ? (
+            <p className="muted csv-custom-note">
+              本次新建自定义动作：<b>{commitResult.createdCustomExerciseNames.join("、")}</b>
+            </p>
+          ) : null}
+          {commitResult.warnings?.length ? (
+            <p className="muted csv-warn-note">{commitResult.warnings.join("\n")}</p>
+          ) : null}
+        </div>
+        <footer>
+          <button
+            type="button"
+            className="quiet"
+            onClick={() => {
+              setCommitResult(null);
+              setValidated(null);
+            }}
+          >
+            继续导入另一份
+          </button>
+          <button type="button" className="primary-button" onClick={closeAllModals}>
+            完成并关闭
+          </button>
+        </footer>
+      </div>
+    );
+  }
+
+  const willSkipCount =
+    preview && validated
+      ? (preview.willSkipDuplicates ?? Math.max(0, preview.totalWorkouts - preview.importableWorkouts))
+      : 0;
+  const detectedTotalDupes =
+    preview ? preview.duplicateWorkouts + (preview.suspectedDuplicateWorkouts ?? 0) : 0;
+
   return (
     <div className="dialog-form csv-import-box">
       <p className="muted">
-        自动识别 <b>Strong</b>、<b>Hevy</b>、<b>FitNotes</b> 与 <b>铁记导出</b> CSV，自动换算 lbs→kg、匹配中文动作库并过滤重复场次。
+        自动识别 <b>Strong</b>、<b>Hevy</b>、<b>FitNotes</b> 与 <b>铁记导出</b> CSV，自动识别小数格式、换算 lbs→kg、匹配动作库并过滤重复场次。
       </p>
+      <div className="csv-scope-note muted" style={{ fontSize: 12, padding: "8px 10px", borderRadius: 8, background: "var(--surface-2, rgba(255,255,255,0.04))", border: "1px solid var(--edge)" }}>
+        <b>字段范围说明：</b>训练 CSV 保存「训练记录、组次重量/单位、RIR 与动作模式/肌群/器械」；若需跨账号完整迁移<b>训练计划、饮食、体重围度、体态照片与 Apple 健康</b>，请使用设置中的「全量 JSON 备份 / 恢复」。
+      </div>
+      {lastSummary ? (
+        <details style={{ fontSize: 12 }}>
+          <summary className="muted" style={{ cursor: "pointer" }}>
+            查看上次 CSV 导入摘要（{lastSummary.completedAt} · 写入 {lastSummary.importedWorkouts} 场）
+          </summary>
+          <div className="muted" style={{ marginTop: 6, paddingLeft: 8 }}>
+            来源：{lastSummary.sourceLabel} · 写入 {lastSummary.importedWorkouts} 场 / {lastSummary.importedSets} 组 · 跳过重复 {lastSummary.skippedDuplicates + lastSummary.skippedSuspectedDuplicates} 场 · 无效行 {lastSummary.skippedRows} 行 · 新建动作 {lastSummary.createdCustomExercises} 个
+          </div>
+        </details>
+      ) : null}
+
       <label className="csv-file-drop">
         <input
           type="file"
@@ -148,32 +336,55 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (!file) return;
-            const reqId = ++previewReqRef.current;
+            const fileReadId = ++fileReadReqRef.current;
+            ++previewReqRef.current;
             setValidated(null);
+            setError("");
             if (file.size > 2_000_000) {
+              setReadingFileName(null);
               setPreviewing(false);
               setError("CSV 文件超过 2 MB，请分批导入。");
               return;
             }
-            setLoadedFileName(file.name);
-            setEditedAfterLoad(false);
+            // #220: Do NOT overwrite loadedFileName until file.text() finishes; keep readingFileName separate.
+            setReadingFileName(file.name);
+            setPreviewing(true);
             const nextSource = `文件：${file.name}`;
-            void file.text().then((txt) => {
-              if (reqId !== previewReqRef.current) return;
-              setCsvText(txt);
-              void runPreview(txt, skipDuplicates, includeSuspected, nextSource);
-            });
+            void file
+              .text()
+              .then((txt) => {
+                if (fileReadId !== fileReadReqRef.current) return;
+                setReadingFileName(null);
+                setLoadedFileName(file.name);
+                setEditedAfterLoad(false);
+                setCsvText(txt);
+                void runPreview(
+                  txt,
+                  skipDuplicatesRef.current,
+                  includeSuspectedRef.current,
+                  decimalFormatRef.current,
+                  nextSource,
+                );
+              })
+              .catch(() => {
+                if (fileReadId !== fileReadReqRef.current) return;
+                setReadingFileName(null);
+                setPreviewing(false);
+                setError(`读取文件「${file.name}」失败，请重试。`);
+              });
           }}
         />
         <span>
           <Icon name="upload" size={16} /> 选择 CSV 文件
         </span>
         <small>
-          {loadedFileName
-            ? editedAfterLoad
-              ? `已编辑内容（原自 ${loadedFileName}）`
-              : `已加载：${loadedFileName}`
-            : "或直接在下方粘贴 CSV 文本（含表头）"}
+          {readingFileName
+            ? `正在读取：${readingFileName}…`
+            : loadedFileName
+              ? editedAfterLoad
+                ? `已编辑内容（原自 ${loadedFileName}）`
+                : `已加载：${loadedFileName}`
+              : "或直接在下方粘贴 CSV 文本（含表头）"}
         </small>
       </label>
 
@@ -182,7 +393,9 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         value={csvText}
         disabled={committing}
         onChange={(e) => {
+          ++fileReadReqRef.current;
           ++previewReqRef.current;
+          setReadingFileName(null);
           setCsvText(e.target.value);
           if (loadedFileName) setEditedAfterLoad(true);
           setValidated(null);
@@ -203,8 +416,12 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
             onChange={(e) => {
               const checked = e.target.checked;
               setSkipDuplicates(checked);
-              if (csvText.trim()) void runPreview(csvText, checked, includeSuspected);
-              else {
+              skipDuplicatesRef.current = checked;
+              // #220: Do NOT cancel an in-flight file read or preview stale text while reading a new file!
+              if (readingFileName) return;
+              if (csvText.trim()) {
+                void runPreview(csvText, checked, includeSuspectedRef.current, decimalFormatRef.current);
+              } else {
                 ++previewReqRef.current;
                 setValidated(null);
               }
@@ -222,13 +439,43 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
               onChange={(e) => {
                 const checked = e.target.checked;
                 setIncludeSuspected(checked);
-                if (csvText.trim()) void runPreview(csvText, skipDuplicates, checked);
+                includeSuspectedRef.current = checked;
+                if (readingFileName) return;
+                if (csvText.trim()) {
+                  void runPreview(csvText, skipDuplicatesRef.current, checked, decimalFormatRef.current);
+                }
               }}
             />
           </label>
         ) : null}
-        <button type="button" className="secondary-button" disabled={previewing || committing} onClick={() => void runPreview(csvText, skipDuplicates, includeSuspected)}>
-          {previewing ? "解析中…" : "解析预览"}
+        <label className="switch-chip" style={{ gap: 6 }}>
+          <span>小数格式</span>
+          <select
+            aria-label="CSV 小数格式"
+            disabled={committing}
+            value={decimalFormat}
+            onChange={(e) => {
+              const next = e.target.value as "auto" | "dot" | "comma";
+              setDecimalFormat(next);
+              decimalFormatRef.current = next;
+              if (readingFileName) return;
+              if (csvText.trim()) {
+                void runPreview(csvText, skipDuplicatesRef.current, includeSuspectedRef.current, next);
+              }
+            }}
+          >
+            <option value="auto">自动识别</option>
+            <option value="dot">小数点 (62.5)</option>
+            <option value="comma">小数逗号 (62,5)</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className="secondary-button"
+          disabled={previewing || committing || Boolean(readingFileName)}
+          onClick={() => void runPreview(csvText, skipDuplicates, includeSuspected, decimalFormat)}
+        >
+          {readingFileName ? "读取中…" : previewing ? "解析中…" : "解析预览"}
         </button>
       </div>
 
@@ -236,24 +483,51 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         {error}
       </p>
 
-      {preview && validated ? (
+      {preview && validated && !readingFileName ? (
         <div className="csv-preview-box">
           <div className="csv-preview-head">
             <span className="starter-tag">识别格式：{preview.formatLabel}</span>
-            <small>来源：{validated.sourceLabel} · 已匹配动作 {preview.matchedExercises} 个</small>
+            <small>
+              来源：{validated.sourceLabel} · 已匹配动作 {preview.matchedExercises} 个 · 小数符「{preview.detectedDecimalSeparator ?? "."}」
+            </small>
           </div>
           <div className="csv-preview-stats">
             <div><span>解析场次</span><strong>{preview.totalWorkouts} <small>场</small></strong></div>
             <div><span>将导入</span><strong>{preview.importableWorkouts} <small>场</small></strong></div>
-            <div><span>重复跳过</span><strong>{preview.duplicateWorkouts + (validated.skipDuplicates && !validated.includeSuspected ? (preview.suspectedDuplicateWorkouts ?? 0) : 0)} <small>场</small></strong></div>
+            <div><span>预计跳过</span><strong>{willSkipCount} <small>场</small></strong></div>
             <div><span>有效组数</span><strong>{preview.totalSets} <small>组</small></strong></div>
           </div>
+          {detectedTotalDupes > 0 && !validated.skipDuplicates ? (
+            <p className="muted" style={{ fontSize: 12, margin: "4px 0" }}>
+              共检测到 {detectedTotalDupes} 场重复记录，因已关闭「跳过明确重复场次」，本次将全部强制导入（预计跳过 0 场）。
+            </p>
+          ) : null}
+          {preview.unclosedQuoteLine != null ? (
+            <label className="switch-chip" style={{ marginTop: 6 }}>
+              <span>忽略第 {preview.unclosedQuoteLine} 行引号截断并部分导入</span>
+              <input
+                className="switch"
+                type="checkbox"
+                checked={allowPartialImport}
+                onChange={(e) => setAllowPartialImport(e.target.checked)}
+              />
+            </label>
+          ) : null}
           {preview.suspectedWorkouts?.length ? (
             <p className="muted csv-warn-note">
               检测到 {preview.suspectedWorkouts.length} 场缺少精确开始时间且同日动作/标题相同的疑似重复场次：{preview.suspectedWorkouts.slice(0, 3).map((w) => `${w.date} ${w.title}`).join("、")}。可通过上方开关决定是否导入。
             </p>
           ) : null}
-          {preview.customExercisesToCreate?.length ? (
+          {preview.customExerciseDetails?.length ? (
+            <p className="muted csv-custom-note">
+              将自动创建自定义动作：
+              <b>
+                {preview.customExerciseDetails
+                  .map((e) => `${e.name}（${MODE_LABELS[e.mode] ?? e.mode}）`)
+                  .join("、")}
+              </b>
+            </p>
+          ) : preview.customExercisesToCreate?.length ? (
             <p className="muted csv-custom-note">
               将自动创建自定义动作：<b>{preview.customExercisesToCreate.join("、")}</b>
             </p>
@@ -262,12 +536,33 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
           {preview.sampleWorkouts?.length ? (
             <ul className="csv-preview-list">
               {preview.sampleWorkouts.map((w, i) => (
-                <li key={i}>
-                  <span><b>{w.date}</b> · {w.title}</span>
+                <li key={i} style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                    <span><b>{w.date}</b> · {w.title}</span>
+                    {w.sampleSets?.length ? (
+                      <button
+                        type="button"
+                        className="quiet"
+                        style={{ fontSize: 12, padding: "2px 6px", minHeight: 24 }}
+                        onClick={() => setExpandedSamples((prev) => ({ ...prev, [i]: !prev[i] }))}
+                      >
+                        {expandedSamples[i] ? "收起代表组" : "展开代表组"}
+                      </button>
+                    ) : null}
+                  </div>
                   <small>
                     {w.exercises.slice(0, 3).join("、")}
                     {w.exercises.length > 3 ? ` 等 ${w.exercises.length} 项` : ""} · {w.sets} 组
                   </small>
+                  {expandedSamples[i] && w.sampleSets?.length ? (
+                    <div style={{ fontSize: 12, marginTop: 4, display: "grid", gap: 3, paddingLeft: 8, borderLeft: "2px solid var(--edge)" }}>
+                      {w.sampleSets.map((s, si) => (
+                        <div key={si} className="muted">
+                          {s.exercise}（{MODE_LABELS[s.mode] ?? s.mode}）：源值 <code>{s.rawWeightText} {s.rawUnit}</code> → 入库 <b>{s.parsedWeight} {s.parsedUnit}</b> × {s.mode === "timed" ? `${s.seconds}s` : `${s.reps}次`}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>
@@ -284,7 +579,13 @@ export function CsvImportModal({ onSuccess }: { onSuccess?: () => void }) {
         <button
           type="button"
           className="primary-button"
-          disabled={committing || previewing || !(validated && validated.preview.importableWorkouts > 0)}
+          disabled={
+            committing ||
+            previewing ||
+            Boolean(readingFileName) ||
+            !(validated && validated.preview.importableWorkouts > 0) ||
+            (validated.preview.unclosedQuoteLine != null && !allowPartialImport)
+          }
           onClick={() => void commitImport()}
         >
           {committing ? "导入中…" : "确认导入"}

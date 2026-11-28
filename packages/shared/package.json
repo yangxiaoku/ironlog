@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "exports": { ".": "./dist/index.js", "./logic": "./dist/logic.js", "./catalogue": "./dist/catalogue.js", "./matrix": "./dist/matrix.js" },
   "scripts": { "build": "tsc -p ." },
   "dependencies": { "zod": "^4.6.7" }

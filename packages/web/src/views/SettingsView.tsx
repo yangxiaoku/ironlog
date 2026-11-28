@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { BACKUP_REQUEST_TIMEOUT_MS } from "@ironlog/shared";
 import { Icon } from "../components/Icon";
 import { AiSettingsCard } from "../components/ai/AiSettingsCard";
@@ -43,14 +43,10 @@ import { useUiStore, type SettingsTab } from "../store/useUiStore";
 const PANEL_NAMES: Record<string, string> = {
   load: "训练趋势",
   muscle: "肌群分布",
-  consistency: "训练日历",
-  strength: "动作进步",
   weight: "体重趋势",
-  nutrition: "饮食趋势",
   apple: "Apple 健康",
-  feeling: "训练体感",
 };
-const PRIMARY_OVERVIEW_PANELS = new Set(["load", "muscle", "strength", "weight"]);
+const PRIMARY_OVERVIEW_PANELS = new Set(["load", "muscle", "weight"]);
 const ALL_EQUIP_KEYS: EquipmentKey[] = [
   "barbell",
   "dumbbell",
@@ -85,6 +81,7 @@ interface ApiTokenItem {
   label: string;
   createdAt?: string;
   expiresAt?: string | null;
+  scope?: "api" | "session";
 }
 
 export function SettingsView() {
@@ -141,16 +138,25 @@ export function SettingsView() {
     if (toastText) notify(toastText);
   };
 
-  // Statistics form state
+  // Statistics form state (#206/#207: independent dirty state & edit sequence per form)
   const [prefRevision, setPrefRevision] = useState(0);
+  const [savedPrefDays, setSavedPrefDays] = useState<PeriodDays>(30);
   const [prefDays, setPrefDays] = useState<PeriodDays>(30);
   const [includeWarmups, setIncludeWarmups] = useState(true);
   const [panelOrder, setPanelOrder] = useState<string[]>(Object.keys(PANEL_NAMES));
   const [selectedPanels, setSelectedPanels] = useState<Set<string>>(() => new Set(Object.keys(PANEL_NAMES)));
+  const [prefDirty, setPrefDirty] = useState(false);
   const [prefSaving, setPrefSaving] = useState(false);
   const [prefError, setPrefError] = useState("");
+  const prefDirtyRef = useRef(false);
+  const prefEditSeqRef = useRef(0);
+  const markPrefDirty = () => {
+    prefEditSeqRef.current += 1;
+    prefDirtyRef.current = true;
+    setPrefDirty(true);
+  };
 
-  // Profile form state
+  // Profile form state (#206/#207: independent dirty state & edit sequence per form)
   const [profileVersion, setProfileVersion] = useState(0);
   const [calories, setCalories] = useState("2200");
   const [protein, setProtein] = useState("150");
@@ -169,9 +175,18 @@ export function SettingsView() {
   const [sex, setSex] = useState<"male" | "female">("male");
   const [activityFactor, setActivityFactor] = useState("1.55");
   const [context, setContext] = useState("general");
+  const [profileDirty, setProfileDirty] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileError, setProfileError] = useState("");
   const [profileGoalObj, setProfileGoalObj] = useState<ProfileGoals | null>(null);
+  const profileDirtyRef = useRef(false);
+  const profileEditSeqRef = useRef(0);
+  const markProfileDirty = () => {
+    profileEditSeqRef.current += 1;
+    profileDirtyRef.current = true;
+    setProfileDirty(true);
+  };
+  const lastSettingsUserRef = useRef(userId);
 
   // Devices / AI / Account
   const [devices, setDevices] = useState<AppleDeviceToken[]>([]);
@@ -188,42 +203,61 @@ export function SettingsView() {
 
   useEffect(() => {
     let active = true;
-    const applySettings = ([prefs, profRes, devs, ai, toks]: [
-      PreferencesRes,
-      { version: number; profile: ProfileGoals },
-      AppleDeviceToken[],
-      AiStatus,
-      ApiTokenItem[],
-    ]) => {
+    const userChanged = lastSettingsUserRef.current !== userId;
+    lastSettingsUserRef.current = userId;
+    if (userChanged) {
+      prefDirtyRef.current = false;
+      profileDirtyRef.current = false;
+      setPrefDirty(false);
+      setProfileDirty(false);
+    }
+
+    const applySettings = (
+      [prefs, profRes, devs, ai, toks]: [
+        PreferencesRes,
+        { version: number; profile: ProfileGoals },
+        AppleDeviceToken[],
+        AiStatus,
+        ApiTokenItem[],
+      ],
+      forceReset = false,
+    ) => {
       setPrefRevision(prefs.revision);
-      setPrefDays(prefs.days);
-      setIncludeWarmups(Boolean(prefs.includeWarmups));
-      const chosen = new Set(prefs.panels);
-      setSelectedPanels(chosen);
-      setPanelOrder([...prefs.panels, ...Object.keys(PANEL_NAMES).filter((id) => !chosen.has(id))]);
+      setSavedPrefDays(prefs.days);
+      // #206/#207: Never wipe unsaved local edits in one form when another form triggers refresh
+      if (forceReset || !prefDirtyRef.current) {
+        setPrefDays(prefs.days);
+        setIncludeWarmups(Boolean(prefs.includeWarmups));
+        const validKnown = prefs.panels.filter((id) => id in PANEL_NAMES);
+        const chosen = new Set(validKnown.length ? validKnown : Object.keys(PANEL_NAMES));
+        setSelectedPanels(chosen);
+        setPanelOrder([...validKnown, ...Object.keys(PANEL_NAMES).filter((id) => !validKnown.includes(id))]);
+      }
 
       const g = profRes.profile;
       setProfileVersion(profRes.version);
       setProfileGoalObj(g);
-      setCalories(String(g.calories ?? 2200));
-      setProtein(String(g.protein ?? 150));
-      setCarbs(String(g.carbs ?? 240));
-      setFat(String(g.fat ?? 70));
-      setDaysPerWeek(String(g.daysPerWeek ?? 4));
-      setRestSeconds(String(g.restSeconds ?? 90));
-      setTargetWeight(g.targetWeight != null ? String(g.targetWeight) : "");
-      setEquipment(new Set((g.equipment ?? ["barbell", "dumbbell", "machine"]) as EquipmentKey[]));
-      const ep = g.energyProfile;
-      setEnergyEnabled(Boolean(ep));
-      setEnergyDetailsOpen(Boolean(ep));
-      if (ep) {
-        setHeightCm(String(ep.heightCm));
-        setEnergyWeightKg(String(ep.weightKg));
-        setWeightDate(ep.weightDate ?? today());
-        setBirthDate(ep.birthDate);
-        setSex(ep.sex);
-        setActivityFactor(String(ep.activityFactor));
-        setContext(ep.context);
+      if (forceReset || !profileDirtyRef.current) {
+        setCalories(String(g.calories ?? 2200));
+        setProtein(String(g.protein ?? 150));
+        setCarbs(String(g.carbs ?? 240));
+        setFat(String(g.fat ?? 70));
+        setDaysPerWeek(String(g.daysPerWeek ?? 4));
+        setRestSeconds(String(g.restSeconds ?? 90));
+        setTargetWeight(g.targetWeight != null ? String(g.targetWeight) : "");
+        setEquipment(new Set((g.equipment ?? ["barbell", "dumbbell", "machine"]) as EquipmentKey[]));
+        const ep = g.energyProfile;
+        setEnergyEnabled(Boolean(ep));
+        setEnergyDetailsOpen(Boolean(ep));
+        if (ep) {
+          setHeightCm(String(ep.heightCm));
+          setEnergyWeightKg(String(ep.weightKg));
+          setWeightDate(ep.weightDate ?? today());
+          setBirthDate(ep.birthDate);
+          setSex(ep.sex);
+          setActivityFactor(String(ep.activityFactor));
+          setContext(ep.context);
+        }
       }
 
       setDevices(devs);
@@ -240,7 +274,7 @@ export function SettingsView() {
     ]>("view:settings", userId)?.data;
 
     if (cachedSettings) {
-      applySettings(cachedSettings);
+      applySettings(cachedSettings, userChanged);
       setLoading(false);
     } else {
       setLoading(true);
@@ -256,7 +290,7 @@ export function SettingsView() {
       .then((bundle) => {
         if (!active) return;
         writeQueryCache("view:settings", bundle, { userId, epoch: dataEpoch });
-        applySettings(bundle);
+        applySettings(bundle, userChanged);
       })
       .catch((err) => {
         if (active) setError((err as Error)?.message || "加载设置失败");
@@ -292,7 +326,8 @@ export function SettingsView() {
   const visiblePanelOrder = appleHealthConnected ? panelOrder : panelOrder.filter((id) => id !== "apple");
   const primaryPanelOrder = visiblePanelOrder.filter((id) => PRIMARY_OVERVIEW_PANELS.has(id));
   const morePanelOrder = visiblePanelOrder.filter((id) => !PRIMARY_OVERVIEW_PANELS.has(id));
-  const persistentTokens = apiTokens.filter((t) => !t.expiresAt);
+  // #162: Display ALL API tokens (including expiring ones with scope === "api") so users can view & revoke them
+  const persistentTokens = apiTokens.filter((t) => (t.scope ? t.scope === "api" : !t.expiresAt));
 
   const reorderPanel = (panelId: string, dir: -1 | 1) => {
     const groupList = PRIMARY_OVERVIEW_PANELS.has(panelId) ? primaryPanelOrder : morePanelOrder;
@@ -308,25 +343,43 @@ export function SettingsView() {
       ? nextVisible
       : [...nextVisible, ...(panelOrder.includes("apple") ? ["apple"] : [])];
     setPanelOrder(nextFull);
+    markPrefDirty();
   };
 
   const handleSavePrefs = async (e: React.FormEvent) => {
     e.preventDefault();
     setPrefError("");
-    const panels = panelOrder.filter((id) => selectedPanels.has(id));
-    if (!panels.length) {
-      setPrefError("至少保留一张统计卡片。");
+    // #208: Validate at least 1 *currently visible* panel so hidden Apple panel cannot leave Overview empty
+    const visibleSelected = visiblePanelOrder.filter((id) => selectedPanels.has(id));
+    if (!visibleSelected.length) {
+      setPrefError("至少保留一张当前可见的统计卡片。");
       return;
     }
+    const panels = appleHealthConnected
+      ? visibleSelected
+      : [...visibleSelected, ...(selectedPanels.has("apple") ? ["apple"] : [])];
+    const submitSeq = prefEditSeqRef.current;
+    const submittedDays = prefDays;
     setPrefSaving(true);
     try {
       const updated = await apiFetch<PreferencesRes>("/api/web/preferences", {
         method: "PUT",
-        body: { revision: prefRevision, days: prefDays, includeWarmups, panels },
+        body: { revision: prefRevision, days: submittedDays, includeWarmups, panels },
       });
       setPrefRevision(updated.revision);
+      setSavedPrefDays(updated.days);
+      // #207: If user edited fields while request was in flight, preserve their newer edits & keep dirty flag!
+      const editedWhileSaving = prefEditSeqRef.current !== submitSeq;
+      if (!editedWhileSaving) {
+        prefDirtyRef.current = false;
+        setPrefDirty(false);
+      }
       bumpDataEpoch();
-      notify("统计设置已保存");
+      notify(
+        editedWhileSaving
+          ? `已保存之前的设置（默认 ${updated.days} 天）；你刚做的新改动尚未保存，请再次点击保存`
+          : `统计设置已保存（默认 ${updated.days} 天 · v${updated.revision}）`,
+      );
     } catch (err) {
       setPrefError((err as Error)?.message || "保存统计设置失败");
     } finally {
@@ -337,6 +390,7 @@ export function SettingsView() {
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileError("");
+    const submitSeq = profileEditSeqRef.current;
     setProfileSaving(true);
     try {
       const currentProfiles = profileGoalObj?.equipmentProfiles?.length
@@ -377,8 +431,17 @@ export function SettingsView() {
       });
       setProfileVersion(updated.version);
       setProfileGoalObj(updated.profile);
+      const editedWhileSaving = profileEditSeqRef.current !== submitSeq;
+      if (!editedWhileSaving) {
+        profileDirtyRef.current = false;
+        setProfileDirty(false);
+      }
       bumpDataEpoch();
-      notify("目标与器械配置已保存");
+      notify(
+        editedWhileSaving
+          ? "已保存先前的目标配置；保存期间的新编辑已保留，请再次保存"
+          : "目标与器械配置已保存",
+      );
     } catch (err) {
       setProfileError((err as Error)?.message || "保存目标失败");
     } finally {
@@ -527,13 +590,29 @@ export function SettingsView() {
         <div className="settings-content">
           {settingsTab === "statistics" ? (
             <section className="panel">
-              <header className="panel-head">
-                <h2>统计布局与口径</h2>
+              <header className="panel-head" style={{ flexWrap: "wrap", gap: 8 }}>
+                <div>
+                  <h2>统计布局与口径</h2>
+                  <p className="muted" style={{ fontSize: 12 }}>
+                    当前生效：默认近 {savedPrefDays} 天 · 配置 v{prefRevision}
+                  </p>
+                </div>
+                {prefDirty ? (
+                  <span className="atlas-pill is-caution" role="status">
+                    有未保存更改
+                  </span>
+                ) : null}
               </header>
               <form className="settings-form" onSubmit={(e) => void handleSavePrefs(e)}>
                 <label className="field">
                   <span>默认统计周期</span>
-                  <select value={String(prefDays)} onChange={(e) => setPrefDays(Number(e.target.value) as PeriodDays)}>
+                  <select
+                    value={String(prefDays)}
+                    onChange={(e) => {
+                      setPrefDays(Number(e.target.value) as PeriodDays);
+                      markPrefDirty();
+                    }}
+                  >
                     {INTERVALS.map((i) => (
                       <option key={i.value} value={i.value}>
                         {i.label}
@@ -551,7 +630,10 @@ export function SettingsView() {
                     className="switch"
                     type="checkbox"
                     checked={includeWarmups}
-                    onChange={(e) => setIncludeWarmups(e.target.checked)}
+                    onChange={(e) => {
+                      setIncludeWarmups(e.target.checked);
+                      markPrefDirty();
+                    }}
                   />
                 </label>
 
@@ -603,6 +685,7 @@ export function SettingsView() {
                                     else next.delete(id);
                                     return next;
                                   });
+                                  markPrefDirty();
                                 }}
                               />
                             </div>
@@ -628,8 +711,13 @@ export function SettingsView() {
           {settingsTab === "profile" ? (
             <>
             <section className="panel">
-              <header className="panel-head">
+              <header className="panel-head" style={{ flexWrap: "wrap", gap: 8 }}>
                 <h2>训练与饮食目标</h2>
+                {profileDirty ? (
+                  <span className="atlas-pill is-caution" role="status">
+                    有未保存更改
+                  </span>
+                ) : null}
               </header>
               <form className="settings-form" onSubmit={(e) => void handleSaveProfile(e)}>
                 <section className="form-section">
@@ -654,7 +742,10 @@ export function SettingsView() {
                             step="any"
                             required
                             value={val}
-                            onChange={(e) => setter(e.target.value)}
+                            onChange={(e) => {
+                              setter(e.target.value);
+                              markProfileDirty();
+                            }}
                           />
                           <span>{unit}</span>
                         </div>
@@ -677,7 +768,10 @@ export function SettingsView() {
                           step={1}
                           required
                           value={daysPerWeek}
-                          onChange={(e) => setDaysPerWeek(e.target.value)}
+                          onChange={(e) => {
+                            setDaysPerWeek(e.target.value);
+                            markProfileDirty();
+                          }}
                         />
                         <span>天</span>
                       </div>
@@ -693,7 +787,10 @@ export function SettingsView() {
                           step={1}
                           required
                           value={restSeconds}
-                          onChange={(e) => setRestSeconds(e.target.value)}
+                          onChange={(e) => {
+                            setRestSeconds(e.target.value);
+                            markProfileDirty();
+                          }}
                         />
                         <span>秒</span>
                       </div>
@@ -708,7 +805,10 @@ export function SettingsView() {
                           max={500}
                           step="any"
                           value={targetWeight}
-                          onChange={(e) => setTargetWeight(e.target.value)}
+                          onChange={(e) => {
+                            setTargetWeight(e.target.value);
+                            markProfileDirty();
+                          }}
                         />
                         <span>kg</span>
                       </div>
@@ -727,13 +827,13 @@ export function SettingsView() {
                   <div className="settings-accordion-body">
                     <small className="muted">保存后，训练编辑器的「我的器械」筛选会优先展示匹配的动作。</small>
                     <div className="equip-presets">
-                      <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.gym))}>
+                      <button type="button" className="quiet" onClick={() => { setEquipment(new Set(EQUIP_PRESET_MAP.gym)); markProfileDirty(); }}>
                         商业健身房
                       </button>
-                      <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.home))}>
+                      <button type="button" className="quiet" onClick={() => { setEquipment(new Set(EQUIP_PRESET_MAP.home)); markProfileDirty(); }}>
                         居家哑铃
                       </button>
-                      <button type="button" className="quiet" onClick={() => setEquipment(new Set(EQUIP_PRESET_MAP.bodyweight))}>
+                      <button type="button" className="quiet" onClick={() => { setEquipment(new Set(EQUIP_PRESET_MAP.bodyweight)); markProfileDirty(); }}>
                         徒手街头
                       </button>
                     </div>
@@ -751,6 +851,7 @@ export function SettingsView() {
                                 else next.delete(eqKey);
                                 return next;
                               });
+                              markProfileDirty();
                             }}
                           />
                           <span>{EQUIPMENT[eqKey] ?? eqKey}</span>
@@ -779,7 +880,10 @@ export function SettingsView() {
                         className="switch"
                         type="checkbox"
                         checked={energyEnabled}
-                        onChange={(e) => setEnergyEnabled(e.target.checked)}
+                        onChange={(e) => {
+                          setEnergyEnabled(e.target.checked);
+                          markProfileDirty();
+                        }}
                       />
                     </label>
                     <fieldset className="form-fieldset" disabled={!energyEnabled}>
@@ -795,7 +899,10 @@ export function SettingsView() {
                               step={0.1}
                               required
                               value={heightCm}
-                              onChange={(e) => setHeightCm(e.target.value)}
+                              onChange={(e) => {
+                                setHeightCm(e.target.value);
+                                markProfileDirty();
+                              }}
                             />
                             <span>cm</span>
                           </div>
@@ -811,22 +918,25 @@ export function SettingsView() {
                               step={0.01}
                               required
                               value={energyWeightKg}
-                              onChange={(e) => setEnergyWeightKg(e.target.value)}
+                              onChange={(e) => {
+                                setEnergyWeightKg(e.target.value);
+                                markProfileDirty();
+                              }}
                             />
                             <span>kg</span>
                           </div>
                         </label>
                         <label className="field">
                           <span>测量日期</span>
-                          <input type="date" max={today()} required value={weightDate} onChange={(e) => setWeightDate(e.target.value)} />
+                          <input type="date" max={today()} required value={weightDate} onChange={(e) => { setWeightDate(e.target.value); markProfileDirty(); }} />
                         </label>
                         <label className="field">
                           <span>出生日期</span>
-                          <input type="date" max={today()} required value={birthDate} onChange={(e) => setBirthDate(e.target.value)} />
+                          <input type="date" max={today()} required value={birthDate} onChange={(e) => { setBirthDate(e.target.value); markProfileDirty(); }} />
                         </label>
                         <label className="field">
                           <span>性别</span>
-                          <select value={sex} onChange={(e) => setSex(e.target.value as "male" | "female")}>
+                          <select value={sex} onChange={(e) => { setSex(e.target.value as "male" | "female"); markProfileDirty(); }}>
                             <option value="male">男</option>
                             <option value="female">女</option>
                           </select>
@@ -841,12 +951,15 @@ export function SettingsView() {
                             max={2.5}
                             required
                             value={activityFactor}
-                            onChange={(e) => setActivityFactor(e.target.value)}
+                            onChange={(e) => {
+                              setActivityFactor(e.target.value);
+                              markProfileDirty();
+                            }}
                           />
                         </label>
                         <label className="field">
                           <span>生理状态</span>
-                          <select value={context} onChange={(e) => setContext(e.target.value)}>
+                          <select value={context} onChange={(e) => { setContext(e.target.value); markProfileDirty(); }}>
                             <option value="general">一般成人</option>
                             <option value="pregnant">妊娠期</option>
                             <option value="breastfeeding">哺乳期</option>
@@ -1569,7 +1682,10 @@ export function SettingsView() {
                           <li key={tok.id}>
                             <span>
                               <strong>{tok.label}</strong>
-                              <small>创建于 {(tok.createdAt ?? "").slice(0, 10)} · 永久有效</small>
+                              <small>
+                                创建于 {(tok.createdAt ?? "").slice(0, 10)} ·{" "}
+                                {tok.expiresAt ? `有效期至 ${tok.expiresAt.slice(0, 10)}` : "永久有效"}
+                              </small>
                             </span>
                             <button type="button" className="quiet" onClick={() => handleRevokeApiToken(tok)}>
                               撤销

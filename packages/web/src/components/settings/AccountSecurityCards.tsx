@@ -75,7 +75,7 @@ export function AccountSecurityAndEcosystemCards({
         skipMutateHook: true,
       });
       setPairingCode(res);
-      notify("已生成 6 位一次性配对码（5 分钟有效）");
+      notify("已生成 8 位一次性配对码（5 分钟有效）");
     } catch (err) {
       notify((err as Error)?.message || "生成配对码失败");
     } finally {
@@ -176,9 +176,9 @@ export function AccountSecurityAndEcosystemCards({
           </summary>
           <div className="settings-accordion-body">
             <div className="form-section">
-              <h4 className="form-section-title">新设备一次性 6 位配对码（HTTP / HTTPS 通用）</h4>
+              <h4 className="form-section-title">新设备一次性 8 位配对码（HTTP / HTTPS 通用）</h4>
               <p className="muted">
-                在手机或平板登录页选择「配对码登录」并输入下方 6 位数字即可免输密码一键登录，5 分钟有效、用后即焚。
+                在手机或平板登录页选择「配对码登录」并输入下方 8 位字母数字配对码即可免输密码一键登录，5 分钟有效、用后即焚。
               </p>
               <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
                 <button
@@ -191,12 +191,16 @@ export function AccountSecurityAndEcosystemCards({
                 </button>
                 {pairingCode ? (
                   <div className="pairing-code-badge">
-                    <strong>{pairingCode.code.slice(0, 3)} {pairingCode.code.slice(3)}</strong>
+                    <strong>
+                      {pairingCode.code.length >= 8
+                        ? `${pairingCode.code.slice(0, 4)} ${pairingCode.code.slice(4)}`
+                        : `${pairingCode.code.slice(0, 3)} ${pairingCode.code.slice(3)}`}
+                    </strong>
                     <button
                       type="button"
                       className="quiet"
                       onClick={() => {
-                        void copyText(pairingCode.code).then(() => notify("已复制 6 位配对码"));
+                        void copyText(pairingCode.code).then(() => notify("已复制 8 位配对码"));
                       }}
                     >
                       复制

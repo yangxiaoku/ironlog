@@ -64,7 +64,8 @@ export function sanitizePlannedExercises(
 ): PlannedExercise[] {
   return rows.map((row) => {
     const ex = catalogueMap.get(row.exerciseId);
-    const timed = ex?.mode === "timed";
+    // #157: When exercise metadata failed to load, infer timed from existing seconds > 0 so saving never wipes timed targets to 0
+    const timed = ex ? ex.mode === "timed" : Number(row.seconds) > 0;
     const min = timed ? 1 : Math.max(1, Math.min(1000, Math.round(Number(row.repsMin) || 8)));
     const max = timed ? 1 : Math.max(min, Math.min(1000, Math.round(Number(row.repsMax) || min)));
     const rawRest = (row.restSeconds as unknown) === "" || row.restSeconds == null ? 90 : Number(row.restSeconds);
@@ -367,7 +368,7 @@ export function PlannedExerciseList({
         {items.length ? (
           items.map((row, index) => {
             const ex = catalogueMap.get(row.exerciseId);
-            const mode = ex?.mode ?? "reps";
+            const mode = ex?.mode ?? (Number(row.seconds) > 0 ? "timed" : "reps");
             const timed = mode === "timed";
             const backupEx = row.backupExerciseId ? catalogueMap.get(row.backupExerciseId) : null;
             const manual = row.progression === "manual" || timed;

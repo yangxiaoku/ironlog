@@ -138,15 +138,17 @@ export function AuthScreen() {
 
         {pairingTab ? (
           <label className="field">
-            <span>6 位一次性配对码</span>
+            <span>8 位一次性配对码</span>
             <input
               name="pairingCode"
-              inputMode="numeric"
-              maxLength={8}
+              inputMode="text"
+              autoCapitalize="characters"
+              spellCheck={false}
+              maxLength={12}
               required
-              placeholder="例如：482910"
+              placeholder="例如：A7K9 M2P4"
               value={pairingCode}
-              onChange={(e) => setPairingCode(e.target.value)}
+              onChange={(e) => setPairingCode(e.target.value.toUpperCase())}
             />
             <small>在已登录设备的「设置 → 账号与数据 → 一次性设备配对码」中生成，5 分钟内有效。</small>
           </label>

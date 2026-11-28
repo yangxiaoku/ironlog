@@ -710,9 +710,10 @@ test("PWA uses autoUpdate, apiFetch surfaces Zod details, and WorkoutEditorModal
   const editor = readFileSync(resolve(process.cwd(), "packages/web/src/components/workout/WorkoutEditorModal.tsx"), "utf8");
   const planModals = readFileSync(resolve(process.cwd(), "packages/web/src/components/plan/PlanModals.tsx"), "utf8");
 
-  assert.match(viteConfig, /registerType:\s*"autoUpdate"/);
-  assert.match(viteConfig, /skipWaiting:\s*true/);
-  assert.match(viteConfig, /clientsClaim:\s*true/);
+  // #163: PWA uses prompt mode without skipWaiting/clientsClaim so active workouts are never force-reloaded
+  assert.match(viteConfig, /registerType:\s*"prompt"/);
+  assert.doesNotMatch(viteConfig, /skipWaiting:\s*true/);
+  assert.doesNotMatch(viteConfig, /clientsClaim:\s*true/);
   assert.match(mainTsx, /visibilitychange/);
   assert.match(mainTsx, /randomUUID/);
 

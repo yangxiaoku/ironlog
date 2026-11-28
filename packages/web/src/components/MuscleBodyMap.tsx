@@ -104,7 +104,7 @@ export function MuscleBodyMap({
         viewBox="0 0 220 156"
         width={dims.w}
         height={dims.h}
-        role="img"
+        role={interactive ? "group" : "img"}
         aria-label="正背面人体肌群分布图"
       >
         {/* === FRONT SILHOUETTE (centered x=55) === */}
@@ -166,8 +166,8 @@ export function MuscleBodyMap({
           <circle cx="55" cy="14" r="9.5" fill="var(--line-strong, #888)" opacity="0.34" />
           <rect x="50" y="23" width="10" height="6" rx="2.5" fill="var(--line-strong, #888)" opacity="0.3" />
 
-          {/* Shoulders (Rear Delts) */}
-          <g {...partProps("shoulders")}>
+          {/* Shoulders (Rear Delts) - click enabled, non-duplicate keyboard stop */}
+          <g {...partProps("shoulders")} tabIndex={undefined} role={undefined} aria-pressed={undefined}>
             <path d="M35 31 C28 32 25 38 26 45 L34 45 L36 33 Z" fill={shoulders.fill} fillOpacity={shoulders.opacity} stroke={shoulders.stroke} strokeWidth={shoulders.stroke ? 1.5 : 0} />
             <path d="M75 31 C82 32 85 38 84 45 L76 45 L74 33 Z" fill={shoulders.fill} fillOpacity={shoulders.opacity} stroke={shoulders.stroke} strokeWidth={shoulders.stroke ? 1.5 : 0} />
             <title>肩部</title>
@@ -179,8 +179,8 @@ export function MuscleBodyMap({
             <title>背部</title>
           </g>
 
-          {/* Arms (Triceps & Forearms) */}
-          <g {...partProps("arms")}>
+          {/* Arms (Triceps & Forearms) - click enabled, non-duplicate keyboard stop */}
+          <g {...partProps("arms")} tabIndex={undefined} role={undefined} aria-pressed={undefined}>
             <path d="M26 46 L34 46 L32 66 L25 65 Z" fill={arms.fill} fillOpacity={arms.opacity} stroke={arms.stroke} strokeWidth={arms.stroke ? 1.4 : 0} />
             <path d="M24 67 L31 67 L28 85 L22 84 Z" fill={arms.fill} fillOpacity={arms.opacity * 0.82} />
             <path d="M84 46 L76 46 L78 66 L85 65 Z" fill={arms.fill} fillOpacity={arms.opacity} stroke={arms.stroke} strokeWidth={arms.stroke ? 1.4 : 0} />
@@ -188,8 +188,8 @@ export function MuscleBodyMap({
             <title>手臂</title>
           </g>
 
-          {/* Legs (Glutes, Hamstrings, Calves) */}
-          <g {...partProps("legs")}>
+          {/* Legs (Glutes, Hamstrings, Calves) - click enabled, non-duplicate keyboard stop */}
+          <g {...partProps("legs")} tabIndex={undefined} role={undefined} aria-pressed={undefined}>
             <path d="M39 78 L54 78 L54 93 C46 95 40 92 39 87 Z" fill={legs.fill} fillOpacity={legs.opacity} stroke={legs.stroke} strokeWidth={legs.stroke ? 1.4 : 0} />
             <path d="M71 78 L56 78 L56 93 C64 95 70 92 71 87 Z" fill={legs.fill} fillOpacity={legs.opacity} stroke={legs.stroke} strokeWidth={legs.stroke ? 1.4 : 0} />
             <path d="M40 94 L53 94 L51 115 L41 115 Z" fill={legs.fill} fillOpacity={legs.opacity * 0.92} />

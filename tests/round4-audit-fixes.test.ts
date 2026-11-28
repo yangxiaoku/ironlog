@@ -81,8 +81,8 @@ test("#43 (P1) 铁记 CSV 导出按公斤折算并保留原单位，跨账号重
     assert.equal(lines.length, 3);
     assert.match(lines[0]!, /重量\(kg\).*容量\(kg\).*重量单位,原始重量/);
     // 135 lb = 61.23 kg; volume = 61.23 * 8 = 489.8 kg (NOT 135 kg / 1080 kg!)
-    assert.match(lines[1]!, /,61\.23,8,0,2,是,489\.8,.*,lb,135$/);
-    assert.match(lines[2]!, /,80,5,0,2,是,400,.*,kg,80$/);
+    assert.match(lines[1]!, /,61\.23,8,0,2,是,489\.8,.*,lb,135(?:,|$)/);
+    assert.match(lines[2]!, /,80,5,0,2,是,400,.*,kg,80(?:,|$)/);
 
     // Re-import into another account: 135 lb stays 135 lb (weightUnit: "lb"), 80 kg stays 80 kg
     const preview = previewWorkoutCsvImport(store, userB.userId, csvImportInput.parse({ csv: csv.content }));
@@ -445,7 +445,7 @@ test("#50 & #51 饮水目标等待服务端确认并支持失败重试；跨月�
   // #50: DietView waits for server response before updating waterGoal & notifying success
   const dietView = readFileSync("packages/web/src/views/DietView.tsx", "utf8");
   assert.match(dietView, /const confirmed = typeof res\?\.waterGoalMl === "number"/);
-  assert.match(dietView, /setFailedWaterGoal\(next\)/);
+  assert.match(dietView, /setFailedWaterGoal\(/);
   assert.match(dietView, /饮水目标保存失败，未同步云端/);
 
   // #51: Cross-month freeze on 2026-11-30 (ISO week 2026-W49 spans Nov 30 - Dec 6)

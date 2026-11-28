@@ -57,7 +57,7 @@ export interface DayScheduleDetail {
   telemetry?: {
     summary?: { progressionCount?: number; prOpportunityCount?: number };
     exercises?: Array<{
-      item: { exerciseId: string; sets: number };
+      item: { exerciseId: string; sets: number; weightUnit?: "kg" | "lb" };
       exercise?: { name?: string; mode?: string };
       weight: number | null;
       reps: number;
@@ -138,6 +138,10 @@ export interface DayDossierProps {
   catalogueMap: Map<string, CatalogueExercise>;
   inModal?: boolean;
   loading?: boolean;
+  switchingDate?: boolean;
+  appleLoading?: boolean;
+  appleError?: string;
+  onRetryApple?: () => void;
   onStepDate?: (newDate: string) => void;
 }
 
@@ -157,16 +161,22 @@ export function DayDossier({
   catalogueMap,
   inModal = false,
   loading = false,
+  switchingDate = false,
+  appleLoading = false,
+  appleError = "",
+  onRetryApple,
   onStepDate,
 }: DayDossierProps) {
   const bumpDataEpoch = useUiStore((s) => s.bumpDataEpoch);
   const closeAllModals = useUiStore((s) => s.closeAllModals);
+  const openConfirm = useUiStore((s) => s.openConfirm);
   const notify = useUiStore((s) => s.notify);
   const [completingDiet, setCompletingDiet] = useState(false);
 
   const swipeStartRef = useRef<{ x: number; y: number } | null>(null);
 
   const isFuture = date > todayKey;
+  const actionsLocked = switchingDate;
   const totalKcal = Math.round(diets.reduce((sum, r) => sum + (r.data.calories || 0), 0));
   const totalP = Math.round(diets.reduce((sum, r) => sum + (r.data.protein || 0), 0));
   const totalC = Math.round(diets.reduce((sum, r) => sum + (r.data.carbs || 0), 0));
@@ -175,37 +185,48 @@ export function DayDossier({
 
   let dayVolume = 0;
   let daySeconds = 0;
+  const completedWorkouts = workouts.filter((r) => r.data.status === "completed");
+  const activeWorkouts = workouts.filter((r) => r.data.status !== "completed");
   const workoutStatsList = workouts.map((rec) => {
     const st = computeWorkoutSummary(rec.data, catalogueMap);
-    dayVolume += st.volume;
-    daySeconds += st.seconds ?? 0;
+    if (rec.data.status === "completed") {
+      dayVolume += st.volume;
+      daySeconds += st.seconds ?? 0;
+    }
     return { rec, st };
   });
   for (const ap of appleEntries) daySeconds += ap.durationSeconds ?? 0;
 
+  // #132: Only completed workouts + Apple Watch sessions count toward completed training KPI; active drafts show separately.
+  const completedSessionsCount = completedWorkouts.length + appleEntries.length;
+  const hasCompletedTrained = completedSessionsCount > 0;
   const hasTrained = workouts.length > 0 || appleEntries.length > 0;
   const hasPlanned =
-    !hasTrained && date >= todayKey && (schedSummary?.status === "scheduled" || schedSummary?.status === "projected");
+    !hasCompletedTrained && date >= todayKey && (schedSummary?.status === "scheduled" || schedSummary?.status === "projected");
   const isRest = !hasTrained && !hasPlanned && schedSummary?.source === "rest";
 
-  const kpiTrainVal = hasTrained
-    ? `${workouts.length + appleEntries.length} 场`
-    : hasPlanned
-      ? "已排期"
-      : isRest
-        ? "休息"
-        : "—";
-  const kpiTrainSub = hasTrained
+  const kpiTrainVal = hasCompletedTrained
+    ? `${completedSessionsCount} 场`
+    : activeWorkouts.length > 0
+      ? "进行中"
+      : hasPlanned
+        ? "已排期"
+        : isRest
+          ? "休息"
+          : "—";
+  const kpiTrainSub = hasCompletedTrained
     ? dayVolume > 0
       ? `${fmt(dayVolume)} kg`
       : daySeconds > 0
         ? duration(daySeconds)
         : "已打卡"
-    : hasPlanned
-      ? `${schedSummary?.exercisesCount ?? 0} 个动作`
-      : isRest
-        ? "主动恢复"
-        : "未训练";
+    : activeWorkouts.length > 0
+      ? `${activeWorkouts.length} 场未完成草稿`
+      : hasPlanned
+        ? `${schedSummary?.exercisesCount ?? 0} 个动作`
+        : isRest
+          ? "主动恢复"
+          : "未训练";
   const kpiKcalVal = diets.length ? fmt(totalKcal, 0) : "—";
   const kpiKcalSub = diets.length ? `目标 ${fmt(targetKcal, 0)}` : isFuture ? "未来日期" : "未记录饮食";
   const kpiWeightVal = weightRecord
@@ -239,16 +260,54 @@ export function DayDossier({
   };
 
   const handleShiftDay = async () => {
+    const toDate = shiftDateStr(date, 1);
     try {
       await apiFetch("/api/web/schedule/shift", {
         method: "POST",
-        body: { fromDate: date, toDate: shiftDateStr(date, 1) },
+        body: { fromDate: date, toDate },
       });
       bumpDataEpoch();
       if (inModal) closeAllModals();
-      notify(`已顺延至 ${shortDate(shiftDateStr(date, 1))}`);
+      notify(`已顺延至 ${shortDate(toDate)}`);
     } catch (err) {
-      notify((err as Error)?.message || "顺延失败");
+      // #133 & #134: Handle 409 shift-conflict confirmation with full planRevision & routineId validation
+      const apiErr = err as Error & {
+        status?: number;
+        payload?: {
+          conflictTarget?: { date: string; title: string; notes: string; version: number; routineId?: string | null };
+          fromVersion?: number;
+          planRevision?: number;
+          fromRoutineId?: string | null;
+        };
+      };
+      if (apiErr.status === 409 && apiErr.payload?.conflictTarget) {
+        const target = apiErr.payload.conflictTarget;
+        openConfirm({
+          title: "目标日期已有训练安排",
+          message: `${shortDate(toDate)} 已有「${target.title}」${target.notes ? `（备注：${target.notes}）` : ""}。确认覆盖目标日期的原有排期吗？`,
+          confirmLabel: "确认覆盖",
+          onConfirm: async () => {
+            await apiFetch("/api/web/schedule/shift", {
+              method: "POST",
+              body: {
+                fromDate: date,
+                toDate,
+                overwrite: true,
+                expectedFromVersion: apiErr.payload?.fromVersion,
+                expectedToVersion: target.version,
+                expectedPlanRevision: apiErr.payload?.planRevision,
+                expectedFromRoutineId: apiErr.payload?.fromRoutineId,
+                expectedToRoutineId: target.routineId ?? null,
+              },
+            });
+            bumpDataEpoch();
+            if (inModal) closeAllModals();
+            notify(`已将 ${shortDate(date)} 训练顺延并覆盖至 ${shortDate(toDate)}`);
+          },
+        });
+        return;
+      }
+      notify(apiErr?.message || "顺延失败");
     }
   };
 
@@ -464,7 +523,7 @@ export function DayDossier({
                         {ex.item.sets}组 ·{" "}
                         {ex.exercise?.mode === "timed"
                           ? `${ex.seconds}秒`
-                          : `${ex.weight ? `${fmt(ex.weight)}kg × ` : ""}${ex.reps}次`}{" "}
+                          : `${ex.weight ? `${fmt(ex.weight)} ${ex.item.weightUnit === "lb" ? "lb" : "kg"} × ` : ""}${ex.reps}次`}{" "}
                         · {ex.progression.statusLabel}
                       </small>
                     </li>
@@ -543,7 +602,7 @@ export function DayDossier({
                 </button>
               ) : null}
               {!isFuture ? (
-                <button type="button" className="secondary-button dossier-quick-btn" onClick={() => openDietEditor({ date, meal: "snack" })}>
+                <button type="button" className="secondary-button dossier-quick-btn" disabled={actionsLocked} onClick={() => openDietEditor({ date, meal: "snack" })}>
                   <Icon name="plus" size={14} /> 记饮食
                 </button>
               ) : null}
@@ -591,7 +650,7 @@ export function DayDossier({
             <h3>
               <Icon name="diet" size={15} /> 饮食与热量
             </h3>
-            <button type="button" className="secondary-button dossier-quick-btn" onClick={() => openDietEditor({ date, meal: "lunch" })}>
+            <button type="button" className="secondary-button dossier-quick-btn" disabled={actionsLocked} onClick={() => openDietEditor({ date, meal: "lunch" })}>
               <Icon name="plus" size={14} /> 记饮食
             </button>
           </header>
@@ -635,11 +694,24 @@ export function DayDossier({
       {/* Section 4: Apple Health Daily */}
       {!isFuture && showDailyStrip && appleDaily ? (
         <AppleDailyStrip daily={appleDaily} compact onOpenDetails={(d) => openAppleDailyDetailsModal(d)} />
+      ) : !isFuture && appleLoading ? (
+        <section className="dossier-block">
+          <p className="muted dossier-empty-note" role="status">正在读取 Apple 健康数据…</p>
+        </section>
+      ) : !isFuture && appleError ? (
+        <section className="dossier-block">
+          <div className="dossier-head">
+            <span className="muted" style={{ fontSize: 12.5 }}>Apple 健康数据暂不可用</span>
+            {onRetryApple ? (
+              <button type="button" className="quiet" onClick={onRetryApple}>重试</button>
+            ) : null}
+          </div>
+        </section>
       ) : null}
 
       {inModal && !isFuture ? (
         <div className="dossier-share-foot">
-          <button type="button" className="secondary-button" onClick={() => openDailyShareModal(date)}>
+          <button type="button" className="secondary-button" disabled={actionsLocked} onClick={() => openDailyShareModal(date)}>
             <Icon name="download" size={15} /> 分享记录
           </button>
         </div>
@@ -650,6 +722,9 @@ export function DayDossier({
 
 /**
  * Self-contained Calendar Day Dossier Modal supporting prev/next stepping across months.
+ * #130: Never expose stale date write actions while switching date.
+ * #131: Validate nutritionDay fingerprint against current day's diets.
+ * R12 UX: Render core training/diet/weight/schedule immediately while Apple Health loads independently.
  */
 export function CalendarDayModal({
   initialDate,
@@ -665,7 +740,14 @@ export function CalendarDayModal({
 
   const [date, setDate] = useState(initialDate);
   const [loading, setLoading] = useState(true);
-  const [propsData, setPropsData] = useState<Omit<DayDossierProps, "inModal" | "loading" | "onStepDate"> | null>(null);
+  const [appleLoading, setAppleLoading] = useState(false);
+  const [appleError, setAppleError] = useState("");
+  const [appleRetryNonce, setAppleRetryNonce] = useState(0);
+  const [appleEntries, setAppleEntries] = useState<AppleWorkoutAgendaItem[]>([]);
+  const [appleDaily, setAppleDaily] = useState<AppleDailyEntry | null>(null);
+  const [coreData, setCoreData] = useState<
+    Omit<DayDossierProps, "inModal" | "loading" | "switchingDate" | "appleEntries" | "appleDaily" | "appleLoading" | "appleError" | "onRetryApple" | "onStepDate"> | null
+  >(null);
 
   useEffect(() => {
     let active = true;
@@ -673,28 +755,16 @@ export function CalendarDayModal({
     setLoading(true);
     void (async () => {
       try {
-        const [workouts, diets, weights, nutritionDays, profileRes, appleWorkouts, dailyRes, schedRes, dayDetail] =
+        const [workouts, diets, weights, nutritionDays, profileRes, schedRes, dayDetail] =
           await Promise.all([
             cachedApiFetch<Array<RecordEnvelope<WorkoutData>>>("/api/records/workout", { epoch: dataEpoch, userId }),
             cachedApiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet", { epoch: dataEpoch, userId }),
             cachedApiFetch<Array<RecordEnvelope<WeightData>>>("/api/records/weight", { epoch: dataEpoch, userId }).catch(() => []),
-            cachedApiFetch<Array<RecordEnvelope<{ date: string; complete?: boolean }>>>("/api/records/nutritionDay", {
+            cachedApiFetch<Array<RecordEnvelope<{ date: string; complete?: boolean; fingerprint?: string }>>>("/api/records/nutritionDay", {
               epoch: dataEpoch,
               userId,
             }).catch(() => []),
             cachedApiFetch<{ profile: ProfileGoals }>("/api/web/profile", { epoch: dataEpoch, userId }).catch(() => null),
-            date <= todayKey
-              ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
-                  `/api/integrations/apple-health/agenda?from=${date}&through=${date}`,
-                  { epoch: dataEpoch, userId },
-                ).catch(() => [])
-              : Promise.resolve([]),
-            date <= todayKey
-              ? cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
-                  `/api/integrations/apple-health/daily?from=${date}&through=${date}`,
-                  { epoch: dataEpoch, userId },
-                ).catch(() => ({ entries: [] }))
-              : Promise.resolve({ entries: [] }),
             cachedApiFetch<{ days: ScheduleDayEntry[] }>(`/api/web/schedule?from=${date}&through=${date}`, {
               epoch: dataEpoch,
               userId,
@@ -710,17 +780,23 @@ export function CalendarDayModal({
         const dayWorkouts = workouts.filter((r) => !r.deleted && r.data.status !== "cancelled" && r.data.date === date);
         const dayDiets = diets.filter((r) => !r.deleted && r.data.date === date);
         const weightRec = weights.find((r) => !r.deleted && r.data.date === date) ?? null;
-        const nutritionComplete = nutritionDays.some((r) => !r.deleted && r.data?.complete && r.data.date === date);
+        // #131: Validate nutritionDay fingerprint against current day's diet records
+        const dietFp = JSON.stringify(
+          [...dayDiets]
+            .sort((a, b) => a.id.localeCompare(b.id))
+            .map((r) => [r.id, r.data.date, r.data.meal, r.data.name, r.data.calories, r.data.protein, r.data.carbs, r.data.fat]),
+        );
+        const nutritionComplete = nutritionDays.some(
+          (r) => !r.deleted && r.data?.complete && r.data.date === date && (!r.data.fingerprint || r.data.fingerprint === dietFp),
+        );
         const catMap = await import("../../lib/catalogue").then((m) =>
           m.resolveCatalogueMap(dayWorkouts.flatMap((w) => w.data.exercises?.map((e) => e.exerciseId) ?? [])),
         );
         if (!active) return;
-        setPropsData({
+        setCoreData({
           date,
           todayKey,
           workouts: dayWorkouts,
-          appleEntries: appleWorkouts.filter((a) => !a.manualWorkoutId && a.date === date),
-          appleDaily: (dailyRes.entries ?? []).find((d) => d.date === date) ?? null,
           appleHealthConnected,
           diets: dayDiets,
           weightRecord: weightRec,
@@ -739,22 +815,84 @@ export function CalendarDayModal({
     };
   }, [date, appleHealthConnected, dataEpoch, userId]);
 
+  useEffect(() => {
+    let active = true;
+    const todayKey = today();
+    setAppleEntries([]);
+    setAppleDaily(null);
+    setAppleError("");
+    if (date > todayKey) {
+      setAppleLoading(false);
+      return;
+    }
+    setAppleLoading(true);
+    void (async () => {
+      try {
+        const [agendaRes, dailyRes] = await Promise.all([
+          cachedApiFetch<AppleWorkoutAgendaItem[]>(
+            `/api/integrations/apple-health/agenda?from=${date}&through=${date}`,
+            { epoch: dataEpoch, userId, force: appleRetryNonce > 0 },
+          ),
+          cachedApiFetch<{ entries?: AppleDailyEntry[] }>(
+            `/api/integrations/apple-health/daily?from=${date}&through=${date}`,
+            { epoch: dataEpoch, userId, force: appleRetryNonce > 0 },
+          ),
+        ]);
+        if (!active) return;
+        setAppleEntries(agendaRes.filter((a) => !a.manualWorkoutId && a.date === date));
+        setAppleDaily((dailyRes.entries ?? []).find((d) => d.date === date) ?? null);
+      } catch (err) {
+        if (active) setAppleError((err as Error)?.message || "读取失败");
+      } finally {
+        if (active) setAppleLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [date, dataEpoch, userId, appleRetryNonce]);
+
   const handleStep = (nextDate: string) => {
     setDate(nextDate);
     updateTopModalTitle(`${shortDate(nextDate)} 训练日程`);
     onDateChange?.(nextDate);
   };
 
-  if (loading && !propsData) {
+  if (loading && (!coreData || coreData.date !== date)) {
     return (
       <div className="cal-dossier in-modal">
+        <div className="dossier-day-stepper">
+          <button type="button" className="quiet day-step-btn" onClick={() => handleStep(shiftDateStr(date, -1))}>
+            <Icon name="back" size={14} /> 前一天
+          </button>
+          <span className="dossier-step-date">
+            <strong>{shortDate(date)}</strong>
+            <span className="calendar-month-sync-badge">读取当日…</span>
+          </span>
+          <button type="button" className="quiet day-step-btn" onClick={() => handleStep(shiftDateStr(date, 1))}>
+            后一天 <Icon name="chevron" size={14} />
+          </button>
+        </div>
         <p className="muted" style={{ padding: "18px 0" }}>
           正在读取 {shortDate(date)} ({formatWeekdayZh(date)}) 当日明细…
         </p>
       </div>
     );
   }
-  if (!propsData) return null;
+  if (!coreData) return null;
 
-  return <DayDossier {...propsData} inModal loading={loading} onStepDate={handleStep} />;
+  return (
+    <DayDossier
+      {...coreData}
+      appleEntries={appleEntries}
+      appleDaily={appleDaily}
+      appleLoading={appleLoading}
+      appleError={appleError}
+      onRetryApple={() => setAppleRetryNonce((n) => n + 1)}
+      inModal
+      loading={loading}
+      switchingDate={coreData.date !== date}
+      onStepDate={handleStep}
+    />
+  );
 }

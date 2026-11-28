@@ -130,9 +130,18 @@ export interface WorkoutExercise {
   sets: WorkoutSet[];
 }
 
+export interface WorkoutCardioMeta {
+  activityType?: string;
+  environment?: "indoor" | "outdoor";
+  distanceMeters?: number | null;
+  estimatedKcal?: number | null;
+  lapSeconds?: number[];
+}
+
 export interface WorkoutData {
   date: string;
   title: string;
+  cardioMeta?: WorkoutCardioMeta | null;
   startedAt: string;
   endedAt: string | null;
   status: "active" | "completed" | "cancelled";
@@ -362,6 +371,7 @@ export interface WorkoutReportResponse {
   notes?: string | null;
   planId?: string | null;
   routineId?: string | null;
+  cardioMeta?: WorkoutData["cardioMeta"] | null;
   canSyncToActivePlan?: boolean;
   activePlanRevision?: number;
   duration: number | null;
@@ -381,6 +391,8 @@ export interface WorkoutReportResponse {
     exerciseId: string;
     name: string;
     mode: ExerciseMode;
+    muscle?: MuscleKey | null;
+    category?: string | null;
     supersetGroup?: string | null;
     weightUnit?: WeightUnit;
     completed: Array<{

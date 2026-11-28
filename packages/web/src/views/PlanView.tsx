@@ -315,8 +315,10 @@ export function PlanView() {
       const apiErr = err as Error & {
         status?: number;
         payload?: {
-          conflictTarget?: { date: string; title: string; notes: string; version: number };
+          conflictTarget?: { date: string; title: string; notes: string; version: number; routineId?: string | null };
           fromVersion?: number;
+          planRevision?: number;
+          fromRoutineId?: string | null;
         };
       };
       if (apiErr.status === 409 && apiErr.payload?.conflictTarget) {
@@ -334,6 +336,9 @@ export function PlanView() {
                 overwrite: true,
                 expectedFromVersion: apiErr.payload?.fromVersion,
                 expectedToVersion: target.version,
+                expectedPlanRevision: apiErr.payload?.planRevision,
+                expectedFromRoutineId: apiErr.payload?.fromRoutineId,
+                expectedToRoutineId: target.routineId ?? null,
               },
             });
             bumpDataEpoch();
@@ -493,7 +498,7 @@ export function PlanView() {
           >
             <Icon name="upload" size={15} /> 导入计划
           </button>
-          {aiReady ? (
+          {aiReady && !(workoutPrefs.hiddenModules ?? []).includes("ai") ? (
             <button type="button" className="secondary-button" onClick={() => openAiPlanModal(activePlan?.id)}>
               生成 AI 计划
             </button>

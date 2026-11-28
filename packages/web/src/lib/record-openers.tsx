@@ -848,11 +848,15 @@ export function openCalendarDayModal(initialDate: string, onDateChange?: (d: str
   });
 }
 
-export function openBadgeDetailModal(badge: BadgeItem, onPinnedChange?: (pinned: string[]) => void): void {
+export function openBadgeDetailModal(
+  badge: BadgeItem,
+  onPinnedChange?: (pinned: string[]) => void,
+  allBadges?: BadgeItem[],
+): void {
   useUiStore.getState().openModal({
     title: badge.title,
     layout: "badge",
-    content: <BadgeDetailModal badge={badge} onPinnedChange={onPinnedChange} />,
+    content: <BadgeDetailModal badge={badge} onPinnedChange={onPinnedChange} allBadges={allBadges} />,
   });
 }
 

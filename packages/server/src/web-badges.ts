@@ -78,19 +78,23 @@ function makeBadge(
     current: number;
     unlocked?: boolean;
     unlockedAt: string | null;
+    integerDisplay?: boolean;
   },
 ): BadgeItem {
+  const { integerDisplay, ...rest } = spec;
   const unlocked = spec.unlocked ?? spec.current >= spec.target;
   const clamped = Math.min(spec.target, Math.max(0, spec.current));
-  const rounded = Math.round(clamped * 10) / 10;
+  const rounded = integerDisplay ? Math.round(clamped) : Math.round(clamped * 10) / 10;
   // #105: Never allow display rounding to show target reached when unrounded current < target.
   const displayCurrent = unlocked
     ? spec.target
     : rounded >= spec.target && spec.target > 0
-      ? Math.max(0, Math.floor(clamped * 10) / 10)
+      ? integerDisplay
+        ? Math.max(0, Math.floor(clamped))
+        : Math.max(0, Math.floor(clamped * 10) / 10)
       : rounded;
   return {
-    ...spec,
+    ...rest,
     current: displayCurrent,
     categoryLabel: categoryLabels[spec.category],
     progress: spec.target > 0 ? Math.min(1, Math.max(0, clamped / spec.target)) : 0,
@@ -190,13 +194,37 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     if (t.hour >= 20) nightOwlDates.push(act.date);
   }
 
-  // Training plan existence / activation
-  const planHistory = store.planSchedule(userId)?.history ?? [];
-  const planDrafts = store.list(userId, "plan");
-  const hasPlan = planDrafts.length > 0 || planHistory.length > 0;
-  const planAt = planHistory.length
-    ? localDate(Date.parse(planHistory[0]!.updatedAt))
-    : planDrafts.length ? through : null;
+  // #201: Training plan existence / activation filtered strictly by `through` with immutable creation date
+  const planHistoryDates = (store.planSchedule(userId)?.history ?? [])
+    .map((entry) => {
+      const ms = Date.parse(entry.startedAt ?? entry.updatedAt ?? "");
+      return Number.isFinite(ms) ? localDate(ms) : null;
+    })
+    .filter((d): d is string => d != null && d <= through)
+    .sort();
+  const planDraftRecords = store.list(userId, "plan");
+  const planDraftIds = new Set(planDraftRecords.map((r) => r.id));
+  const firstPlanChangeRow = store.db
+    .prepare(
+      "SELECT id, MIN(updated_at) AS firstAt FROM changes WHERE user_id = ? AND kind = 'plan' AND deleted = 0 GROUP BY id",
+    )
+    .all(userId) as Array<{ id: string; firstAt: string | null }>;
+  const firstAtByPlanId = new Map<string, string>();
+  for (const r of firstPlanChangeRow) {
+    if (r.firstAt) firstAtByPlanId.set(r.id, r.firstAt);
+  }
+  const planDraftDates = planDraftRecords
+    .map((rec) => {
+      const iso = firstAtByPlanId.get(rec.id) ?? rec.updatedAt;
+      const ms = Date.parse(iso);
+      return Number.isFinite(ms) ? localDate(ms) : null;
+    })
+    .filter((d): d is string => d != null && d <= through)
+    .sort();
+  // Also preserve legacy history-only plans whose draft was deleted
+  const planDates = [...planHistoryDates, ...planDraftDates].sort();
+  const hasPlan = planDates.length > 0 && (planDraftIds.size > 0 || planHistoryDates.length > 0);
+  const planAt = planDates[0] ?? null;
 
   // Volume, sets, reps, duration, PRs, muscle split, SBD & accessories
   let totalVolume = 0;
@@ -251,14 +279,14 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     let hasCardio = false;
     let sessionVolume = 0;
     let sessionSets = 0;
+    // #199: Aggregate intra-workout best per exerciseId before comparing against prior-workout PR baseline
+    const workoutExBest = new Map<string, { weight: number; est: number }>();
     if (workout.feeling === "balanced") balancedDates.push(workout.date);
     if (workout.feeling === "fatigued") fatiguedDates.push(workout.date);
 
     for (const row of workout.exercises) {
       const exercise = row.snapshot ?? catalogue.get(row.exerciseId);
       if (!exercise) continue;
-      if (exercise.muscle === "cardio") hasCardio = true;
-      else hasStrength = true;
 
       let sessionBestWeight = 0;
       let sessionBestEst = 0;
@@ -316,7 +344,14 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
             if (liftScore > maxDeadliftScore) maxDeadliftScore = liftScore;
             deadliftTracker.observe(liftScore, workout.date);
           }
-          if (!/leg-press|bench|腿举|卧推/i.test(tag) && (row.exerciseId.includes("press") || /推举|肩推/.test(exercise.name))) {
+          // #198: Explicit overhead/shoulder press check (excludes chest-press, bench, leg-press)
+          const isExcludedPress = /leg-press|bench|chest-press|incline-press|decline-press|floor-press|腿举|卧推|胸推/i.test(tag);
+          const isOverheadPress =
+            !isExcludedPress &&
+            ((exercise.muscle === "shoulders" && (row.exerciseId.includes("press") || /推举|肩推/.test(exercise.name))) ||
+              /(?:overhead-press|shoulder-press|military-press|arnold-press|push-press)/i.test(row.exerciseId) ||
+              /(?:过头推举|站姿推举|坐姿推举|杠铃推举|哑铃推举|肩推|阿诺德推举|实力推|借力推)/.test(exercise.name));
+          if (isOverheadPress) {
             if (liftScore > maxOhpScore) maxOhpScore = liftScore;
             ohpTracker.observe(liftScore, workout.date);
           }
@@ -325,13 +360,20 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
             rowTracker.observe(liftScore, workout.date);
           }
 
-          const sbdNow = maxBenchScore + maxSquatScore + maxDeadliftScore;
-          if (sbdNow > maxSbdScore) maxSbdScore = sbdNow;
-          sbdTracker.observe(sbdNow, workout.date);
+          // #197: Big-3 SBD requires all three lifts (bench + squat + deadlift) to have valid records
+          if (maxBenchScore > 0 && maxSquatScore > 0 && maxDeadliftScore > 0) {
+            const sbdNow = maxBenchScore + maxSquatScore + maxDeadliftScore;
+            if (sbdNow > maxSbdScore) maxSbdScore = sbdNow;
+            sbdTracker.observe(sbdNow, workout.date);
+          }
         }
       }
 
       if (hadValidSet) {
+        // #200: Only count strength / cardio completion when at least one valid completed work set exists
+        if (exercise.muscle === "cardio") hasCardio = true;
+        else hasStrength = true;
+
         usedExercises.add(row.exerciseId);
         varietyTracker.observe(usedExercises.size, workout.date);
         if (exercise.equipment) {
@@ -341,16 +383,25 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
       }
 
       if (sessionBestWeight > 0) {
-        const previous = bestSeen.get(row.exerciseId);
-        if (previous && (sessionBestWeight > previous.weight || sessionBestEst > previous.est)) {
-          prExercises.add(row.exerciseId);
-          prTracker.observe(prExercises.size, workout.date);
-        }
-        bestSeen.set(row.exerciseId, {
-          weight: Math.max(previous?.weight ?? 0, sessionBestWeight),
-          est: Math.max(previous?.est ?? 0, sessionBestEst),
+        const curW = workoutExBest.get(row.exerciseId);
+        workoutExBest.set(row.exerciseId, {
+          weight: Math.max(curW?.weight ?? 0, sessionBestWeight),
+          est: Math.max(curW?.est ?? 0, sessionBestEst),
         });
       }
+    }
+
+    // #199: Compare merged workout bests against historical baseline from PRIOR workouts only
+    for (const [exerciseId, cur] of workoutExBest) {
+      const previous = bestSeen.get(exerciseId);
+      if (previous && (cur.weight > previous.weight || cur.est > previous.est)) {
+        prExercises.add(exerciseId);
+        prTracker.observe(prExercises.size, workout.date);
+      }
+      bestSeen.set(exerciseId, {
+        weight: Math.max(previous?.weight ?? 0, cur.weight),
+        est: Math.max(previous?.est ?? 0, cur.est),
+      });
     }
 
     if (sessionVolume > maxSessionVolume) maxSessionVolume = sessionVolume;
@@ -451,7 +502,14 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
 
   const triadDates = sortedDates.filter((date) => completeDietSet.has(date) && weightDateSet.has(date));
 
-  const round1 = (v: number) => Math.round(v * 10) / 10;
+  const missingSbdLifts = [
+    ...(maxBenchScore > 0 ? [] : ["卧推"]),
+    ...(maxSquatScore > 0 ? [] : ["深蹲"]),
+    ...(maxDeadliftScore > 0 ? [] : ["硬拉"]),
+  ];
+  const hasAllSbd = missingSbdLifts.length === 0;
+  const sbdSubtitleSuffix = hasAllSbd ? "" : `（尚缺 ${missingSbdLifts.join("、")}）`;
+  const totalHoursRaw = totalSeconds / 3600;
 
   const badges: BadgeItem[] = [
     // ==================== 1. consistency (21 枚) ====================
@@ -474,20 +532,20 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     makeBadge({ id: "week-five", title: "单周 5 天", subtitle: "自然周内 5 个训练日", category: "consistency", rule: "任意自然周内达成至少 5 天训练或运动打卡", current: maxWeekDays, target: 5, unit: "天", unlockedAt: weekTracker.dateFor(5), tier: "milestone" }),
     makeBadge({ id: "month-12", title: "单月 12 天", subtitle: "自然月内 12 个训练日", category: "consistency", rule: "任意自然月内完成至少 12 天训练打卡", current: maxMonthDays, target: 12, unit: "天", unlockedAt: monthTracker.dateFor(12), tier: "milestone" }),
     makeBadge({ id: "month-16", title: "单月 16 天", subtitle: "自然月内 16 个训练日", category: "consistency", rule: "任意自然月内完成至少 16 天训练打卡", current: maxMonthDays, target: 16, unit: "天", unlockedAt: monthTracker.dateFor(16), tier: "prestige" }),
-    makeBadge({ id: "plan-architect", title: "启用计划", subtitle: "创建或启用 1 套计划", category: "consistency", rule: "创建或启用至少 1 套训练计划", current: hasPlan ? 1 : 0, target: 1, unit: "套", unlockedAt: planAt, tier: "standard" }),
+    makeBadge({ id: "plan-architect", title: "启用计划", subtitle: "创建草稿或启用 1 套计划", category: "consistency", rule: "保存至少 1 套训练计划草稿或正式启用计划", current: hasPlan ? 1 : 0, target: 1, unit: "套", unlockedAt: planAt, tier: "standard" }),
     makeBadge({ id: "active-days-50", title: "50 个活跃日", subtitle: "50 个训练自然日", category: "consistency", rule: "累计在 50 个不同自然日完成训练或运动", current: sortedDates.length, target: 50, unit: "天", unlockedAt: sortedDates[49] ?? null, tier: "milestone" }),
 
     // ==================== 2. volume (21 枚) ====================
-    makeBadge({ id: "tonnage-5t", title: "累计 5 吨", subtitle: "5,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 5,000 kg", current: Math.round(totalVolume), target: 5000, unit: "kg", unlockedAt: tonnageTracker.dateFor(5000), tier: "standard" }),
-    makeBadge({ id: "tonnage-10t", title: "累计 10 吨", subtitle: "10,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 10,000 kg", current: Math.round(totalVolume), target: 10000, unit: "kg", unlockedAt: tonnageTracker.dateFor(10000), tier: "standard" }),
-    makeBadge({ id: "tonnage-25t", title: "累计 25 吨", subtitle: "25,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 25,000 kg", current: Math.round(totalVolume), target: 25000, unit: "kg", unlockedAt: tonnageTracker.dateFor(25000), tier: "standard" }),
-    makeBadge({ id: "tonnage-50t", title: "累计 50 吨", subtitle: "50,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 50,000 kg", current: Math.round(totalVolume), target: 50000, unit: "kg", unlockedAt: tonnageTracker.dateFor(50000), tier: "milestone" }),
-    makeBadge({ id: "tonnage-100t", title: "累计 100 吨", subtitle: "100,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 100,000 kg", current: Math.round(totalVolume), target: 100000, unit: "kg", unlockedAt: tonnageTracker.dateFor(100000), tier: "milestone" }),
-    makeBadge({ id: "tonnage-250t", title: "累计 250 吨", subtitle: "250,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 250,000 kg", current: Math.round(totalVolume), target: 250000, unit: "kg", unlockedAt: tonnageTracker.dateFor(250000), tier: "prestige" }),
-    makeBadge({ id: "tonnage-500t", title: "累计 500 吨", subtitle: "500,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 500,000 kg", current: Math.round(totalVolume), target: 500000, unit: "kg", unlockedAt: tonnageTracker.dateFor(500000), tier: "prestige" }),
-    makeBadge({ id: "tonnage-1000t", title: "累计 1,000 吨", subtitle: "1,000,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 1,000,000 kg", current: Math.round(totalVolume), target: 1000000, unit: "kg", unlockedAt: tonnageTracker.dateFor(1000000), tier: "prestige" }),
-    makeBadge({ id: "session-5t", title: "单场 5 吨", subtitle: "单次 5,000 kg 容量", category: "volume", rule: "单次正式训练总容量达到 5,000 kg", current: Math.round(maxSessionVolume), target: 5000, unit: "kg", unlockedAt: sessionVolTracker.dateFor(5000), tier: "standard" }),
-    makeBadge({ id: "session-10t", title: "单场 10 吨", subtitle: "单次 10,000 kg 容量", category: "volume", rule: "单次正式训练总容量达到 10,000 kg", current: Math.round(maxSessionVolume), target: 10000, unit: "kg", unlockedAt: sessionVolTracker.dateFor(10000), tier: "milestone" }),
+    makeBadge({ id: "tonnage-5t", title: "累计 5 吨", subtitle: "5,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 5,000 kg", current: totalVolume, integerDisplay: true, target: 5000, unit: "kg", unlockedAt: tonnageTracker.dateFor(5000), tier: "standard" }),
+    makeBadge({ id: "tonnage-10t", title: "累计 10 吨", subtitle: "10,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 10,000 kg", current: totalVolume, integerDisplay: true, target: 10000, unit: "kg", unlockedAt: tonnageTracker.dateFor(10000), tier: "standard" }),
+    makeBadge({ id: "tonnage-25t", title: "累计 25 吨", subtitle: "25,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 25,000 kg", current: totalVolume, integerDisplay: true, target: 25000, unit: "kg", unlockedAt: tonnageTracker.dateFor(25000), tier: "standard" }),
+    makeBadge({ id: "tonnage-50t", title: "累计 50 吨", subtitle: "50,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 50,000 kg", current: totalVolume, integerDisplay: true, target: 50000, unit: "kg", unlockedAt: tonnageTracker.dateFor(50000), tier: "milestone" }),
+    makeBadge({ id: "tonnage-100t", title: "累计 100 吨", subtitle: "100,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 100,000 kg", current: totalVolume, integerDisplay: true, target: 100000, unit: "kg", unlockedAt: tonnageTracker.dateFor(100000), tier: "milestone" }),
+    makeBadge({ id: "tonnage-250t", title: "累计 250 吨", subtitle: "250,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 250,000 kg", current: totalVolume, integerDisplay: true, target: 250000, unit: "kg", unlockedAt: tonnageTracker.dateFor(250000), tier: "prestige" }),
+    makeBadge({ id: "tonnage-500t", title: "累计 500 吨", subtitle: "500,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 500,000 kg", current: totalVolume, integerDisplay: true, target: 500000, unit: "kg", unlockedAt: tonnageTracker.dateFor(500000), tier: "prestige" }),
+    makeBadge({ id: "tonnage-1000t", title: "累计 1,000 吨", subtitle: "1,000,000 kg 容量", category: "volume", rule: "累计抗阻训练容量达到 1,000,000 kg", current: totalVolume, integerDisplay: true, target: 1000000, unit: "kg", unlockedAt: tonnageTracker.dateFor(1000000), tier: "prestige" }),
+    makeBadge({ id: "session-5t", title: "单场 5 吨", subtitle: "单次 5,000 kg 容量", category: "volume", rule: "单次正式训练总容量达到 5,000 kg", current: maxSessionVolume, integerDisplay: true, target: 5000, unit: "kg", unlockedAt: sessionVolTracker.dateFor(5000), tier: "standard" }),
+    makeBadge({ id: "session-10t", title: "单场 10 吨", subtitle: "单次 10,000 kg 容量", category: "volume", rule: "单次正式训练总容量达到 10,000 kg", current: maxSessionVolume, integerDisplay: true, target: 10000, unit: "kg", unlockedAt: sessionVolTracker.dateFor(10000), tier: "milestone" }),
     makeBadge({ id: "sets-100", title: "累计 100 组", subtitle: "100 个有效工作组", category: "volume", rule: "累计完成 100 个有效训练工作组", current: totalSets, target: 100, unit: "组", unlockedAt: setsTracker.dateFor(100), tier: "standard" }),
     makeBadge({ id: "sets-300", title: "累计 300 组", subtitle: "300 个有效工作组", category: "volume", rule: "累计完成 300 个有效训练工作组", current: totalSets, target: 300, unit: "组", unlockedAt: setsTracker.dateFor(300), tier: "standard" }),
     makeBadge({ id: "sets-500", title: "累计 500 组", subtitle: "500 个有效工作组", category: "volume", rule: "累计完成 500 个有效训练工作组", current: totalSets, target: 500, unit: "组", unlockedAt: setsTracker.dateFor(500), tier: "milestone" }),
@@ -496,9 +554,9 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     makeBadge({ id: "reps-1000", title: "累计 1,000 次", subtitle: "1,000 次抗阻重复", category: "volume", rule: "累计完成 1,000 次抗阻重复次数", current: totalReps, target: 1000, unit: "次", unlockedAt: repsTracker.dateFor(1000), tier: "standard" }),
     makeBadge({ id: "reps-5000", title: "累计 5,000 次", subtitle: "5,000 次抗阻重复", category: "volume", rule: "累计完成 5,000 次抗阻重复次数", current: totalReps, target: 5000, unit: "次", unlockedAt: repsTracker.dateFor(5000), tier: "milestone" }),
     makeBadge({ id: "reps-10000", title: "累计 10,000 次", subtitle: "10,000 次抗阻重复", category: "volume", rule: "累计完成 10,000 次抗阻重复次数", current: totalReps, target: 10000, unit: "次", unlockedAt: repsTracker.dateFor(10000), tier: "prestige" }),
-    makeBadge({ id: "hours-10", title: "累计 10 小时", subtitle: "10 小时训练时长", category: "volume", rule: "累计有效训练与运动时长达到 10 小时", current: round1(totalSeconds / 3600), target: 10, unit: "h", unlockedAt: hoursTracker.dateFor(10), tier: "standard" }),
-    makeBadge({ id: "hours-50", title: "累计 50 小时", subtitle: "50 小时训练时长", category: "volume", rule: "累计有效训练与运动时长达到 50 小时", current: round1(totalSeconds / 3600), target: 50, unit: "h", unlockedAt: hoursTracker.dateFor(50), tier: "milestone" }),
-    makeBadge({ id: "hours-100", title: "累计 100 小时", subtitle: "100 小时训练时长", category: "volume", rule: "累计有效训练与运动时长达到 100 小时", current: round1(totalSeconds / 3600), target: 100, unit: "h", unlockedAt: hoursTracker.dateFor(100), tier: "prestige" }),
+    makeBadge({ id: "hours-10", title: "累计 10 小时", subtitle: "10 小时训练时长", category: "volume", rule: "累计有效训练与运动时长达到 10 小时", current: totalHoursRaw, target: 10, unit: "h", unlockedAt: hoursTracker.dateFor(10), tier: "standard" }),
+    makeBadge({ id: "hours-50", title: "累计 50 小时", subtitle: "50 小时训练时长", category: "volume", rule: "累计有效训练与运动时长达到 50 小时", current: totalHoursRaw, target: 50, unit: "h", unlockedAt: hoursTracker.dateFor(50), tier: "milestone" }),
+    makeBadge({ id: "hours-100", title: "累计 100 小时", subtitle: "100 小时训练时长", category: "volume", rule: "累计有效训练与运动时长达到 100 小时", current: totalHoursRaw, target: 100, unit: "h", unlockedAt: hoursTracker.dateFor(100), tier: "prestige" }),
 
     // ==================== 3. strength (21 枚) ====================
     makeBadge({ id: "pr-first", title: "1 项新纪录", subtitle: "首个动作突破 PR", category: "strength", rule: "在任意 1 个动作上刷新个人最高重量或估算 1RM", current: prExercises.size, target: 1, unit: "项", unlockedAt: prTracker.dateFor(1), tier: "standard" }),
@@ -507,21 +565,21 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     makeBadge({ id: "pr-legend", title: "15 项新纪录", subtitle: "15 个动作刷新 PR", category: "strength", rule: "在至少 15 个动作上刷新个人最高重量或估算 1RM", current: prExercises.size, target: 15, unit: "项", unlockedAt: prTracker.dateFor(15), tier: "prestige" }),
     makeBadge({ id: "full-split", title: "五大肌群 20 组", subtitle: "胸背腿肩臂各 ≥20 组", category: "strength", rule: "胸、背、腿、肩、臂 5 大肌群各自累计完成至少 20 组", current: split20Count, target: 5, unit: "肌群", unlockedAt: fullSplit20At, tier: "milestone" }),
     makeBadge({ id: "full-split-50", title: "五大肌群 50 组", subtitle: "胸背腿肩臂各 ≥50 组", category: "strength", rule: "胸、背、腿、肩、臂 5 大肌群各自累计完成至少 50 组", current: split50Count, target: 5, unit: "肌群", unlockedAt: fullSplit50At, tier: "prestige" }),
-    makeBadge({ id: "bench-60", title: "卧推 60 kg", subtitle: "杠铃卧推达 60 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 60 kg", current: round1(maxBenchScore), target: 60, unit: "kg", unlockedAt: benchTracker.dateFor(60), tier: "standard" }),
-    makeBadge({ id: "bench-80", title: "卧推 80 kg", subtitle: "杠铃卧推达 80 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 80 kg", current: round1(maxBenchScore), target: 80, unit: "kg", unlockedAt: benchTracker.dateFor(80), tier: "milestone" }),
-    makeBadge({ id: "bench-100", title: "卧推 100 kg", subtitle: "杠铃卧推达 100 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 100 kg", current: round1(maxBenchScore), target: 100, unit: "kg", unlockedAt: benchTracker.dateFor(100), tier: "prestige" }),
-    makeBadge({ id: "bench-120", title: "卧推 120 kg", subtitle: "杠铃卧推达 120 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 120 kg", current: round1(maxBenchScore), target: 120, unit: "kg", unlockedAt: benchTracker.dateFor(120), tier: "prestige" }),
-    makeBadge({ id: "squat-80", title: "深蹲 80 kg", subtitle: "杠铃深蹲达 80 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 80 kg", current: round1(maxSquatScore), target: 80, unit: "kg", unlockedAt: squatTracker.dateFor(80), tier: "standard" }),
-    makeBadge({ id: "squat-100", title: "深蹲 100 kg", subtitle: "杠铃深蹲达 100 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 100 kg", current: round1(maxSquatScore), target: 100, unit: "kg", unlockedAt: squatTracker.dateFor(100), tier: "milestone" }),
-    makeBadge({ id: "squat-120", title: "深蹲 120 kg", subtitle: "杠铃深蹲达 120 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 120 kg", current: round1(maxSquatScore), target: 120, unit: "kg", unlockedAt: squatTracker.dateFor(120), tier: "prestige" }),
-    makeBadge({ id: "squat-160", title: "深蹲 160 kg", subtitle: "杠铃深蹲达 160 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 160 kg", current: round1(maxSquatScore), target: 160, unit: "kg", unlockedAt: squatTracker.dateFor(160), tier: "prestige" }),
-    makeBadge({ id: "deadlift-80", title: "硬拉 80 kg", subtitle: "硬拉类达 80 kg", category: "strength", rule: "硬拉类动作单组重量或估算 1RM 达到 80 kg", current: round1(maxDeadliftScore), target: 80, unit: "kg", unlockedAt: deadliftTracker.dateFor(80), tier: "standard" }),
-    makeBadge({ id: "deadlift-120", title: "硬拉 120 kg", subtitle: "硬拉类达 120 kg", category: "strength", rule: "硬拉类动作单组重量或估算 1RM 达到 120 kg", current: round1(maxDeadliftScore), target: 120, unit: "kg", unlockedAt: deadliftTracker.dateFor(120), tier: "milestone" }),
-    makeBadge({ id: "deadlift-160", title: "硬拉 160 kg", subtitle: "硬拉类达 160 kg", category: "strength", rule: "硬拉类动作单组重量或估算 1RM 达到 160 kg", current: round1(maxDeadliftScore), target: 160, unit: "kg", unlockedAt: deadliftTracker.dateFor(160), tier: "prestige" }),
-    makeBadge({ id: "ohp-50", title: "推举 50 kg", subtitle: "推举类达 50 kg", category: "strength", rule: "推举类动作单组重量或估算 1RM 达到 50 kg", current: round1(maxOhpScore), target: 50, unit: "kg", unlockedAt: ohpTracker.dateFor(50), tier: "milestone" }),
-    makeBadge({ id: "row-70", title: "划船 70 kg", subtitle: "划船类达 70 kg", category: "strength", rule: "划船类动作单组重量或估算 1RM 达到 70 kg", current: round1(maxRowScore), target: 70, unit: "kg", unlockedAt: rowTracker.dateFor(70), tier: "milestone" }),
-    makeBadge({ id: "sbd-250", title: "三大项 250 kg", subtitle: "SBD 合计 250 kg", category: "strength", rule: "卧推、深蹲、硬拉最高权重/1RM 总和达到 250 kg", current: round1(maxSbdScore), target: 250, unit: "kg", unlockedAt: sbdTracker.dateFor(250), tier: "milestone" }),
-    makeBadge({ id: "sbd-400", title: "三大项 400 kg", subtitle: "SBD 合计 400 kg", category: "strength", rule: "卧推、深蹲、硬拉最高权重/1RM 总和达到 400 kg", current: round1(maxSbdScore), target: 400, unit: "kg", unlockedAt: sbdTracker.dateFor(400), tier: "prestige" }),
+    makeBadge({ id: "bench-60", title: "卧推 60 kg", subtitle: "杠铃卧推达 60 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 60 kg", current: maxBenchScore, target: 60, unit: "kg", unlockedAt: benchTracker.dateFor(60), tier: "standard" }),
+    makeBadge({ id: "bench-80", title: "卧推 80 kg", subtitle: "杠铃卧推达 80 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 80 kg", current: maxBenchScore, target: 80, unit: "kg", unlockedAt: benchTracker.dateFor(80), tier: "milestone" }),
+    makeBadge({ id: "bench-100", title: "卧推 100 kg", subtitle: "杠铃卧推达 100 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 100 kg", current: maxBenchScore, target: 100, unit: "kg", unlockedAt: benchTracker.dateFor(100), tier: "prestige" }),
+    makeBadge({ id: "bench-120", title: "卧推 120 kg", subtitle: "杠铃卧推达 120 kg", category: "strength", rule: "杠铃卧推单组重量或估算 1RM 达到 120 kg", current: maxBenchScore, target: 120, unit: "kg", unlockedAt: benchTracker.dateFor(120), tier: "prestige" }),
+    makeBadge({ id: "squat-80", title: "深蹲 80 kg", subtitle: "杠铃深蹲达 80 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 80 kg", current: maxSquatScore, target: 80, unit: "kg", unlockedAt: squatTracker.dateFor(80), tier: "standard" }),
+    makeBadge({ id: "squat-100", title: "深蹲 100 kg", subtitle: "杠铃深蹲达 100 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 100 kg", current: maxSquatScore, target: 100, unit: "kg", unlockedAt: squatTracker.dateFor(100), tier: "milestone" }),
+    makeBadge({ id: "squat-120", title: "深蹲 120 kg", subtitle: "杠铃深蹲达 120 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 120 kg", current: maxSquatScore, target: 120, unit: "kg", unlockedAt: squatTracker.dateFor(120), tier: "prestige" }),
+    makeBadge({ id: "squat-160", title: "深蹲 160 kg", subtitle: "杠铃深蹲达 160 kg", category: "strength", rule: "杠铃深蹲单组重量或估算 1RM 达到 160 kg", current: maxSquatScore, target: 160, unit: "kg", unlockedAt: squatTracker.dateFor(160), tier: "prestige" }),
+    makeBadge({ id: "deadlift-80", title: "硬拉 80 kg", subtitle: "硬拉类达 80 kg", category: "strength", rule: "硬拉类动作单组重量或估算 1RM 达到 80 kg", current: maxDeadliftScore, target: 80, unit: "kg", unlockedAt: deadliftTracker.dateFor(80), tier: "standard" }),
+    makeBadge({ id: "deadlift-120", title: "硬拉 120 kg", subtitle: "硬拉类达 120 kg", category: "strength", rule: "硬拉类动作单组重量或估算 1RM 达到 120 kg", current: maxDeadliftScore, target: 120, unit: "kg", unlockedAt: deadliftTracker.dateFor(120), tier: "milestone" }),
+    makeBadge({ id: "deadlift-160", title: "硬拉 160 kg", subtitle: "硬拉类达 160 kg", category: "strength", rule: "硬拉类动作单组重量或估算 1RM 达到 160 kg", current: maxDeadliftScore, target: 160, unit: "kg", unlockedAt: deadliftTracker.dateFor(160), tier: "prestige" }),
+    makeBadge({ id: "ohp-50", title: "推举 50 kg", subtitle: "过头/肩部推举达 50 kg", category: "strength", rule: "过头推举或肩部推举单组重量/估算 1RM 达到 50 kg", current: maxOhpScore, target: 50, unit: "kg", unlockedAt: ohpTracker.dateFor(50), tier: "milestone" }),
+    makeBadge({ id: "row-70", title: "划船 70 kg", subtitle: "划船类达 70 kg", category: "strength", rule: "划船类动作单组重量或估算 1RM 达到 70 kg", current: maxRowScore, target: 70, unit: "kg", unlockedAt: rowTracker.dateFor(70), tier: "milestone" }),
+    makeBadge({ id: "sbd-250", title: "三大项 250 kg", subtitle: `SBD 合计 250 kg${sbdSubtitleSuffix}`, category: "strength", rule: "需分别拥有卧推、深蹲、硬拉有效记录，且三项最高重量/1RM 总和达到 250 kg", current: hasAllSbd ? maxSbdScore : Math.min(249.9, maxBenchScore + maxSquatScore + maxDeadliftScore), unlocked: hasAllSbd && maxSbdScore >= 250, target: 250, unit: "kg", unlockedAt: sbdTracker.dateFor(250), tier: "milestone" }),
+    makeBadge({ id: "sbd-400", title: "三大项 400 kg", subtitle: `SBD 合计 400 kg${sbdSubtitleSuffix}`, category: "strength", rule: "需分别拥有卧推、深蹲、硬拉有效记录，且三项最高重量/1RM 总和达到 400 kg", current: hasAllSbd ? maxSbdScore : Math.min(399.9, maxBenchScore + maxSquatScore + maxDeadliftScore), unlocked: hasAllSbd && maxSbdScore >= 400, target: 400, unit: "kg", unlockedAt: sbdTracker.dateFor(400), tier: "prestige" }),
 
     // ==================== 4. lifestyle (21 枚) ====================
     makeBadge({ id: "diet-1", title: "完整饮食 1 天", subtitle: "1 天全天饮食记录", category: "lifestyle", rule: "累计完成 1 天全天完整饮食记录标记", current: completeDietDates.length, target: 1, unit: "天", unlockedAt: completeDietDates[0] ?? null, tier: "standard" }),
@@ -534,8 +592,8 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     makeBadge({ id: "protein-7", title: "高蛋白 7 天", subtitle: "7 天蛋白 ≥120 g", category: "lifestyle", rule: "累计 7 天每日蛋白质摄入达到 120 g 以上", current: highProteinDates.length, target: 7, unit: "天", unlockedAt: highProteinDates[6] ?? null, tier: "standard" }),
     makeBadge({ id: "protein-14", title: "高蛋白 14 天", subtitle: "14 天蛋白 ≥120 g", category: "lifestyle", rule: "累计 14 天每日蛋白质摄入达到 120 g 以上", current: highProteinDates.length, target: 14, unit: "天", unlockedAt: highProteinDates[13] ?? null, tier: "milestone" }),
     makeBadge({ id: "protein-30", title: "高蛋白 30 天", subtitle: "30 天蛋白 ≥120 g", category: "lifestyle", rule: "累计 30 天每日蛋白质摄入达到 120 g 以上", current: highProteinDates.length, target: 30, unit: "天", unlockedAt: highProteinDates[29] ?? null, tier: "prestige" }),
-    makeBadge({ id: "protein-total-2kg", title: "累计蛋白 2 kg", subtitle: "2,000 g 蛋白质", category: "lifestyle", rule: "历史累计摄入蛋白质达到 2,000 g", current: Math.round(totalProteinG), target: 2000, unit: "g", unlockedAt: proteinTotalTracker.dateFor(2000), tier: "standard" }),
-    makeBadge({ id: "protein-total-5kg", title: "累计蛋白 5 kg", subtitle: "5,000 g 蛋白质", category: "lifestyle", rule: "历史累计摄入蛋白质达到 5,000 g", current: Math.round(totalProteinG), target: 5000, unit: "g", unlockedAt: proteinTotalTracker.dateFor(5000), tier: "milestone" }),
+    makeBadge({ id: "protein-total-2kg", title: "累计蛋白 2 kg", subtitle: "2,000 g 蛋白质", category: "lifestyle", rule: "历史累计摄入蛋白质达到 2,000 g", current: totalProteinG, integerDisplay: true, target: 2000, unit: "g", unlockedAt: proteinTotalTracker.dateFor(2000), tier: "standard" }),
+    makeBadge({ id: "protein-total-5kg", title: "累计蛋白 5 kg", subtitle: "5,000 g 蛋白质", category: "lifestyle", rule: "历史累计摄入蛋白质达到 5,000 g", current: totalProteinG, integerDisplay: true, target: 5000, unit: "g", unlockedAt: proteinTotalTracker.dateFor(5000), tier: "milestone" }),
     makeBadge({ id: "four-meals-10", title: "四餐齐备 10 天", subtitle: "10 天早午晚加餐", category: "lifestyle", rule: "累计 10 天集齐早、午、晚、加餐四餐记录", current: fourMealDates.length, target: 10, unit: "天", unlockedAt: fourMealDates[9] ?? null, tier: "standard" }),
     makeBadge({ id: "weight-7", title: "称重 7 天", subtitle: "7 天体重记录", category: "lifestyle", rule: "累计记录 7 天体重数据", current: weightDates.length, target: 7, unit: "天", unlockedAt: weightDates[6] ?? null, tier: "standard" }),
     makeBadge({ id: "weight-30", title: "称重 30 天", subtitle: "30 天体重记录", category: "lifestyle", rule: "累计记录 30 天体重数据", current: weightDates.length, target: 30, unit: "天", unlockedAt: weightDates[29] ?? null, tier: "standard" }),
@@ -544,7 +602,7 @@ export function getWebBadges(store: Store, userId: string, through = localDate()
     makeBadge({ id: "apple-sync-1", title: "Apple 同步 1 次", subtitle: "同步 1 场运动", category: "lifestyle", rule: "通过 Apple 健康快捷指令同步至少 1 场运动记录", current: projected.length, target: 1, unit: "次", unlockedAt: projected[0]?.date ?? null, tier: "standard" }),
     makeBadge({ id: "apple-sync", title: "Apple 同步 10 次", subtitle: "同步 10 场运动", category: "lifestyle", rule: "通过 Apple 健康快捷指令同步 10 场运动记录", current: projected.length, target: 10, unit: "次", unlockedAt: projected[9]?.date ?? null, tier: "standard" }),
     makeBadge({ id: "apple-sync-30", title: "Apple 同步 30 次", subtitle: "同步 30 场运动", category: "lifestyle", rule: "通过 Apple 健康快捷指令同步 30 场运动记录", current: projected.length, target: 30, unit: "次", unlockedAt: projected[29]?.date ?? null, tier: "milestone" }),
-    makeBadge({ id: "apple-burn-5000", title: "运动消耗 5,000 千卡", subtitle: "Apple 健康累计消耗", category: "lifestyle", rule: "通过 Apple 健康同步运动累计消耗 5,000 kcal", current: Math.round(totalAppleBurnKcal), target: 5000, unit: "kcal", unlockedAt: appleBurnTracker.dateFor(5000), tier: "milestone" }),
+    makeBadge({ id: "apple-burn-5000", title: "运动消耗 5,000 千卡", subtitle: "Apple 健康累计消耗", category: "lifestyle", rule: "通过 Apple 健康同步运动累计消耗 5,000 kcal", current: totalAppleBurnKcal, integerDisplay: true, target: 5000, unit: "kcal", unlockedAt: appleBurnTracker.dateFor(5000), tier: "milestone" }),
 
     // ==================== 5. special (21 枚) ====================
     makeBadge({ id: "early-bird", title: "早训 1 次", subtitle: "09:00 前开练", category: "special", rule: "在每日 09:00 前开启并完成任意一场训练或有氧", current: earlyBirdDates.length, target: 1, unit: "次", unlockedAt: earlyBirdDates[0] ?? null, tier: "standard" }),

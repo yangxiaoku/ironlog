@@ -1015,6 +1015,7 @@ export function evaluateNutritionEnergyBalance({
     carbs: number;
     fat: number;
     isTrainingDay: boolean;
+    targetCalories?: number;
   }>;
   targetCalories: number;
   tdeeObservation?: {
@@ -1058,13 +1059,30 @@ export function evaluateNutritionEnergyBalance({
   const avgCarbs = Math.round(valid.reduce((s, d) => s + d.carbs, 0) / daysLogged);
   const avgFat = Math.round(valid.reduce((s, d) => s + d.fat, 0) / daysLogged);
 
+  // #153: Largest-remainder rounding guarantees macroPct always sums to 100% when macroKcalSum > 0
   const pKcal = avgProtein * 4;
   const cKcal = avgCarbs * 4;
   const fKcal = avgFat * 9;
   const macroKcalSum = pKcal + cKcal + fKcal;
-  const proteinPct = macroKcalSum > 0 ? Math.round((pKcal / macroKcalSum) * 100) : 0;
-  const carbsPct = macroKcalSum > 0 ? Math.round((cKcal / macroKcalSum) * 100) : 0;
-  const fatPct = macroKcalSum > 0 ? Math.max(0, 100 - proteinPct - carbsPct) : 0;
+  let proteinPct = 0;
+  let carbsPct = 0;
+  let fatPct = 0;
+  if (macroKcalSum > 0) {
+    const exact = [
+      { key: "p" as const, val: (pKcal / macroKcalSum) * 100 },
+      { key: "c" as const, val: (cKcal / macroKcalSum) * 100 },
+      { key: "f" as const, val: (fKcal / macroKcalSum) * 100 },
+    ];
+    const floored = exact.map((e) => ({ key: e.key, floor: Math.floor(e.val), rem: e.val - Math.floor(e.val) }));
+    let remainder = 100 - floored.reduce((s, e) => s + e.floor, 0);
+    const byRem = [...floored].sort((a, b) => b.rem - a.rem);
+    for (let i = 0; i < remainder && i < byRem.length; i++) {
+      byRem[i]!.floor += 1;
+    }
+    proteinPct = floored.find((e) => e.key === "p")!.floor;
+    carbsPct = floored.find((e) => e.key === "c")!.floor;
+    fatPct = floored.find((e) => e.key === "f")!.floor;
+  }
 
   const trainDays = valid.filter((d) => d.isTrainingDay);
   const restDays = valid.filter((d) => !d.isTrainingDay);
@@ -1076,8 +1094,16 @@ export function evaluateNutritionEnergyBalance({
   const trainingDayAvgProtein = avgOf(trainDays, (x) => x.protein);
   const restDayAvgProtein = avgOf(restDays, (x) => x.protein);
 
+  // #210: Evaluate calorie adherence against each day's historical effective calorie target
+  const totalDayTargets = valid.reduce((s, d) => s + (d.targetCalories && d.targetCalories > 0 ? d.targetCalories : targetCalories), 0);
+  const totalDayCalories = valid.reduce((s, d) => s + d.calories, 0);
+  const effectiveTarget = totalDayTargets > 0 ? Math.round(totalDayTargets / daysLogged) : targetCalories;
   const calorieAdherencePct =
-    targetCalories > 0 ? Math.round((avgCalories / targetCalories) * 100) : null;
+    totalDayTargets > 0
+      ? Math.round((totalDayCalories / totalDayTargets) * 100)
+      : targetCalories > 0
+        ? Math.round((avgCalories / targetCalories) * 100)
+        : null;
 
   let estimatedTdeeKcal: number | null = null;
   let tdeeConfidence: NutritionEnergyBalanceReport["tdeeConfidence"] = "insufficient";
@@ -1113,7 +1139,7 @@ export function evaluateNutritionEnergyBalance({
     avgCarbs,
     avgFat,
     macroPct: { protein: proteinPct, carbs: carbsPct, fat: fatPct },
-    calorieTarget: targetCalories,
+    calorieTarget: effectiveTarget,
     calorieAdherencePct,
     trainingDayAvgKcal,
     restDayAvgKcal,

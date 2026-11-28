@@ -18,15 +18,23 @@ export interface ShareExerciseRow {
   summary: string;
 }
 
+export interface SharePrivacyOptions {
+  hideUsername?: boolean;
+  hideDiet?: boolean;
+  hideHeartRate?: boolean;
+}
+
 export interface DailySharePayload {
   date: string;
   dateDot: string;
   headline: string;
   authorLabel: string;
   totalMinutes: number;
+  durationUnknown?: boolean;
   strength: {
     hasData: boolean;
     minutes: number;
+    durationUnknown?: boolean;
     totalSets: number;
     totalVolumeKg: number;
     exercises: ShareExerciseRow[];
@@ -34,6 +42,8 @@ export interface DailySharePayload {
   cardio: {
     hasData: boolean;
     minutes: number;
+    durationUnknown?: boolean;
+    isSubSession?: boolean;
     title: string;
     avgBpm: number | null;
     caloriesKcal: number | null;
@@ -162,10 +172,25 @@ function posterExerciseSetSummary(pool: ShareSetLike[], mode: ExerciseMode, unit
   if (!count) return "已完成";
   const best = bestSetObject(pool, mode);
   if (!best) return `${count} 组`;
-  if (mode === "timed") return `${best.seconds || 0} 秒 × ${count} 组`;
-  if (mode === "assisted") return `辅助 ${fmt(best.weight)} ${unit} × ${best.reps || 0} × ${count} 组`;
-  if ((best.weight || 0) > 0) return `${fmt(best.weight)} ${unit} × ${best.reps || 0} × ${count} 组`;
-  return `徒手 × ${best.reps || 0} × ${count} 组`;
+
+  // #145: Only write "× N 组" when all sets share the same load/reps (or seconds); otherwise clearly label best set + total sets.
+  const allUniform = mode === "timed"
+    ? pool.every((s) => (s.seconds || 0) === (best.seconds || 0))
+    : pool.every((s) => (s.weight || 0) === (best.weight || 0) && (s.reps || 0) === (best.reps || 0));
+
+  const singleLabel = mode === "timed"
+    ? `${best.seconds || 0} 秒`
+    : mode === "assisted"
+      ? `辅助 ${fmt(best.weight)} ${unit} × ${best.reps || 0}`
+      : (best.weight || 0) > 0
+        ? `${fmt(best.weight)} ${unit} × ${best.reps || 0}`
+        : `徒手 × ${best.reps || 0}`;
+
+  if (count === 1) return singleLabel;
+  if (allUniform) return `${singleLabel} × ${count} 组`;
+  return mode === "timed"
+    ? `最长 ${singleLabel} · 共 ${count} 组`
+    : `最佳组 ${singleLabel} · 共 ${count} 组`;
 }
 
 export function buildDailySharePayload({
@@ -179,6 +204,7 @@ export function buildDailySharePayload({
   username = "",
   singleReport = null,
   singleHealth = null,
+  privacy = {},
 }: {
   date?: string;
   todayKey?: string;
@@ -190,34 +216,109 @@ export function buildDailySharePayload({
   username?: string;
   singleReport?: WorkoutReportResponse | null;
   singleHealth?: ShareAppleEntry | null;
+  privacy?: SharePrivacyOptions;
 } = {}): DailySharePayload {
-  const targetDate = date || singleReport?.date || todayKey || new Date().toISOString().slice(0, 10);
+  const targetDate = date || singleReport?.date || singleHealth?.date || todayKey || new Date().toISOString().slice(0, 10);
   const dateDot = String(targetDate).replace(/-/g, ".");
   const effectiveToday = todayKey || new Date().toISOString().slice(0, 10);
+  const isSingleReport = Boolean(singleReport);
+  const isSingleHealth = Boolean(singleHealth && !singleReport);
+  const isSingleMode = isSingleReport || isSingleHealth;
   const headline = targetDate === effectiveToday ? "今日记录" : `${dateDot.slice(5)} 记录`;
-  const authorLabel = username ? `铁记 · ${username}` : "铁记 · IRONLOG";
+  const authorLabel = privacy.hideUsername
+    ? "铁记"
+    : username
+      ? `铁记 · ${username}`
+      : "铁记 · IRONLOG";
 
   let strengthSeconds = 0;
+  let hasUnknownStrengthDuration = false;
+  let hasManualStrengthExercises = false;
   let totalSets = 0;
   let totalVolumeKg = 0;
   const exercises: ShareExerciseRow[] = [];
-  const cardioItems: Array<{ title: string; minutes: number; avgBpm: number | null; caloriesKcal: number | null; distanceMeters?: number | null }> = [];
+  const cardioItems: Array<{
+    title: string;
+    minutes: number;
+    durationUnknown?: boolean;
+    isSubSession?: boolean;
+    workoutId?: string;
+    avgBpm: number | null;
+    caloriesKcal: number | null;
+    distanceMeters?: number | null;
+  }> = [];
+  const processedManualWorkoutIds = new Set<string>();
 
-  if (singleReport && (!workouts || !workouts.length)) {
-    strengthSeconds += Number(singleReport.duration) || 0;
-    totalSets += Number(singleReport.sets) || 0;
-    totalVolumeKg += Number(singleReport.volume) || 0;
-    for (const row of singleReport.exercises ?? []) {
+  if (isSingleReport && singleReport) {
+    processedManualWorkoutIds.add(singleReport.id);
+    const reportDur = typeof singleReport.duration === "number" && singleReport.duration > 0 ? singleReport.duration : 0;
+    const reportRows = singleReport.exercises ?? [];
+    const reportCardioIndices: number[] = [];
+    let reportHasStrength = false;
+    let reportStrengthSets = 0;
+
+    for (const row of reportRows) {
       const pool = workSetsOf(row);
       if (!pool.length) continue;
+      const meta = catalogueMap?.get(row.exerciseId);
+      const muscle = row.muscle ?? meta?.muscle ?? null;
+      const category = row.category ?? meta?.category ?? (muscle === "cardio" ? "cardio" : "strength");
+      const isCardioRow =
+        category === "cardio" ||
+        muscle === "cardio" ||
+        Boolean(singleReport.cardioMeta && reportRows.length === 1 && row.mode === "timed");
+      if (isCardioRow) {
+        const secSum = pool.reduce((sum, s) => sum + (Number(s.seconds) || 0), 0);
+        const effSec = secSum > 0 ? secSum : reportDur;
+        reportCardioIndices.push(cardioItems.length);
+        cardioItems.push({
+          title: cleanCardioTitle(row.name, singleReport.cardioMeta?.activityType),
+          minutes: effSec > 0 ? Math.max(1, Math.round(effSec / 60)) : 0,
+          durationUnknown: effSec <= 0,
+          workoutId: singleReport.id,
+          avgBpm: null,
+          caloriesKcal: singleReport.cardioMeta?.estimatedKcal ?? null,
+          distanceMeters: singleReport.cardioMeta?.distanceMeters ?? null,
+        });
+        continue;
+      }
+      reportHasStrength = true;
+      hasManualStrengthExercises = true;
+      const workOnly = (row.completed ?? []).filter((s) => s.type !== "warmup");
+      reportStrengthSets += workOnly.length;
+      // #106: Preserve original weightUnit in single-workout share card
+      const rowUnit: "kg" | "lb" = row.weightUnit === "lb" ? "lb" : "kg";
       exercises.push({
         name: row.name,
         setsCount: pool.length,
-        summary: posterExerciseSetSummary(pool, row.mode || "reps"),
+        summary: posterExerciseSetSummary(pool, row.mode || "reps", rowUnit),
       });
     }
-  } else {
+
+    if (reportHasStrength) {
+      if (reportDur > 0) strengthSeconds += reportDur;
+      else hasUnknownStrengthDuration = true;
+      totalSets += reportStrengthSets || Number(singleReport.sets) || 0;
+      totalVolumeKg += Number(singleReport.volume) || 0;
+      // #139: Hybrid workout cardio sub-sets are already inside reportDur
+      for (const idx of reportCardioIndices) {
+        if (cardioItems[idx]) cardioItems[idx]!.isSubSession = true;
+      }
+    } else if (!reportCardioIndices.length && singleReport.cardioMeta) {
+      cardioItems.push({
+        title: cleanCardioTitle(singleReport.title, singleReport.cardioMeta.activityType),
+        minutes: reportDur > 0 ? Math.max(1, Math.round(reportDur / 60)) : 0,
+        durationUnknown: reportDur <= 0,
+        workoutId: singleReport.id,
+        avgBpm: null,
+        caloriesKcal: singleReport.cardioMeta.estimatedKcal ?? null,
+        distanceMeters: singleReport.cardioMeta.distanceMeters ?? null,
+      });
+    }
+  } else if (!isSingleHealth) {
     for (const rec of workouts ?? []) {
+      const recId = "id" in rec && typeof rec.id === "string" ? rec.id : undefined;
+      if (recId) processedManualWorkoutIds.add(recId);
       const w = "data" in rec ? rec.data : rec;
       if (!w) continue;
       const elapsed = w.timing?.elapsedSeconds ?? 0;
@@ -227,6 +328,7 @@ export function buildDailySharePayload({
           ? Math.max(0, Math.round((Date.parse(w.endedAt) - Date.parse(w.startedAt)) / 1000))
           : 0;
       let workoutHasStrength = false;
+      const workoutCardioIndices: number[] = [];
       for (const row of w.exercises ?? []) {
         const meta = row.snapshot ?? (catalogueMap ? catalogueMap.get(row.exerciseId) : null);
         const name = meta?.name ?? row.exerciseId;
@@ -239,15 +341,21 @@ export function buildDailySharePayload({
         if (!pool.length) continue;
         if (category === "cardio" || meta?.muscle === "cardio") {
           const secSum = pool.reduce((sum, s) => sum + (Number(s.seconds) || 0), 0);
+          const effSec = secSum > 0 ? secSum : dur;
+          workoutCardioIndices.push(cardioItems.length);
           cardioItems.push({
-            title: name,
-            minutes: Math.max(1, Math.round((secSum || dur || 900) / 60)),
+            title: cleanCardioTitle(name, w.cardioMeta?.activityType),
+            minutes: effSec > 0 ? Math.max(1, Math.round(effSec / 60)) : 0,
+            durationUnknown: effSec <= 0,
+            workoutId: recId,
             avgBpm: null,
-            caloriesKcal: null,
+            caloriesKcal: w.cardioMeta?.estimatedKcal ?? null,
+            distanceMeters: w.cardioMeta?.distanceMeters ?? null,
           });
           continue;
         }
         workoutHasStrength = true;
+        hasManualStrengthExercises = true;
         totalSets += work.length;
         const rowUnit: "kg" | "lb" = row.weightUnit === "lb" ? "lb" : "kg";
         for (const s of work) {
@@ -261,41 +369,77 @@ export function buildDailySharePayload({
           summary: posterExerciseSetSummary(pool, mode, rowUnit),
         });
       }
-      if (workoutHasStrength && dur > 0) {
-        strengthSeconds += dur;
+      if (workoutHasStrength) {
+        if (dur > 0) strengthSeconds += dur;
+        else hasUnknownStrengthDuration = true;
+        // #139: Do not add hybrid workout's cardio sub-sets on top of whole-session dur
+        for (const idx of workoutCardioIndices) {
+          if (cardioItems[idx]) cardioItems[idx]!.isSubSession = true;
+        }
       }
     }
   }
 
-  const allApple = [...(appleEntries ?? [])];
-  if (singleHealth && !allApple.some((a) => a && a.id === singleHealth.id)) {
-    allApple.push(singleHealth);
-  }
+  // #136: Strictly scope Apple entries in singleReport / singleHealth modes
+  const candidateApple: ShareAppleEntry[] = isSingleHealth
+    ? (singleHealth ? [singleHealth] : [])
+    : isSingleReport && singleReport
+      ? (appleEntries ?? []).filter((a) => Boolean(a && a.manualWorkoutId && a.manualWorkoutId === singleReport.id))
+      : (() => {
+          const merged = [...(appleEntries ?? [])];
+          if (singleHealth && !merged.some((a) => a && a.id === singleHealth.id)) {
+            merged.push(singleHealth);
+          }
+          return merged;
+        })();
 
-  for (const ap of allApple) {
+  for (const ap of candidateApple) {
     if (!ap) continue;
-    const mins = Math.max(1, Math.round((Number(ap.durationSeconds) || 0) / 60));
-    const avgBpm = ap.heartRate?.avgBpm ?? ap.avgHeartRate ?? null;
+    const rawSec = Number(ap.durationSeconds) || 0;
+    const mins = rawSec > 0 ? Math.max(1, Math.round(rawSec / 60)) : 0;
+    const avgBpm = privacy.hideHeartRate ? null : (ap.heartRate?.avgBpm ?? ap.avgHeartRate ?? null);
     const kcal = ap.activeEnergyKcal ?? ap.energyKcal ?? null;
+    const linkedToManual = Boolean(ap.manualWorkoutId && processedManualWorkoutIds.has(ap.manualWorkoutId));
+
     if (isStrengthAppleEntry(ap)) {
-      if (strengthSeconds === 0 && (Number(ap.durationSeconds) || 0) > 0) {
-        strengthSeconds += Number(ap.durationSeconds) || 0;
+      if (linkedToManual) {
+        // Linked Apple strength session only fills missing duration; never double-count
+        if (strengthSeconds === 0 && rawSec > 0) {
+          strengthSeconds += rawSec;
+          hasUnknownStrengthDuration = false;
+        }
+      } else {
+        // #137: Always accumulate ALL independent Apple Watch strength sessions
+        if (rawSec > 0) strengthSeconds += rawSec;
+        if (!hasManualStrengthExercises) {
+          exercises.push({
+            name: cleanCardioTitle(ap.title, ap.activityType),
+            setsCount: 0,
+            summary: [
+              mins > 0 ? `${mins} 分钟` : "时长未记录",
+              kcal != null ? `${Math.round(kcal)} kcal` : "",
+              avgBpm != null ? `${Math.round(avgBpm)} bpm` : "",
+            ].filter(Boolean).join(" · "),
+          });
+        }
       }
-      if (!exercises.length) {
-        exercises.push({
-          name: cleanCardioTitle(ap.title, ap.activityType),
-          setsCount: 0,
-          summary: [
-            `${mins} 分钟`,
-            kcal != null ? `${Math.round(kcal)} kcal` : "",
-            avgBpm != null ? `${Math.round(avgBpm)} bpm` : "",
-          ].filter(Boolean).join(" · "),
-        });
+    } else if (linkedToManual) {
+      // #138: Merge linked Apple cardio metrics onto the existing manual cardio session without duplicating count/duration
+      const matched = cardioItems.find((c) => c.workoutId && c.workoutId === ap.manualWorkoutId);
+      if (matched) {
+        if (avgBpm != null && matched.avgBpm == null) matched.avgBpm = Math.round(avgBpm);
+        if (kcal != null && matched.caloriesKcal == null) matched.caloriesKcal = Math.round(kcal);
+        if (ap.distanceMeters != null && matched.distanceMeters == null) matched.distanceMeters = ap.distanceMeters;
+        if (matched.minutes === 0 && mins > 0) {
+          matched.minutes = mins;
+          matched.durationUnknown = false;
+        }
       }
     } else {
       cardioItems.push({
         title: cleanCardioTitle(ap.title, ap.activityType),
         minutes: mins,
+        durationUnknown: mins <= 0,
         avgBpm: avgBpm != null ? Math.round(avgBpm) : null,
         caloriesKcal: kcal != null ? Math.round(kcal) : null,
         distanceMeters: ap.distanceMeters ?? null,
@@ -303,13 +447,14 @@ export function buildDailySharePayload({
     }
   }
 
-  const strengthMinutes = strengthSeconds > 0
-    ? Math.max(1, Math.round(strengthSeconds / 60))
-    : exercises.length > 0
-      ? Math.max(15, totalSets * 4)
-      : 0;
+  // #140: Never fabricate 15 minutes for unknown duration; keep 0 and flag durationUnknown
+  const strengthMinutes = strengthSeconds > 0 ? Math.max(1, Math.round(strengthSeconds / 60)) : 0;
+  const strengthDurationUnknown = strengthMinutes === 0 && (hasUnknownStrengthDuration || exercises.length > 0);
 
   const cardioMinutes = cardioItems.reduce((sum, c) => sum + (c.minutes || 0), 0);
+  const independentCardioMinutes = cardioItems.reduce((sum, c) => sum + (c.isSubSession ? 0 : c.minutes || 0), 0);
+  const cardioIsAllSubSession = cardioItems.length > 0 && cardioItems.every((c) => c.isSubSession);
+  const cardioDurationUnknown = cardioItems.length > 0 && cardioMinutes === 0;
   const primaryCardio = cardioItems[0] ?? null;
   const bpmItems = cardioItems.filter((c) => c.avgBpm != null && c.avgBpm > 0);
   const avgCardioBpm = bpmItems.length
@@ -321,23 +466,29 @@ export function buildDailySharePayload({
   let protein = 0;
   let carbs = 0;
   let fat = 0;
-  if (Array.isArray(diets) && diets.length > 0) {
-    for (const r of diets) {
-      const d = "data" in r ? r.data : r;
-      if (!d) continue;
-      calories += Number(d.calories) || 0;
-      protein += Number(d.protein) || 0;
-      carbs += Number(d.carbs) || 0;
-      fat += Number(d.fat) || 0;
+  // #136 & privacy: Single-workout/single-health posters never include day's diet
+  if (!isSingleMode && !privacy.hideDiet) {
+    if (Array.isArray(diets) && diets.length > 0) {
+      for (const r of diets) {
+        const d = "data" in r ? r.data : r;
+        if (!d) continue;
+        calories += Number(d.calories) || 0;
+        protein += Number(d.protein) || 0;
+        carbs += Number(d.carbs) || 0;
+        fat += Number(d.fat) || 0;
+      }
+    } else if (nutrition && typeof nutrition === "object") {
+      calories = Number(nutrition.calories) || 0;
+      protein = Number(nutrition.protein) || 0;
+      carbs = Number(nutrition.carbs) || 0;
+      fat = Number(nutrition.fat) || 0;
     }
-  } else if (nutrition && typeof nutrition === "object") {
-    calories = Number(nutrition.calories) || 0;
-    protein = Number(nutrition.protein) || 0;
-    carbs = Number(nutrition.carbs) || 0;
-    fat = Number(nutrition.fat) || 0;
   }
 
-  const totalMinutes = strengthMinutes + cardioMinutes;
+  // #139: Hybrid workout cardio sub-sets are already counted in strengthMinutes
+  const totalMinutes = strengthMinutes + independentCardioMinutes;
+  const durationUnknown =
+    totalMinutes === 0 && (strengthDurationUnknown || cardioDurationUnknown);
 
   return {
     date: targetDate,
@@ -345,16 +496,20 @@ export function buildDailySharePayload({
     headline,
     authorLabel,
     totalMinutes,
+    durationUnknown,
     strength: {
       hasData: exercises.length > 0 || strengthMinutes > 0,
       minutes: strengthMinutes,
+      durationUnknown: strengthDurationUnknown,
       totalSets: Math.round(totalSets),
       totalVolumeKg: Math.round(totalVolumeKg),
       exercises,
     },
     cardio: {
-      hasData: cardioItems.length > 0 && cardioMinutes > 0,
+      hasData: cardioItems.length > 0 && (cardioMinutes > 0 || cardioDurationUnknown),
       minutes: cardioMinutes,
+      durationUnknown: cardioDurationUnknown,
+      isSubSession: cardioIsAllSubSession,
       title: cardioItems.length > 1 && primaryCardio
         ? `${primaryCardio.title}等 ${cardioItems.length} 项`
         : (primaryCardio?.title ?? "未记录"),
@@ -595,17 +750,25 @@ async function renderStylePaper(ctx: CanvasRenderingContext2D, W: number, H: num
   drawCrosshair(ctx, 52, 292, 12, rule, 1.6);
   drawTickRuler(ctx, 106, 285, 7, 19, 15, rule, 1.6);
 
-  const heroStr = String(payload.totalMinutes || 0);
-  const dotPitch = heroStr.length >= 3 ? 10 : 12;
-  const dotRadius = heroStr.length >= 3 ? 3.7 : 4.4;
-  const matrixW = drawCircularDotMatrixText(ctx, heroStr, 52, 342, 250, dotPitch, dotRadius, ink, sans);
+  if (payload.durationUnknown) {
+    ctx.fillStyle = ink;
+    ctx.font = `900 112px ${sans}`;
+    ctx.fillText("未记录", 52, 516);
+    ctx.font = `500 35px ${sans}`;
+    ctx.fillText("总训练时长", 52, 580);
+  } else {
+    const heroStr = String(payload.totalMinutes || 0);
+    const dotPitch = heroStr.length >= 3 ? 10 : 12;
+    const dotRadius = heroStr.length >= 3 ? 3.7 : 4.4;
+    const matrixW = drawCircularDotMatrixText(ctx, heroStr, 52, 342, 250, dotPitch, dotRadius, ink, sans);
 
-  const unitX = 52 + matrixW + 32;
-  ctx.fillStyle = ink;
-  ctx.font = `900 72px ${sans}`;
-  ctx.fillText("分钟", unitX, 520);
-  ctx.font = `500 35px ${sans}`;
-  ctx.fillText("总训练时长", unitX, 580);
+    const unitX = 52 + matrixW + 32;
+    ctx.fillStyle = ink;
+    ctx.font = `900 72px ${sans}`;
+    ctx.fillText("分钟", unitX, 520);
+    ctx.font = `500 35px ${sans}`;
+    ctx.fillText("总训练时长", unitX, 580);
+  }
 
   drawCrosshair(ctx, W - padX, 592, 12, rule, 1.6);
 
@@ -620,7 +783,9 @@ async function renderStylePaper(ctx: CanvasRenderingContext2D, W: number, H: num
   drawInlinePipeSegments(
     ctx,
     [
-      [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
+      payload.strength.durationUnknown
+        ? [{ text: "时长未记录", bold: false }]
+        : [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
       [{ text: String(payload.strength.totalSets), bold: true }, { text: " 组", bold: false }],
       [{ text: fmt(payload.strength.totalVolumeKg, 0), bold: true }, { text: " kg", bold: false }],
     ],
@@ -835,10 +1000,15 @@ async function renderStyleRing(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.save();
   ctx.textAlign = "center";
   ctx.fillStyle = white;
-  ctx.font = `800 112px ${sans}`;
-  ctx.fillText(String(payload.totalMinutes || 0), cx, cy - 2);
-  ctx.font = `600 38px ${sans}`;
-  ctx.fillText("分钟", cx, cy + 48);
+  if (payload.durationUnknown) {
+    ctx.font = `800 58px ${sans}`;
+    ctx.fillText("未记录", cx, cy + 12);
+  } else {
+    ctx.font = `800 112px ${sans}`;
+    ctx.fillText(String(payload.totalMinutes || 0), cx, cy - 2);
+    ctx.font = `600 38px ${sans}`;
+    ctx.fillText("分钟", cx, cy + 48);
+  }
   ctx.fillStyle = lineBlue;
   ctx.fillRect(cx - 74, cy + 68, 148, 2);
   ctx.fillStyle = "#dbe7ff";
@@ -853,12 +1023,17 @@ async function renderStyleRing(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.fillStyle = white;
   ctx.font = `800 40px ${sans}`;
   ctx.fillText("力量训练", legX + 60, 346);
-  ctx.font = `800 72px ${sans}`;
-  const sMinStr = String(strM);
-  ctx.fillText(sMinStr, legX + 60, 422);
-  const sMinW = ctx.measureText(sMinStr).width;
-  ctx.font = `600 35px ${sans}`;
-  ctx.fillText(hasCardio ? ` 分钟 (${strPct}%)` : ` 分钟 · ${payload.strength.totalSets} 组`, legX + 60 + sMinW, 422);
+  if (payload.strength.durationUnknown) {
+    ctx.font = `700 42px ${sans}`;
+    ctx.fillText(`未记录 · ${payload.strength.totalSets} 组`, legX + 60, 418);
+  } else {
+    ctx.font = `800 72px ${sans}`;
+    const sMinStr = String(strM);
+    ctx.fillText(sMinStr, legX + 60, 422);
+    const sMinW = ctx.measureText(sMinStr).width;
+    ctx.font = `600 35px ${sans}`;
+    ctx.fillText(hasCardio ? ` 分钟 (${strPct}%)` : ` 分钟 · ${payload.strength.totalSets} 组`, legX + 60 + sMinW, 422);
+  }
 
   ctx.fillStyle = sky;
   drawRoundedRect(ctx, legX, 486, 38, 38, 8);
@@ -894,7 +1069,9 @@ async function renderStyleRing(ctx: CanvasRenderingContext2D, W: number, H: numb
   drawInlinePipeSegments(
     ctx,
     [
-      [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
+      payload.strength.durationUnknown
+        ? [{ text: "时长未记录", bold: false }]
+        : [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
       [{ text: String(payload.strength.totalSets), bold: true }, { text: " 组", bold: false }],
       [{ text: fmt(payload.strength.totalVolumeKg, 0), bold: true }, { text: " kg", bold: false }],
     ],
@@ -1046,12 +1223,17 @@ async function renderStyleMono(ctx: CanvasRenderingContext2D, W: number, H: numb
   ctx.fillRect(padX + 4, 434, 64, 9);
 
   ctx.fillStyle = white;
-  ctx.font = `800 134px ${sans}`;
-  const durStr = String(payload.totalMinutes || 0);
-  ctx.fillText(durStr, padX - 2, 582);
-  const durW = ctx.measureText(durStr).width;
-  ctx.font = `800 54px ${sans}`;
-  ctx.fillText(" 分钟", padX - 2 + durW, 582);
+  if (payload.durationUnknown) {
+    ctx.font = `800 94px ${sans}`;
+    ctx.fillText("未记录", padX - 2, 576);
+  } else {
+    ctx.font = `800 134px ${sans}`;
+    const durStr = String(payload.totalMinutes || 0);
+    ctx.fillText(durStr, padX - 2, 582);
+    const durW = ctx.measureText(durStr).width;
+    ctx.font = `800 54px ${sans}`;
+    ctx.fillText(" 分钟", padX - 2 + durW, 582);
+  }
 
   ctx.fillStyle = "#e2e4e1";
   ctx.font = `500 34px ${sans}`;
@@ -1066,7 +1248,9 @@ async function renderStyleMono(ctx: CanvasRenderingContext2D, W: number, H: numb
   drawInlinePipeSegments(
     ctx,
     [
-      [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
+      payload.strength.durationUnknown
+        ? [{ text: "时长未记录", bold: false }]
+        : [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
       [{ text: String(payload.strength.totalSets), bold: true }, { text: " 组", bold: false }],
       [{ text: fmt(payload.strength.totalVolumeKg, 0), bold: true }, { text: " kg", bold: false }],
     ],
@@ -1212,23 +1396,30 @@ async function renderStylePoster(ctx: CanvasRenderingContext2D, W: number, H: nu
   ctx.font = `900 108px ${sans}`;
   ctx.fillText(payload.headline, 58, 232);
 
-  const heroStr = String(payload.totalMinutes || 0);
-  const heroFontPx = heroStr.length >= 3 ? 215 : 272;
-  const scaleX = heroStr.length >= 3 ? 0.70 : 0.76;
-  ctx.font = `900 ${heroFontPx}px ${sans}`;
-  const rawHeroW = ctx.measureText(heroStr).width;
-  const renderedHeroW = Math.round(rawHeroW * scaleX);
-  ctx.save();
-  ctx.translate(50, 562);
-  ctx.scale(scaleX, 1);
-  ctx.fillText(heroStr, 0, 0);
-  ctx.restore();
+  if (payload.durationUnknown) {
+    ctx.font = `900 112px ${sans}`;
+    ctx.fillText("未记录", 54, 480);
+    ctx.font = `600 32px ${sans}`;
+    ctx.fillText("总训练时长", 56, 536);
+  } else {
+    const heroStr = String(payload.totalMinutes || 0);
+    const heroFontPx = heroStr.length >= 3 ? 215 : 272;
+    const scaleX = heroStr.length >= 3 ? 0.70 : 0.76;
+    ctx.font = `900 ${heroFontPx}px ${sans}`;
+    const rawHeroW = ctx.measureText(heroStr).width;
+    const renderedHeroW = Math.round(rawHeroW * scaleX);
+    ctx.save();
+    ctx.translate(50, 562);
+    ctx.scale(scaleX, 1);
+    ctx.fillText(heroStr, 0, 0);
+    ctx.restore();
 
-  const unitX = 50 + renderedHeroW + 22;
-  ctx.font = `800 62px ${sans}`;
-  ctx.fillText("分钟", unitX, 466);
-  ctx.font = `600 30px ${sans}`;
-  ctx.fillText("总训练时长", unitX - 2, 524);
+    const unitX = 50 + renderedHeroW + 22;
+    ctx.font = `800 62px ${sans}`;
+    ctx.fillText("分钟", unitX, 466);
+    ctx.font = `600 30px ${sans}`;
+    ctx.fillText("总训练时长", unitX - 2, 524);
+  }
 
   drawSlantedMarker(ctx, padX, 686, 30, 50, 16, crimson);
   ctx.fillStyle = ink;
@@ -1238,7 +1429,9 @@ async function renderStylePoster(ctx: CanvasRenderingContext2D, W: number, H: nu
   drawInlinePipeSegments(
     ctx,
     [
-      [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
+      payload.strength.durationUnknown
+        ? [{ text: "时长未记录", bold: false }]
+        : [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
       [{ text: String(payload.strength.totalSets), bold: true }, { text: " 组", bold: false }],
       [{ text: fmt(payload.strength.totalVolumeKg, 0), bold: true }, { text: " kg", bold: false }],
     ],
@@ -1468,12 +1661,17 @@ async function renderStyleObsidian(ctx: CanvasRenderingContext2D, W: number, H: 
   ctx.font = `900 104px ${sans}`;
   ctx.fillText(payload.headline, padX, 248);
 
-  ctx.font = `800 168px ${sans}`;
-  const durStr = String(payload.totalMinutes || 0);
-  ctx.fillText(durStr, padX, 466);
-  const durW = ctx.measureText(durStr).width;
-  ctx.font = `800 62px ${sans}`;
-  ctx.fillText(" 分钟", padX + durW, 466);
+  if (payload.durationUnknown) {
+    ctx.font = `800 104px ${sans}`;
+    ctx.fillText("未记录", padX, 462);
+  } else {
+    ctx.font = `800 168px ${sans}`;
+    const durStr = String(payload.totalMinutes || 0);
+    ctx.fillText(durStr, padX, 466);
+    const durW = ctx.measureText(durStr).width;
+    ctx.font = `800 62px ${sans}`;
+    ctx.fillText(" 分钟", padX + durW, 466);
+  }
   ctx.fillStyle = "#b5b8c0";
   ctx.font = `500 34px ${sans}`;
   ctx.fillText("总训练时长", padX + 4, 526);
@@ -1489,7 +1687,9 @@ async function renderStyleObsidian(ctx: CanvasRenderingContext2D, W: number, H: 
   drawInlinePipeSegments(
     ctx,
     [
-      [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
+      payload.strength.durationUnknown
+        ? [{ text: "时长未记录", bold: false }]
+        : [{ text: String(payload.strength.minutes), bold: true }, { text: " 分钟", bold: false }],
       [{ text: String(payload.strength.totalSets), bold: true }, { text: " 组", bold: false }],
       [{ text: fmt(payload.strength.totalVolumeKg, 0), bold: true }, { text: " kg", bold: false }],
     ],
@@ -1632,7 +1832,10 @@ export async function renderDailyShareCard(
   const blob = await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob((res) => (res ? resolve(res) : reject(new Error("生成分享图片失败"))), "image/png");
   });
-  const dataUrl = canvas.toDataURL("image/png");
+  // R13 UX: Encode PNG only once via toBlob and reuse ObjectURL for preview & download
+  const dataUrl = typeof URL !== "undefined" && typeof URL.createObjectURL === "function"
+    ? URL.createObjectURL(blob)
+    : canvas.toDataURL("image/png");
   return {
     dataUrl,
     blob,

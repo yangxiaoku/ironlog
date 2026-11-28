@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { MatrixText } from "../components/MatrixText";
 import {
@@ -168,13 +168,19 @@ export function CalendarView() {
   }, [userId, dataEpoch]);
 
   // 2. Month-local incremental slice: only fetches schedule & Apple telemetry for visible month
+  const [schedError, setSchedError] = useState("");
+  const [schedLoaded, setSchedLoaded] = useState(false);
+  const [schedRetrySeq, setSchedRetrySeq] = useState(0);
+
   useEffect(() => {
     let active = true;
-    const fetchMonthSlice = async (targetMonth: string): Promise<CalendarMonthSnap> => {
+    const fetchMonthSlice = async (targetMonth: string): Promise<CalendarMonthSnap & { schedOk: boolean; schedErrMsg?: string }> => {
       const { days: mDays } = monthDays(targetMonth);
       const from = `${targetMonth}-01`;
       const monthEnd = `${targetMonth}-${String(mDays).padStart(2, "0")}`;
       const appleThrough = monthEnd > todayKey ? todayKey : monthEnd;
+      let schedOk = true;
+      let schedErrMsg = "";
       const [appleActs, dailyRes, schedRes] = await Promise.all([
         appleHealthConnected && from <= todayKey
           ? cachedApiFetch<AppleWorkoutAgendaItem[]>(
@@ -190,13 +196,19 @@ export function CalendarView() {
           : Promise.resolve({ entries: [] }),
         cachedApiFetch<{ days?: ScheduleDayEntry[] }>(
           `/api/web/schedule?from=${from}&through=${monthEnd}`,
-          { epoch: dataEpoch, userId },
-        ).catch(() => null),
+          { epoch: dataEpoch + schedRetrySeq, userId },
+        ).catch((err) => {
+          schedOk = false;
+          schedErrMsg = (err as Error)?.message || "排期服务暂不可用";
+          return null;
+        }),
       ]);
       return {
         appleEntries: appleActs,
         appleDailyMap: new Map((dailyRes.entries ?? []).map((row) => [row.date, row])),
         schedDays: schedRes?.days ?? [],
+        schedOk,
+        schedErrMsg,
       };
     };
 
@@ -206,19 +218,29 @@ export function CalendarView() {
       setAppleEntries(staleMonth.appleEntries);
       setAppleDailyMap(staleMonth.appleDailyMap);
       setSchedDays(staleMonth.schedDays);
+      setSchedLoaded(true);
       setMonthLoading(false);
     } else {
+      setSchedLoaded(false);
       setMonthLoading(true);
     }
+    setSchedError("");
 
     let prefetchTimer: number | undefined;
     void fetchMonthSlice(month)
       .then((nextMonthSnap) => {
         if (!active) return;
-        writeQueryCache(currentKey, nextMonthSnap, { userId, epoch: dataEpoch });
         setAppleEntries(nextMonthSnap.appleEntries);
         setAppleDailyMap(nextMonthSnap.appleDailyMap);
-        setSchedDays(nextMonthSnap.schedDays);
+        if (nextMonthSnap.schedOk) {
+          setSchedDays(nextMonthSnap.schedDays);
+          setSchedLoaded(true);
+          setSchedError("");
+          writeQueryCache(currentKey, nextMonthSnap, { userId, epoch: dataEpoch });
+        } else {
+          // #135: Do NOT overwrite cached schedule with empty array or cache a failed 503 response!
+          setSchedError(nextMonthSnap.schedErrMsg || "月排期加载失败，请稍后重试");
+        }
 
         // Warm adjacent months locally so next left/right swipe is instantaneous
         prefetchTimer = window.setTimeout(() => {
@@ -231,7 +253,7 @@ export function CalendarView() {
             if (peekQuery<CalendarMonthSnap>(adjKey, userId)) continue;
             void fetchMonthSlice(adj)
               .then((snap) => {
-                writeQueryCache(adjKey, snap, { userId, epoch: dataEpoch });
+                if (snap.schedOk) writeQueryCache(adjKey, snap, { userId, epoch: dataEpoch });
               })
               .catch(() => {});
           }
@@ -245,7 +267,7 @@ export function CalendarView() {
       active = false;
       if (prefetchTimer !== undefined) window.clearTimeout(prefetchTimer);
     };
-  }, [userId, month, dataEpoch, todayKey, maxMonth, appleHealthConnected]);
+  }, [userId, month, dataEpoch, schedRetrySeq, todayKey, maxMonth, appleHealthConnected]);
 
   // 3. Incrementally resolve exercise dictionary entries for exercises appearing in visible month
   useEffect(() => {
@@ -303,46 +325,92 @@ export function CalendarView() {
   }
 
   const { beginning, days } = monthDays(month);
-  const standaloneApple = appleEntries.filter((r) => !r.manualWorkoutId);
-  const showApple = Boolean(
-    appleHealthConnected || standaloneApple.length > 0 || [...appleDailyMap.values()].some(hasAppleTelemetry),
-  );
+  // R16 perf + #131/#132: Memoize date grouping, validate nutrition snapshot, and separate completed vs active drafts
+  const {
+    standaloneApple,
+    showApple,
+    workoutsByDate,
+    completedWorkoutsByDate,
+    appleByDate,
+    dietsByDate,
+    schedByDate,
+    completeSet,
+    totalWorkouts,
+    calorieDays,
+    avgCalories,
+    completeDietDays,
+    futurePlannedCount,
+  } = useMemo(() => {
+    const standalone = appleEntries.filter((r) => !r.manualWorkoutId);
+    const hasApple = Boolean(
+      appleHealthConnected || standalone.length > 0 || [...appleDailyMap.values()].some(hasAppleTelemetry),
+    );
+    const allWByDate = groupByDate(workouts, (r) => r.data?.date);
+    const doneWByDate = groupByDate(
+      workouts.filter((r) => r.data?.status === "completed"),
+      (r) => r.data?.date,
+    );
+    const aByDate = groupByDate(standalone, (r) => r.date);
+    const dByDate = groupByDate(diets, (r) => r.data?.date);
+    const sByDate = new Map(schedDays.map((s) => [s.date, s]));
 
-  const workoutsByDate = groupByDate(workouts, (r) => r.data?.date);
-  const appleByDate = groupByDate(standaloneApple, (r) => r.date);
-  const dietsByDate = groupByDate(diets, (r) => r.data?.date);
-  const schedByDate = new Map(schedDays.map((s) => [s.date, s]));
-  const completeSet = new Set(nutritionDays.filter((r) => !r.deleted && r.data?.complete).map((r) => r.data.date));
-
-  let totalWorkouts = 0;
-  let totalSeconds = 0;
-  let calorieDays = 0;
-  let totalCalories = 0;
-  let completeDietDays = 0;
-  let futurePlannedCount = 0;
-
-  for (let i = 0; i < days; i++) {
-    const iso = `${month}-${String(i + 1).padStart(2, "0")}`;
-    const wList = workoutsByDate.get(iso) ?? [];
-    const aList = appleByDate.get(iso) ?? [];
-    const dList = dietsByDate.get(iso) ?? [];
-    const sched = schedByDate.get(iso);
-
-    if (wList.length || aList.length) {
-      totalWorkouts += wList.length + aList.length;
-      for (const w of wList) totalSeconds += workoutSeconds(w.data) ?? 0;
-      for (const a of aList) totalSeconds += a.durationSeconds ?? 0;
+    // #131: Validate nutritionDay snapshot against actual meal versions/ids (matches @ironlog/shared nutritionDayComplete)
+    const validComplete = new Set<string>();
+    for (const nd of nutritionDays) {
+      if (nd.deleted || !nd.data?.complete) continue;
+      const dayMeals = dByDate.get(nd.data.date) ?? [];
+      if (!dayMeals.length) continue;
+      const snap = (nd.data as { meals?: Array<{ id: string; version: number }> }).meals;
+      if (Array.isArray(snap)) {
+        const mealVerMap = new Map(dayMeals.map((m) => [m.id, m.version]));
+        if (snap.length === dayMeals.length && snap.every((s) => mealVerMap.get(s.id) === s.version)) {
+          validComplete.add(nd.data.date);
+        }
+      } else {
+        validComplete.add(nd.data.date);
+      }
     }
-    if (dList.length) {
-      calorieDays++;
-      totalCalories += dList.reduce((sum, r) => sum + (r.data.calories || 0), 0);
-      if (completeSet.has(iso)) completeDietDays++;
+
+    let totWorkouts = 0;
+    let calDays = 0;
+    let totCalories = 0;
+    let compDietDays = 0;
+    let futPlanned = 0;
+    for (let i = 0; i < days; i++) {
+      const iso = `${month}-${String(i + 1).padStart(2, "0")}`;
+      const doneList = doneWByDate.get(iso) ?? [];
+      const aList = aByDate.get(iso) ?? [];
+      const dList = dByDate.get(iso) ?? [];
+      const sched = sByDate.get(iso);
+
+      if (doneList.length || aList.length) {
+        totWorkouts += doneList.length + aList.length;
+      }
+      if (dList.length) {
+        calDays++;
+        totCalories += dList.reduce((sum, r) => sum + (r.data.calories || 0), 0);
+        if (validComplete.has(iso)) compDietDays++;
+      }
+      if (iso >= todayKey && !doneList.length && !aList.length && (sched?.status === "scheduled" || sched?.status === "projected")) {
+        futPlanned++;
+      }
     }
-    if (iso >= todayKey && !wList.length && !aList.length && (sched?.status === "scheduled" || sched?.status === "projected")) {
-      futurePlannedCount++;
-    }
-  }
-  const avgCalories = calorieDays ? Math.round(totalCalories / calorieDays) : 0;
+    return {
+      standaloneApple: standalone,
+      showApple: hasApple,
+      workoutsByDate: allWByDate,
+      completedWorkoutsByDate: doneWByDate,
+      appleByDate: aByDate,
+      dietsByDate: dByDate,
+      schedByDate: sByDate,
+      completeSet: validComplete,
+      totalWorkouts: totWorkouts,
+      calorieDays: calDays,
+      avgCalories: calDays ? Math.round(totCalories / calDays) : 0,
+      completeDietDays: compDietDays,
+      futurePlannedCount: futPlanned,
+    };
+  }, [workouts, appleEntries, appleDailyMap, appleHealthConnected, diets, schedDays, nutritionDays, days, month, todayKey]);
 
   const selWorkouts = workoutsByDate.get(selectedDate) ?? [];
   const selApple = appleByDate.get(selectedDate) ?? [];
@@ -428,9 +496,26 @@ export function CalendarView() {
               <button className="icon-button" type="button" aria-label="上个月" onClick={() => changeMonth(-1)}>
                 <Icon name="back" />
               </button>
-              <h2 className="calendar-month-title">
-                {month.slice(0, 4)} 年 {Number(month.slice(5))} 月
-              </h2>
+              <label className="calendar-month-picker" aria-label="选择年月" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <h2 className="calendar-month-title">
+                  {month.slice(0, 4)} 年 {Number(month.slice(5))} 月
+                </h2>
+                <input
+                  type="month"
+                  aria-label="跳转到指定月份"
+                  value={month}
+                  min="1902-01"
+                  max={maxMonth}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (/^\d{4}-\d{2}$/.test(val) && val <= maxMonth) {
+                      setMonth(val);
+                      setSelectedDate(val === todayKey.slice(0, 7) ? todayKey : `${val}-01`);
+                    }
+                  }}
+                  style={{ width: 22, opacity: 0.72, cursor: "pointer", border: 0, background: "transparent", padding: 0 }}
+                />
+              </label>
               {monthLoading ? <span className="calendar-month-sync-badge">同步中…</span> : null}
               <button
                 className="icon-button"
@@ -477,10 +562,24 @@ export function CalendarView() {
             <div>
               <span>后续排期</span>
               <strong>
-                {futurePlannedCount} <small>场</small>
+                {schedError && !schedLoaded ? (
+                  <small>暂不可用</small>
+                ) : (
+                  <>
+                    {futurePlannedCount} <small>场</small>
+                  </>
+                )}
               </strong>
             </div>
           </div>
+          {schedError ? (
+            <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "8px 0" }}>
+              <span>月排期刷新失败：{schedError}</span>
+              <button type="button" className="quiet" onClick={() => setSchedRetrySeq((n) => n + 1)}>
+                重试
+              </button>
+            </div>
+          ) : null}
 
           <div className={`calendar-grid${monthLoading ? " is-month-loading" : ""}`}>
             {["一", "二", "三", "四", "五", "六", "日"].map((d) => (
@@ -491,11 +590,14 @@ export function CalendarView() {
             ))}
             {Array.from({ length: days }, (_, i) => {
               const cell = `${month}-${String(i + 1).padStart(2, "0")}`;
-              const cellWorkouts = workoutsByDate.get(cell) ?? [];
+              const cellAllWorkouts = workoutsByDate.get(cell) ?? [];
+              const cellWorkouts = completedWorkoutsByDate.get(cell) ?? [];
+              const cellActiveDrafts = cellAllWorkouts.filter((w) => w.data.status === "active");
               const cellApple = appleByDate.get(cell) ?? [];
               const cellDiets = dietsByDate.get(cell) ?? [];
               const sched = schedByDate.get(cell);
 
+              // #132: Only count COMPLETED workouts + Apple workouts toward trained cell & monthly count
               const workoutCount = cellWorkouts.length + cellApple.length;
               const rawTrainTitle = cellWorkouts[0]?.data.title ?? cellApple[0]?.plan?.name ?? cellApple[0]?.title ?? "";
               const isFuture = cell > todayKey;
@@ -511,18 +613,22 @@ export function CalendarView() {
               const countSuffix = workoutCount > 1 ? `×${workoutCount}` : "";
               const fullTrainLabel = workoutCount
                 ? `${fullWorkoutTag(rawTrainTitle || "训练")}${countSuffix}`
-                : hasPlanned
-                  ? fullWorkoutTag(sched?.title ?? "")
-                  : isRestSched
-                    ? "休息"
-                    : "";
+                : cellActiveDrafts.length > 0
+                  ? "进行中"
+                  : hasPlanned
+                    ? fullWorkoutTag(sched?.title ?? "")
+                    : isRestSched
+                      ? "休息"
+                      : "";
               const shortTrainLabel = workoutCount
                 ? `${compactWorkoutTag(rawTrainTitle || "训练")}${countSuffix}`
-                : hasPlanned
-                  ? compactWorkoutTag(sched?.title ?? "")
-                  : isRestSched
-                    ? "休息"
-                    : "";
+                : cellActiveDrafts.length > 0
+                  ? "进行中"
+                  : hasPlanned
+                    ? compactWorkoutTag(sched?.title ?? "")
+                    : isRestSched
+                      ? "休息"
+                      : "";
 
               const kcalLabel = kcal > 0 ? fmt(kcal, 0) : "";
 
@@ -530,6 +636,7 @@ export function CalendarView() {
                 "cal-cell",
                 cell === todayKey ? "is-today" : "",
                 workoutCount ? "has-entries has-workout" : "",
+                !workoutCount && cellActiveDrafts.length > 0 ? "has-active-draft" : "",
                 hasPlanned ? "has-planned" : "",
                 isManualPlan ? "has-manual-plan" : "",
                 isRestSched ? "is-rest-cell" : "",
@@ -543,6 +650,7 @@ export function CalendarView() {
 
               const ariaParts = [cell];
               if (workoutCount) ariaParts.push(`训练 ${rawTrainTitle}`);
+              else if (cellActiveDrafts.length > 0) ariaParts.push("进行中训练草稿");
               else if (hasPlanned) ariaParts.push(`排期 ${sched?.title ?? ""}`);
               if (kcal > 0) ariaParts.push(`摄入 ${kcal} 千卡`);
               if (hasAppleDaily) ariaParts.push("体征已同步");

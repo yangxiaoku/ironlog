@@ -25,6 +25,7 @@ function trainingRows(workout: Workout, catalogue: ReadonlyMap<string, Exercise>
     return {
       id: row.id, exerciseId: row.exerciseId, name: exercise?.name ?? row.exerciseId, mode, working,
       muscle: exercise?.muscle ?? catalogueEx?.muscle ?? null,
+      category: (catalogueEx as { category?: string } | undefined)?.category ?? (exercise?.muscle === "cardio" || catalogueEx?.muscle === "cardio" ? "cardio" : "strength"),
       secondaryMuscles: catalogueEx?.secondaryMuscles ?? [],
       supersetGroup: row.supersetGroup ?? null,
       weightUnit: unit ?? "kg",
@@ -186,6 +187,7 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
     id, title: workout.title, date: workout.date, feeling: workout.feeling, notes: workout.notes,
     planId: workout.planId ?? null,
     routineId: workout.routineId ?? null,
+    cardioMeta: workout.cardioMeta ?? null,
     canSyncToActivePlan: Boolean(matchedRoutine),
     activePlanRevision: matchedRoutine ? activePlan!.revision : null,
     activeRoutineName: matchedRoutine?.name ?? null,
@@ -196,6 +198,8 @@ export function getWebWorkoutReport(store: Store, userId: string, id: string) {
     previousComparison,
     exercises: rows.filter((row) => row.completed.length).map((row) => ({
       id: row.id, exerciseId: row.exerciseId, name: row.name, mode: row.mode,
+      muscle: row.muscle,
+      category: row.category,
       supersetGroup: row.supersetGroup,
       weightUnit: row.weightUnit,
       completed: row.completed.map(({ type, weight, reps, seconds, rir, note }) => ({

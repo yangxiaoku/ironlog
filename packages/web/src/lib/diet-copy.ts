@@ -15,10 +15,24 @@ export class DietCopyMismatchError extends Error {
   constructor(
     public readonly pendingSummary: DietCopyBatchSummary,
     public readonly newSummary: DietCopyBatchSummary,
+    public readonly pendingIds: string[] = [],
   ) {
     super("上次同来源的复制尚未确认，但当前模板或食物内容已变更，请确认是重试旧操作还是按最新内容复制");
     this.name = "DietCopyMismatchError";
   }
+}
+
+export function clearPendingDietCopyBatch(
+  userId: string,
+  intent: string,
+  date: string,
+  storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null = getOfflineStorage(),
+): void {
+  if (!userId || !storage) return;
+  const key = `ironlog-diet-copy:${userId}:${date}:${encodeURIComponent(intent)}`;
+  try {
+    storage.removeItem(key);
+  } catch {}
 }
 
 function summarizeFoods(items: readonly { name: string; calories: number }[]): DietCopyBatchSummary {
@@ -94,7 +108,8 @@ export async function copyDietBatch({
           : fingerprintFromBatch(cachedBatch);
       if (detectSourceChange && mode === "auto" && cachedFingerprint !== nextFingerprint) {
         const pendingFoods = cachedBatch.mutations.map((m) => m.data as Diet);
-        throw new DietCopyMismatchError(summarizeFoods(pendingFoods), summarizeFoods(foods));
+        const pendingIds = cachedBatch.mutations.map((m) => m.id).filter(Boolean);
+        throw new DietCopyMismatchError(summarizeFoods(pendingFoods), summarizeFoods(foods), pendingIds);
       }
       saved = JSON.stringify({ batch: cachedBatch, fingerprint: cachedFingerprint });
     } catch (err) {

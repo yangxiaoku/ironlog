@@ -15,7 +15,7 @@ import {
 import { BadgesOverviewStrip } from "../components/badges/BadgesOverviewStrip";
 import { WelcomeChecklist, onboardingSeenKey } from "../components/onboarding/WelcomeChecklist";
 import { apiFetch } from "../lib/api";
-import type { BadgeSummary } from "../lib/badges";
+import { pinnedBadgesKey, type BadgeSummary } from "../lib/badges";
 import { duration, fmt, shortDate, today } from "../lib/date";
 import { cachedApiFetch, peekQuery, writeQueryCache } from "../lib/query-cache";
 import {
@@ -79,6 +79,7 @@ export function OverviewView() {
 
   interface OverviewAuxSnapshot {
     day: TodayResponse | null;
+    liveStats: OverviewStatsResponse | null;
     badges: BadgeSummary | null;
     hasPlan: boolean;
     schedule: ScheduleResponse | null;
@@ -95,6 +96,7 @@ export function OverviewView() {
   const cachedAuxInit = peekQuery<OverviewAuxSnapshot>(initialAuxKey, userId)?.data;
 
   const [stats, setStats] = useState<OverviewStatsResponse | null>(() => cachedStatsInit ?? null);
+  const [liveTodayStats, setLiveTodayStats] = useState<OverviewStatsResponse | null>(() => cachedAuxInit?.liveStats ?? null);
   const [day, setDay] = useState<TodayResponse | null>(() => cachedAuxInit?.day ?? null);
   const [badges, setBadges] = useState<BadgeSummary | null>(() => cachedAuxInit?.badges ?? null);
   const [hasPlan, setHasPlan] = useState<boolean>(() => cachedAuxInit?.hasPlan ?? false);
@@ -110,10 +112,18 @@ export function OverviewView() {
   const manualRefreshToastRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const key = pinnedBadgesKey(userId);
     const onPinnedChange = () => setPinnedBadgesTick((n) => n + 1);
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === null || ev.key === key) setPinnedBadgesTick((n) => n + 1);
+    };
     window.addEventListener("ironlog-pinned-badges-change", onPinnedChange);
-    return () => window.removeEventListener("ironlog-pinned-badges-change", onPinnedChange);
-  }, []);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener("ironlog-pinned-badges-change", onPinnedChange);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, [userId]);
 
   // Stats-only effect: changing period or through ONLY fetches /api/web/statistics
   useEffect(() => {
@@ -182,6 +192,7 @@ export function OverviewView() {
     if (userChanged) {
       if (staleAux) {
         setDay(staleAux.day);
+        setLiveTodayStats(staleAux.liveStats ?? null);
         setBadges(staleAux.badges);
         setHasPlan(staleAux.hasPlan);
         setScheduleData(staleAux.schedule);
@@ -191,6 +202,7 @@ export function OverviewView() {
         setAppleStatus(staleAux.appleStatus);
       } else {
         setDay(null);
+        setLiveTodayStats(null);
         setBadges(null);
         setHasPlan(false);
         setScheduleData(null);
@@ -207,6 +219,8 @@ export function OverviewView() {
       );
     void Promise.all([
       wrap(cachedApiFetch<TodayResponse>("/api/web/today", { ttlMs: 60_000, epoch: dataEpoch, userId })),
+      // #209: Always fetch real-today weekly streak & activity independently of historical `through` date picker
+      wrap(cachedApiFetch<OverviewStatsResponse>(`/api/web/statistics?through=${encodeURIComponent(currentToday)}&days=7`, { epoch: dataEpoch, userId })),
       wrap(cachedApiFetch<BadgeSummary>("/api/web/badges", { epoch: dataEpoch, userId })),
       wrap(cachedApiFetch<{ panels?: string[] }>("/api/web/preferences", { epoch: dataEpoch, userId })),
       wrap(cachedApiFetch<ScheduleResponse>("/api/web/schedule", { epoch: dataEpoch, userId })),
@@ -229,9 +243,10 @@ export function OverviewView() {
       appleHealthConnected
         ? wrap(cachedApiFetch<AppleSyncStatus>("/api/integrations/apple-health/status", { ttlMs: 30_000, epoch: dataEpoch, userId }))
         : Promise.resolve({ ok: true as const, v: null }),
-    ]).then(([todayRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes, statusRes]) => {
+    ]).then(([todayRes, liveStatsRes, badgesRes, prefsRes, schedRes, dailyRes, agendaRes, statusRes]) => {
       if (!active) return;
       if (todayRes.ok) setDay(todayRes.v);
+      if (liveStatsRes.ok) setLiveTodayStats(liveStatsRes.v);
       if (badgesRes.ok) setBadges(badgesRes.v);
       if (schedRes.ok) setScheduleData(schedRes.v ?? null);
       if (todayRes.ok || schedRes.ok) {
@@ -243,6 +258,7 @@ export function OverviewView() {
       if (statusRes.ok) setAppleStatus(statusRes.v ?? null);
       if (
         todayRes.ok &&
+        liveStatsRes.ok &&
         badgesRes.ok &&
         prefsRes.ok &&
         schedRes.ok &&
@@ -252,6 +268,7 @@ export function OverviewView() {
       ) {
         const nextAux: OverviewAuxSnapshot = {
           day: todayRes.v,
+          liveStats: liveStatsRes.v,
           badges: badgesRes.v,
           hasPlan: Boolean(schedRes.v?.activePlan?.id || todayRes.v?.planned),
           schedule: schedRes.v ?? null,
@@ -586,42 +603,57 @@ export function OverviewView() {
           <div className="hero-inner">
             <div className="hero-title-streak">
               <h1>今天</h1>
-              {stats.weeklyStreak ? (
-                <div className="streak-pill-bar">
-                  <span className="streak-pill" title={`本周标识 ${stats.weeklyStreak.currentWeekKey}`}>
-                    🔥 连续 <b>{stats.weeklyStreak.currentWeeks}</b> 周
-                  </span>
-                  {stats.weeklyStreak.isCurrentWeekFrozen ? (
-                    <span className="streak-freeze-pill is-frozen">❄️ 本周已冻结保护</span>
-                  ) : stats.weeklyStreak.freezeRemainingThisMonth > 0 ? (
-                    <button
-                      type="button"
-                      className="streak-freeze-pill"
-                      title="出差或生病时使用每月 1 次的连胜冻结卡，避免周连胜清零"
-                      onClick={() => {
-                        openConfirm({
-                          title: "启用本周连胜冻结保护",
-                          message: `使用本月连胜冻结卡保护 ${stats.weeklyStreak!.currentWeekKey}（每月限 1 次），即使本周未练也不中断周连胜。确认启用？`,
-                          confirmLabel: "启用冻结卡",
-                          onConfirm: async () => {
-                            await apiFetch("/api/web/streak-freeze", {
-                              method: "POST",
-                              body: { weekKey: stats.weeklyStreak!.currentWeekKey },
-                            });
-                            bumpDataEpoch();
-                            notify("已启用本周连胜冻结保护 ❄️");
-                          },
-                        });
-                      }}
-                    >
-                      ❄️ 冻结卡 ({stats.weeklyStreak.freezeRemainingThisMonth})
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
+              {(() => {
+                // #209: Hero "今天" streak & freeze actions ALWAYS bind to real-today live stats, never historical `through`
+                const liveStreak = liveTodayStats?.weeklyStreak ?? (through === todayKey ? stats.weeklyStreak : null);
+                const liveAct = liveTodayStats?.activity ?? (through === todayKey ? stats.activity : []);
+                if (!liveStreak) return null;
+                const liveAnchor = new Date(`${todayKey}T00:00:00Z`);
+                const liveMonOffset = (liveAnchor.getUTCDay() + 6) % 7;
+                const liveMon = shiftDateStr(todayKey, -liveMonOffset);
+                const trainedThisWeek = liveAct.some((a) => a.active && a.date >= liveMon && a.date <= todayKey);
+                return (
+                  <div className="streak-pill-bar">
+                    <span className="streak-pill" title={`本周标识 ${liveStreak.currentWeekKey}`}>
+                      🔥 连续 <b>{liveStreak.currentWeeks}</b> 周
+                    </span>
+                    {liveStreak.isCurrentWeekFrozen ? (
+                      <span className="streak-freeze-pill is-frozen">❄️ 本周已冻结保护</span>
+                    ) : liveStreak.freezeRemainingThisMonth > 0 ? (
+                      <button
+                        type="button"
+                        className="streak-freeze-pill"
+                        title="出差或生病时使用每月 1 次的连胜冻结卡，避免周连胜清零"
+                        onClick={() => {
+                          const warnExtra = trainedThisWeek
+                            ? "\n\n提示：本周你已完成训练，连胜已自动延续，建议保留本次额度以备不时之需。"
+                            : liveStreak.currentWeeks === 0
+                              ? "\n\n提示：当前连续周数为 0 周，暂无待保护的连胜，建议留存额度。"
+                              : "";
+                          openConfirm({
+                            title: "启用本周连胜冻结保护",
+                            message: `拟保护周期：${liveStreak.currentWeekKey}（当前连续 ${liveStreak.currentWeeks} 周，本月剩余额度 ${liveStreak.freezeRemainingThisMonth} 次）。启用后本周即使未练也不会中断周连胜。${warnExtra}`,
+                            confirmLabel: "确认启用冻结卡",
+                            onConfirm: async () => {
+                              await apiFetch("/api/web/streak-freeze", {
+                                method: "POST",
+                                body: { weekKey: liveStreak.currentWeekKey },
+                              });
+                              bumpDataEpoch();
+                              notify(`已启用 ${liveStreak.currentWeekKey} 连胜冻结保护 ❄️`);
+                            },
+                          });
+                        }}
+                      >
+                        ❄️ 冻结卡 ({liveStreak.freezeRemainingThisMonth})
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })()}
             </div>
             <WeekStrip
-              activity={stats.activity}
+              activity={liveTodayStats?.activity ?? (through === todayKey ? stats.activity : [])}
               todayKey={todayKey}
               selectedDate={weekDate}
               scheduleDays={scheduleData?.days}
@@ -830,26 +862,25 @@ export function OverviewView() {
         </div>
       ) : null}
 
-      {error ? (
-        <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 12 }}>
-          <span>刷新统计失败：{error}</span>
-          <button
-            type="button"
-            className="quiet"
-            onClick={() => setStatsRetrySeq((n) => n + 1)}
-          >
-            重试
-          </button>
-        </div>
-      ) : null}
-
       {isNewUser && !demo ? <WelcomeChecklist stats={stats} currentDay={day} hasPlan={hasPlan} /> : null}
 
       <div className="section-bar stats-header">
         <div>
           <div className="stats-header-title">
             <h2>训练表现</h2>
-            <button type="button" className="quiet stats-analytics-link" onClick={() => navigate("analytics")}>
+            <button
+              type="button"
+              className="quiet stats-analytics-link"
+              onClick={() => {
+                try {
+                  sessionStorage.setItem(
+                    "ironlog_analytics_handoff",
+                    JSON.stringify({ through: stats.through, days: period ?? stats.period }),
+                  );
+                } catch {}
+                navigate("analytics");
+              }}
+            >
               数据分析 <Icon name="chevron" size={14} />
             </button>
           </div>

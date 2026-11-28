@@ -169,6 +169,20 @@ function postPinnedWebhook(
     const isHttps = parsed.protocol === "https:";
     const mod = isHttps ? https : http;
     const rawHost = parsed.hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "");
+    let settled = false;
+    let wallTimer: ReturnType<typeof setTimeout> | null = null;
+    const finishResolve = (result: { ok: boolean; status: number }) => {
+      if (settled) return;
+      settled = true;
+      if (wallTimer) clearTimeout(wallTimer);
+      resolve(result);
+    };
+    const finishReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      if (wallTimer) clearTimeout(wallTimer);
+      reject(err);
+    };
     const req = mod.request(
       {
         protocol: parsed.protocol,
@@ -176,6 +190,7 @@ function postPinnedWebhook(
         port: parsed.port ? Number(parsed.port) : isHttps ? 443 : 80,
         path: `${parsed.pathname}${parsed.search}`,
         method: "POST",
+        agent: false,
         headers: {
           ...headers,
           Host: parsed.host,
@@ -193,18 +208,24 @@ function postPinnedWebhook(
       },
       (res) => {
         const status = res.statusCode ?? 0;
-        res.resume();
+        // #174 (P1): Destroy response stream immediately after reading status to prevent streaming connection leaks.
+        res.destroy();
         if (status >= 300 && status < 400) {
-          reject(new Error("Webhook 禁止重定向"));
+          finishReject(new Error("Webhook 禁止重定向"));
           return;
         }
-        resolve({ ok: status >= 200 && status < 300, status });
+        finishResolve({ ok: status >= 200 && status < 300, status });
       },
     );
+    // #174 (P1): Enforce a strict wall-clock timeout in addition to socket idle timeout.
+    wallTimer = setTimeout(() => {
+      req.destroy(new Error("推送超时"));
+      finishReject(new Error("推送超时"));
+    }, timeoutMs);
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error("推送超时"));
     });
-    req.on("error", reject);
+    req.on("error", (err) => finishReject(err instanceof Error ? err : new Error(String(err))));
     req.write(body);
     req.end();
   });

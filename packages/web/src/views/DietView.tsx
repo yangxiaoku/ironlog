@@ -5,7 +5,7 @@ import { DotMeter, ThinMeter } from "../components/Meters";
 import { PageHeading, WorkspaceTabs } from "../components/WorkspaceTabs";
 import { apiFetch } from "../lib/api";
 import { fmt, shortDate, today } from "../lib/date";
-import { copyDietBatch, DietCopyMismatchError } from "../lib/diet-copy";
+import { clearPendingDietCopyBatch, copyDietBatch, DietCopyMismatchError } from "../lib/diet-copy";
 import {
   MEALS,
   safeUuid,
@@ -64,18 +64,20 @@ export function DietView() {
   const [copying, setCopying] = useState(false);
   const copyInFlight = useRef(false);
   const [dietDone, setDietDone] = useState(false);
+  const [dietDoneVersion, setDietDoneVersion] = useState(0);
   const [waterMl, setWaterMl] = useState(0);
   const [waterGoal, setWaterGoal] = useState(() => getWaterGoalMl(userId));
+  const [waterGoalPickerOpen, setWaterGoalPickerOpen] = useState(false);
+  const [customWaterGoalVal, setCustomWaterGoalVal] = useState("");
   const [savingWaterGoal, setSavingWaterGoal] = useState(false);
   const [failedWaterGoal, setFailedWaterGoal] = useState<number | null>(null);
   const [busyWater, setBusyWater] = useState(false);
-  const [pendingWaterOp, setPendingWaterOp] = useState<{
-    opId: string;
-    date: string;
-    deltaMl?: number;
-    setMl?: number;
-    label: string;
-  } | null>(null);
+  // #06: Persist pending water retry op per-date so switching dates never drops the original opId
+  type PendingWaterOp = { opId: string; date: string; deltaMl?: number; setMl?: number; label: string };
+  const [pendingWaterOps, setPendingWaterOps] = useState<Record<string, PendingWaterOp>>({});
+  const pendingWaterOp = pendingWaterOps[date] ?? null;
+  // #147: Preserve stable opId & expectedVersion per-date for unmark retries
+  const pendingUnmarkRef = useRef<Map<string, { opId: string; expectedVersion: number }>>(new Map());
   const [customWaterOpen, setCustomWaterOpen] = useState(false);
   const [customWaterVal, setCustomWaterVal] = useState("");
   const [markingDone, setMarkingDone] = useState(false);
@@ -143,13 +145,13 @@ export function DietView() {
     if (lastHydrationKeyRef.current !== hydrationKey) {
       lastHydrationKeyRef.current = hydrationKey;
       setDietDone(false);
+      setDietDoneVersion(0);
       setWaterMl(0);
-      setPendingWaterOp(null);
       setCustomWaterOpen(false);
       setCustomWaterVal("");
     }
     void Promise.all([
-      cachedApiFetch<{ complete?: boolean }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId })
+      cachedApiFetch<{ complete?: boolean; version?: number }>(`/api/web/nutrition-day?date=${encodeURIComponent(date)}`, { epoch: dataEpoch, userId })
         .then((v) => ({ ok: true as const, v }))
         .catch(() => ({ ok: false as const, v: null })),
       cachedApiFetch<{ entries?: Array<{ waterMl?: number }> }>(
@@ -160,7 +162,10 @@ export function DietView() {
         .catch(() => ({ ok: false as const, v: null })),
     ]).then(([markerRes, dailyRes]) => {
       if (!active) return;
-      if (markerRes.ok) setDietDone(Boolean(markerRes.v?.complete));
+      if (markerRes.ok) {
+        setDietDone(Boolean(markerRes.v?.complete));
+        setDietDoneVersion(typeof markerRes.v?.version === "number" ? markerRes.v.version : 0);
+      }
       if (dailyRes.ok) setWaterMl(dailyRes.v?.entries?.[0]?.waterMl ?? 0);
     });
     return () => {
@@ -226,9 +231,31 @@ export function DietView() {
       notify(label || `已添加 ${count} 项饮食至 ${shortDate(targetDate)}`);
     } catch (err) {
       if (err instanceof DietCopyMismatchError) {
+        // #148: Check server records before overwriting an unconfirmed batch so already-landed old items aren't silently duplicated
+        let alreadyLanded = false;
+        if (err.pendingIds.length) {
+          try {
+            const latestDiets = await apiFetch<Array<RecordEnvelope<DietData>>>("/api/records/diet");
+            const idSet = new Set(err.pendingIds);
+            alreadyLanded = latestDiets.some((r) => !r.deleted && idSet.has(r.id));
+          } catch {}
+        }
+        if (alreadyLanded) {
+          clearPendingDietCopyBatch(userId, intent, targetDate);
+          bumpDataEpoch();
+          openConfirm({
+            title: "上次复制已入库",
+            message: `核对服务端记录后发现，上次复制的旧批次（${err.pendingSummary.names || `${err.pendingSummary.count} 项`} · ${err.pendingSummary.calories} kcal）其实已保存至 ${shortDate(targetDate)}。如需另加最新内容（${err.newSummary.names || `${err.newSummary.count} 项`} · ${err.newSummary.calories} kcal），请确认；否则请取消并在列表直接编辑已有记录。`,
+            confirmLabel: "保留旧项并另加最新内容",
+            onConfirm: async () => {
+              await copyFoodsToDate(intent, foods, targetMeal, label, "replace-with-new");
+            },
+          });
+          return;
+        }
         openConfirm({
           title: "模板内容已更新",
-          message: `上次复制（${err.pendingSummary.names || `${err.pendingSummary.count} 项`} · ${err.pendingSummary.calories} kcal）尚未收到确认回执，但当前内容已变更为（${err.newSummary.names || `${err.newSummary.count} 项`} · ${err.newSummary.calories} kcal）。确认放弃旧批次并按最新内容复制吗？`,
+          message: `上次复制（${err.pendingSummary.names || `${err.pendingSummary.count} 项`} · ${err.pendingSummary.calories} kcal）尚未入库，当前内容已变更为（${err.newSummary.names || `${err.newSummary.count} 项`} · ${err.newSummary.calories} kcal）。确认按最新内容复制至 ${shortDate(targetDate)} 吗？`,
           confirmLabel: "按最新内容复制",
           onConfirm: async () => {
             await copyFoodsToDate(intent, foods, targetMeal, label, "replace-with-new");
@@ -243,7 +270,7 @@ export function DietView() {
     }
   };
 
-  const sendWaterRequest = async (req: { opId: string; date: string; deltaMl?: number; setMl?: number; label: string }) => {
+  const sendWaterRequest = async (req: PendingWaterOp) => {
     if (busyWater) return;
     setBusyWater(true);
     triggerHaptic("light");
@@ -255,14 +282,28 @@ export function DietView() {
           ? { date: req.date, setMl: req.setMl, opId: req.opId }
           : { date: req.date, deltaMl: req.deltaMl ?? 250, opId: req.opId },
       });
-      setPendingWaterOp(null);
+      setPendingWaterOps((prev) => {
+        if (!(req.date in prev)) return prev;
+        const next = { ...prev };
+        delete next[req.date];
+        return next;
+      });
+      // #146: Update daily cache entry immediately so switching away and returning shows the saved waterMl
+      const dailyKey = `/api/integrations/apple-health/daily?from=${req.date}&through=${req.date}`;
+      const prevDaily = peekQuery<{ entries?: Array<Record<string, unknown>> }>(dailyKey, userId)?.data;
+      const prevEntries = prevDaily?.entries ?? [];
+      const nextEntries = prevEntries.length
+        ? prevEntries.map((entry, idx) => (idx === 0 ? { ...entry, waterMl: res.waterMl } : entry))
+        : [{ date: req.date, waterMl: res.waterMl }];
+      writeQueryCache(dailyKey, { ...(prevDaily ?? {}), entries: nextEntries }, { userId, epoch: dataEpoch });
       if (dateRef.current === req.date) {
         setWaterMl(res.waterMl);
       }
+      bumpDataEpoch();
       const dayLabel = req.date === todayStr ? "今日饮水" : `${shortDate(req.date)} 饮水`;
       notify(req.setMl === 0 ? `已重置${dayLabel}记录` : `${dayLabel} ${fmt(res.waterMl, 0)} ml`);
     } catch (err) {
-      setPendingWaterOp(req);
+      setPendingWaterOps((prev) => ({ ...prev, [req.date]: req }));
       notify((err as Error)?.message || "饮水保存尚未确认，可点击下方重试原操作");
     } finally {
       setBusyWater(false);
@@ -271,10 +312,12 @@ export function DietView() {
 
   const updateWater = async (deltaMl?: number, setMl?: number) => {
     const reqDate = date;
+    const existingPending = pendingWaterOps[reqDate];
     const samePending =
-      pendingWaterOp &&
-      pendingWaterOp.date === reqDate &&
-      (setMl != null ? pendingWaterOp.setMl === setMl : pendingWaterOp.setMl == null && pendingWaterOp.deltaMl === (deltaMl ?? 250));
+      existingPending &&
+      (setMl != null
+        ? existingPending.setMl === setMl
+        : existingPending.setMl == null && existingPending.deltaMl === (deltaMl ?? 250));
     const label =
       setMl === 0
         ? "清零饮水"
@@ -283,8 +326,8 @@ export function DietView() {
           : (deltaMl ?? 250) > 0
             ? `+${deltaMl ?? 250}ml`
             : `${deltaMl}ml`;
-    const op = samePending
-      ? pendingWaterOp
+    const op: PendingWaterOp = samePending
+      ? existingPending
       : {
           opId: safeUuid(),
           date: reqDate,
@@ -299,15 +342,25 @@ export function DietView() {
     const reqDate = date;
     setMarkingDone(true);
     try {
-      await apiFetch("/api/web/nutrition-day", {
+      const res = await apiFetch<{ complete?: boolean; version?: number }>("/api/web/nutrition-day", {
         method: "PUT",
         skipMutateHook: true,
         body: { date: reqDate, opId: safeUuid() },
       });
+      pendingUnmarkRef.current.delete(reqDate);
+      const nextVer = typeof res?.version === "number" ? res.version : dietDoneVersion + 1;
+      // #146: Update nutrition-day query cache immediately & bump epoch
+      writeQueryCache(
+        `/api/web/nutrition-day?date=${encodeURIComponent(reqDate)}`,
+        { complete: true, version: nextVer },
+        { userId, epoch: dataEpoch },
+      );
       triggerHaptic("success");
       if (dateRef.current === reqDate) {
         setDietDone(true);
+        setDietDoneVersion(nextVer);
       }
+      bumpDataEpoch();
       notify("已标记全天饮食记录完成");
     } catch (err) {
       notify((err as Error)?.message || "操作失败");
@@ -320,20 +373,74 @@ export function DietView() {
     if (markingDone) return;
     const reqDate = date;
     setMarkingDone(true);
+    // #147: Bind stable opId + expectedVersion so lost-receipt retries cannot delete a newer confirmation from another device
+    const cachedOp = pendingUnmarkRef.current.get(reqDate);
+    const op =
+      cachedOp && cachedOp.expectedVersion === dietDoneVersion
+        ? cachedOp
+        : { opId: safeUuid(), expectedVersion: dietDoneVersion };
+    pendingUnmarkRef.current.set(reqDate, op);
     try {
-      await apiFetch(`/api/web/nutrition-day?date=${encodeURIComponent(reqDate)}`, {
+      const qs = new URLSearchParams({
+        date: reqDate,
+        opId: op.opId,
+        expectedVersion: String(op.expectedVersion),
+      });
+      const res = await apiFetch<{ complete?: boolean; version?: number }>(`/api/web/nutrition-day?${qs.toString()}`, {
         method: "DELETE",
         skipMutateHook: true,
       });
+      pendingUnmarkRef.current.delete(reqDate);
+      const nextVer = typeof res?.version === "number" ? res.version : op.expectedVersion + 1;
+      writeQueryCache(
+        `/api/web/nutrition-day?date=${encodeURIComponent(reqDate)}`,
+        { complete: false, version: nextVer },
+        { userId, epoch: dataEpoch },
+      );
       triggerHaptic("light");
       if (dateRef.current === reqDate) {
         setDietDone(false);
+        setDietDoneVersion(nextVer);
       }
+      bumpDataEpoch();
       notify("已取消全天已记录标记");
     } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 409) {
+        pendingUnmarkRef.current.delete(reqDate);
+        bumpDataEpoch();
+      }
       notify((err as Error)?.message || "取消标记失败");
     } finally {
       setMarkingDone(false);
+    }
+  };
+
+  const saveWaterGoalTarget = async (targetMl: number) => {
+    if (savingWaterGoal) return;
+    setSavingWaterGoal(true);
+    try {
+      const res = await apiFetch<{ waterGoalMl?: number; version?: number }>("/api/web/profile/water-goal", {
+        method: "PUT",
+        body: { waterGoalMl: targetMl },
+      });
+      const confirmed = typeof res?.waterGoalMl === "number" ? res.waterGoalMl : targetMl;
+      setWaterGoal(confirmed);
+      setFailedWaterGoal(null);
+      setWaterGoalPickerOpen(false);
+      try {
+        localStorage.setItem(waterGoalKey(userId), String(confirmed));
+      } catch {}
+      if (typeof res?.version === "number" && typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
+      }
+      bumpDataEpoch();
+      notify(`每日饮水目标已设为 ${fmt(confirmed, 0)} ml（已同步云端）`);
+    } catch (err) {
+      setFailedWaterGoal(targetMl);
+      notify((err as Error)?.message || "饮水目标保存失败，未同步云端");
+    } finally {
+      setSavingWaterGoal(false);
     }
   };
 
@@ -527,41 +634,65 @@ export function DietView() {
               <span>
                 每日饮水 <strong>{fmt(waterMl, 0)}</strong> / {fmt(waterGoal, 0)} ml
               </span>
-              <button
-                type="button"
-                className="quiet"
-                disabled={savingWaterGoal}
-                title={`已喝 ${waterCups} 杯，点击切换每日饮水目标`}
-                onClick={async () => {
-                  if (savingWaterGoal) return;
-                  const next = WATER_GOALS[(WATER_GOALS.indexOf(waterGoal) + 1) % WATER_GOALS.length]!;
-                  setSavingWaterGoal(true);
-                  try {
-                    const res = await apiFetch<{ waterGoalMl?: number; version?: number }>("/api/web/profile/water-goal", {
-                      method: "PUT",
-                      body: { waterGoalMl: next },
-                    });
-                    const confirmed = typeof res?.waterGoalMl === "number" ? res.waterGoalMl : next;
-                    setWaterGoal(confirmed);
-                    setFailedWaterGoal(null);
-                    try {
-                      localStorage.setItem(waterGoalKey(userId), String(confirmed));
-                    } catch {}
-                    if (typeof res?.version === "number" && typeof window !== "undefined") {
-                      window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
-                    }
-                    notify(`每日饮水目标已设为 ${fmt(confirmed, 0)} ml（已同步云端）`);
-                  } catch (err) {
-                    setFailedWaterGoal(next);
-                    notify((err as Error)?.message || "饮水目标保存失败，未同步云端");
-                  } finally {
-                    setSavingWaterGoal(false);
-                  }
-                }}
-              >
-                {savingWaterGoal ? "保存中…" : `${waterPct}% · 目标`}
-              </button>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <small className="muted" title={`已喝 ${waterCups} 杯`}>{waterPct}%</small>
+                <button
+                  type="button"
+                  className="quiet"
+                  disabled={savingWaterGoal}
+                  aria-expanded={waterGoalPickerOpen}
+                  onClick={() => {
+                    setCustomWaterGoalVal(String(waterGoal));
+                    setWaterGoalPickerOpen((v) => !v);
+                  }}
+                >
+                  {savingWaterGoal ? "保存中…" : "设目标"}
+                </button>
+              </span>
             </div>
+            {waterGoalPickerOpen ? (
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6, margin: "8px 0" }}>
+                {WATER_GOALS.map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    className="micro-chip"
+                    aria-pressed={waterGoal === g}
+                    disabled={savingWaterGoal}
+                    onClick={() => void saveWaterGoalTarget(g)}
+                  >
+                    {g}ml
+                  </button>
+                ))}
+                <form
+                  style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const parsed = Math.round(Number(customWaterGoalVal));
+                    if (!Number.isFinite(parsed) || parsed < 500 || parsed > 10000) {
+                      notify("请输入 500–10000 ml 之间的每日饮水目标");
+                      return;
+                    }
+                    void saveWaterGoalTarget(parsed);
+                  }}
+                >
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={500}
+                    max={10000}
+                    step={50}
+                    aria-label="自定义每日饮水目标 (ml)"
+                    value={customWaterGoalVal}
+                    onChange={(e) => setCustomWaterGoalVal(e.target.value)}
+                    style={{ width: 86, minHeight: 30 }}
+                  />
+                  <button type="submit" className="secondary-button" disabled={savingWaterGoal} style={{ minHeight: 30, padding: "2px 10px" }}>
+                    确认
+                  </button>
+                </form>
+              </div>
+            ) : null}
             <ThinMeter ratio={waterMl / waterGoal} label="每日饮水完成度" />
             {failedWaterGoal != null ? (
               <div className="form-error" role="alert" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
@@ -571,30 +702,8 @@ export function DietView() {
                     type="button"
                     className="micro-chip"
                     disabled={savingWaterGoal}
-                    onClick={async () => {
-                      const target = failedWaterGoal;
-                      if (target == null || savingWaterGoal) return;
-                      setSavingWaterGoal(true);
-                      try {
-                        const res = await apiFetch<{ waterGoalMl?: number; version?: number }>("/api/web/profile/water-goal", {
-                          method: "PUT",
-                          body: { waterGoalMl: target },
-                        });
-                        const confirmed = typeof res?.waterGoalMl === "number" ? res.waterGoalMl : target;
-                        setWaterGoal(confirmed);
-                        setFailedWaterGoal(null);
-                        try {
-                          localStorage.setItem(waterGoalKey(userId), String(confirmed));
-                        } catch {}
-                        if (typeof res?.version === "number" && typeof window !== "undefined") {
-                          window.dispatchEvent(new CustomEvent(PROFILE_VERSION_EVENT, { detail: res.version }));
-                        }
-                        notify(`每日饮水目标已设为 ${fmt(confirmed, 0)} ml（已同步云端）`);
-                      } catch (err) {
-                        notify((err as Error)?.message || "饮水目标保存失败，未同步云端");
-                      } finally {
-                        setSavingWaterGoal(false);
-                      }
+                    onClick={() => {
+                      if (failedWaterGoal != null) void saveWaterGoalTarget(failedWaterGoal);
                     }}
                   >
                     重试同步
@@ -612,7 +721,18 @@ export function DietView() {
                   <button type="button" className="micro-chip" disabled={busyWater} onClick={() => void sendWaterRequest(pendingWaterOp)}>
                     重试原操作
                   </button>
-                  <button type="button" className="quiet" disabled={busyWater} onClick={() => setPendingWaterOp(null)}>
+                  <button
+                    type="button"
+                    className="quiet"
+                    disabled={busyWater}
+                    onClick={() =>
+                      setPendingWaterOps((prev) => {
+                        const next = { ...prev };
+                        delete next[date];
+                        return next;
+                      })
+                    }
+                  >
                     取消
                   </button>
                 </span>
@@ -880,12 +1000,18 @@ export function DietView() {
                         className="micro-chip"
                         disabled={copying}
                         onClick={() =>
-                          void copyFoodsToDate(
-                            `template:${tpl.id}:${mKey}`,
-                            foods,
-                            mKey,
-                            `已将「${tpl.data.name}」填入${mLabel}`,
-                          )
+                          openConfirm({
+                            title: `填入 ${shortDate(date)} ${mLabel}`,
+                            message: `将常用餐单「${tpl.data.name}」（共 ${foods.length} 项，预计 +${fmt(kcal, 0)} kcal）添加到 ${shortDate(date)} 的${mLabel}吗？`,
+                            confirmLabel: `确认填入${mLabel}`,
+                            onConfirm: () =>
+                              copyFoodsToDate(
+                                `template:${tpl.id}:${mKey}`,
+                                foods,
+                                mKey,
+                                `已将「${tpl.data.name}」填入 ${shortDate(date)} ${mLabel}`,
+                              ),
+                          })
                         }
                       >
                         +{mLabel}

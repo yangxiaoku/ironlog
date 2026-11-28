@@ -1,7 +1,11 @@
-import { localDate, type AppleWorkoutAnnotationInput } from "@ironlog/shared";
+import type { AppleWorkoutAnnotationInput } from "@ironlog/shared";
 import { getAppleCardioPreset, type AppleCardioPreset, type AppleCardioPresetId } from "./apple-fitness";
 import type { FeelingKey } from "./domain";
 import { elapsedAt, formatClock, pauseAt, type WorkoutTiming } from "./haptics-audio";
+
+function localDate(ms = Date.now()): string {
+  return new Date((Number.isFinite(ms) ? ms : Date.now()) + 8 * 3600_000).toISOString().slice(0, 10);
+}
 
 export const CARDIO_SESSION_EVENT = "ironlog-cardio-session-change";
 export const CARDIO_TARGET_MINUTES_OPTIONS = [null, 20, 30, 45, 60] as const;

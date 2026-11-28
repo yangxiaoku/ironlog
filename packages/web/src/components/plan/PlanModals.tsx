@@ -147,6 +147,9 @@ export function DaySchedulerModal({
   const [routineId, setRoutineId] = useState<string | null>(null);
   const [templateId, setTemplateId] = useState<string | null>(null);
   const [exercises, setExercises] = useState<PlannedExercise[]>([]);
+  // #160: Sequence guard so late-returning template/preset catalogue fetches never overwrite a newer selection
+  const presetSeqRef = useRef(0);
+  const [applyingPresetName, setApplyingPresetName] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -237,74 +240,99 @@ export function DaySchedulerModal({
     const missing = ids.filter((id) => id && !catalogueMap.has(id));
     if (!missing.length) return catalogueMap;
     const fetched = await resolveCatalogueMap(missing);
-    const next = new Map(catalogueMap);
-    fetched.forEach((v, k) => next.set(k, v));
-    setCatalogueMap(next);
-    return next;
+    let merged = catalogueMap;
+    setCatalogueMap((prev) => {
+      const next = new Map(prev);
+      fetched.forEach((v, k) => next.set(k, v));
+      merged = next;
+      return next;
+    });
+    return merged;
   };
 
   const applyPlanPreset = async (r: PlanRoutine) => {
+    const seq = ++presetSeqRef.current;
     setError("");
+    setApplyingPresetName(r.name);
     const ids = r.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""].filter(Boolean));
-    await mergeCatalogue(ids);
-    void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
-    setTitle(r.name);
-    setPlanId(schedule?.activePlan?.id ?? null);
-    setRoutineId(r.id);
-    setTemplateId(null);
-    setExercises(r.exercises.map((e) => ({ ...e })));
+    try {
+      await mergeCatalogue(ids);
+      if (seq !== presetSeqRef.current) return;
+      void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
+      setTitle(r.name);
+      setPlanId(schedule?.activePlan?.id ?? null);
+      setRoutineId(r.id);
+      setTemplateId(null);
+      setExercises(r.exercises.map((e) => ({ ...e })));
+    } finally {
+      if (seq === presetSeqRef.current) setApplyingPresetName("");
+    }
   };
 
   const applyTemplatePreset = async (t: { id: string; name: string; exercises: PlannedExercise[] }) => {
+    const seq = ++presetSeqRef.current;
     setError("");
+    setApplyingPresetName(t.name);
     const ids = t.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""].filter(Boolean));
-    await mergeCatalogue(ids);
-    void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
-    setTitle(t.name);
-    setPlanId(null);
-    setRoutineId(null);
-    setTemplateId(t.id);
-    setExercises(t.exercises.map((e) => ({ ...e })));
+    try {
+      await mergeCatalogue(ids);
+      if (seq !== presetSeqRef.current) return;
+      void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
+      setTitle(t.name);
+      setPlanId(null);
+      setRoutineId(null);
+      setTemplateId(t.id);
+      setExercises(t.exercises.map((e) => ({ ...e })));
+    } finally {
+      if (seq === presetSeqRef.current) setApplyingPresetName("");
+    }
   };
 
   const applyHistoryPreset = async (w: RecordEnvelope<WorkoutData>) => {
+    const seq = ++presetSeqRef.current;
     setError("");
+    setApplyingPresetName(w.data.title);
     const ids = w.data.exercises.map((e) => e.exerciseId);
-    const map = await mergeCatalogue(ids);
-    void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
-    setTitle(w.data.title);
-    setPlanId(w.data.planId ?? null);
-    setRoutineId(w.data.routineId ?? null);
-    setTemplateId(null);
-    setExercises(
-      w.data.exercises.map((exRow) => {
-        const info = map.get(exRow.exerciseId);
-        const mode = info?.mode ?? exRow.snapshot?.mode ?? "reps";
-        const timed = mode === "timed";
-        const assisted = mode === "assisted";
-        const work = exRow.sets.filter((s) => s.completed && s.type !== "warmup");
-        const topWeight = work.length
-          ? (assisted ? Math.min : Math.max)(...work.map((s) => s.weight))
-          : null;
-        const reps = work.length ? Math.max(...work.map((s) => s.reps)) : 8;
-        const rowUnit = exRow.weightUnit === "lb" || exRow.weightUnit === "kg" ? exRow.weightUnit : undefined;
-        return {
-          exerciseId: exRow.exerciseId,
-          sets: Math.max(1, work.length || exRow.sets.length || 3),
-          repsMin: timed ? 1 : Math.max(1, Math.min(reps, 12)),
-          repsMax: timed ? 1 : Math.max(Math.min(reps + 2, 15), reps, 10),
-          weight: timed ? null : topWeight,
-          ...(rowUnit ? { weightUnit: rowUnit } : {}),
-          seconds: timed ? Math.max(15, ...exRow.sets.map((s) => s.seconds || 0)) : 0,
-          restSeconds: exRow.restSeconds ?? 90,
-          targetRir: 2,
-          progression: timed ? "manual" : "double",
-          increment: rowUnit === "lb" ? 5 : 2.5,
-          backupExerciseId: null,
-          supersetGroup: exRow.supersetGroup ?? null,
-        };
-      }),
-    );
+    try {
+      const map = await mergeCatalogue(ids);
+      if (seq !== presetSeqRef.current) return;
+      void fetchMissingPrs(ids, prMap, setPrMap, shiftDateStr(today(), 1));
+      setTitle(w.data.title);
+      setPlanId(w.data.planId ?? null);
+      setRoutineId(w.data.routineId ?? null);
+      setTemplateId(null);
+      setExercises(
+        w.data.exercises.map((exRow) => {
+          const info = map.get(exRow.exerciseId);
+          const mode = info?.mode ?? exRow.snapshot?.mode ?? "reps";
+          const timed = mode === "timed";
+          const assisted = mode === "assisted";
+          const work = exRow.sets.filter((s) => s.completed && s.type !== "warmup");
+          const topWeight = work.length
+            ? (assisted ? Math.min : Math.max)(...work.map((s) => s.weight))
+            : null;
+          const reps = work.length ? Math.max(...work.map((s) => s.reps)) : 8;
+          const rowUnit = exRow.weightUnit === "lb" || exRow.weightUnit === "kg" ? exRow.weightUnit : undefined;
+          return {
+            exerciseId: exRow.exerciseId,
+            sets: Math.max(1, work.length || exRow.sets.length || 3),
+            repsMin: timed ? 1 : Math.max(1, Math.min(reps, 12)),
+            repsMax: timed ? 1 : Math.max(Math.min(reps + 2, 15), reps, 10),
+            weight: timed ? null : topWeight,
+            ...(rowUnit ? { weightUnit: rowUnit } : {}),
+            seconds: timed ? Math.max(15, ...exRow.sets.map((s) => s.seconds || 0)) : 0,
+            restSeconds: exRow.restSeconds ?? 90,
+            targetRir: 2,
+            progression: timed ? "manual" : "double",
+            increment: rowUnit === "lb" ? 5 : 2.5,
+            backupExerciseId: null,
+            supersetGroup: exRow.supersetGroup ?? null,
+          };
+        }),
+      );
+    } finally {
+      if (seq === presetSeqRef.current) setApplyingPresetName("");
+    }
   };
 
   const handleQuickOp = async (op: "rest" | "shift" | "clear") => {
@@ -419,7 +447,7 @@ export function DaySchedulerModal({
 
       {hasPresets ? (
         <section className="scheduler-presets">
-          <span>快速排入</span>
+          <span>快速排入{applyingPresetName ? ` · 正在载入「${applyingPresetName}」…` : ""}</span>
           <div className="ai-presets">
             {(schedule?.activePlan?.routines ?? []).map((r) => (
               <button key={r.id} type="button" className="ai-chip" onClick={() => void applyPlanPreset(r)}>
@@ -542,50 +570,70 @@ export function PlanBuilderModal({
   const [activeRoutineIdx, setActiveRoutineIdx] = useState(0);
   const [catalogueMap, setCatalogueMap] = useState<Map<string, CatalogueExercise>>(() => new Map());
   const [prMap, setPrMap] = useState<Map<string, ExercisePrInfo>>(() => new Map());
-  const [loading, setLoading] = useState(true);
+  const [prLoading, setPrLoading] = useState(false);
+  const [metaRetryNonce, setMetaRetryNonce] = useState(0);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const createdDraftRef = useRef<{ id: string; version: number; fingerprint: string } | null>(null);
+  // #158: Bind stable opId per draft content fingerprint before POST /api/plans/drafts
+  const pendingDraftOpRef = useRef<{ fingerprint: string; opId: string } | null>(null);
   const openingRevisionRef = useRef<number>(0);
 
+  // R15 UX: Render form immediately; fetch catalogue, activePlan, and PRs independently without blocking editing
   useEffect(() => {
     let active = true;
-    const ids = routines.flatMap((r) => r.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""].filter(Boolean)));
-    void Promise.all([
-      resolveCatalogueMap(ids),
-      ids.length
-        ? apiFetch<ExercisePrInfo[]>("/api/web/exercise-prs", {
-            method: "POST",
-            body: {
-              date: "2099-12-31",
-              startedAt: "2099-12-31T23:59:59Z",
-              exercises: [...new Set(ids)].map((id) => ({ id })),
-            },
-          }).catch(() => [])
-        : Promise.resolve([]),
-      apiFetch<{ revision?: number } | null>("/api/plans/active").catch(() => null),
-    ])
-      .then(([cat, prs, activePlan]) => {
+    const ids = [
+      ...new Set(
+        routines.flatMap((r) => r.exercises.flatMap((e) => [e.exerciseId, e.backupExerciseId ?? ""].filter(Boolean))),
+      ),
+    ];
+    void resolveCatalogueMap(ids)
+      .then((cat) => {
         if (!active) return;
-        setCatalogueMap(cat);
-        setPrMap(new Map(prs.map((p) => [p.exerciseId, p])));
-        openingRevisionRef.current = activePlan?.revision ?? 0;
+        setCatalogueMap((prev) => {
+          const next = new Map(prev);
+          cat.forEach((v, k) => next.set(k, v));
+          return next;
+        });
       })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+      .catch(() => {});
+
+    void apiFetch<{ revision?: number } | null>("/api/plans/active")
+      .then((activePlan) => {
+        if (active) openingRevisionRef.current = activePlan?.revision ?? 0;
+      })
+      .catch(() => {});
+
+    if (ids.length) {
+      setPrLoading(true);
+      void apiFetch<ExercisePrInfo[]>("/api/web/exercise-prs", {
+        method: "POST",
+        body: {
+          date: "2099-12-31",
+          startedAt: "2099-12-31T23:59:59Z",
+          exercises: ids.map((id) => ({ id })),
+        },
+      })
+        .then((prs) => {
+          if (active) setPrMap(new Map(prs.map((p) => [p.exerciseId, p])));
+        })
+        .catch(() => {})
+        .finally(() => {
+          if (active) setPrLoading(false);
+        });
+    }
     return () => {
       active = false;
     };
-  }, []);
+  }, [metaRetryNonce]);
 
-  if (loading) {
-    return (
-      <div className="dialog-form scheduler-form">
-        <p className="muted">正在准备动作与个人 PR 基准…</p>
-      </div>
-    );
-  }
+  const missingMetaIds = [
+    ...new Set(
+      routines
+        .flatMap((r) => r.exercises.map((e) => e.exerciseId))
+        .filter((id) => id && !catalogueMap.has(id)),
+    ),
+  ];
 
   const currentRoutine = routines[activeRoutineIdx] ?? routines[0]!;
 
@@ -701,24 +749,45 @@ export function PlanBuilderModal({
       const fingerprint = JSON.stringify(draftBody);
       let targetDraft = createdDraftRef.current?.fingerprint === fingerprint ? createdDraftRef.current : null;
       if (!targetDraft) {
+        // #158: Reuse stable opId for identical draft content so retrying after a lost receipt never creates a duplicate draft
+        if (!pendingDraftOpRef.current || pendingDraftOpRef.current.fingerprint !== fingerprint) {
+          pendingDraftOpRef.current = { fingerprint, opId: safeUuid() };
+        }
         const draftRes = await apiFetch<{ record?: { id: string; version: number } }>("/api/plans/drafts", {
           method: "POST",
-          body: draftBody,
+          body: { ...draftBody, opId: pendingDraftOpRef.current.opId },
         });
         if (draftRes?.record) {
           targetDraft = { id: draftRes.record.id, version: draftRes.record.version, fingerprint };
           createdDraftRef.current = targetDraft;
+          pendingDraftOpRef.current = null;
         }
       }
       if (mode === "apply" && targetDraft) {
-        await apiFetch("/api/plans/apply", {
-          method: "POST",
-          body: {
-            id: targetDraft.id,
-            version: targetDraft.version,
-            expectedRevision: openingRevisionRef.current,
-          },
-        });
+        try {
+          await apiFetch("/api/plans/apply", {
+            method: "POST",
+            body: {
+              id: targetDraft.id,
+              version: targetDraft.version,
+              expectedRevision: openingRevisionRef.current,
+            },
+          });
+        } catch (applyErr) {
+          // #159: On 409 conflict, check if this exact draft is ALREADY the active plan (lost receipt from previous attempt)
+          const status = (applyErr as { status?: number })?.status;
+          if (status === 409) {
+            const currentActive = await apiFetch<{ id?: string; version?: number } | null>("/api/plans/active").catch(() => null);
+            if (currentActive && currentActive.id === targetDraft.id && currentActive.version === targetDraft.version) {
+              bumpDataEpoch();
+              closeAllModals();
+              openPlanSection("current");
+              notify("训练计划已保存并启用");
+              return;
+            }
+          }
+          throw applyErr;
+        }
       }
       bumpDataEpoch();
       closeAllModals();
@@ -792,6 +861,19 @@ export function PlanBuilderModal({
       </div>
 
       <div className="builder-muscle-summary">
+        {prLoading ? (
+          <small className="muted" role="status" style={{ display: "block", marginBottom: 4 }}>
+            正在后台加载个人 PR 参考基准…
+          </small>
+        ) : null}
+        {missingMetaIds.length > 0 ? (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 6 }}>
+            <small className="muted">部分动作详情暂未加载，已保留原有目标参数。</small>
+            <button type="button" className="micro-chip" onClick={() => setMetaRetryNonce((n) => n + 1)}>
+              重试加载
+            </button>
+          </div>
+        ) : null}
         <MuscleDistributionSummary
           routines={routines}
           catalogueMap={catalogueMap}
@@ -1101,6 +1183,17 @@ export function PlanDraftModal({
       openPlanSection("current");
       notify("训练计划已启用");
     } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 409) {
+        const currentActive = await apiFetch<{ id?: string; version?: number } | null>("/api/plans/active").catch(() => null);
+        if (currentActive && currentActive.id === record.id && currentActive.version === record.version) {
+          bumpDataEpoch();
+          closeAllModals();
+          openPlanSection("current");
+          notify("训练计划已启用");
+          return;
+        }
+      }
       notify((err as Error)?.message || "启用失败");
       setApplying(false);
     }
